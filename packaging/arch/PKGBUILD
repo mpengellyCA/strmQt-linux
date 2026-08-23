@@ -6,10 +6,15 @@
 # packaging files, swap "#tag=$_tag" for "#branch=main".
 
 pkgname=strmqt
-pkgver=0.3.0rc1
-# An Arch pkgver may not contain a hyphen, but the git tag is spelled the
-# conventional way, so the two are kept separate rather than renaming the tag.
-_tag=v0.3.0-rc1
+# The tag is the single source of truth, and pkgver is derived from it. Stating
+# both independently is how an rc2 release shipped an Arch package still calling
+# itself rc1 and built from the rc1 tag: nothing checks that two hand-edited
+# strings agree, and all three package jobs went green anyway.
+# An Arch pkgver may not contain a hyphen, so it is stripped here rather than
+# spelling the git tag unconventionally to suit one packager.
+_tag=v0.3.0-rc3
+pkgver=${_tag#v}
+pkgver=${pkgver//-/}
 pkgrel=1
 pkgdesc="Native Qt 6 Emby client for KDE Plasma, built for the couch"
 arch=('x86_64')

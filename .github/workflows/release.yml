@@ -42,6 +42,26 @@ jobs:
           sed -i 's/^OPTIONS=(\(.*\)debug/OPTIONS=(\1!debug/' /etc/makepkg.conf
           grep '^OPTIONS=' /etc/makepkg.conf
 
+      # Three green package jobs once produced a release whose Arch package was
+      # built from the PREVIOUS tag and named after it, because _tag is written
+      # by hand and nothing compared it to the tag being released. Checked here
+      # rather than trusted.
+      - name: Version consistency
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          PKG_TAG=$(sed -n 's/^_tag=//p' packaging/arch/PKGBUILD)
+          CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "release tag=$TAG  PKGBUILD _tag=$PKG_TAG  CMake version=$CM_VER"
+          [ "$PKG_TAG" = "$TAG" ] || {
+            echo "::error::PKGBUILD _tag ($PKG_TAG) does not match the tag being released ($TAG)"
+            exit 1
+          }
+          # The tag may carry a prerelease suffix the project version does not.
+          case "$TAG" in
+            "v$CM_VER"|"v$CM_VER"-*) ;;
+            *) echo "::error::tag $TAG does not match CMake version $CM_VER"; exit 1 ;;
+          esac
+
       - name: makepkg
         run: |
           cd packaging/arch
