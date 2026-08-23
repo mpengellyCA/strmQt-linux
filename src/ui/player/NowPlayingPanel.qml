@@ -54,7 +54,12 @@ FocusScope {
     // coordinates. An empty rect while the pane has not laid out yet, which is
     // exactly the "not ready" answer the flight polls for.
     function heroArtRect(target: Item): rect {
-        if (artFrame.width <= 0 || artFrame.height <= 0)
+        // The PANE is what says whether this has laid out, never the square:
+        // the square is floored at Theme.scale(72) so that a pane with no
+        // geometry at all still reports a 72 px sleeve, and a sentinel taken
+        // off it would accept the very first tick and fly the cover to a stale
+        // destination instead of waiting one more frame.
+        if (artArea.width <= 0 || artArea.height <= 0)
             return Qt.rect(0, 0, 0, 0);
         const corner = artFrame.mapToItem(target, 0, 0);
         return Qt.rect(corner.x, corner.y, artFrame.width, artFrame.height);
@@ -644,10 +649,29 @@ FocusScope {
                 // The readout's strip, taken out of the square's budget rather
                 // than laid over it: the sleeve is allowed every pixel that is
                 // left, and this is what "left" means once the underside has
-                // its line. Read off the Text's own implicit height, which does
-                // not depend on the square, so there is no circle here.
-                readonly property int readoutHeight: technical.text.length > 0
-                    ? technical.implicitHeight + Theme.spacingTight : 0
+                // its line.
+                //
+                // Measured off a TextMetrics, not off the laid-out Text — the
+                // same reason MiniPlayer measures its clock that way. `technical`
+                // is as wide as the square, the square is as wide as whatever is
+                // left after this strip, so reading the Text's implicitHeight
+                // here would route the square's own width back into its height.
+                // It converges today only because an elided line with no
+                // wrapMode has a height that does not depend on its width; add
+                // wrapping, or a font whose metrics vary, and it is a live
+                // binding loop. A TextMetrics has no width to close the circle
+                // with. (Ceiled because that is what Text does to the same font
+                // height: 16.328 → 17 for the mono caption, measured.)
+                readonly property int readoutHeight: panel.technicalText.length > 0
+                    ? Math.ceil(technicalMetrics.height) + Theme.spacingTight : 0
+
+                TextMetrics {
+                    id: technicalMetrics
+
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontCaption
+                    text: panel.technicalText
+                }
 
                 // The sleeve sits ON the surface, not in it (MUSIC.md §4).
                 //

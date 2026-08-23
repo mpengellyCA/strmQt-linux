@@ -51,23 +51,40 @@ public:
     int revision() const { return m_revision; }
     static qreal maxWashOpacity();
 
+    // Roughly a library page's worth of covers. Bounded because every image the
+    // app draws passes through here, and an unbounded map of every cover a long
+    // session scrolled past is a leak with a colour in it. Public so the test
+    // can fill it exactly.
+    static constexpr int kMaxEntries = 512;
+
 signals:
     void revisionChanged();
 
 private:
     void onImageDecoded(const QString &id, const QImage &image);
     void remember(const QString &id, const QColor &tint);
-
-    // Roughly a library page's worth of covers. Bounded because every image the
-    // app draws passes through here, and an unbounded map of every cover a long
-    // session scrolled past is a leak with a colour in it.
-    static constexpr int kMaxEntries = 512;
+    void touch(const QString &id) const;
 
     // An entry with an invalid colour is a REMEMBERED failure: the cover was
     // sampled and had no tint that could meet the clamp. Keeping it stops the
     // same greyscale sleeve being re-sampled on every redraw.
     QHash<QString, QColor> m_tints;
-    QQueue<QString> m_order;
+
+    // ── Why the order is ACCESS order, not insertion order ───────────────────
+    // Evicting the oldest *inserted* entry drops covers that are still on
+    // screen: scrolling a large library pushes 512 strangers through here while
+    // one record plays, and the playing record's tint is dequeued from under
+    // it. That loss is permanent, not transient — the mini player's and the
+    // hero's Images are still holding that cover's pixmap, so EmbyImageFetcher
+    // is never asked to decode it again, imageDecoded never re-fires, and the
+    // wash falls back to the flat surface colour for the rest of the session.
+    //
+    // So asking for a tint counts as using it: `tintFor` re-queues, and the
+    // wash on screen asks again on every revision bump. `m_wanted` closes the
+    // last hole in that — a run of covers whose tint fails the clamp inserts
+    // without bumping revision, so nothing would re-ask in time.
+    mutable QQueue<QString> m_order;
+    mutable QString m_wanted;
     int m_revision = 0;
 };
 

@@ -74,10 +74,17 @@ target_include_directories(tst_player_tracks PRIVATE mocks)
 strmqt_add_test(tst_play_queue unit/tst_play_queue.cpp)
 
 # The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
-# is deliberately QtCore-only; the unit is compiled straight into the test. It is
-# pure — an image in, a colour out — so there is nothing else to link.
-strmqt_add_test(tst_cover_tint unit/tst_cover_tint.cpp ${CMAKE_SOURCE_DIR}/src/app/CoverTint.cpp)
-target_link_libraries(tst_cover_tint PRIVATE Qt6::Gui)
+# is deliberately QtCore-only; the unit is compiled straight into the test. The
+# clamp is pure — an image in, a colour out — but the cache around it is driven
+# by EmbyImageFetcher's decode signal, so the fetcher comes along to be the thing
+# that emits it. It is constructed with a null client and never fetches: no
+# network in a unit test (AGENTS.md).
+strmqt_add_test(tst_cover_tint unit/tst_cover_tint.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/CoverTint.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/CoverTintService.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/EmbyImageProvider.cpp
+)
+target_link_libraries(tst_cover_tint PRIVATE Qt6::Gui Qt6::Quick)
 
 # MprisPlayer assembles Metadata without a registered D-Bus connection, so the
 # map and its value types are testable on a machine with no session bus.

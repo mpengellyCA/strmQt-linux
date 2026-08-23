@@ -40,6 +40,29 @@ Item {
     // This is what the endpoints hide against.
     readonly property bool active: sleeve.visible
 
+    // ── The sizes this flight is allowed to ask for ─────────────────────────
+    // QQuickPixmapCache keys on (url, sourceSize) and the provider puts the
+    // width straight into the request as `maxWidth`, so a size no endpoint
+    // asks for is a cache miss AND a fresh download — and the square would fly
+    // empty for most of its 420 ms while it arrived. Both endpoints size their
+    // Image as `frame width x devicePixelRatio`, so the flight takes its sizes
+    // from the very rectangles it is handed, by the same rule.
+    //
+    // Which one is resident depends on the direction of travel, so there are
+    // two:
+    //
+    //   · takeoffWidth — the endpoint the square just LEFT. Whatever else is
+    //     true, that copy was on screen a frame ago, so its pixmap is decoded
+    //     and the first frame of the flight has something to draw.
+    //   · sharpWidth — the largest endpoint this flight touches. Expanding,
+    //     that is the hero, which is still loading when the square lifts off:
+    //     it is drawn over the stand-in the moment it arrives, and because the
+    //     hero's own Image asks for exactly this size, it is one shared pixmap
+    //     rather than a third request. Minimising, it is the takeoff size
+    //     itself and the second Image never loads at all.
+    property int takeoffWidth: 0
+    property int sharpWidth: 0
+
     // The sleeve has arrived (or been cancelled). The owner uses this to hand
     // focus on, not to un-hide anything.
     signal landed
@@ -55,6 +78,8 @@ Item {
         sleeve.height = frame.height;
         sleeve.radius = radius;
         sleeve.visible = frame.width > 0 && frame.height > 0;
+        flight.takeoffWidth = Math.round(frame.width * Screen.devicePixelRatio);
+        flight.sharpWidth = flight.takeoffWidth;
     }
 
     // Travel to the other rectangle. Safe to call while a flight is running:
@@ -66,6 +91,10 @@ Item {
             return;
         }
         travel.stop();
+        // Never shrinks: turning the square around mid-expand must not throw
+        // away the large pixmap it has just been handed.
+        flight.sharpWidth = Math.max(flight.sharpWidth,
+                                     Math.round(frame.width * Screen.devicePixelRatio));
         toX.from = sleeve.x;
         toX.to = frame.x;
         toY.from = sleeve.y;
@@ -156,6 +185,20 @@ Item {
     // onto: the square travels flat, and the shadow belongs to the endpoint it
     // lands on — which reads as the sleeve settling onto the surface, and that
     // is what MUSIC.md asked the shadow for in the first place.
+    //
+    // ── The corners travel exactly as the endpoints draw them ───────────────
+    // `clip` is a scissor rectangle, not a rounded mask: a Rectangle with a
+    // radius clips a child that fills it to the plain bounding box, so an
+    // opaque cover shows square corners whatever the radius says. Measured on
+    // Qt 6.11.2 rather than assumed.
+    //
+    // That is true of BOTH endpoints — MiniPlayer's frame and the hero's frame
+    // are the same radius-plus-clip — so nothing pops on landing, and the
+    // radius animation above is not dead: it is the only thing that matters
+    // while the cover has not decoded yet, which is exactly when the sleeve's
+    // own rounded fill is what the eye sees. Dropping it would ADD a corner
+    // pop on the one path where the corner is visible. A real mask is the
+    // whole control library's business, not this one square's.
     Rectangle {
         id: sleeve
 
@@ -163,19 +206,33 @@ Item {
         color: Theme.surfaceColor
         clip: true
 
+        // The size the endpoint the square just left is holding. Sized once
+        // per flight, not per frame: the square is resized on every frame of
+        // the trip, and a sourceSize that followed it would ask the provider
+        // for a different image on every one of them.
         Image {
             anchors.fill: parent
             source: flight.source
-            // Sized from the WINDOW, not from the square. The square is
-            // resized on every frame of the flight, and a sourceSize that
-            // followed it would ask the provider for a different image on
-            // every one of them; this asks once, at a size no endpoint can
-            // exceed, and lets the GPU scale it for the trip.
-            sourceSize.width: Math.round(Math.max(flight.width, flight.height) *
-                                         Screen.devicePixelRatio / 2)
+            sourceSize.width: flight.takeoffWidth
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             cache: true
+        }
+
+        // Drawn over the stand-in when the trip is towards the bigger
+        // endpoint, and only then — minimising, this is the same size as the
+        // stand-in and never loads.
+        Image {
+            anchors.fill: parent
+            source: flight.sharpWidth > flight.takeoffWidth ? flight.source : ""
+            sourceSize.width: flight.sharpWidth
+            fillMode: Image.PreserveAspectCrop
+            asynchronous: true
+            cache: true
+            // No fade. It is the same picture at a higher resolution, so a
+            // cross-fade would only show the two of them disagreeing about
+            // their edges.
+            visible: status === Image.Ready
         }
     }
 }

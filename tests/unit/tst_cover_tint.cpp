@@ -14,12 +14,20 @@
 //   2. With the wash drawn at its opacity ceiling over the ground, an amber
 //      focus ring still clears 3:1 against it — and so do the three alternate
 //      accents, because the accent is a user preference.
+//
+// And one about the cache in front of it (CoverTintService): a tint that is
+// still on screen is never the one thrown away, because losing it is permanent
+// — the Images holding that cover keep their pixmap, so it is never decoded
+// again and the wash would fall back to flat surface colour for good.
 
 #include "app/CoverTint.h"
+#include "app/CoverTintService.h"
+#include "app/EmbyImageProvider.h"
 
 #include <QImage>
 #include <QLinearGradient>
 #include <QPainter>
+#include <QSignalSpy>
 #include <QTest>
 #include <QtMath>
 
@@ -99,6 +107,12 @@ private slots:
     void oneColouredPixelDoesNotDecideTheRoom();
     void translucentPixelsAreIgnored();
     void washOpacityCeiling();
+
+    void serviceRemembersOneTintPerCover();
+    void serviceEvictsTheLeastRecentlyUsed();
+    void serviceKeepsTheSleeveThatIsStillOnScreen();
+    void serviceKeepsTheSleeveThroughSilentFailures();
+    void serviceStaysBounded();
 };
 
 // ── The adversarial covers ──────────────────────────────────────────────────
@@ -320,6 +334,152 @@ void TestCoverTint::washOpacityCeiling()
     QVERIFY(kMaxSaturation <= 0.55);
     QVERIFY(kMinLightness >= 0.10);
     QVERIFY(kMaxLightness <= 0.22);
+}
+
+// ── The cache in front of the clamp ─────────────────────────────────────────
+// CoverTintService listens to EmbyImageFetcher::imageDecoded, so the fetcher is
+// how a test puts a cover in. It is built with a null client and asked for
+// nothing, so it opens no socket.
+namespace {
+
+// A cover that definitely produces a tint, and one that definitely does not.
+const QImage &blueSleeve()
+{
+    static const QImage image = solid(QColor(58, 123, 213));
+    return image;
+}
+
+const QImage &greySleeve()
+{
+    static const QImage image = solid(QColor(128, 128, 128));
+    return image;
+}
+
+QString coverId(int n)
+{
+    return QStringLiteral("cover%1/Primary/tag").arg(n);
+}
+
+bool isRemembered(const strmqt::CoverTintService &service, const QString &id)
+{
+    return service.tintFor(id).alpha() > 0;
+}
+
+} // namespace
+
+void TestCoverTint::serviceRemembersOneTintPerCover()
+{
+    strmqt::EmbyImageFetcher fetcher(nullptr);
+    strmqt::CoverTintService service(&fetcher);
+
+    QCOMPARE(service.tintFor(QString()), QColor(Qt::transparent));
+    QCOMPARE(service.tintFor(coverId(1)), QColor(Qt::transparent));
+
+    QSignalSpy revisions(&service, &strmqt::CoverTintService::revisionChanged);
+    emit fetcher.imageDecoded(coverId(1), blueSleeve());
+    QCOMPARE(revisions.count(), 1);
+
+    const QColor tint = service.tintFor(coverId(1));
+    QVERIFY(tint.isValid());
+    QVERIFY(withinClamp(tint));
+    // Both spellings of the same cover reach the same entry: models publish the
+    // provider URL, the fetcher keys by the id inside it.
+    QCOMPARE(service.tintFor(QStringLiteral("image://emby/") + coverId(1)), tint);
+
+    // A cover that cannot meet the clamp is remembered as a failure, and a
+    // remembered failure changes nothing on screen, so it wakes no bindings.
+    emit fetcher.imageDecoded(coverId(2), greySleeve());
+    QCOMPARE(revisions.count(), 1);
+    QCOMPARE(service.tintFor(coverId(2)), QColor(Qt::transparent));
+}
+
+// The cache is bounded, so something has to go. It must be the entry nobody has
+// asked about for longest — NOT the oldest insertion, which is how the cover
+// being looked at gets thrown away while a library scroll fills the map.
+void TestCoverTint::serviceEvictsTheLeastRecentlyUsed()
+{
+    strmqt::EmbyImageFetcher fetcher(nullptr);
+    strmqt::CoverTintService service(&fetcher);
+
+    constexpr int kMax = strmqt::CoverTintService::kMaxEntries;
+    for (int i = 0; i < kMax; ++i)
+        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+    // Cover 0 is the oldest insertion; asking for it makes it the youngest use.
+    // Cover 2 is asked for afterwards so that the pin is on 2 rather than on 0:
+    // what keeps 0 alive below is access order and nothing else. Cover 1 has
+    // not been touched since it was inserted, so it is next out.
+    QVERIFY(isRemembered(service, coverId(0)));
+    QVERIFY(isRemembered(service, coverId(2)));
+
+    emit fetcher.imageDecoded(coverId(kMax), blueSleeve());
+
+    QVERIFY2(isRemembered(service, coverId(0)), "the entry just used was evicted");
+    QVERIFY2(!isRemembered(service, coverId(1)), "the least recently used entry survived");
+}
+
+// The scroll that started this: one record is playing, its wash is on screen
+// and re-asks for its tint on every revision bump, and a whole library's worth
+// of covers decodes past it.
+void TestCoverTint::serviceKeepsTheSleeveThatIsStillOnScreen()
+{
+    strmqt::EmbyImageFetcher fetcher(nullptr);
+    strmqt::CoverTintService service(&fetcher);
+
+    const QString sleeve = QStringLiteral("nowplaying/Primary/tag");
+    emit fetcher.imageDecoded(sleeve, blueSleeve());
+    const QColor tint = service.tintFor(sleeve);
+    QVERIFY(tint.isValid());
+
+    // Four times the cache. Every decode bumps the revision, CoverWash's
+    // binding re-runs, and re-running it is this tintFor call.
+    for (int i = 0; i < strmqt::CoverTintService::kMaxEntries * 4; ++i) {
+        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+        QCOMPARE(service.tintFor(sleeve), tint);
+    }
+
+    QCOMPARE(service.tintFor(sleeve), tint);
+}
+
+// The hole access order alone does not close: a run of covers that fail the
+// clamp inserts entries without bumping `revision`, so nothing on screen is
+// woken and nothing re-asks. The last cover asked for is pinned for exactly
+// this case.
+void TestCoverTint::serviceKeepsTheSleeveThroughSilentFailures()
+{
+    strmqt::EmbyImageFetcher fetcher(nullptr);
+    strmqt::CoverTintService service(&fetcher);
+
+    const QString sleeve = QStringLiteral("nowplaying/Primary/tag");
+    emit fetcher.imageDecoded(sleeve, blueSleeve());
+    const QColor tint = service.tintFor(sleeve);
+    QVERIFY(tint.isValid());
+
+    QSignalSpy revisions(&service, &strmqt::CoverTintService::revisionChanged);
+    for (int i = 0; i < strmqt::CoverTintService::kMaxEntries * 2; ++i)
+        emit fetcher.imageDecoded(coverId(i), greySleeve());
+    QCOMPARE(revisions.count(), 0);
+
+    QCOMPARE(service.tintFor(sleeve), tint);
+}
+
+// Bounded is the other half of the contract: keeping the sleeve on screen must
+// not turn the cache into the unbounded map of every cover a session scrolled
+// past that it exists to avoid.
+void TestCoverTint::serviceStaysBounded()
+{
+    strmqt::EmbyImageFetcher fetcher(nullptr);
+    strmqt::CoverTintService service(&fetcher);
+
+    constexpr int kMax = strmqt::CoverTintService::kMaxEntries;
+    for (int i = 0; i < kMax * 3; ++i)
+        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+
+    int remembered = 0;
+    for (int i = 0; i < kMax * 3; ++i) {
+        if (isRemembered(service, coverId(i)))
+            ++remembered;
+    }
+    QCOMPARE(remembered, kMax);
 }
 
 QTEST_GUILESS_MAIN(TestCoverTint)
