@@ -83,6 +83,13 @@ target_include_directories(tst_item_actions_queue PRIVATE mocks)
 
 strmqt_add_test(tst_emby_websocket unit/tst_emby_websocket.cpp)
 
+strmqt_add_test(tst_remote_control
+    integration/tst_remote_control.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h
+)
+target_include_directories(tst_remote_control PRIVATE mocks)
+
 strmqt_add_test(tst_live_updates
     integration/tst_live_updates.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
