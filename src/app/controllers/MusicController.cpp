@@ -313,6 +313,18 @@ int MusicController::currentTabIndex() const
     return 0;
 }
 
+int MusicController::retire(int &generation, int &inFlight)
+{
+    inFlight = 0;
+    return ++generation;
+}
+
+void MusicController::updateLoading()
+{
+    setLoading(m_albumInFlight != 0 || m_artistInFlight != 0 || m_songInFlight != 0
+               || m_playlistInFlight != 0 || m_detailInFlight != 0);
+}
+
 void MusicController::applyQueryChange()
 {
     emit queryChanged();
@@ -321,10 +333,11 @@ void MusicController::applyQueryChange()
 
     // Clearing a model is not enough on its own — a page already in flight for
     // the old filter would land in the new one — so every generation moves.
-    ++m_albumGeneration;
-    ++m_artistGeneration;
-    ++m_songGeneration;
-    ++m_playlistGeneration;
+    retire(m_albumGeneration, m_albumInFlight);
+    retire(m_artistGeneration, m_artistInFlight);
+    retire(m_songGeneration, m_songInFlight);
+    retire(m_playlistGeneration, m_playlistInFlight);
+    updateLoading();
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
@@ -397,10 +410,19 @@ void MusicController::setLibrary(const QString &libraryId)
     // is not enough on its own: a page requested for the old library lands a
     // moment later and setItems() drops it straight into the new scope, so the
     // grid shows one library's albums under another library's name.
-    ++m_albumGeneration;
-    ++m_artistGeneration;
-    ++m_songGeneration;
-    ++m_playlistGeneration;
+    //
+    // Those dropped replies were the ones that would have cleared `loading`, and
+    // nothing has been requested for the new scope yet — so retiring them lowers
+    // the flag here rather than leaving the grid shimmering until some unrelated
+    // fetch happens to finish. It used to take an explicit setLoading(false) at
+    // the end of this function; the in-flight markers make it automatic, and
+    // more accurate: an album page still loading in another part of the app
+    // keeps the flag up instead of having it cleared out from under it.
+    retire(m_albumGeneration, m_albumInFlight);
+    retire(m_artistGeneration, m_artistInFlight);
+    retire(m_songGeneration, m_songInFlight);
+    retire(m_playlistGeneration, m_playlistInFlight);
+    updateLoading();
     ++m_genreGeneration;
     m_albums->clear();
     m_artists->clear();
@@ -441,10 +463,6 @@ void MusicController::setLibrary(const QString &libraryId)
         m_favoritesOnly = false;
         emit queryChanged();
     }
-    // Those dropped replies were the ones that would have cleared `loading`,
-    // and nothing has been requested for the new scope yet — so clear it here
-    // or the grid shimmers until some unrelated fetch happens to finish.
-    setLoading(false);
 }
 
 void MusicController::loadAlbums()
@@ -462,8 +480,9 @@ void MusicController::loadMoreAlbums()
 
 void MusicController::fetchAlbums(int startIndex)
 {
-    const int generation = ++m_albumGeneration;
-    setLoading(true);
+    const int generation = retire(m_albumGeneration, m_albumInFlight);
+    m_albumInFlight = generation;
+    updateLoading();
 
     ItemsQuery query;
     query.parentId = m_libraryId;
@@ -482,7 +501,8 @@ void MusicController::fetchAlbums(int startIndex)
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_albumGeneration)
                 return;
-            setLoading(false);
+            m_albumInFlight = 0;
+            updateLoading();
             if (!result.ok()) {
                 setError(result.error);
                 return;
@@ -511,8 +531,9 @@ void MusicController::loadMoreArtists()
 
 void MusicController::fetchArtists(int startIndex)
 {
-    const int generation = ++m_artistGeneration;
-    setLoading(true);
+    const int generation = retire(m_artistGeneration, m_artistInFlight);
+    m_artistInFlight = generation;
+    updateLoading();
 
     ItemsQuery query;
     query.parentId = m_libraryId;
@@ -534,7 +555,8 @@ void MusicController::fetchArtists(int startIndex)
     future.then(this, [this, generation, startIndex](const Result<ItemsPage> &result) {
         if (generation != m_artistGeneration)
             return;
-        setLoading(false);
+        m_artistInFlight = 0;
+        updateLoading();
         if (!result.ok()) {
             setError(result.error);
             return;
@@ -568,8 +590,9 @@ void MusicController::loadMoreSongs()
 
 void MusicController::fetchSongs(int startIndex)
 {
-    const int generation = ++m_songGeneration;
-    setLoading(true);
+    const int generation = retire(m_songGeneration, m_songInFlight);
+    m_songInFlight = generation;
+    updateLoading();
 
     ItemsQuery query;
     query.parentId = m_libraryId;
@@ -592,7 +615,8 @@ void MusicController::fetchSongs(int startIndex)
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_songGeneration)
                 return; // a newer filter, sort or library superseded this reply
-            setLoading(false);
+            m_songInFlight = 0;
+            updateLoading();
             if (!result.ok()) {
                 setError(result.error);
                 return;
@@ -630,7 +654,15 @@ void MusicController::invalidatePlaylists()
     // Retire whatever is in flight before emptying, or the page requested a
     // moment ago lands in the model this just cleared and the new playlist is
     // missing from it anyway.
-    ++m_playlistGeneration;
+    //
+    // retire() rather than a bare ++: the refetch below only happens when the
+    // Playlists tab is the one on screen, so from any other tab this call ends
+    // with a playlist request that has been made stale and no replacement made
+    // for it. Its reply returns above the marker, and a `loading` flag that
+    // nothing else lowers stays true for the rest of the session — which is
+    // exactly the strand review found here.
+    retire(m_playlistGeneration, m_playlistInFlight);
+    updateLoading();
     m_playlists->clear();
     emit playlistsChanged();
     if (m_started && currentTabIndex() == 3)
@@ -639,18 +671,24 @@ void MusicController::invalidatePlaylists()
 
 void MusicController::fetchPlaylists(int startIndex)
 {
-    const int generation = ++m_playlistGeneration;
+    const int generation = retire(m_playlistGeneration, m_playlistInFlight);
     // No library, no audio scoping. An unscoped query would answer with every
     // playlist the user has, film lists included, under a heading that says
     // this is their music — which is exactly the thing this tab exists to stop.
+    //
+    // The retire() above has already made any playlist page in flight stale, so
+    // this early return has to answer for the flag as well — the same strand
+    // invalidatePlaylists() had.
     if (m_libraryId.isEmpty()) {
+        updateLoading();
         if (m_playlists->rowCount() > 0) {
             m_playlists->clear();
             emit playlistsChanged();
         }
         return;
     }
-    setLoading(true);
+    m_playlistInFlight = generation;
+    updateLoading();
 
     ItemsQuery query;
     query.parentId = m_libraryId;
@@ -665,13 +703,23 @@ void MusicController::fetchPlaylists(int startIndex)
     // year-filtered playlist query answers with nothing rather than everything
     // (measured) — so the year filter narrows albums and songs and leaves this
     // list alone, exactly as it does for artists.
+    //
+    // GENRES ARE NOT THE SAME CASE, and review has now asked twice. Measured on
+    // 4.9.5.0 against this library: a playlist DOES carry genres — Emby
+    // aggregates them from its members and publishes both `Genres` and
+    // `GenreItems` on the list payload — and GenreIds narrows the tab the way it
+    // narrows the others (1,564 playlists → 191 for Rock, against 5,037 albums →
+    // 627). It is a working axis, not a filter that empties the grid, so it
+    // stays. `Genres` by NAME answers differently again (299) and is not what
+    // this sends.
     query.yearFilters.clear();
 
     m_client->items(query).then(
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_playlistGeneration)
                 return;
-            setLoading(false);
+            m_playlistInFlight = 0;
+            updateLoading();
             if (!result.ok()) {
                 setError(result.error);
                 return;
@@ -770,10 +818,11 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     m_tracks->clear();
     // Same gap openArtist() had: without these a failed track fetch is
     // indistinguishable from a slow one, and the page shimmers forever.
-    setLoading(true);
     setError(QString());
 
-    const int generation = ++m_generation;
+    const int generation = retire(m_generation, m_detailInFlight);
+    m_detailInFlight = generation;
+    updateLoading();
     ItemsQuery query;
     query.parentId = albumId;
     // NOT recursive and NOT sorted: an album's children are its tracks, and the
@@ -786,7 +835,8 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
             return;
-        setLoading(false);
+        m_detailInFlight = 0;
+        updateLoading();
         if (!result.ok()) {
             setError(result.error);
             return;
@@ -848,10 +898,11 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     m_artistTracks->clear();
     // Gap found in review: this fetch reported neither progress nor failure, so
     // a failed discography was indistinguishable from an artist with no albums.
-    setLoading(true);
     setError(QString());
 
-    const int generation = ++m_generation;
+    const int generation = retire(m_generation, m_detailInFlight);
+    m_detailInFlight = generation;
+    updateLoading();
     ItemsQuery query;
     // AlbumArtistIds, not ArtistIds: a discography is what someone released,
     // not everything they guested on. Measured on one artist: 5 albums either
@@ -868,7 +919,11 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
             return;
-        setLoading(false);
+        // The top-tracks fetch below shares this generation and does NOT clear
+        // the marker: the discography is what the page's spinner is about, and
+        // one of the two replies has to own the flag.
+        m_detailInFlight = 0;
+        updateLoading();
         if (!result.ok()) {
             setError(result.error);
             return;

@@ -574,10 +574,10 @@ FocusScope {
             picker.target = item ? item : ({})
             picker.opened = true
             pickerField.text = ""
-            if (PlaylistCtl.playlists.count === 0)
-                PlaylistCtl.refresh()
-            else
-                picker.rebuildRecords()
+            // Resume the walk to the end of the list rather than fetching one
+            // page of it; a complete list costs nothing here.
+            PlaylistCtl.ensureAllPlaylists()
+            picker.rebuildRecords()
             pickerField.forceActiveFocus(Qt.OtherFocusReason)
         }
 
@@ -618,8 +618,12 @@ FocusScope {
                     out.push(source[i])
             }
             // Offered only when it would actually make something new; an exact
-            // match already on the list is the row above, not a duplicate.
-            if (typed.length > 0 && !exact)
+            // match already on the list is the row above, not a duplicate. And
+            // only once the WHOLE list is loaded — see PlaylistPicker.qml's
+            // header: with one page of 500 against 1,564 playlists, every name
+            // sorting past the first page read as free and Return made a second
+            // playlist with a name the user already had.
+            if (typed.length > 0 && !exact && PlaylistCtl.playlistsComplete)
                 out.unshift({ "create": true, "id": "", "name": typed, "lower": needle })
             picker.rows = out
             pickerList.currentIndex = out.length > 0 ? 0 : -1
@@ -652,9 +656,12 @@ FocusScope {
         // Only while the panel is up: the reply this waits for is the one show()
         // asked for, and rebuilding several hundred records behind a closed
         // overlay is work nobody can see.
+        // The controller's signal, not the model's count: the walk's last page
+        // may add no rows at all, and it is that reply which flips
+        // `playlistsComplete` and so decides whether the create offer may appear.
         Connections {
-            target: PlaylistCtl.playlists
-            function onCountChanged() {
+            target: PlaylistCtl
+            function onPlaylistsChanged() {
                 if (picker.opened)
                     picker.rebuildRecords()
             }

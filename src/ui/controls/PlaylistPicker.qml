@@ -10,6 +10,19 @@ import StrmQt
 // choose, Return to file; a name that matches nothing offers to create it, so
 // "new playlist from this" is the same gesture as "add to an existing one".
 //
+// ── "Matches nothing" has to mean nothing in the LIBRARY ────────────────────
+// The create offer is the one thing here that is destructive when it is wrong:
+// it makes a second playlist with a name the user already has, and the two are
+// then indistinguishable in every list in the app. It rests entirely on the
+// records below being the user's WHOLE set — which they were not, because the
+// controller fetched one page of 500 against 1,564 playlists, so every name
+// sorting past the 500th read as free.
+//
+// PlaylistController now walks its list to the end and publishes
+// `playlistsComplete`, and this panel offers to create only while that is true.
+// A partial list still narrows and still files into anything it can see; it
+// just does not answer a question it cannot answer yet.
+//
 // Generalised on one axis only — it files a LIST of ids, so the same panel
 // serves one track, a whole record, and a selection.
 //
@@ -42,6 +55,10 @@ FocusScope {
     // can be told apart from an edit made somewhere else.
     property bool pending: false
 
+    // Every playlist the user has is loaded, so "no match" is an answer about
+    // the library rather than about the first page of it.
+    readonly property bool listComplete: PlaylistCtl.playlistsComplete
+
     signal dismissed
 
     function show(subject, ids): void {
@@ -51,10 +68,12 @@ FocusScope {
         picker.targetIds = ids
         picker.opened = true
         pickerField.text = ""
-        if (PlaylistCtl.playlists.count === 0)
-            PlaylistCtl.refresh()
-        else
-            picker.rebuildRecords()
+        // Always ask: the controller's own verb is a resume, so a complete list
+        // costs nothing and one that stopped on an error is retried from the
+        // page that stopped it. Rebuild from whatever is held either way — a
+        // half-loaded list is still worth narrowing.
+        PlaylistCtl.ensureAllPlaylists()
+        picker.rebuildRecords()
         pickerField.forceActiveFocus(Qt.OtherFocusReason)
     }
 
@@ -94,7 +113,10 @@ FocusScope {
             if (needle.length === 0 || source[i].lower.indexOf(needle) >= 0)
                 out.push(source[i])
         }
-        if (typed.length > 0 && !exact)
+        // Only while the whole list is in hand: see the header. An incomplete
+        // list cannot tell a free name from one on a page that has not arrived,
+        // and guessing wrong makes a duplicate playlist rather than a wrong row.
+        if (typed.length > 0 && !exact && picker.listComplete)
             out.unshift({ "create": true, "id": "", "name": typed, "lower": needle })
         picker.rows = out
         pickerList.currentIndex = out.length > 0 ? 0 : -1
@@ -124,9 +146,12 @@ FocusScope {
         NumberAnimation { duration: Theme.animFastMs; easing.type: Theme.easeStandard }
     }
 
+    // The controller's signal rather than the model's count: the walk's last page
+    // may add no rows at all, and it is that reply which flips `playlistsComplete`
+    // and so decides whether the create offer may appear.
     Connections {
-        target: PlaylistCtl.playlists
-        function onCountChanged() {
+        target: PlaylistCtl
+        function onPlaylistsChanged() {
             if (picker.opened)
                 picker.rebuildRecords()
         }
@@ -320,8 +345,17 @@ FocusScope {
             anchors.rightMargin: Theme.spacingValue
             height: pickerHint.visible ? Theme.controlHeightLarge : Theme.spacingTight
             verticalAlignment: Text.AlignVCenter
+            // Also while a name is typed against a list that is still arriving:
+            // the create row is withheld then, and a missing offer with nothing
+            // said is the same dead end as an empty list with no explanation.
             visible: picker.rows.length === 0
-            text: picker.records.length === 0
+                     || (!picker.listComplete && pickerField.text.trim().length > 0)
+            // Three different dead ends, and only the last one is the user's to
+            // act on: the list is still arriving, they have none, or the name
+            // they typed matches none of the ones they do have.
+            text: !picker.listComplete
+                  ? qsTr("Still loading your playlists…")
+                  : picker.records.length === 0
                   ? qsTr("You have no playlists yet — type a name to make one.")
                   : qsTr("Nothing matches. Keep typing to create a new playlist.")
             color: Theme.textTertiary

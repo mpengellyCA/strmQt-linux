@@ -295,6 +295,14 @@ private:
     void ensureCurrentTab();
     // 0 albums · 1 artists · 2 songs · 3 playlists.
     int currentTabIndex() const;
+    // Retire whatever is in flight for one list: bump its generation so the
+    // reply is dropped, and clear the in-flight marker in the same breath,
+    // because that reply is now the thing that will never clear it. Returns the
+    // new generation, which is what a fetch about to be issued carries.
+    static int retire(int &generation, int &inFlight);
+    // `loading` is the OR of the in-flight markers. Called after every retire()
+    // and every reply.
+    void updateLoading();
 
     emby::EmbyClient *m_client;
     ItemActions *m_actions = nullptr;
@@ -356,6 +364,34 @@ private:
     int m_playlistGeneration = 0;
     int m_genreGeneration = 0;
     int m_playGeneration = 0;
+
+    // ── What `loading` actually is ────────────────────────────────────────────
+    // The generation of the request in flight for each list, or 0 for none —
+    // and `loading` is derived from the set of them rather than being a bool
+    // that every fetch raises and every reply is trusted to lower.
+    //
+    // A single bool cannot survive this controller's shape, because a request
+    // can be retired without ever being answered: a generation bump makes the
+    // reply return above setLoading(false), and if no replacement request is
+    // issued nothing lowers the flag again. Review found the live instance —
+    // invalidatePlaylists() (a playlist created from a track) bumps the playlist
+    // generation and only refetches when the Playlists tab is the one on screen,
+    // so a playlist page in flight from any other tab left `loading` stuck true
+    // for the rest of the session: every loadMore* early-returns on it and every
+    // ensure*() in MusicPage is guarded on it, so scroll paging died everywhere
+    // and only a sort or filter change brought it back. fetchPlaylists() has the
+    // same shape at its no-library early return.
+    //
+    // setLibrary() papered over its own instance of this with an explicit
+    // setLoading(false), which is right only because it retires ALL of them.
+    // Deriving the flag makes that unnecessary and makes the next retire path
+    // correct by construction rather than by remembering.
+    int m_albumInFlight = 0;
+    int m_artistInFlight = 0;
+    int m_songInFlight = 0;
+    int m_playlistInFlight = 0;
+    // openAlbum() and openArtist() share m_generation, so they share a marker.
+    int m_detailInFlight = 0;
 };
 
 } // namespace strmqt

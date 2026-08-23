@@ -43,6 +43,8 @@ private slots:
     void playlistsAreScopedToTheLibraryNotProbedOneByOne();
     void anUnscopedControllerFetchesNoPlaylists();
     void createdPlaylistsReappearInTheMusicTab();
+    void invalidatingPlaylistsFromAnotherTabDoesNotStrandLoading();
+    void aPlaylistFetchWithNoLibraryDoesNotStrandLoading();
 
 private:
     // `count` MusicGenre rows numbered from `from`, as /MusicGenres answers them.
@@ -675,6 +677,13 @@ void MusicQueryTest::playlistsAreScopedToTheLibraryNotProbedOneByOne()
     // playlist carries no ProductionYear and a year-filtered playlist query
     // answers with nothing at all, which would read as a broken tab rather than
     // as an axis that does not apply — the same call the artists tab makes.
+    //
+    // GenreIds is the opposite case and is asserted here on purpose, because a
+    // reviewer read the two as the same axis. Measured on the live server: Emby
+    // aggregates a playlist's genres from its members and publishes them, and
+    // GenreIds narrows this query the way it narrows albums — 191 of 1,564
+    // playlists for the Rock id, against 627 of 5,037 albums. Dropping it would
+    // make a lit genre chip silently mean nothing on this one tab.
     m_music->setNameStartsWith(QStringLiteral("W"));
     m_music->setGenreIds({QStringLiteral("1932975")});
     m_music->setYearFilters({QStringLiteral("1999")});
@@ -744,6 +753,100 @@ void MusicQueryTest::createdPlaylistsReappearInTheMusicTab()
     QTest::qWait(80);
     QCOMPARE(requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId)), afterAlbums);
     QCOMPARE(m_music->playlists()->rowCount(), 0);
+}
+
+// ── `loading` must never outlive the request that raised it ─────────────────
+// invalidatePlaylists() retires the playlist page in flight and only refetches
+// when the Playlists tab is the one on screen. From any other tab that leaves a
+// request that has been made stale and no replacement for it: the reply returns
+// above the flag, and nothing else ever lowers it.
+//
+// The cost is not a spinner. `loading` is the guard on every loadMore* in this
+// controller and on every ensure*() in MusicPage, so a stranded flag kills
+// scroll paging on all four tabs for the rest of the session, and only a sort or
+// filter change brings it back.
+//
+// The route delay is what makes this deterministic: without it the playlist page
+// resolves before there is anything to strand and the test passes against the
+// bug.
+void MusicQueryTest::invalidatingPlaylistsFromAnotherTabDoesNotStrandLoading()
+{
+    const auto itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"1\",\"Name\":\"Threnody\","
+                                       "\"Type\":\"Audio\"}],\"TotalRecordCount\":56283}"));
+
+    // Songs first, so its model has rows and ensureCurrentTab() issues nothing
+    // when the user comes back to it — the whole point of the sequence.
+    m_music->setTab(QStringLiteral("songs"));
+    m_music->loadSongs();
+    settle();
+    QCOMPARE(m_music->songs()->rowCount(), 1);
+
+    // Playlists, on a library big enough that the page is still on the wire.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 400);
+    m_music->setTab(QStringLiteral("playlists"));
+    QVERIFY(m_music->loading());
+    const int inFlight = requestsFor(itemsPath);
+
+    // Back to Songs. Its model has rows, so nothing is requested and nothing new
+    // will clear the flag.
+    m_music->setTab(QStringLiteral("songs"));
+    QCOMPARE(requestsFor(itemsPath), inFlight);
+    QVERIFY(m_music->loading());
+
+    // Create a playlist from a track row: PlaylistController emits
+    // playlistsMutated and Application routes it here.
+    m_music->invalidatePlaylists();
+    // Immediately, not eventually: the retired request is the only thing that
+    // could have lowered this, and it is not coming back.
+    QVERIFY(!m_music->loading());
+    QCOMPARE(m_music->playlists()->rowCount(), 0);
+
+    // The stale reply lands a moment later and must not raise it again either.
+    QTest::qWait(600);
+    QVERIFY(!m_music->loading());
+
+    // And paging is alive: this is what the strand actually broke.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    QVERIFY(m_music->canLoadMoreSongs());
+    const int before = requestsFor(itemsPath);
+    m_music->loadMoreSongs();
+    settle();
+    QCOMPARE(requestsFor(itemsPath), before + 1);
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("1"));
+}
+
+// The same shape at fetchPlaylists()' other early return. With no library there
+// is no ParentId and nothing to ask for — but the generation has already been
+// bumped by then, so the return has to answer for the flag as well.
+//
+// Reachable without a delayed playlist route at all: an unscoped controller
+// (which is a legitimate state — an empty library id means "every music
+// library") with a songs page in flight, and any filter change. applyQueryChange
+// retires all four lists, which makes the songs reply stale, and then asks the
+// playlists tab for a page it cannot fetch.
+void MusicQueryTest::aPlaylistFetchWithNoLibraryDoesNotStrandLoading()
+{
+    const auto itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 400);
+
+    auto *unscoped = new MusicController(m_client, this);
+    unscoped->setTab(QStringLiteral("songs"));
+    unscoped->loadSongs();
+    QVERIFY(unscoped->loading());
+
+    unscoped->setTab(QStringLiteral("playlists"));
+    // A genre picked while the songs page is still on the wire.
+    unscoped->setGenreIds({QStringLiteral("1932901")});
+    QVERIFY(!unscoped->loading());
+
+    // The retired songs reply arrives and changes nothing.
+    QTest::qWait(600);
+    QVERIFY(!unscoped->loading());
+    QCOMPARE(unscoped->playlists()->rowCount(), 0);
+    delete unscoped;
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
 }
 
 QTEST_MAIN(MusicQueryTest)

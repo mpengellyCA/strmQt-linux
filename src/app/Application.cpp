@@ -90,7 +90,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     for (MediaItemModel *model : { m_home->resume(), m_home->nextUp(), m_home->favorites(),
                                    m_library->model(), m_search->model(), m_series->episodes(),
                                    m_details->similar(), m_music->albums(), m_music->artists(),
-                                   m_music->tracks(), m_music->artistAlbums(),
+                                   m_music->tracks(), m_music->songs(),
+                                   m_music->artistAlbums(),
                                    m_music->artistTracks(), m_music->playlists(),
                                    m_playlists->items() })
         m_actions->registerModel(model);

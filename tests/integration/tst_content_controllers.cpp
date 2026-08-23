@@ -42,8 +42,47 @@ private slots:
     void createWhileOpenLeavesTheOpenPlaylistAlone();
     void creationCarriesTheMediaTypeItWasGiven();
     void musicRetargetDropsTheInFlightPage();
+    void thePlaylistListPagesToTheEnd();
+    void aPlaylistWalkThatStoppedHalfwayIsRetried();
 
 private:
+    // `count` playlists numbered from `from`, as /Items answers them.
+    static QByteArray playlistPage(int from, int count, int total)
+    {
+        QByteArray page = QByteArrayLiteral("{\"Items\":[");
+        for (int i = 0; i < count; ++i) {
+            if (i > 0)
+                page += ',';
+            page += QStringLiteral("{\"Id\":\"pl%1\",\"Name\":\"List %1\","
+                                   "\"Type\":\"Playlist\"}")
+                        .arg(from + i)
+                        .toUtf8();
+        }
+        page += QStringLiteral("],\"TotalRecordCount\":%1}").arg(total).toUtf8();
+        return page;
+    }
+    int requestsFor(const QString &path) const
+    {
+        int count = 0;
+        for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests()) {
+            if (request.path == path)
+                ++count;
+        }
+        return count;
+    }
+    int indexOfNthRequest(const QString &path, int nth) const
+    {
+        int seen = 0;
+        for (int i = 0; i < m_mock->requests().size(); ++i) {
+            if (m_mock->requests().at(i).path != path)
+                continue;
+            if (seen == nth)
+                return i;
+            ++seen;
+        }
+        return -1;
+    }
+
     MockEmbyServer *m_mock = nullptr;
     emby::EmbyClient *m_client = nullptr;
 };
@@ -453,6 +492,107 @@ void ContentControllersTest::musicRetargetDropsTheInFlightPage()
     QCOMPARE(QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath).query)
                  .queryItemValue(QStringLiteral("ParentId")),
              QStringLiteral("lib-b"));
+}
+
+// ── The playlist list is the WHOLE list, or it is a wrong answer ────────────
+// One request returns at most 500 and this server has 1,564 playlists, so the
+// list used to stop at the first page. That is not merely an incomplete browse
+// rail: PlaylistPicker offers to CREATE when the typed name matches nothing it
+// holds, so every name sorting past the 500th read as free and Return made a
+// second playlist with a name the user already had. Nothing in the app can tell
+// the two apart afterwards.
+//
+// Emby has no server-side answer to "is this name taken" either — measured on
+// 4.9.5.0, SearchTerm is a word-prefix match ("Waltz" finds "Waltzes", "altz"
+// finds nothing), so it can confirm a hit and never an absence. The list has to
+// be held in full, so it pages itself to the end.
+void ContentControllersTest::thePlaylistListPagesToTheEnd()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    // A FULL page — 500 is what makes the walk ask for another one — with a
+    // total the walk deliberately does not steer by.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, playlistPage(0, 500, 1564));
+
+    PlaylistController playlists(m_client);
+    // The second page is swapped in from the first reply's own signal, so the
+    // break is deterministic rather than a race with the event loop.
+    bool swapped = false;
+    connect(&playlists, &PlaylistController::playlistsChanged, &playlists,
+            [this, &swapped, itemsPath, &playlists] {
+                // Only once page 0 is actually in the model: refresh() also
+                // emits this up front, to retract `playlistsComplete`.
+                if (swapped || playlists.playlists()->rowCount() < 500)
+                    return;
+                swapped = true;
+                m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                                 playlistPage(500, 64, 1564));
+            });
+
+    QVERIFY(!playlists.playlistsComplete());
+    playlists.refresh();
+
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.playlists()->rowCount(), 564, 5000);
+    QVERIFY(playlists.playlistsComplete());
+    QCOMPARE(requestsFor(itemsPath), 2);
+
+    // The second page was asked for from the right offset: the number of rows
+    // actually received, not the count the server claims.
+    const QUrlQuery second(
+        m_mock->requests().at(indexOfNthRequest(itemsPath, 1)).query);
+    QCOMPARE(second.queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("500"));
+    QCOMPARE(second.queryItemValue(QStringLiteral("Limit")), QStringLiteral("500"));
+    QCOMPARE(second.queryItemValue(QStringLiteral("IncludeItemTypes")),
+             QStringLiteral("Playlist"));
+    // The tail is really in the model — this is the row the picker could not see.
+    QCOMPARE(playlists.playlists()->get(563).value(QStringLiteral("name")).toString(),
+             QStringLiteral("List 563"));
+
+    // And it is idempotent: every surface that is about to read the list may ask.
+    playlists.ensureAllPlaylists();
+    QTest::qWait(80);
+    QCOMPARE(requestsFor(itemsPath), 2);
+}
+
+// A walk that answered page 0 and then failed holds 500 of 1,564 — which looks
+// exactly like the bug it replaced. `playlistsComplete` is what tells them
+// apart, and it is what the picker keys its create offer on, so a broken walk
+// must leave it false and must be resumable from the page that broke it.
+void ContentControllersTest::aPlaylistWalkThatStoppedHalfwayIsRetried()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, playlistPage(0, 500, 1564));
+
+    PlaylistController playlists(m_client);
+    bool broken = false;
+    const QMetaObject::Connection breaker =
+        connect(&playlists, &PlaylistController::playlistsChanged, &playlists,
+                [this, &broken, itemsPath, &playlists] {
+                    if (broken || playlists.playlists()->rowCount() < 500)
+                        return;
+                    broken = true;
+                    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500,
+                                     QByteArrayLiteral("{}"));
+                });
+
+    playlists.refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.playlists()->rowCount(), 500, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.errorMessage().isEmpty(), 5000);
+    disconnect(breaker);
+    // 500 rows in hand and NOT complete: the picker must not offer to create a
+    // name it cannot know is free.
+    QVERIFY(!playlists.playlistsComplete());
+    QCOMPARE(requestsFor(itemsPath), 2);
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, playlistPage(500, 64, 1564));
+    playlists.ensureAllPlaylists();
+    QTRY_VERIFY_WITH_TIMEOUT(playlists.playlistsComplete(), 5000);
+    // Resumed, not restarted: StartIndex 500, and the 500 already held are
+    // neither refetched nor duplicated.
+    QCOMPARE(playlists.playlists()->rowCount(), 564);
+    QCOMPARE(requestsFor(itemsPath), 3);
+    QCOMPARE(QUrlQuery(m_mock->requests().at(indexOfNthRequest(itemsPath, 2)).query)
+                 .queryItemValue(QStringLiteral("StartIndex")),
+             QStringLiteral("500"));
 }
 
 QTEST_MAIN(ContentControllersTest)

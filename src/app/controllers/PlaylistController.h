@@ -41,16 +41,33 @@ public:
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_error; }
 
-    Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY playlistsChanged)
+    // ── The list is walked to the END, not paged on demand ────────────────────
+    // Measured on the target server: 1,564 playlists, and one request returns at
+    // most `kListPageSize`. Every consumer of this model needs the WHOLE list,
+    // and one of them needs it for correctness rather than for completeness:
+    // PlaylistPicker offers to CREATE a playlist when the typed name matches
+    // nothing it holds, so a name sorting past the first page read as free and
+    // Return made a SECOND playlist with a name the user already had. There is
+    // no server-side answer to "is this name taken" either — SearchTerm is a
+    // word-prefix match (measured: "Waltz" finds "Waltzes", "altz" finds
+    // nothing), so it can confirm a hit and never an absence.
+    //
+    // So the list pages itself: refresh() asks for page 0 and each reply asks
+    // for the next until a short page ends it. Four requests on the measured
+    // library, once per session and once per mutation, in exchange for a picker
+    // and a browse rail that are not quietly missing two thirds of their rows.
+    Q_PROPERTY(bool playlistsComplete READ playlistsComplete NOTIFY playlistsChanged)
 
-    bool canLoadMore() const;
+    bool playlistsComplete() const { return m_listComplete; }
 
-    // Refresh the list of playlists. Cheap and idempotent.
+    // Refresh the list of playlists, from page 0, walking to the end.
     Q_INVOKABLE void refresh();
-    // Next page of playlists. This server has 1,564 of them and one request
-    // returns 500, so without paging a playlist named "Zappa" is unreachable
-    // and the filter silently narrows only the first page.
-    Q_INVOKABLE void loadMorePlaylists();
+    // The walk, as a resume rather than a restart: nothing to do when the list
+    // is already complete or a walk is running, and otherwise it picks up from
+    // the page that stopped it. The same contract MusicController::loadGenres()
+    // has, and for the same reason — a walk that broke on page 2 is not a
+    // finished list, so a surface about to read the list may always ask.
+    Q_INVOKABLE void ensureAllPlaylists();
     Q_INVOKABLE void open(const QString &playlistId, const QString &name);
     Q_INVOKABLE void reload();
 
@@ -113,7 +130,14 @@ private:
     // in-flight page of the playlist list, so a picker silently lost a page.
     int m_listGeneration = 0;
     int m_itemsGeneration = 0;
-    int m_playlistPage = 0;
+    // The walk's own state, so a walk that stopped on an error can be told apart
+    // from one that reached the end of the list — the difference between "every
+    // playlist you have" and "the 500 that arrived before page 1 failed", which
+    // is precisely the difference between a picker that may offer to create a
+    // name and one that must not.
+    int m_listNextIndex = 0;
+    bool m_listComplete = false;
+    bool m_listWalkActive = false;
 };
 
 } // namespace strmqt

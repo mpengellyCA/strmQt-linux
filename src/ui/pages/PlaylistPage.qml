@@ -66,9 +66,10 @@ FocusScope {
     property bool playlistsPending: true
 
     readonly property int playlistCount: PlaylistCtl.playlists.count
-    // The server has more playlists than one page of the query returns
-    // (PlaylistController caps at 500). Saying so is better than quietly
-    // pretending the tail does not exist.
+    // A page of the list holds 500 and this server has 1,564, so the rail used to
+    // stop at the first page and quietly pretend the tail did not exist. The
+    // controller now walks to the end; this stays as the honest state DURING the
+    // walk — and as the one that survives if a page of it fails.
     readonly property int playlistTotal: PlaylistCtl.playlists.totalRecordCount
     readonly property bool playlistsTruncated: page.playlistTotal > page.playlistCount
 
@@ -246,14 +247,18 @@ FocusScope {
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
     Component.onCompleted: {
-        if (PlaylistCtl.playlists.count === 0) {
-            page.playlistsPending = true;
-            PlaylistCtl.refresh();
-            refreshGuard.restart();
+        // ensureAllPlaylists() rather than refresh(): the list pages itself to
+        // the end now, and this verb resumes a walk that stopped instead of
+        // starting the whole thing again. A complete list is left alone.
+        if (!PlaylistCtl.playlistsComplete) {
+            page.playlistsPending = PlaylistCtl.playlists.count === 0;
+            PlaylistCtl.ensureAllPlaylists();
+            if (page.playlistsPending)
+                refreshGuard.restart();
         } else {
             page.playlistsPending = false;
-            page.rebuildRecords();
         }
+        page.rebuildRecords();
     }
 
     Timer {
@@ -307,7 +312,7 @@ FocusScope {
 
         title: qsTr("Playlists")
         subtitle: page.playlistsTruncated
-                  ? qsTr("%1 of %2 — the server returns the first %1 by name")
+                  ? qsTr("%1 of %2 — still loading")
                     .arg(page.playlistCount).arg(page.playlistTotal)
                   : (page.playlistCount > 0 ? qsTr("%1 playlists").arg(page.playlistCount) : "")
 

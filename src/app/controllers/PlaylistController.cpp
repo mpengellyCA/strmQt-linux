@@ -8,6 +8,13 @@ namespace strmqt {
 
 namespace {
 constexpr int kMemberLimit = 500;
+// One page of the playlist LIST. The walk in fetchPlaylistPage() covers the
+// measured 1,564 in four round trips.
+constexpr int kListPageSize = 500;
+// A hard stop on that walk, the same guard MusicController's genre walk carries:
+// a server that answers a full page forever must not spin this loop. 20 pages is
+// 10,000 playlists — an order of magnitude past the measured library.
+constexpr int kListPageLimit = 20;
 } // namespace
 
 PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent)
@@ -16,22 +23,27 @@ PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent
 {
 }
 
-bool PlaylistController::canLoadMore() const
-{
-    return m_playlists->rowCount() < m_playlists->totalRecordCount();
-}
-
 void PlaylistController::refresh()
 {
-    m_playlistPage = 0;
+    // A restart, not a resume: create(), rename() and remove() all end here, and
+    // each of them changes the set this list is a picture of.
+    m_listNextIndex = 0;
+    m_listComplete = false;
+    m_listWalkActive = true;
+    emit playlistsChanged(); // `playlistsComplete` just went false
     fetchPlaylistPage(0);
 }
 
-void PlaylistController::loadMorePlaylists()
+void PlaylistController::ensureAllPlaylists()
 {
-    if (!canLoadMore())
+    // NOT "the model has rows, so we are done". A walk that answered page 0 and
+    // then failed leaves 500 of 1,564 behind, and an emptiness guard calls that
+    // finished for the life of the session — which is what let the picker offer
+    // to create a name that already existed on page 2.
+    if (m_listComplete || m_listWalkActive)
         return;
-    fetchPlaylistPage(m_playlists->rowCount());
+    m_listWalkActive = true;
+    fetchPlaylistPage(m_listNextIndex);
 }
 
 void PlaylistController::fetchPlaylistPage(int startIndex)
@@ -42,19 +54,42 @@ void PlaylistController::fetchPlaylistPage(int startIndex)
     query.recursive = true;
     query.sortBy = QStringLiteral("SortName");
     query.startIndex = startIndex;
-    query.limit = kMemberLimit;
+    query.limit = kListPageSize;
     m_client->items(query).then(
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_listGeneration)
                 return;
             if (!result.ok()) {
+                // The walk stops, but it is not *complete*: m_listNextIndex still
+                // points at the page that failed, so the next ensureAllPlaylists()
+                // picks it up again. `playlistsComplete` stays false, which is
+                // what stops a picker offering to create a name it cannot know
+                // is free.
+                m_listWalkActive = false;
                 setError(result.error);
+                emit playlistsChanged();
                 return;
             }
             if (startIndex == 0)
                 m_playlists->setItems(result.value.items, result.value.totalRecordCount);
             else
                 m_playlists->appendItems(result.value.items, result.value.totalRecordCount);
+            // Page on the ARRAY's own size, never on TotalRecordCount: this
+            // family of endpoints has a documented habit of reporting 0 while
+            // returning rows (ARCHITECTURE.md §2), and a short page is the end
+            // of the list whatever the count says.
+            const int received = static_cast<int>(result.value.items.size());
+            m_listNextIndex = startIndex + received;
+            if (received == kListPageSize && m_listNextIndex < kListPageSize * kListPageLimit) {
+                emit playlistsChanged();
+                fetchPlaylistPage(m_listNextIndex);
+                return;
+            }
+            // A short page (the end) or the hard stop, which is deliberately also
+            // "done": a server that answers a full page forever must not be
+            // walked forever either.
+            m_listComplete = true;
+            m_listWalkActive = false;
             emit playlistsChanged();
         });
 }
