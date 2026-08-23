@@ -172,6 +172,11 @@ FocusScope {
 
     // MUSIC.md §6.3. Values match Settings::replayGainModes(); anything else on
     // disk reads back as "off" rather than reaching the engine.
+    //
+    // Only MpvPlayer overrides PlayerBackend::setReplayGain — VlcPlayer
+    // inherits the no-op — so on the VLC escape hatch the row would persist a
+    // choice, promise levelled playback in its hint, and change nothing.
+    readonly property bool replayGainSupported: Session.playbackEngine === "mpv"
     readonly property var replayGainOptions: [
         {
             "text": qsTr("Off"),
@@ -719,12 +724,14 @@ FocusScope {
                     SettingsSections.SettingRow {
                         width: parent.width
                         label: qsTr("Volume normalisation")
-                        hint: page.prefsAvailable
-                              ? qsTr("Levels tracks using their ReplayGain tags, so a shuffled library stops jumping between records. Per album keeps a record's own quiet and loud tracks in proportion. Untagged files are unaffected.")
-                              : page.unavailableHint
+                        hint: !page.prefsAvailable
+                              ? page.unavailableHint
+                              : page.replayGainSupported
+                                ? qsTr("Levels tracks using their ReplayGain tags, so a shuffled library stops jumping between records. Per album keeps a record's own quiet and loud tracks in proportion. Untagged files are unaffected.")
+                                : qsTr("Only the mpv engine applies ReplayGain. The VLC engine ignores it.")
 
                         StrmSelect {
-                            enabled: page.prefsAvailable
+                            enabled: page.prefsAvailable && page.replayGainSupported
                             width: Theme.scale(220)
                             model: page.replayGainOptions
                             currentIndex: page.indexOfValue(page.replayGainOptions, page.storedReplayGain)

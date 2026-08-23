@@ -163,6 +163,22 @@ void SettingsPrefsTest::replayGainDefaultsOffAndValidates()
     }
     Settings recovered(ini);
     QCOMPARE(recovered.replayGainMode(), QStringLiteral("off"));
+
+    // ...and choosing "Off" over that corrupt value must actually scrub it.
+    // Comparing the new value against the VALIDATED getter would match here —
+    // both read as "off" — and leave "nonsense" on disk forever, where any
+    // other reader of the file still sees it.
+    QSignalSpy recoveredSpy(&recovered, &Settings::replayGainModeChanged);
+    recovered.setReplayGainMode(QStringLiteral("off"));
+    QCOMPARE(recoveredSpy.count(), 1);
+    {
+        QSettings raw(ini, QSettings::IniFormat);
+        QCOMPARE(raw.value(QStringLiteral("playback/replayGain")).toString(),
+                 QStringLiteral("off"));
+    }
+    // And it is idempotent once the stored value is genuinely "off".
+    recovered.setReplayGainMode(QStringLiteral("off"));
+    QCOMPARE(recoveredSpy.count(), 1);
 }
 
 void SettingsPrefsTest::mutePersists()

@@ -222,7 +222,14 @@ QString Settings::replayGainMode() const
 
 void Settings::setReplayGainMode(const QString &mode)
 {
-    if (!replayGainModes().contains(mode) || mode == replayGainMode())
+    if (!replayGainModes().contains(mode))
+        return;
+    // Compared against the RAW stored value rather than the validated getter.
+    // With a hand-edited INI that reads back as "off", choosing "Off" would
+    // otherwise match and early-return, leaving the value the engine refuses on
+    // disk indefinitely — and silently swallowing the write for anything else
+    // reading the file.
+    if (mode == m_store.value(kReplayGainKey).toString())
         return;
     m_store.setValue(kReplayGainKey, mode);
     emit replayGainModeChanged();
