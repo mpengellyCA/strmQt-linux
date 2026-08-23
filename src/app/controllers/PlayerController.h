@@ -31,6 +31,12 @@ class PlayerController : public QObject
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // Is this session music rather than a picture (MUSIC.md §4)? The docked bar
+    // and the player page both lay themselves out entirely differently on the
+    // answer, and both used to derive it themselves from the queue entry's type
+    // and the chosen source's streams — two derivations of one fact, which is
+    // one more than the architecture allows. It lives here now; QML reads it.
+    Q_PROPERTY(bool isAudio READ isAudio NOTIFY isAudioChanged)
     Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY positionChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY durationChanged)
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
@@ -81,6 +87,7 @@ public:
     bool active() const { return m_active; }
     bool paused() const;
     bool busy() const { return m_busy; }
+    bool isAudio() const { return m_isAudio; }
     qint64 positionMs() const { return m_backend->positionMs(); }
     qint64 durationMs() const;
     QString title() const { return m_title; }
@@ -220,6 +227,7 @@ signals:
     void activeChanged();
     void pausedChanged();
     void busyChanged();
+    void isAudioChanged();
     void positionChanged();
     void durationChanged();
     void titleChanged();
@@ -308,6 +316,12 @@ private:
     // Applies a remembered pair once the engine has published its track list.
     void restoreRememberedTracks();
     void setBusy(bool busy);
+    // The answer isAudio() caches, and the one place that recomputes it. Both
+    // inputs — the queue's cursor and the chosen media source — move on their
+    // own signals, so the update hangs off those rather than being remembered
+    // by hand on every path that could have moved one.
+    bool computeIsAudio() const;
+    void updateIsAudio();
     void setError(const QString &message);
     PlaybackProgress progressNow() const;
     // Current rung of the *current source*; nullptr when there is nothing to play.
@@ -352,6 +366,7 @@ private:
     bool m_applyingVolume = false; // guards the engine → controller echo
     bool m_active = false;
     bool m_busy = false;
+    bool m_isAudio = false;
     bool m_started = false;   // current rung got to Playing at least once
     bool m_reporting = false; // this session reports to the server
     int m_generation = 0;

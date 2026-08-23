@@ -33,6 +33,15 @@ QVariantMap itemMap(const QString &id, const QString &name)
     return map;
 }
 
+// A queued track, as ItemActions hands one over: the type is the thing that
+// matters here, because it is what PlayerController::isAudio() reads first.
+QVariantMap audioMap(const QString &id, const QString &name)
+{
+    QVariantMap map = itemMap(id, name);
+    map.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+    return map;
+}
+
 } // namespace
 
 // Auto-advance, Up Next and prev/next where they actually live: on top of the
@@ -59,6 +68,8 @@ private slots:
     void queueEditsAfterStopDoNotStartPlayback();
     void changingItemClosesTheOutgoingSession();
     void currentChangedLeadsTheControllersTitleAndDuration();
+    void isAudioFollowsTheQueuesItemType();
+    void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
 
 private:
     QVariantList threeItems() const;
@@ -564,6 +575,50 @@ void QueuePlaybackTest::currentChangedLeadsTheControllersTitleAndDuration()
     // ...while the controller is still the outgoing one.
     QCOMPARE(controllerTitle, QStringLiteral("Episode One"));
     QCOMPARE(controllerDurationMs, Q_INT64_C(60'000));
+}
+
+// `isAudio` is what the docked bar and the player page both lay themselves out
+// on (MUSIC.md §4), so it has to be right the instant the queue is set — before
+// the ticket resolves — and it has to move with the cursor. A queue that runs
+// from a track into a music video crosses the boundary mid-session.
+void QueuePlaybackTest::isAudioFollowsTheQueuesItemType()
+{
+    QSignalSpy audioSpy(m_controller, &PlayerController::isAudioChanged);
+    QVERIFY(!m_controller->isAudio()); // no session, no answer
+
+    m_controller->playQueue({audioMap(QStringLiteral("301001"), QStringLiteral("Threnody")),
+                             itemMap(QStringLiteral("301002"), QStringLiteral("Episode Two"))},
+                            0);
+    // Synchronously true: the queue carried the type, so nothing waited on the
+    // network. This is the flash the ordering exists to prevent.
+    QVERIFY(m_controller->isAudio());
+    QCOMPARE(audioSpy.count(), 1);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QVERIFY(m_controller->isAudio()); // and the ticket's video stream did not win
+
+    m_controller->queue()->jumpTo(1);
+    QVERIFY(!m_controller->isAudio());
+    QCOMPARE(audioSpy.count(), 2);
+
+    m_controller->queue()->jumpTo(0);
+    QVERIFY(m_controller->isAudio());
+
+    m_controller->stop();
+    QVERIFY(!m_controller->isAudio());
+}
+
+// The bare play-by-id path — a crash resume, a remote client naming an id —
+// seeds the queue with an id and a title and no type at all. There the media
+// source is the only answer there is, and "nothing known yet" must read as
+// video: guessing audio would put the now-playing panel over the first second
+// of every film and then take it back.
+void QueuePlaybackTest::isAudioFallsBackToTheSourceWhenTheTypeIsUnknown()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("Something"));
+    QVERIFY(!m_controller->isAudio());
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    // The fixture's source carries an h264 stream, so it stays video.
+    QVERIFY(!m_controller->isAudio());
 }
 
 QTEST_GUILESS_MAIN(QueuePlaybackTest)

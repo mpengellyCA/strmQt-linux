@@ -52,65 +52,18 @@ FocusScope {
     }
 
     // ── Is this a record or a film? ─────────────────────────────────────────
-    // There is no `isAudio` on the controller and this page does not invent
-    // one. Two signals already exist, and they answer at different times, so
-    // both are used — in this order, for these reasons:
+    // `PlayerCtl.isAudio` (MUSIC.md §4). This page used to derive the answer
+    // itself from the queue entry's type with the media source as a fallback,
+    // and the docked bar needed the same answer for the same reason — so the
+    // derivation moved into PlayerController, where the queue and the ticket
+    // both already live, and both surfaces now read one property.
     //
-    //  1. The queue entry's `type` is Emby's own item type ("Audio", "Movie",
-    //     "Episode", …). It is metadata about the *item*, so it is known the
-    //     instant the queue is set — before the ticket is fetched, before a
-    //     MediaSource exists. That makes it the only signal that is correct
-    //     during loading, which matters: a black video plane that flips to a
-    //     now-playing page a second later is the flash this ordering avoids.
-    //     It is also the only one that cannot be fooled by an audio file whose
-    //     embedded cover art the server reports as a video stream.
-    //
-    //  2. `PlayerCtl.videoStream` is the fallback, and only once a MediaSource
-    //     has actually arrived. PlayerController::playItem() seeds the queue
-    //     with an id and a title and no type at all, so the bare play verb
-    //     leaves signal 1 empty; for that path the source is the only answer
-    //     there is. An empty videoStream *while loading* means "not known yet",
-    //     never "no video", which is why `sourceResolved` gates it — and why
-    //     that path shows the video surface until the source lands rather than
-    //     guessing audio and having to take it back.
-    //
-    // Both are read through the queue's notifying `currentIndex` and through
-    // `sourceIndexChanged` (which the controller forces on every new ticket),
-    // so this is a live binding rather than a snapshot.
-    readonly property var nowQueueItem: {
-        const q = PlayerCtl.queue;
-        if (q === undefined || q === null || q.currentIndex < 0 || q.count <= 0)
-            return ({});
-        return q.itemAt(q.currentIndex);
-    }
-
-    readonly property string nowItemType: {
-        const t = page.nowQueueItem.type;
-        return (t !== undefined) ? String(t) : "";
-    }
-
-    readonly property bool typeIsAudio: page.nowItemType === "Audio"
-                                        || page.nowItemType === "AudioBook"
-    // Anything the server named that is not audio is a picture; do not go
-    // looking at streams for it.
-    readonly property bool typeIsVisual: page.nowItemType.length > 0 && !page.typeIsAudio
-
-    // currentSource() returns {} until the ticket resolves; every real source
-    // carries an `id` key.
-    readonly property bool sourceResolved: {
-        const s = PlayerCtl.currentSource;
-        return s !== undefined && s !== null && s.id !== undefined;
-    }
-    // videoStream() returns {} when the source has no video stream; every real
-    // one carries an `index` key.
-    readonly property bool sourceHasVideo: {
-        const v = PlayerCtl.videoStream;
-        return v !== undefined && v !== null && v.index !== undefined;
-    }
-
-    readonly property bool audioMode: PlayerCtl.active === true
-        && (page.typeIsAudio
-            || (!page.typeIsVisual && page.sourceResolved && !page.sourceHasVideo))
+    // The ordering the controller applies is the one this page depended on and
+    // is worth restating, because it is what stops a black video plane from
+    // flipping to a now-playing page a second later: the item's own type wins
+    // whenever the server gave one, and the source's streams are consulted only
+    // for the bare play-by-id path, which is the only one that has no type.
+    readonly property bool audioMode: PlayerCtl.isAudio === true
 
     // Crossing the boundary mid-session (a queue that runs from a track into a
     // music video, or a stop) must not leave the keyboard inside chrome that

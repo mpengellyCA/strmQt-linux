@@ -81,6 +81,17 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     });
     connect(m_queue, &PlayQueue::repeatModeChanged, this, &PlayerController::queueStateChanged);
 
+    // isAudio is a function of three things — whether a session is live, what
+    // the queue's cursor points at, and which media source was chosen — so it
+    // is recomputed whenever one of them moves. Cheaper than it looks: the
+    // computation is a string compare and a pointer test, and the signal only
+    // fires when the answer actually changes.
+    connect(this, &PlayerController::activeChanged, this, &PlayerController::updateIsAudio);
+    connect(this, &PlayerController::sourcesChanged, this, &PlayerController::updateIsAudio);
+    connect(this, &PlayerController::sourceIndexChanged, this, &PlayerController::updateIsAudio);
+    connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::updateIsAudio);
+    connect(m_queue, &PlayQueue::queueChanged, this, &PlayerController::updateIsAudio);
+
     connect(m_backend, &PlayerBackend::stateChanged, this, &PlayerController::onBackendState);
     connect(m_backend, &PlayerBackend::errorOccurred, this, &PlayerController::onBackendError);
     connect(m_backend, &PlayerBackend::endReached, this, &PlayerController::onEndReached);
@@ -1303,6 +1314,40 @@ void PlayerController::setBusy(bool busy)
         return;
     m_busy = busy;
     emit busyChanged();
+}
+
+// Music, or a picture? The type the server put on the queue entry answers it
+// outright whenever there is one, and that is the common case: everything that
+// reaches the queue through ItemActions carries its type.
+//
+// Only a bare playItem() — a crash resume, a remote-control play-by-id — seeds
+// the queue with an id and a title and nothing else, and that is the one case
+// that has to ask the stream instead: a source the server offered with no video
+// stream in it is music. The order matters, because the reverse is not true. A
+// picture whose ticket has not resolved yet has no streams to inspect either,
+// and treating "nothing known" as audio would flash the now-playing panel over
+// the first second of every film.
+bool PlayerController::computeIsAudio() const
+{
+    if (!m_active)
+        return false;
+    const QString type = m_queue->current().type;
+    if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
+        || type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0)
+        return true;
+    if (!type.isEmpty())
+        return false;
+    const MediaSourceCandidates *entry = m_ticket.source(m_sourceIndex);
+    return entry != nullptr && entry->source.videoStream() == nullptr;
+}
+
+void PlayerController::updateIsAudio()
+{
+    const bool value = computeIsAudio();
+    if (m_isAudio == value)
+        return;
+    m_isAudio = value;
+    emit isAudioChanged();
 }
 
 void PlayerController::setError(const QString &message)

@@ -573,6 +573,14 @@ ApplicationWindow {
                 stack.push(playerComponent);
             }
         }
+        // The bar's subline is a pair of links (MUSIC.md §4), and a link states
+        // intent the same way a card does: the bar asks, this file routes. Both
+        // go through openMusic(), so following "Lift Yr Skinny Fists" from the
+        // bar lands on exactly the page an album card would have opened.
+        onArtistRequested: (artistId, name) =>
+            root.openMusic({ "itemId": artistId, "name": name, "type": "MusicArtist" })
+        onAlbumRequested: (albumId, name) =>
+            root.openMusic({ "itemId": albumId, "name": name, "type": "MusicAlbum" })
         onDismissed: root.focusCurrentPage()
     }
 
