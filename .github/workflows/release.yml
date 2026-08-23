@@ -136,9 +136,16 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           find artifacts -type f | sort
+          # A tag carrying a prerelease suffix (v0.3.0-rc1, -beta2, -alpha) is
+          # marked as one. Without this it publishes looking like a final
+          # release, and the "Latest" badge would move to it.
+          PRERELEASE=""
+          case "$TAG" in
+            *-rc*|*-alpha*|*-beta*) PRERELEASE="--prerelease" ;;
+          esac
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "StrmQt $TAG" \
             --generate-notes \
-            --draft \
+            --draft $PRERELEASE \
             $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.flatpak' \) | tr '\n' ' ')

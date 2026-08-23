@@ -14,11 +14,18 @@ set -euo pipefail
 
 APP_NAME="StrmQt"
 APP_ID="ca.mikesdev.StrmQt"
-APP_VERSION="0.2.0"
 APP_ARCH="x86_64"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# Read from the project definition rather than restated here. Hardcoding it
+# shipped a "StrmQt-0.2.0" AppImage built from 0.3.0-rc1 sources — the one
+# artifact of the three whose version is in its filename and nowhere else.
+# Must come after SRC_DIR: under `set -u` an early read would abort the script.
+APP_VERSION="$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' \
+    "${SRC_DIR}/CMakeLists.txt")"
+[ -n "${APP_VERSION}" ] || { printf 'ERROR: cannot read project version from %s\n' \
+    "${SRC_DIR}/CMakeLists.txt" >&2; exit 1; }
 BUILD_DIR="${SRC_DIR}/build/appimage"
 APPDIR="${BUILD_DIR}/AppDir"
 DIST_DIR="${SRC_DIR}/build/dist"
