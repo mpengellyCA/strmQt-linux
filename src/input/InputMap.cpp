@@ -435,6 +435,13 @@ void InputMap::load()
     if (isKnownDevice(device))
         m_lastInputDevice = device;
 
+    // Two passes, and the split matters. conflictFor() answers from bindings(),
+    // which reports a default for every action whose override has not been
+    // inserted yet — so detecting conflicts while loading judges a stored
+    // binding against defaults the user already replaced, and the second half
+    // of a valid swap (app.settings -> Ctrl+, plus library.search -> F2) reads
+    // as a collision with the default it just freed. Load every override
+    // first; only then is the set conflictFor() sees the one the user has.
     for (const ActionDef &def : catalogue()) {
         const QVariant stored = m_store.value(kOverrideGroup + def.id);
         if (!stored.isValid())
@@ -453,27 +460,33 @@ void InputMap::load()
             m_store.remove(kOverrideGroup + def.id);
             continue;
         }
-        // A stored binding can collide with a default that changed between
-        // releases; the default wins and the stale override is dropped.
-        bool conflicted = false;
-        for (const QString &sequence : std::as_const(sequences)) {
-            const QString other = conflictFor(def.id, sequence);
-            if (!other.isEmpty()) {
-                qCWarning(logApp) << "input map: stored binding" << sequence << "for" << def.id
-                                  << "conflicts with" << other << "— keeping the default";
-                conflicted = true;
-                break;
-            }
-        }
-        if (conflicted) {
-            // Drop the stale override from the store as well, exactly as the
-            // branch above does. Leaving it there means the same warning on
-            // every launch for the rest of the installation's life, and a
-            // "custom" binding the remap UI can never show.
-            m_store.remove(kOverrideGroup + def.id);
-            continue;
-        }
         m_overrides.insert(def.id, sequences);
+    }
+
+    // A stored binding can collide with a default that changed between
+    // releases; the default wins and the stale override is dropped. Dropping
+    // one is visible to the checks that follow, so a stored file that somehow
+    // holds two overrides on the same sequence keeps the first in catalogue
+    // order rather than discarding both.
+    for (const ActionDef &def : catalogue()) {
+        const auto it = m_overrides.constFind(def.id);
+        if (it == m_overrides.cend())
+            continue;
+        const QStringList sequences = *it;
+        for (const QString &sequence : sequences) {
+            const QString other = conflictFor(def.id, sequence);
+            if (other.isEmpty())
+                continue;
+            qCWarning(logApp) << "input map: stored binding" << sequence << "for" << def.id
+                              << "conflicts with" << other << "— keeping the default";
+            // Drop the stale override from the store as well. Leaving it there
+            // means the same warning on every launch for the rest of the
+            // installation's life, and a "custom" binding the remap UI can
+            // never show.
+            m_overrides.remove(def.id);
+            m_store.remove(kOverrideGroup + def.id);
+            break;
+        }
     }
 }
 

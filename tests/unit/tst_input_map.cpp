@@ -19,6 +19,7 @@ private slots:
     void customBindingPersistsAndReloads();
     void conflictingBindingIsRejected();
     void conflictedStoredBindingIsDroppedFromTheStore();
+    void freedDefaultLetsTheSecondHalfOfASwapSurviveAReload();
     void contextsKeepBrowseAndPlayerApart();
     void resetRestoresTheDefault();
     void resetAllClearsEveryOverride();
@@ -265,6 +266,29 @@ void InputMapTest::conflictedStoredBindingIsDroppedFromTheStore()
 
     QSettings store(ini(), QSettings::IniFormat);
     QVERIFY(!store.contains(QStringLiteral("input/binding/app.settings")));
+}
+
+void InputMapTest::freedDefaultLetsTheSecondHalfOfASwapSurviveAReload()
+{
+    // Moving one action off a key and another onto it is two accepted rebinds,
+    // and both have to come back. Conflict detection at load time answers from
+    // bindings(), which reports the *default* for every action not yet loaded,
+    // so a single pass judged library.search's new F2 against app.settings'
+    // abandoned default and deleted the override outright — the user's rebind
+    // vanished from the INI, permanently, on the next launch.
+    QVERIFY(m_map->setBinding(QStringLiteral("app.settings"), QStringLiteral("Ctrl+,")));
+    QVERIFY(m_map->setBinding(QStringLiteral("library.search"), QStringLiteral("F2")));
+
+    InputMap loaded(ini());
+    QCOMPARE(loaded.binding(QStringLiteral("app.settings")), QStringLiteral("Ctrl+,"));
+    QCOMPARE(loaded.binding(QStringLiteral("library.search")), QStringLiteral("F2"));
+    QVERIFY(loaded.isCustomised(QStringLiteral("app.settings")));
+    QVERIFY(loaded.isCustomised(QStringLiteral("library.search")));
+
+    // And the store still holds them, so this survives more than one launch.
+    QSettings store(ini(), QSettings::IniFormat);
+    QVERIFY(store.contains(QStringLiteral("input/binding/app.settings")));
+    QVERIFY(store.contains(QStringLiteral("input/binding/library.search")));
 }
 
 void InputMapTest::contextsKeepBrowseAndPlayerApart()

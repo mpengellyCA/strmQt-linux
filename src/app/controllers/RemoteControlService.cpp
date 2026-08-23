@@ -165,8 +165,20 @@ void RemoteControlService::handlePlay(const QJsonObject &data)
         // the list forwards would leave the queue holding it backwards: sending
         // [A, B] queued B then A. Walk it from the end and the sent order is
         // what ends up in the queue.
-        for (auto it = items.crbegin(); it != items.crend(); ++it)
-            m_actions->playNext(*it);
+        //
+        // Unless there is no current item: on an empty queue the first insert
+        // lands at row 0 and becomes current, so every later one goes *after*
+        // it and forwards is the order-preserving direction. Reversing there
+        // is what turns [A, B] into [B, A].
+        const PlayQueue *queue = m_player ? m_player->queue() : nullptr;
+        const bool haveCurrent = queue && queue->currentIndex() >= 0;
+        if (haveCurrent) {
+            for (auto it = items.crbegin(); it != items.crend(); ++it)
+                m_actions->playNext(*it);
+        } else {
+            for (const QVariant &item : std::as_const(items))
+                m_actions->playNext(item);
+        }
     } else if (command == QLatin1String("PlayLast")) {
         for (const QVariant &item : items)
             m_actions->addToQueue(item);

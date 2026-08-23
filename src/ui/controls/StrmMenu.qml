@@ -110,8 +110,18 @@ Popup {
         // transition ends. What QQC2 leaves behind is nothing focused, or bare
         // window content with no focus chain under it — those two, and only
         // those two, are this menu's to repair.
+        //
+        // "Bare window content" is two different items here: Main.qml is an
+        // ApplicationWindow, and QQC2 hands focus to its contentItem — a child
+        // of the window's own contentItem, not the same object. Testing only
+        // the window root made this return early in exactly the case it exists
+        // for. For a plain Window the two are the same item and the second
+        // test is a no-op.
         const current = host.Window.activeFocusItem
-        if (current && current !== host.Window.contentItem)
+        const win = host.Window.window
+        const bare = current === host.Window.contentItem
+                     || (win && current === win.contentItem)
+        if (current && !bare)
             return
         if (remembered.visible && remembered.enabled)
             remembered.forceActiveFocus(Qt.OtherFocusReason)
