@@ -12,7 +12,7 @@ pkgname=strmqt
 # strings agree, and all three package jobs went green anyway.
 # An Arch pkgver may not contain a hyphen, so it is stripped here rather than
 # spelling the git tag unconventionally to suit one packager.
-_tag=v0.3.0-rc3
+_tag=v0.3.0-rc4
 pkgver=${_tag#v}
 pkgver=${pkgver//-/}
 pkgrel=1

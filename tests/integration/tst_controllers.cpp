@@ -35,6 +35,7 @@ private slots:
 
     void sessionLoginPersistsAndRestores();
     void sessionLoginFailureSurfaces();
+    void sessionWithoutServerDoesNotRestore();
     void homeRefreshBuildsRails();
     void libraryPaging();
 
@@ -101,6 +102,33 @@ void ControllersTest::sessionLoginPersistsAndRestores()
     restored.logout();
     QVERIFY(!restored.authenticated());
     QCOMPARE(m_secrets->readSecret(QStringLiteral("emby/accessToken")), QString());
+}
+
+// A stored credential with no server address must NOT come back as a session.
+// This shipped: while serverUrl() carried a baked-in default, signing in with
+// the pre-filled field never wrote the address to the store, and removing the
+// default left those installs restoring into an app with nowhere to send a
+// request — every call failing as `Protocol "" is unknown` behind a UI that
+// looked signed in.
+void ControllersTest::sessionWithoutServerDoesNotRestore()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+
+    // The credential survives; only the address is gone.
+    m_settings->setServerUrl(QUrl());
+    QCOMPARE(m_secrets->readSecret(QStringLiteral("emby/accessToken")), kToken);
+
+    emby::EmbyClient freshClient;
+    SessionController restored(m_settings, m_secrets, &freshClient);
+    QVERIFY(!restored.restore());
+    QVERIFY(!restored.authenticated());
+    QVERIFY(!restored.errorMessage().isEmpty()); // the login screen has to say why
 }
 
 void ControllersTest::sessionLoginFailureSurfaces()

@@ -55,7 +55,13 @@ QUrl Settings::serverUrl() const
 
 void Settings::setServerUrl(const QUrl &url)
 {
-    if (url == serverUrl())
+    // The `contains` half is load-bearing, and its absence cost a release. When
+    // serverUrl() still carried a baked-in default, signing in with the
+    // pre-filled field meant url == serverUrl() and the value was never written
+    // to the store at all — it only ever *looked* stored, because the default
+    // answered every read. Removing the default then left those installs with
+    // no address and a session that restored into a server-less app.
+    if (url == serverUrl() && m_store.contains(kServerUrlKey))
         return;
     m_store.setValue(kServerUrlKey, url);
     emit serverUrlChanged();

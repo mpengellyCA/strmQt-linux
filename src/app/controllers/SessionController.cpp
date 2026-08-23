@@ -54,6 +54,18 @@ bool SessionController::restore()
     const QString userId = m_settings->userId();
     if (token.isEmpty() || userId.isEmpty())
         return false;
+    // A credential is not a session: without an address there is nowhere to
+    // send it. Restoring on the token alone brought the app up looking signed
+    // in, with every request failing as `Protocol "" is unknown` and no way
+    // back to the login screen short of finding Sign out. Upgrades from a build
+    // that carried a baked-in server default land here, so it is a real path,
+    // not a defensive one.
+    if (m_settings->serverUrl().isEmpty()) {
+        qCWarning(logApp) << "session for" << m_settings->username()
+                          << "has no server address; signing in again";
+        setError(tr("Enter the address of your Emby server to sign in again."));
+        return false;
+    }
     m_client->setSession(token, userId);
     setAuthenticated(true);
     qCInfo(logApp) << "session restored for user" << m_settings->username();
