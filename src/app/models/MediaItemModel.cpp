@@ -110,6 +110,8 @@ QVariant MediaItemModel::data(const QModelIndex &index, int role) const
         return progressOf(item);
     case PlayedRole:
         return item.played;
+    case PlayCountRole:
+        return item.playCount;
     case FavoriteRole:
         return item.favorite;
     case ResumableRole:
@@ -175,6 +177,7 @@ QHash<int, QByteArray> MediaItemModel::roleNames() const
         {PositionMsRole, "positionMs"},
         {ProgressRole, "progress"},
         {PlayedRole, "played"},
+        {PlayCountRole, "playCount"},
         {FavoriteRole, "favorite"},
         {ResumableRole, "resumable"},
         {PosterUrlRole, "posterUrl"},

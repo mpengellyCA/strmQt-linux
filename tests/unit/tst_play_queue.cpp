@@ -58,6 +58,7 @@ private slots:
     void jumpToAndClear();
     void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
+    void playCountSurvivesTheRoundTrip();
 };
 
 // The whole point of the queue being a model is that the queue panel can use the
@@ -489,6 +490,40 @@ void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
     again.setItems({restoredTrack});
     QCOMPARE(again.get(0).value(QStringLiteral("posterUrl")).toString(),
              map.value(QStringLiteral("posterUrl")).toString());
+}
+
+// An album or a playlist plays through Actions.playAllFrom() → playQueue(), i.e.
+// through model maps rather than through DTOs, so a field that the model does not
+// publish as a role is a field the queue entry cannot have. playCount was exactly
+// that, which made MPRIS's xesam:useCount unreachable on the main music path.
+void PlayQueueTest::playCountSurvivesTheRoundTrip()
+{
+    MediaItem track;
+    track.id = QStringLiteral("t1");
+    track.name = QStringLiteral("Storm");
+    track.type = QStringLiteral("Audio");
+    track.playCount = 12;
+
+    MediaItemModel model;
+    model.setItems({track});
+    const QVariantMap map = model.get(0);
+    QCOMPARE(map.value(QStringLiteral("playCount")).toInt(), 12);
+
+    QCOMPARE(PlayQueue::itemFromVariant(map).playCount, 12);
+
+    // Through the queue itself, which is how the real path reaches MPRIS.
+    PlayQueue queue;
+    queue.setItems({track});
+    QCOMPARE(queue.current().playCount, 12);
+    queue.setItems({PlayQueue::itemFromVariant(map)});
+    QCOMPARE(queue.current().playCount, 12);
+
+    // A map that never carried the key restores the documented default rather
+    // than a sentinel: 0 is "never played, or nobody asked", and the MPRIS side
+    // is what decides not to publish it.
+    QVariantMap bare;
+    bare.insert(QStringLiteral("itemId"), QStringLiteral("t2"));
+    QCOMPARE(PlayQueue::itemFromVariant(bare).playCount, 0);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

@@ -49,9 +49,14 @@ public:
     // filenames are an implementation detail — hashed, versioned, and with no
     // supported way to ask for one — so they cannot be handed out as a file://
     // URL. MPRIS's mpris:artUrl is exactly that: Plasma's applet, the lock
-    // screen and the notification daemon open the path themselves. Hence a
-    // deliberate second copy, which still costs no extra download because this
-    // request goes through the same cache.
+    // screen and the notification daemon open the path themselves.
+    //
+    // This is a genuine second download, not just a second copy: the export
+    // asks for a fixed 512 px while fetch() asks for whatever width the
+    // delegate wants, maxWidth is part of the query string, and so the two are
+    // different cache entries. Deliberate — the sleeve on a HiDPI lock screen
+    // wants the resolution, and with every grid delegate requesting its own
+    // size there is no single width to share.
     //
     // `id` is the same "{itemId}/{imageType}/{tag}" the provider takes. Files
     // land in <CacheLocation>/<subdir>/, one per image tag: reusing a single

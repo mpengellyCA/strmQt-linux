@@ -52,6 +52,7 @@ private slots:
     void stopReportsAndDeactivates();
     void seekAndPauseReportProgress();
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
+    void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
 
     void demotionStaysWithinSelectedSource();
     void preferredSourceHonouredAtStart();
@@ -278,6 +279,48 @@ void PlayerControllerTest::seekAdoptsItsTargetBeforeTheEngineReportsIt()
     QCOMPARE(backend.seeks.at(2), Q_INT64_C(0));
     controller.seekRelative(5'000);
     QCOMPARE(backend.seeks.at(3), Q_INT64_C(5'000));
+}
+
+// Two things MPRIS needs that a toggle-only, signal-less controller cannot give
+// it. Play, Pause and PlayPause are three separate verbs on the bus and only the
+// last one toggles — `playerctl play` and XF86AudioPlay send Play, so routing it
+// through togglePause() paused a track that was already playing. And a client
+// extrapolates Position between polls, so it has to be told when the playhead
+// jumped; the signal fires for seeks made in the app as much as for ones that
+// arrived over D-Bus, since the client has no other way to hear about those.
+void PlayerControllerTest::setPausedIsAbsoluteAndSeeksAnnounceThemselves()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    m_controller->setPaused(false); // Play, while already playing
+    QVERIFY(!m_controller->paused());
+    m_controller->setPaused(true);
+    QVERIFY(m_controller->paused());
+    m_controller->setPaused(true); // Pause, while already paused
+    QVERIFY(m_controller->paused());
+    m_controller->setPaused(false);
+    QVERIFY(!m_controller->paused());
+    // The toggle is still a toggle: QML and the input map use it.
+    m_controller->togglePause();
+    QVERIFY(m_controller->paused());
+    m_controller->togglePause();
+    QVERIFY(!m_controller->paused());
+
+    QSignalSpy seeked(m_controller, &PlayerController::seeked);
+    m_backend->simulateDuration(240'000);
+    m_backend->simulatePosition(30'000);
+    m_controller->seekTo(90'000);
+    QCOMPARE(seeked.count(), 1);
+    QCOMPARE(seeked.takeFirst().at(0).toLongLong(), Q_INT64_C(90'000));
+
+    // Relative steps and chapter jumps funnel through seekTo(), so they announce
+    // themselves too — and what is announced is the CLAMPED target the engine was
+    // actually given, not the argument.
+    m_controller->seekRelative(-500'000);
+    QCOMPARE(seeked.count(), 1);
+    QCOMPARE(seeked.takeFirst().at(0).toLongLong(), Q_INT64_C(0));
 }
 
 void PlayerControllerTest::watchdogNudgesReloadsThenDemotes()

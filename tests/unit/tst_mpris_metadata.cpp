@@ -20,6 +20,7 @@ private slots:
     void fullTrackPublishesEveryKey();
     void sparseTrackOmitsUnknownKeys();
     void trackIdFollowsTheItem();
+    void artUrlIsPublishedAsAValidUri();
     void ratingIsClamped();
     void queueStateDrivesCanGoNextAndPrevious();
     void repeatedSetNowPlayingIsIdempotent();
@@ -168,6 +169,36 @@ void MprisMetadataTest::trackIdFollowsTheItem()
     track.itemId.clear();
     mpris.setNowPlaying(track);
     QVERIFY(!QDBusObjectPath(pathOf()).path().isEmpty());
+}
+
+// The export path is rooted at QStandardPaths::CacheLocation — the user's home —
+// so a space or a non-ASCII character in it is entirely ordinary, and safeName()
+// only sanitises the filename. QUrl's default PrettyDecoded rendering would put
+// those characters on the bus raw, producing a string that is not a URI at all;
+// a consumer that parses it strictly (g_file_new_for_uri, notification daemons)
+// then silently draws a blank square.
+void MprisMetadataTest::artUrlIsPublishedAsAValidUri()
+{
+    MprisPlayer mpris;
+    mpris.setPlaybackActive(true, false);
+
+    MprisPlayer::TrackInfo track;
+    track.itemId = QStringLiteral("x");
+    track.artUrl =
+        QUrl::fromLocalFile(QStringLiteral("/home/a b/José/.cache/strmqt/mpris/id-tag.jpg"));
+    mpris.setNowPlaying(track);
+
+    const QString published = mpris.metadata().value(QStringLiteral("mpris:artUrl")).toString();
+    QCOMPARE(published,
+             QStringLiteral("file:///home/a%20b/Jos%C3%A9/.cache/strmqt/mpris/id-tag.jpg"));
+    // Round trip: what went out has to name the same file when parsed back.
+    QCOMPARE(QUrl(published, QUrl::StrictMode).toLocalFile(), track.artUrl.toLocalFile());
+
+    // An all-ASCII path is unaffected — this is an encoding, not a rewrite.
+    track.artUrl = QUrl::fromLocalFile(QStringLiteral("/tmp/strmqt/mpris/abc123-tag.jpg"));
+    mpris.setNowPlaying(track);
+    QCOMPARE(mpris.metadata().value(QStringLiteral("mpris:artUrl")).toString(),
+             QStringLiteral("file:///tmp/strmqt/mpris/abc123-tag.jpg"));
 }
 
 void MprisMetadataTest::ratingIsClamped()

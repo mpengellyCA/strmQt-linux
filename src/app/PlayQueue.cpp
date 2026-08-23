@@ -71,6 +71,11 @@ MediaItem PlayQueue::itemFromVariant(const QVariant &value)
     item.unplayedItemCount = intOf(map, QStringLiteral("unplayedCount"), 0);
     item.playbackPositionTicks = map.value(QStringLiteral("positionMs")).toLongLong() * kTicksPerMs;
     item.played = map.value(QStringLiteral("played")).toBool();
+    // Restored because the DTO path is not the only way into the queue: an album
+    // or a playlist plays through playQueue(QVariantList), and without this every
+    // one of those tracks reaches MPRIS with no xesam:useCount. Absent means 0,
+    // which MediaItem already documents as "never, or nobody asked".
+    item.playCount = intOf(map, QStringLiteral("playCount"), 0);
     item.favorite = map.value(QStringLiteral("favorite")).toBool();
     // Music identity travels with the entry. Without it a queued track knows
     // only its own name, which is why the bar had to reconstruct context by

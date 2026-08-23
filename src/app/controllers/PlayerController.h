@@ -146,6 +146,11 @@ public:
     // Dev/test entry: play a URL directly, no server ticket or reporting.
     Q_INVOKABLE void playUrl(const QUrl &url, const QString &title);
     Q_INVOKABLE void togglePause();
+    // Explicit pause intent, for callers that mean one specific state rather
+    // than "the other one". MPRIS is the reason it exists: Play and Pause are
+    // separate verbs there and routing Play through togglePause() pauses a
+    // track that was already playing.
+    Q_INVOKABLE void setPaused(bool paused);
     Q_INVOKABLE void stop();
     Q_INVOKABLE void seekTo(qint64 positionMs);
     Q_INVOKABLE void seekRelative(qint64 deltaMs);
@@ -240,6 +245,11 @@ signals:
     void upNextChanged();
     // OSD toast for track switches ("Audio: eng — DTS 5.1").
     void trackChanged(const QString &description);
+    // The playhead was MOVED, as opposed to having advanced on its own. Distinct
+    // from positionChanged, which fires on every tick: a remote client that
+    // extrapolates position between polls needs to be told when its extrapolation
+    // became wrong, and MPRIS's Seeked signal is exactly that.
+    void seeked(qint64 positionMs);
 
 private:
     // PlayerBackend::setVolume() contract; mirrored in Settings.

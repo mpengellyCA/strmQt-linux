@@ -212,21 +212,40 @@ void Application::wirePlaybackIntegrations()
     // export we are currently waiting on belongs to a superseded item.
     connect(m_imageFetcher, &EmbyImageFetcher::fileExported, this,
             [this](const QString &id, const QUrl &fileUrl) {
-                if (id != m_mprisArtId || fileUrl.isEmpty())
+                if (id != m_mprisArtId)
                     return;
+                if (fileUrl.isEmpty()) {
+                    // A failure must not latch. Every track on an album shares
+                    // one coverSource(), so leaving the failed id in place makes
+                    // the artId != m_mprisArtId guard below false for the rest of
+                    // the record and the export is never retried — one dropped
+                    // request would cost the whole album its lock-screen cover.
+                    m_mprisArtId.clear();
+                    return;
+                }
                 m_mprisArtUrl = fileUrl;
                 m_mpris->setArtUrl(fileUrl);
             });
 
     // MPRIS remote commands (KDE Connect phone, Plasma applet) → controller.
+    // Play, Pause and PlayPause are three distinct verbs in the spec and only
+    // the last of them toggles. `playerctl play`, XF86AudioPlay on GNOME and
+    // most notification-daemon buttons send Play, so mapping it to the toggle
+    // paused a track that was already playing.
     connect(m_mpris, &MprisPlayer::playPauseRequested, m_player, &PlayerController::togglePause);
-    connect(m_mpris, &MprisPlayer::playRequested, m_player, &PlayerController::togglePause);
-    connect(m_mpris, &MprisPlayer::pauseRequested, m_player, &PlayerController::togglePause);
+    connect(m_mpris, &MprisPlayer::playRequested, m_player, [this] { m_player->setPaused(false); });
+    connect(m_mpris, &MprisPlayer::pauseRequested, m_player, [this] { m_player->setPaused(true); });
     connect(m_mpris, &MprisPlayer::stopRequested, m_player, &PlayerController::stop);
     connect(m_mpris, &MprisPlayer::nextRequested, m_player, &PlayerController::playNext);
     connect(m_mpris, &MprisPlayer::previousRequested, m_player, &PlayerController::playPrevious);
     connect(m_mpris, &MprisPlayer::seekRequested, m_player, &PlayerController::seekRelative);
     connect(m_mpris, &MprisPlayer::setPositionRequested, m_player, &PlayerController::seekTo);
+    // Seeked is the spec's answer to a client that extrapolates position between
+    // polls: without it the applet's bar keeps running from where the playhead
+    // was and visibly snaps back at the next poll. It fires for seeks made in
+    // the app as well as ones that arrived over the bus — the client has no
+    // other way to learn about the former.
+    connect(m_player, &PlayerController::seeked, m_mpris, &MprisPlayer::notifySeeked);
 }
 
 void Application::pushNowPlayingToMpris()
@@ -238,8 +257,17 @@ void Application::pushNowPlayingToMpris()
 
     MprisPlayer::TrackInfo track;
     track.itemId = item.id;
-    track.title = m_player->title().isEmpty() ? item.name : m_player->title();
-    track.durationMs = m_player->durationMs();
+    // The queue entry wins over the engine, and the order matters. This runs
+    // from PlayQueue::currentChanged, which advance() emits BEFORE
+    // startQueueCurrent() → startItem() assigns the new title, and the backend
+    // still reports the old file's duration until the new one loads. So at the
+    // moment a new mpris:trackid goes out, m_player->title() and
+    // m_player->durationMs() both still describe the track that just ended:
+    // taking them would pop the previous song's name in every notification
+    // keyed on trackid and scale the applet's scrub bar to the previous
+    // runtime for the whole of the load.
+    track.title = item.name.isEmpty() ? m_player->title() : item.name;
+    track.durationMs = item.runtimeMs() > 0 ? item.runtimeMs() : m_player->durationMs();
     track.album = item.album;
     if (!item.artists.isEmpty())
         track.artists = item.artists;

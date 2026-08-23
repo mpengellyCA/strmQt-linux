@@ -58,6 +58,7 @@ private slots:
     void aBarePlayItemIsAOneItemQueue();
     void queueEditsAfterStopDoNotStartPlayback();
     void changingItemClosesTheOutgoingSession();
+    void currentChangedLeadsTheControllersTitleAndDuration();
 
 private:
     QVariantList threeItems() const;
@@ -518,6 +519,51 @@ void QueuePlaybackTest::changingItemClosesTheOutgoingSession()
                  .value(QLatin1String("ItemId"))
                  .toString(),
              QStringLiteral("301003"));
+}
+
+// Pins the ordering that Application::pushNowPlayingToMpris depends on, because
+// it is not obvious and getting it wrong is invisible in the app itself.
+// currentChanged() is emitted from INSIDE advance(), so every listener runs
+// before startQueueCurrent() → startItem() assigns the new title, and long
+// before the engine has opened the new file and can report its duration. At
+// that instant the controller still describes the track that just ended and
+// only the queue entry describes the one about to start — which is why the
+// MPRIS push takes name/runtime from the entry. Taking them from the controller
+// published a new mpris:trackid with the previous song's xesam:title, so every
+// notification daemon keyed on trackid popped the wrong track.
+void QueuePlaybackTest::currentChangedLeadsTheControllersTitleAndDuration()
+{
+    QVariantMap first = itemMap(QStringLiteral("301001"), QStringLiteral("Episode One"));
+    QVariantMap second = itemMap(QStringLiteral("301002"), QStringLiteral("Episode Two"));
+    second.insert(QStringLiteral("runtimeMs"), 123'000);
+
+    m_controller->playQueue({first, second}, 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(60'000);
+    QCOMPARE(m_controller->title(), QStringLiteral("Episode One"));
+    QCOMPARE(m_controller->durationMs(), Q_INT64_C(60'000));
+
+    QString entryName;
+    QString controllerTitle;
+    qint64 entryRuntimeMs = -1;
+    qint64 controllerDurationMs = -1;
+    connect(m_controller->queue(), &PlayQueue::currentChanged, this, [&] {
+        const MediaItem entry = m_controller->queue()->current();
+        entryName = entry.name;
+        entryRuntimeMs = entry.runtimeMs();
+        controllerTitle = m_controller->title();
+        controllerDurationMs = m_controller->durationMs();
+    });
+
+    m_controller->playNext();
+
+    // The entry is already the incoming track...
+    QCOMPARE(entryName, QStringLiteral("Episode Two"));
+    QCOMPARE(entryRuntimeMs, Q_INT64_C(123'000));
+    // ...while the controller is still the outgoing one.
+    QCOMPARE(controllerTitle, QStringLiteral("Episode One"));
+    QCOMPARE(controllerDurationMs, Q_INT64_C(60'000));
 }
 
 QTEST_GUILESS_MAIN(QueuePlaybackTest)

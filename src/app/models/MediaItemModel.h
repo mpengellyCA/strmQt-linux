@@ -33,6 +33,10 @@ public:
         PositionMsRole,
         ProgressRole, // 0.0–1.0 for progress bars
         PlayedRole,
+        // Times the user has finished this item. Carried as a role so it
+        // survives the trip through QML into the queue, where MPRIS reads it as
+        // xesam:useCount.
+        PlayCountRole,
         FavoriteRole,
         ResumableRole,
         PosterUrlRole,

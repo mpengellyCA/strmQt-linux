@@ -186,8 +186,13 @@ QVariantMap MprisPlayer::metadata() const
     map.insert(QStringLiteral("mpris:trackid"), QVariant::fromValue(trackPath(m_track.itemId)));
     if (m_track.durationMs > 0)
         map.insert(QStringLiteral("mpris:length"), qlonglong(m_track.durationMs) * 1000);
+    // FullyEncoded, not the default PrettyDecoded: the export path is rooted at
+    // the user's cache directory, so a home with a space or a non-ASCII
+    // character in it produces "file:///home/a b/José/x.jpg" — a string, not a
+    // URI. Consumers that parse it strictly (g_file_new_for_uri, notification
+    // daemons) fail to load the sleeve rather than guessing.
     if (!m_track.artUrl.isEmpty())
-        map.insert(QStringLiteral("mpris:artUrl"), m_track.artUrl.toString());
+        map.insert(QStringLiteral("mpris:artUrl"), m_track.artUrl.toString(QUrl::FullyEncoded));
     if (!m_track.title.isEmpty())
         map.insert(QStringLiteral("xesam:title"), m_track.title);
     if (!m_track.artists.isEmpty())

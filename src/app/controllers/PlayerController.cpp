@@ -977,7 +977,12 @@ void PlayerController::setUpNext(bool visible, int seconds)
 
 void PlayerController::togglePause()
 {
-    m_backend->setPaused(m_backend->state() != PlayerBackend::State::Paused);
+    setPaused(m_backend->state() != PlayerBackend::State::Paused);
+}
+
+void PlayerController::setPaused(bool paused)
+{
+    m_backend->setPaused(paused);
 }
 
 void PlayerController::stop()
@@ -1013,6 +1018,10 @@ void PlayerController::seekTo(qint64 positionMs)
     // recomputing every step off the same stale base: two taps of skip-forward
     // move 20 s, not 10.
     m_lastPositionMs = target;
+    // Announced from here rather than from each caller so that every way of
+    // moving the playhead — the scrubber, a skip binding, a chapter jump, a
+    // remote SetPosition — reaches a listening MPRIS client as one Seeked.
+    emit seeked(target);
     if (m_reporting && m_started)
         reportProgress();
 }
