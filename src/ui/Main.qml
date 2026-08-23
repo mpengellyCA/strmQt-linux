@@ -137,9 +137,10 @@ ApplicationWindow {
         // known right now — the hero is on screen and the bar's docked place is
         // computed rather than read — so this is one call, unlike the expand
         // below, which has to wait for a page that does not exist yet.
-        root.startSleeveFlight(stack.currentItem.sleeveRect(root),
+        root.startSleeveFlight(stack.currentItem.sleeveRect(root.contentItem),
                                stack.currentItem.sleeveRadius,
-                               miniPlayer.dockedArtRect(root), miniPlayer.artRadius);
+                               miniPlayer.dockedArtRect(root.contentItem),
+                               miniPlayer.artRadius);
         stack.pop();
         Qt.callLater(root.restoreFocusToPage);
     }
@@ -182,7 +183,7 @@ ApplicationWindow {
             return;
         }
         if (!sleeveFlight.active) {
-            const from = miniPlayer.dockedArtRect(root);
+            const from = miniPlayer.dockedArtRect(root.contentItem);
             if (from.width <= 0)
                 return;
             sleeveFlight.place(from, miniPlayer.artRadius);
@@ -562,6 +563,12 @@ ApplicationWindow {
     // Above every piece of chrome: the sleeve travels over the rail and the bar,
     // not behind them. It declares no input handling, so nothing it passes over
     // becomes unclickable.
+    // The endpoint rects above are asked for in THIS item's coordinates, which
+    // is why every caller passes root.contentItem and not root. `root` is an
+    // ApplicationWindow, not an Item: handed to a `target: Item` parameter it
+    // coerces to null, mapToItem quietly falls back to scene coordinates, and
+    // the two spaces coincide only while the window has no header or footer.
+    // Adding either would have offset every endpoint by its height.
     SleeveFlight {
         id: sleeveFlight
 
@@ -595,7 +602,7 @@ ApplicationWindow {
                 sleeveFlight.cancel();
                 return;
             }
-            const target = page.sleeveRect(root);
+            const target = page.sleeveRect(root.contentItem);
             if (target.width <= 0)
                 return;
             heroWatch.stop();
