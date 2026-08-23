@@ -17,6 +17,7 @@ strmqt_add_test(tst_playback_ticket unit/tst_playback_ticket.cpp)
 strmqt_add_test(tst_media_source unit/tst_media_source.cpp)
 strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
 strmqt_add_test(tst_stick_decision unit/tst_stick_decision.cpp)
+strmqt_add_test(tst_gamepad_decision unit/tst_gamepad_decision.cpp)
 strmqt_add_test(tst_item_details unit/tst_item_details.cpp)
 strmqt_add_test(tst_settings_prefs unit/tst_settings_prefs.cpp)
 

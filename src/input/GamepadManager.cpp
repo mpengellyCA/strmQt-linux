@@ -1,6 +1,7 @@
 #include "GamepadManager.h"
 
 #include "core/Log.h"
+#include "input/GamepadDecision.h"
 #include "input/InputMap.h"
 #include "input/StickDecision.h"
 
@@ -11,6 +12,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QInputMethod>
 #include <QKeyEvent>
 #include <QTimer>
 #include <QWindow>
@@ -49,14 +51,22 @@ constexpr int kVerticalThreshold = 16'000;
 constexpr int kTriggerPress = 20'000;
 constexpr int kTriggerRelease = 12'000;
 
-// Auto-repeat, tuned to feel like a TV UI rather than a text cursor: a pause
-// long enough that a single flick stays a single step, then acceleration, so
-// crossing a 1300-item grid is a held stick and not a rhythm game.
-constexpr int kRepeatDelayMs = 380;
-constexpr int kRepeatFastMs = 90;
-constexpr int kRepeatFastestMs = 38;
-// Steps at kRepeatFastMs before the rate ramps to kRepeatFastestMs.
-constexpr int kStepsBeforeAccel = 6;
+// Auto-repeat, tuned to feel like a TV UI rather than a text cursor. The ladder
+// and the reason the player clamps it live with the pure function in
+// GamepadDecision.h, where they can be tested without a device.
+constexpr RepeatTuning kRepeat{};
+
+// True while whatever holds focus is a text editor. QGuiApplication::focusObject()
+// plus the ImEnabled input-method query is the standard way to ask, and it needs
+// no QML dependency — which matters, because this decision cannot be left to
+// Main.qml: its single-character shortcuts stand down while a field has focus,
+// so a pad button bound to a letter would land in the field instead of firing.
+bool textInputHasFocus()
+{
+    if (!QGuiApplication::focusObject())
+        return false;
+    return QGuiApplication::inputMethod()->queryFocusObject(Qt::ImEnabled, QVariant()).toBool();
+}
 
 // Slots for held directions. The stick and the D-pad get separate slots so
 // releasing one does not cancel a direction the other is still holding.
@@ -91,8 +101,15 @@ GamepadManager::GamepadManager(InputMap *input, QObject *parent) : QObject(paren
 
 GamepadManager::~GamepadManager()
 {
-    if (m_initialized)
-        SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    if (!m_initialized)
+        return;
+    releaseAll();
+    // SDL_QuitSubSystem does not close handles this instance opened; a handle
+    // that outlives the subsystem is a leak in a process that can re-init.
+    const QList<quint32> open = m_pads.keys();
+    for (quint32 instanceId : open)
+        closePad(instanceId);
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
 }
 
 void GamepadManager::setContext(const QString &context)
@@ -101,8 +118,9 @@ void GamepadManager::setContext(const QString &context)
         return;
     m_context = context;
     // A direction held across a context switch would keep repeating the *old*
-    // context's action; drop everything held rather than translate it.
-    m_held.clear();
+    // context's action; drop everything held rather than translate it. Dropping
+    // means releasing: the key is down, and a key left down never commits.
+    releaseAll();
     m_stickAxis = -1;
 }
 
@@ -152,14 +170,24 @@ void GamepadManager::poll()
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
         case SDL_EVENT_GAMEPAD_ADDED: {
-            SDL_Gamepad *pad = SDL_OpenGamepad(event.gdevice.which);
+            const quint32 instanceId = event.gdevice.which;
+            // SDL re-announces devices it already told us about (a re-plug that
+            // reuses an id, a subsystem re-init), and opening twice would leak
+            // the first handle.
+            closePad(instanceId);
+            SDL_Gamepad *pad = SDL_OpenGamepad(instanceId);
             qCInfo(logApp) << "gamepad connected:" << (pad ? SDL_GetGamepadName(pad) : "unknown");
+            if (pad)
+                m_pads.insert(instanceId, pad);
             break;
         }
         case SDL_EVENT_GAMEPAD_REMOVED:
             qCInfo(logApp) << "gamepad disconnected";
+            // The handle SDL gave us on connect goes back on disconnect; a
+            // removal for a device we never opened closes nothing.
+            closePad(event.gdevice.which);
             // Whatever was held is no longer held by anything.
-            m_held.clear();
+            releaseAll();
             m_axisState.clear();
             m_stickX = 0;
             m_stickY = 0;
@@ -205,7 +233,7 @@ void GamepadManager::handleButton(int sdlButton, bool pressed)
         return;
     const QString actionId = actionForButton(sdlButton);
     if (!actionId.isEmpty())
-        fire(actionId);
+        tap(actionId);
 }
 
 void GamepadManager::handleAxis(int axis, int value)
@@ -224,10 +252,10 @@ void GamepadManager::handleAxis(int axis, int value)
         const bool player = m_context == QLatin1String("player");
         const bool left = axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
         if (player)
-            fire(left ? QStringLiteral("player.seekBackward")
-                      : QStringLiteral("player.seekForward"));
+            tap(left ? QStringLiteral("player.seekBackward")
+                     : QStringLiteral("player.seekForward"));
         else
-            fire(left ? QStringLiteral("nav.pageUp") : QStringLiteral("nav.pageDown"));
+            tap(left ? QStringLiteral("nav.pageUp") : QStringLiteral("nav.pageDown"));
         return;
     }
 
@@ -275,20 +303,51 @@ void GamepadManager::evaluateStick()
 void GamepadManager::setDirection(int slot, const QString &actionId, bool active)
 {
     if (!active || actionId.isEmpty()) {
-        m_held.remove(slot);
+        releaseDirection(slot);
         return;
     }
     const auto it = m_held.constFind(slot);
     if (it != m_held.constEnd() && it->actionId == actionId)
         return; // already holding this direction
+    // Turning around on one slot ends the old direction properly rather than
+    // dropping its key on the floor still pressed.
+    releaseDirection(slot);
 
     Repeat repeat;
     repeat.actionId = actionId;
     repeat.heldFor.start();
     repeat.emitted = 1;
-    repeat.nextAtMs = kRepeatDelayMs;
+    repeat.nextAtMs = kRepeat.delayMs;
+    repeat.seeking = isSeekRepeat(m_context, actionId);
+    if (resolveKey(actionId, &repeat.key, &repeat.modifiers)) {
+        m_input->noteInput(QStringLiteral("gamepad"));
+        // The key goes DOWN and stays down for the whole hold, exactly as it
+        // would on a keyboard: the first step is immediate, only the repeat
+        // waits, and the release that ends the gesture comes in
+        // releaseDirection(). That release is not an auto-repeat, and it is the
+        // event a control commits on.
+        sendKey(repeat.key, repeat.modifiers, true, false);
+    }
     m_held.insert(slot, repeat);
-    fire(actionId); // the first step is immediate; only the repeat waits
+}
+
+void GamepadManager::releaseDirection(int slot)
+{
+    const auto it = m_held.constFind(slot);
+    if (it == m_held.constEnd())
+        return;
+    const Repeat repeat = *it;
+    m_held.erase(it);
+    if (repeat.key != 0)
+        sendKey(repeat.key, repeat.modifiers, false, false);
+}
+
+void GamepadManager::releaseAll()
+{
+    // `slots` is a Qt keyword, hence the name.
+    const QList<int> heldSlots = m_held.keys();
+    for (int slot : heldSlots)
+        releaseDirection(slot);
 }
 
 void GamepadManager::pump()
@@ -300,10 +359,19 @@ void GamepadManager::pump()
         const qint64 heldMs = repeat.heldFor.elapsed();
         if (heldMs < repeat.nextAtMs)
             continue;
-        fire(repeat.actionId);
+        if (repeat.key != 0) {
+            m_input->noteInput(QStringLiteral("gamepad"));
+            // A repeat step is a release/press pair *flagged as auto-repeat*,
+            // which is the shape a keyboard delivers one in. The flag is the
+            // whole point: controls already read it — StrmSlider nudges on every
+            // press and commits only on a release that is not a repeat — so an
+            // unflagged step committed a seek, and a server round-trip, per
+            // step of the hold.
+            sendKey(repeat.key, repeat.modifiers, false, true);
+            sendKey(repeat.key, repeat.modifiers, true, true);
+        }
         ++repeat.emitted;
-        const int interval =
-            repeat.emitted > kStepsBeforeAccel + 1 ? kRepeatFastestMs : kRepeatFastMs;
+        const int interval = repeatIntervalMs(repeat.emitted, repeat.seeking, kRepeat);
         // Advance from the scheduled time, not from now, so a late frame does
         // not slow the whole repeat down.
         repeat.nextAtMs += interval;
@@ -312,32 +380,69 @@ void GamepadManager::pump()
     }
 }
 
-void GamepadManager::fire(const QString &actionId)
+void GamepadManager::tap(const QString &actionId)
 {
-    if (!m_input)
+    int key = 0;
+    int modifiers = 0;
+    if (!resolveKey(actionId, &key, &modifiers))
         return;
-    const int key = m_input->keyFor(actionId);
-    if (key == 0) {
+    m_input->noteInput(QStringLiteral("gamepad"));
+    // Discrete: neither half is an auto-repeat, so a control that commits on a
+    // plain release commits exactly once.
+    sendKey(key, modifiers, true, false);
+    sendKey(key, modifiers, false, false);
+}
+
+bool GamepadManager::resolveKey(const QString &actionId, int *key, int *modifiers) const
+{
+    *key = 0;
+    *modifiers = 0;
+    if (!m_input)
+        return false;
+    const int resolved = m_input->keyFor(actionId);
+    if (resolved == 0) {
         // A binding that resolves to no single key cannot be synthesized. Say
         // so rather than silently doing nothing, which is how the old LT/RT and
         // right-stick hints survived while being wired to nothing at all.
         qCDebug(logApp) << "gamepad: no single-key binding for" << actionId;
-        return;
+        return false;
     }
-    const int modifiers = m_input->modifiersFor(actionId);
-    m_input->noteInput(QStringLiteral("gamepad"));
-    sendKey(key, modifiers, true);
-    sendKey(key, modifiers, false);
+    const int resolvedModifiers = m_input->modifiersFor(actionId);
+    if (shouldSuppressKey(resolved, resolvedModifiers, textInputHasFocus())) {
+        // Menu resolves to "M" and Y to "/", and a text field takes both as
+        // typing: it eats the key, the shortcut behind it never runs, and an
+        // editor that inserts on the key alone would print it. The button goes
+        // dead while a field has focus instead — B/Esc, the arrows and Return
+        // are not typable and still get through, so the field can be left.
+        qCDebug(logApp) << "gamepad: not delivering typable key for" << actionId
+                        << "— a text field has focus";
+        return false;
+    }
+    *key = resolved;
+    *modifiers = resolvedModifiers;
+    return true;
 }
 
-void GamepadManager::sendKey(int qtKey, int modifiers, bool pressed)
+void GamepadManager::sendKey(int qtKey, int modifiers, bool pressed, bool autoRepeat)
 {
     QWindow *window = QGuiApplication::focusWindow();
     if (!window)
         return;
+    // The text is deliberately empty: this is a command, not typing.
     auto *event = new QKeyEvent(pressed ? QEvent::KeyPress : QEvent::KeyRelease, qtKey,
-                                static_cast<Qt::KeyboardModifiers>(modifiers));
+                                static_cast<Qt::KeyboardModifiers>(modifiers), QString(),
+                                autoRepeat);
     QCoreApplication::postEvent(window, event);
+}
+
+void GamepadManager::closePad(quint32 instanceId)
+{
+    SDL_Gamepad *pad = m_pads.take(instanceId);
+    if (!pad)
+        return;
+    // take() first: closing is the only place the handle is released, so it can
+    // never be closed twice even if SDL repeats a removal.
+    SDL_CloseGamepad(pad);
 }
 
 } // namespace strmqt

@@ -171,6 +171,14 @@ FocusScope {
     }
 
     // ── Building the season bar ────────────────────────────────────────────
+    // Which series the tabs on screen belong to. The seasons model's `count`
+    // says how many seasons there are, never *whose*, so it cannot tell a
+    // different series from a refresh of the one already open — and only the
+    // first of those may move the user's tab. Cleared back to "" whenever there
+    // are no tabs, so re-opening the same series (which empties the model
+    // first) still counts as an arrival and still lands on its default season.
+    property string tabbedSeriesId: ""
+
     function rebuildSeasonTabs() {
         const tabs = []
         const posters = []
@@ -181,7 +189,51 @@ FocusScope {
         }
         page.seasonTabs = tabs
         page.seasonPosters = posters
+
+        // Opening a different series is the one thing that earns the cursor:
+        // seasons landing again for the series already on screen is a refresh,
+        // and snapping the selection back to SeriesCtl.currentSeason there
+        // would drop the user out of the season they walked over to read.
+        const arrived = tabs.length > 0 ? SeriesCtl.seriesId : ""
+        if (page.tabbedSeriesId === arrived)
+            return
+        page.tabbedSeriesId = arrived
         seasonBar.currentIndex = Math.max(0, SeriesCtl.currentSeason)
+    }
+
+    // The unplayed badge is the one thing on a tab that changes while the page
+    // is open, and moving a number is no reason to rebuild the bar around it —
+    // `tabs` is a plain JS value, so StrmTabBar re-reads it on assignment while
+    // `currentIndex` is a separate property that survives untouched.
+    //
+    // Only the loaded season can be recounted, and it is recounted from the
+    // episodes on screen rather than adjusted by a delta: ItemActions patches
+    // SeriesCtl.episodes before it announces the change, so the badge and the
+    // ticks the user just clicked are derived from the same rows and cannot
+    // disagree — and a repeated or rolled-back announcement, which
+    // ItemActions::applyPlayed() does emit, costs nothing instead of drifting
+    // the count by one each time. Seasons that were never opened keep the
+    // number the server sent; nothing on this page knows better about those.
+    function refreshSeasonBadges(itemId) {
+        const index = SeriesCtl.currentSeason
+        if (index < 0 || index >= page.seasonTabs.length)
+            return
+        let unplayed = 0
+        let mine = false
+        for (let i = 0; i < SeriesCtl.episodes.count; ++i) {
+            const episode = SeriesCtl.episodes.get(i)
+            if (String(episode.itemId) === itemId)
+                mine = true
+            if (episode.played !== true)
+                ++unplayed
+        }
+        // An id from somewhere else in the app — another page's card, or this
+        // series' own "Mark watched" — says nothing about this season's count.
+        if (!mine || page.seasonTabs[index].badge === unplayed)
+            return
+        const tabs = page.seasonTabs.slice()
+        tabs[index] = { text: tabs[index].text, badge: unplayed }
+        page.seasonTabs = tabs
     }
 
     readonly property string seasonPoster: {
@@ -324,6 +376,12 @@ FocusScope {
         page.syncSeriesItem()
     }
 
+    // The season LIST changing — emptied by open(), filled when the seasons
+    // land. Rebuilding the tabs here is right; moving the selection is not,
+    // which is why rebuildSeasonTabs() decides that for itself off the series
+    // id rather than off the fact that a count moved. Badges do not come
+    // through here at all: they move without the count moving, and
+    // refreshSeasonBadges() carries them.
     Connections {
         target: SeriesCtl.seasons
         function onCountChanged() { page.rebuildSeasonTabs() }
@@ -356,6 +414,12 @@ FocusScope {
         function onPlayedChanged(itemId, played) {
             if (itemId === SeriesCtl.seriesId)
                 page.seriesPlayed = played
+            // The season tabs carry an unplayed count and nothing refetches the
+            // seasons while the page is open — SeriesCtl.seasons is not one of
+            // the models ItemActions patches, so it is never told either.
+            // Without this the tab the user is standing on goes on claiming the
+            // episode they just ticked is unwatched.
+            page.refreshSeasonBadges(itemId)
             // The whole-series episode list SeriesController derives
             // "next unwatched" from is not a model registered with Actions, so
             // it has to be told. Application.cpp makes the same connection in

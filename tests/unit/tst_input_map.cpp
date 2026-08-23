@@ -18,6 +18,7 @@ private slots:
     void planSection37IsFullyCovered();
     void customBindingPersistsAndReloads();
     void conflictingBindingIsRejected();
+    void conflictedStoredBindingIsDroppedFromTheStore();
     void contextsKeepBrowseAndPlayerApart();
     void resetRestoresTheDefault();
     void resetAllClearsEveryOverride();
@@ -241,6 +242,29 @@ void InputMapTest::conflictingBindingIsRejected()
     QCOMPARE(m_map->binding(QStringLiteral("app.settings")), QStringLiteral("F2"));
     // Unknown actions are rejected rather than invented.
     QVERIFY(!m_map->setBinding(QStringLiteral("nope.nothing"), QStringLiteral("F7")));
+}
+
+void InputMapTest::conflictedStoredBindingIsDroppedFromTheStore()
+{
+    // A default can move onto a key the user had already bound elsewhere when
+    // the catalogue changes between releases. The default wins — and the losing
+    // override has to leave the store too, or it is re-read, re-rejected and
+    // re-warned on every launch for the life of the installation, while the
+    // remap UI shows an action that is not actually customised.
+    {
+        QSettings seeded(ini(), QSettings::IniFormat);
+        seeded.setValue(QStringLiteral("input/binding/app.settings"),
+                        QStringList{QStringLiteral("/")}); // library.search's default
+    }
+
+    {
+        InputMap loaded(ini());
+        QCOMPARE(loaded.binding(QStringLiteral("app.settings")), QStringLiteral("F2"));
+        QVERIFY(!loaded.isCustomised(QStringLiteral("app.settings")));
+    }
+
+    QSettings store(ini(), QSettings::IniFormat);
+    QVERIFY(!store.contains(QStringLiteral("input/binding/app.settings")));
 }
 
 void InputMapTest::contextsKeepBrowseAndPlayerApart()

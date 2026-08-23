@@ -88,7 +88,15 @@ private:
     QString m_currentName;
     QString m_error;
     bool m_loading = false;
-    int m_generation = 0;
+    // Two counters, not one. The playlist LIST and the OPEN playlist's members
+    // are independent fetches that supersede only themselves: create(),
+    // rename() and remove() all end in refresh(), and with a shared counter
+    // that refresh invalidated an in-flight reload() — whose reply then
+    // returned above setLoading(false) and left the page spinning on an empty
+    // list forever. The same collision ran the other way: open() invalidated an
+    // in-flight page of the playlist list, so a picker silently lost a page.
+    int m_listGeneration = 0;
+    int m_itemsGeneration = 0;
     int m_playlistPage = 0;
 };
 

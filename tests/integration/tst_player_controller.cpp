@@ -21,6 +21,16 @@ QString fixturePath(const QString &name)
 const auto kUserId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
 const auto kToken = QStringLiteral("not-a-real-token-fixture-only");
 
+// A real engine publishes the post-seek position asynchronously; the fake
+// applies it inside seekTo(), which hides exactly the staleness the seek tests
+// below are about.
+class LazySeekBackend : public FakePlayerBackend
+{
+public:
+    using FakePlayerBackend::FakePlayerBackend;
+    void seekTo(qint64 positionMs) override { seeks.append(positionMs); }
+};
+
 } // namespace
 
 class PlayerControllerTest : public QObject
@@ -41,6 +51,7 @@ private slots:
     void endReachedReportsFullRuntime();
     void stopReportsAndDeactivates();
     void seekAndPauseReportProgress();
+    void seekAdoptsItsTargetBeforeTheEngineReportsIt();
 
     void demotionStaysWithinSelectedSource();
     void preferredSourceHonouredAtStart();
@@ -227,6 +238,46 @@ void PlayerControllerTest::seekAndPauseReportProgress()
             .value(QLatin1String("IsPaused"))
             .toBool();
     }());
+}
+
+// The controller's idea of "where we are" has to move with the seek, not wait
+// for the engine to confirm it. Two things ride on that: the progress report
+// sent immediately after a seek, and seekRelative(), which computes its target
+// from that same value — a held skip key or a gamepad shoulder repeats every
+// ~38 ms, far faster than an engine answers, so a stale base makes every step
+// after the first a no-op.
+void PlayerControllerTest::seekAdoptsItsTargetBeforeTheEngineReportsIt()
+{
+    LazySeekBackend backend;
+    PlayerController controller(m_client, &backend, m_settings);
+    controller.playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(backend.loadedUrls.size(), 1);
+    backend.simulateState(PlayerBackend::State::Playing);
+    backend.simulatePosition(30'000);
+
+    controller.seekRelative(10'000);
+    controller.seekRelative(10'000);
+    QCOMPARE(backend.seeks.size(), 2);
+    QCOMPARE(backend.seeks.at(0), Q_INT64_C(40'000));
+    QCOMPARE(backend.seeks.at(1), Q_INT64_C(50'000)); // not 40 s twice
+
+    QTRY_COMPARE(
+        static_cast<qint64>(
+            QJsonDocument::fromJson(m_mock
+                                        ->lastRequestFor(QStringLiteral("POST"),
+                                                         QStringLiteral("/Sessions/Playing/Progress"))
+                                        .body)
+                .object()
+                .value(QLatin1String("PositionTicks"))
+                .toDouble()),
+        Q_INT64_C(50'000) * kTicksPerMs);
+
+    // Clamping is still the floor: seeking below zero lands at zero, and the
+    // next relative step counts from there.
+    controller.seekRelative(-90'000);
+    QCOMPARE(backend.seeks.at(2), Q_INT64_C(0));
+    controller.seekRelative(5'000);
+    QCOMPARE(backend.seeks.at(3), Q_INT64_C(5'000));
 }
 
 void PlayerControllerTest::watchdogNudgesReloadsThenDemotes()

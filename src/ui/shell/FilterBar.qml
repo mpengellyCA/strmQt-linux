@@ -169,6 +169,11 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 model: bar.sortModel
                 placeholder: qsTr("Sort")
+                // No currentIndex binding by design: syncFromController() pushes
+                // it from LibraryCtl, so a sort a details drill-down reset moves
+                // this control too. StrmSelect never writes it, so this push is
+                // the only thing that does — asking the controller below is how
+                // a pick gets back here.
 
                 KeyNavigation.right: directionButton
                 KeyNavigation.down: alphaStrip
@@ -287,6 +292,9 @@ FocusScope {
                 visible: bar.compact
                 model: bar.watchedModel
                 placeholder: qsTr("Show")
+                // Pushed by syncFromController(), like the sort select above,
+                // which is also what keeps it agreeing with the three chips it
+                // stands in for at wider widths.
 
                 KeyNavigation.left: directionButton
                 KeyNavigation.right: clearButton.visible ? clearButton : null

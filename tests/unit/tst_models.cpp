@@ -69,6 +69,26 @@ void ModelsTest::appendAndReset()
     QCOMPARE(model.rowCount(), 2);
     QCOMPARE(model.totalRecordCount(), 50);
 
+    // A page carries its own count, and the library it came from can have grown
+    // since the first request. The newer count wins, or canLoadMore() stops at
+    // a total the server has already moved past.
+    MediaItem third = makeEpisode();
+    third.id = QStringLiteral("402016");
+    QSignalSpy totalSpy(&model, &MediaItemModel::totalRecordCountChanged);
+    model.appendItems({third}, 51);
+    QCOMPARE(model.totalRecordCount(), 51);
+    QCOMPARE(totalSpy.count(), 1);
+
+    // With no count — and on /Persons and /Genres, which report 0 while
+    // returning rows — the total may still never sit below the rows now held:
+    // canLoadMore() would read as "nothing more" with a page already appended.
+    model.setItems({makeEpisode()}, 0);
+    model.appendItems({second});
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.totalRecordCount(), 2);
+    model.appendItems({third}, 0);
+    QCOMPARE(model.totalRecordCount(), 3);
+
     model.clear();
     QCOMPARE(model.rowCount(), 0);
     QCOMPARE(model.totalRecordCount(), 0);

@@ -66,7 +66,16 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     void setItems(QList<MediaItem> items, int totalRecordCount = -1);
-    void appendItems(const QList<MediaItem> &items);
+    // `totalRecordCount` is the count the appended page itself reported; -1
+    // means "the caller has none". Either way the total ends up at least the
+    // number of rows now held, because canLoadMore() is `rowCount <
+    // totalRecordCount` and a total left behind by a growing library reads as
+    // "there is nothing more" while a page is sitting in the model unpaged —
+    // and on /Persons and /Genres, which report 0 while returning rows, the
+    // grid would stop after the first page. A count that arrives with a page is
+    // newer than the one setItems() recorded, so it wins over the stored value;
+    // it never shrinks the total below what is actually here.
+    void appendItems(const QList<MediaItem> &items, int totalRecordCount = -1);
     void clear();
 
     int totalRecordCount() const { return m_totalRecordCount; }

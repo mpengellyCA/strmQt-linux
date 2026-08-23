@@ -152,13 +152,16 @@ FocusScope {
     // arrow key moves the selection the keyboard takes it back — even if the
     // cursor is still resting where it was.
     //
-    // `washHoverRail` is the outer-list index of the rail that owns the pointer,
-    // so a rail can only clear the hover if it is the rail that set it. Only one
-    // rail can be hovered at a time, but delegates are recycled underneath a
-    // stationary cursor and an unguarded clear would blank the wash.
+    // `washHoverOwner` is the rail delegate that owns the pointer, so a rail can
+    // only clear the hover if it is the rail that set it. Only one rail can be
+    // hovered at a time, but delegates come and go underneath a stationary
+    // cursor and an unguarded clear would blank the wash. The token is the
+    // delegate object and not its index, because `index` is already reset to -1
+    // by the time Component.onDestruction runs — an index-keyed guard could
+    // never match there, which left the wash stuck on a rail that had gone.
     property string washFocusUrl: ""
     property string washHoverUrl: ""
-    property int washHoverRail: -1
+    property Item washHoverOwner: null
     property bool washHoverWins: false
 
     readonly property string washUrl: page.washHoverWins ? page.washHoverUrl
@@ -193,14 +196,14 @@ FocusScope {
             page.washFocusUrl = url
     }
 
-    function publishHover(railIndex, hovering, url) {
+    function publishHover(owner, hovering, url) {
         if (hovering) {
             page.washHoverUrl = url
-            page.washHoverRail = railIndex
+            page.washHoverOwner = owner
             page.washHoverWins = true
-        } else if (page.washHoverRail === railIndex) {
+        } else if (page.washHoverOwner === owner) {
             page.washHoverWins = false
-            page.washHoverRail = -1
+            page.washHoverOwner = null
             page.washHoverUrl = ""
         }
     }
@@ -221,7 +224,7 @@ FocusScope {
         if (!page.hasContent) {
             page.washFocusUrl = ""
             page.washHoverUrl = ""
-            page.washHoverRail = -1
+            page.washHoverOwner = null
         }
     }
 
@@ -381,13 +384,24 @@ FocusScope {
             onFocusBackdropUrlChanged: page.claimFocus(cell.isCurrent, cell.focusBackdropUrl)
             Component.onCompleted: page.seedFocus(cell.isCurrent, cell.focusBackdropUrl)
 
-            onHoveringChanged: page.publishHover(cell.index, cell.hovering,
+            // The vertical cursor follows focus wherever it lands inside this
+            // rail — including on a card's ✓/♥/⋯, which are real buttons and
+            // take focus on tap without ever activating the card. Leaving the
+            // cursor behind is what made the next Down jump relative to the rail
+            // the keyboard last visited rather than the one the user is on.
+            // Focus only: hovering a rail still never moves the cursor onto it.
+            onActiveFocusChanged: {
+                if (cell.activeFocus)
+                    railList.currentIndex = cell.index
+            }
+
+            onHoveringChanged: page.publishHover(cell, cell.hovering,
                                                  cell.hoverBackdropUrl)
-            onHoverBackdropUrlChanged: page.publishHover(cell.index, cell.hovering,
+            onHoverBackdropUrlChanged: page.publishHover(cell, cell.hovering,
                                                          cell.hoverBackdropUrl)
-            // A recycled delegate must not leave the page thinking this row
+            // A destroyed delegate must not leave the page thinking this row
             // still owns the pointer.
-            Component.onDestruction: page.publishHover(cell.index, false, "")
+            Component.onDestruction: page.publishHover(cell, false, "")
 
             StrmRail {
                 id: mediaRail

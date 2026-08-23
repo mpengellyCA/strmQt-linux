@@ -33,10 +33,12 @@ FocusScope {
     // Which card the pointer is over, or -1. Published separately from
     // currentIndex because hover and focus are separate states: a page driving
     // a backdrop wash wants to follow the pointer without the pointer ever
-    // moving the keyboard's place. Delegates are recycled, so a card only
-    // clears this if it is still the one that set it.
+    // moving the keyboard's place. A card only clears this if it is still the
+    // one that set it, and "still the one" is the delegate *object* rather than
+    // its index — see cell.setHovered().
     readonly property int hoveredIndex: rail._hoveredIndex
     property int _hoveredIndex: -1
+    property Item _hoverOwner: null
     readonly property alias count: list.count
     readonly property bool hovered: railHover.hovered
 
@@ -191,7 +193,7 @@ FocusScope {
         // instead of silently swallowing it while scrolling nothing.
         flickableDirection: Flickable.HorizontalFlick
 
-        delegate: Item {
+        delegate: FocusScope {
             id: cell
 
             required property int index
@@ -199,6 +201,43 @@ FocusScope {
 
             width: rail.cardWidth
             height: list.height
+
+            // A FocusScope rather than a plain Item, so that focus landing
+            // *inside* a card is observable at all: a card's ✓/♥/⋯ are real
+            // buttons and take focus on tap, and a plain Item never reports
+            // activeFocus for a focused descendant. Without this the cursor
+            // stayed on whichever card the keyboard last visited, so the next
+            // arrow key moved from a place the user had already left — and the
+            // page's own vertical cursor, which follows this one, stayed on the
+            // wrong rail. Focus only: hover still never moves the cursor.
+            onActiveFocusChanged: {
+                if (cell.activeFocus)
+                    list.currentIndex = cell.index
+            }
+
+            // Hover ownership is the delegate itself, not its index: `index` is
+            // already reset to -1 by the time Component.onDestruction runs, so
+            // an index comparison there can never match, and a card removed
+            // from under a resting pointer left the published index pointing at
+            // a row that no longer exists — with nothing left alive to clear it.
+            function setHovered(on) {
+                if (on) {
+                    rail._hoveredIndex = cell.index
+                    rail._hoverOwner = cell
+                } else if (rail._hoverOwner === cell) {
+                    rail._hoverOwner = null
+                    rail._hoveredIndex = -1
+                }
+            }
+
+            Component.onDestruction: cell.setHovered(false)
+
+            // A row removed above this card renumbers it without the pointer
+            // moving, so the published index has to follow it.
+            onIndexChanged: {
+                if (rail._hoverOwner === cell && cell.index >= 0)
+                    rail._hoveredIndex = cell.index
+            }
 
             StrmCard {
                 id: cardItem
@@ -229,12 +268,7 @@ FocusScope {
                 // half of the pair and the two never touch.
                 highlighted: cell.ListView.isCurrentItem && list.activeFocus
 
-                onHoveredChanged: {
-                    if (hovered)
-                        rail._hoveredIndex = cell.index
-                    else if (rail._hoveredIndex === cell.index)
-                        rail._hoveredIndex = -1
-                }
+                onHoveredChanged: cell.setHovered(hovered)
 
                 onActivated: {
                     // A click makes this card the keyboard's place too, so a

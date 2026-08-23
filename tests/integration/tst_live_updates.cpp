@@ -71,6 +71,7 @@ private slots:
     void socketReconnectsAfterServerDrop();
     void libraryBurstCoalescesIntoOneInvalidation();
     void pollingFallbackEngagesAndSuspends();
+    void suspensionDisarmsAnArmedDebounce();
     void transportGoesOffWhenDisabled();
     void userDataPatchesHomeModelsWithoutRefetch();
     void homeHoldsUpdatesWhenAutoApplyIsOff();
@@ -311,6 +312,36 @@ void LiveUpdatesTest::pollingFallbackEngagesAndSuspends()
     invalidated.clear();
     QTest::qWait(150);
     QCOMPARE(invalidated.size(), 0);
+}
+
+// Suspension stopped the poll timer and nothing else. A debounce armed in the
+// second before playback started stayed armed, fired mid-playback and reloaded
+// the library grid — the one thing suspension exists to prevent.
+void LiveUpdatesTest::suspensionDisarmsAnArmedDebounce()
+{
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(120, 120, 5000);
+    QSignalSpy invalidated(&live, &LiveUpdateService::libraryInvalidated);
+    QSignalSpy userData(&live, &LiveUpdateService::userDataInvalidated);
+
+    // A scan message and a watched-state change arm both debounces; playback
+    // starts before either window elapses.
+    live.socket()->handleTextMessage(libraryChangedFrame({QStringLiteral("item-1")}));
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("item-1"), true, false));
+    live.setSuspended(true);
+
+    QTest::qWait(300);
+    QCOMPARE(invalidated.size(), 0);
+    QCOMPARE(userData.size(), 0);
+
+    // Deferred, not dropped: the socket does not resend, so resume has to
+    // deliver what was held or the grid stays wrong until something unrelated
+    // invalidates it.
+    live.setSuspended(false);
+    QTRY_COMPARE(invalidated.size(), 1);
+    QCOMPARE(invalidated.first().at(0).toStringList(), QStringList{QStringLiteral("item-1")});
+    QTRY_COMPARE(userData.size(), 1);
+    QCOMPARE(userData.first().at(0).toStringList(), QStringList{QStringLiteral("item-1")});
 }
 
 void LiveUpdatesTest::transportGoesOffWhenDisabled()

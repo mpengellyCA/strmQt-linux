@@ -108,7 +108,19 @@ FocusScope {
                 HoverHandler {
                     cursorShape: Qt.PointingHandCursor
                     // Preview: never forceActiveFocus(), never select().
-                    onHoveredChanged: bar.hoveredIndex = hovered ? tab.index : -1
+                    // Guarded clear, as in StrmRail: a tab only takes the
+                    // shared hover down if it is still the one holding it.
+                    // A delegate torn down when `tabs` changes, and a pointer
+                    // crossing fast enough that the next tab's enter arrives
+                    // before this one's leave, both end with the leaver
+                    // clearing a hover that already belongs to someone else —
+                    // and the label under the cursor flickers back to secondary.
+                    onHoveredChanged: {
+                        if (hovered)
+                            bar.hoveredIndex = tab.index
+                        else if (bar.hoveredIndex === tab.index)
+                            bar.hoveredIndex = -1
+                    }
                 }
 
                 // The indicator's geometry is published by the current tab

@@ -11,10 +11,25 @@ import StrmQt
 // Shaped like StrmButton rather than *being* one: a select needs its own
 // trailing chevron and its own pressed/open state, and inheriting a button's
 // content item to bolt those on would be more coupling than it is worth.
+//
+// `currentIndex` is *controlled*: the select renders the index its owner hands
+// it and never writes it. That is the single-owner rule in ARCHITECTURE.md, and
+// it is not a purity argument — a JS write here destroys the owner's binding,
+// after which the label and the thing it names are two variables that agree
+// only until one of them moves. Both cases that move it are ones this app
+// actually has: a remembered version resolving after the details payload lands,
+// and PlayerController refusing an unplayable source so the picker has to snap
+// back to what is really playing.
+//
+// The contract that buys: **every consumer must route `activated` to whatever
+// owns the index**, directly or through a controller round-trip. A handler that
+// does not leaves a select that never changes — visible on the first click,
+// which is the failure worth having.
 Item {
     id: select
 
     property var model: []
+    // Owned by the consumer. See the note above before assigning it from here.
     property int currentIndex: -1
     property string placeholder: qsTr("Select…")
 
@@ -143,9 +158,9 @@ Item {
                 out.push({ text: select.textAt(i), checked: i === select.currentIndex })
             return out
         }
-        onTriggered: index => {
-            select.currentIndex = index
-            select.activated(index)
-        }
+        // Asks, and does not decide: the owner writes the value back and the
+        // binding carries it home. Assigning select.currentIndex here would
+        // drop that binding on the user's very first pick.
+        onTriggered: index => select.activated(index)
     }
 }

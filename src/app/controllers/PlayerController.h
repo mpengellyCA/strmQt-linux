@@ -257,6 +257,9 @@ private:
     // cancelled the Up Next card for this item.
     bool advanceToNext();
     void onQueueCurrentChanged();
+    // The queue put a different item under the cursor. `displaced` marks the one
+    // case that is not a request to play: the row that was current was removed.
+    void onQueueItemChanged(bool displaced);
     void onQueueExhausted();
     void updateUpNext();
     void setUpNext(bool visible, int seconds);
@@ -274,6 +277,11 @@ private:
     void recoverMidStream();
     void reportProgress();
     void report(int kind); // 0 start, 1 progress, 2 stopped
+    // Ends the server-side session for whatever is playing *now*. Every path
+    // that replaces the item under the playhead calls this first, or the server
+    // is never told the old item stopped and the progress timer keeps running
+    // into the next one (see the comment on the definition).
+    void closeCurrentSession();
     void finishSession();
     void persistResume();
     void setActive(bool active);

@@ -158,13 +158,28 @@ void LiveUpdateService::setSuspended(bool suspended)
     emit suspendedChanged();
     updatePollTimer();
 
-    if (!m_suspended) {
-        // Deliver whatever the socket reported while we were quiet.
-        if (m_heldWhileSuspended) {
-            m_heldWhileSuspended = false;
-            flushLibrary();
-            flushUserData();
+    if (m_suspended) {
+        // A debounce armed in the moment before suspension is still armed, and
+        // it fires during it: the library grid reloads mid-playback, which is
+        // the one thing suspension exists to prevent. Deferred rather than
+        // dropped — the pending id sets are untouched, so resume delivers them
+        // exactly as it does for a message that arrives while already
+        // suspended (armLibraryFlush()). Dropping would be silent data loss:
+        // the socket does not resend, so the grid would stay wrong until the
+        // next unrelated invalidation.
+        if (m_libraryDebounce.isActive() || m_userDataDebounce.isActive()) {
+            m_libraryDebounce.stop();
+            m_userDataDebounce.stop();
+            m_heldWhileSuspended = true;
         }
+        return;
+    }
+
+    // Deliver whatever the socket reported while we were quiet.
+    if (m_heldWhileSuspended) {
+        m_heldWhileSuspended = false;
+        flushLibrary();
+        flushUserData();
     }
 }
 

@@ -26,6 +26,23 @@ Popup {
 
     signal triggered(int index)
 
+    // ── Focus escrow (ARCHITECTURE.md) ─────────────────────────────────────
+    // `focus: true` below hands the keyboard to the popup, and QQC2 does not
+    // hand it back: closing a menu left nothing focused, so the arrow keys were
+    // dead until the user clicked something. Every other overlay in the app
+    // already returns focus explicitly — ShortcutSheet and CommandPalette
+    // through Main.qml's restoreFocusToPage(), the playlist picker to the
+    // button that opened it — and a menu is the one that cannot delegate it,
+    // because it is raised from cards, rails, grids, the top bar and every
+    // StrmSelect. So it remembers the item itself rather than making six
+    // callers remember it.
+    //
+    // Typed as Item, not stashed in a JS map like Main.qml's focus memory, so
+    // QML nulls it for us if the page it belonged to is destroyed while the
+    // menu is open. What remains to guard is an item that outlived its page but
+    // is no longer reachable — hence the visible/enabled test on restore.
+    property Item _focusEscrow: null
+
     // ── Placement ──────────────────────────────────────────────────────────
     // x/y arrive in SCENE coordinates (what StrmCard.menuRequested emits), and
     // are flipped rather than clamped when the menu would run off the window:
@@ -72,6 +89,34 @@ Popup {
         menu.triggered(i)
     }
 
+    // Give the keyboard back to wherever it was when the menu went up, in the
+    // defensive shape Main.qml's restoreFocusToPage() uses: a remembered item
+    // is only worth focusing while it is still on screen and still enabled.
+    function _restoreFocus() {
+        // Re-opened while the restore was queued: the escrow now belongs to
+        // that open and its own close will return it. Tested before the escrow
+        // is read, or this call clears the new one; and yanking focus out of a
+        // menu the user is looking at is a worse bug than the one being fixed.
+        if (menu.visible)
+            return
+        const remembered = menu._focusEscrow
+        menu._focusEscrow = null
+        const host = menu.parent
+        if (!remembered || !host)
+            return
+        // Never override a REAL claim on the keyboard. A press outside closes
+        // the menu and also lands on whatever was underneath, and a row that
+        // pushes a page has already focused that page by the time the exit
+        // transition ends. What QQC2 leaves behind is nothing focused, or bare
+        // window content with no focus chain under it — those two, and only
+        // those two, are this menu's to repair.
+        const current = host.Window.activeFocusItem
+        if (current && current !== host.Window.contentItem)
+            return
+        if (remembered.visible && remembered.enabled)
+            remembered.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
     // ── Popup configuration ────────────────────────────────────────────────
     padding: Theme.spacingTight / 2
     modal: false
@@ -82,8 +127,22 @@ Popup {
     contentWidth: Math.max(Theme.scale(200),
                            metrics.implicitWidth + Theme.iconSize + Theme.spacingLoose)
 
+    // aboutToShow, not onOpened: the popup takes focus when its enter
+    // transition finishes, so by `opened` the item worth remembering is already
+    // the one we would be trying to restore it from.
+    onAboutToShow: {
+        const host = menu.parent
+        menu._focusEscrow = host ? host.Window.activeFocusItem : null
+    }
+
     onOpened: menu.currentIndex = menu._step(-1, 1)
-    onClosed: menu.currentIndex = -1
+    // Deferred, the way Main.qml defers its own focus restores: `closed` fires
+    // inside the popup's own teardown, which is still settling focus, and a
+    // forceActiveFocus() made in the middle of that is simply overwritten.
+    onClosed: {
+        menu.currentIndex = -1
+        Qt.callLater(menu._restoreFocus)
+    }
 
     enter: Transition {
         NumberAnimation {

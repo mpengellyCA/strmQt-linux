@@ -111,6 +111,33 @@ void PlayQueue::emitRowMetaChanged()
                      {QueueIndexRole, IsCurrentRole});
 }
 
+quint64 PlayQueue::currentKey() const
+{
+    if (m_currentIndex < 0 || m_currentIndex >= m_entries.size())
+        return 0;
+    return m_entries.at(m_currentIndex).key;
+}
+
+// currentChanged() is the property signal: hasNext/hasPrevious hang off it and
+// both can flip on a pure re-index, so it fires for every structural change.
+// The cursor signals are the narrow ones — they fire only when the entry under
+// the cursor is a *different* entry, and identity here is the per-entry key,
+// never the row, because a removal above the cursor moves the row without
+// changing the item (and the same item may legitimately be queued twice).
+void PlayQueue::notifyCursor(bool displaced)
+{
+    const quint64 key = currentKey();
+    const bool moved = key != m_currentKey;
+    m_currentKey = key;
+    emit currentChanged();
+    if (!moved || key == 0)
+        return; // an emptied queue is exhausted(), not a new item to play
+    if (displaced)
+        emit currentItemDisplaced();
+    else
+        emit currentItemChanged();
+}
+
 void PlayQueue::syncView()
 {
     QList<MediaItem> items;
@@ -168,7 +195,7 @@ void PlayQueue::setItems(QList<MediaItem> items, int startIndex)
     if (wasShuffled)
         emit shuffledChanged();
     emit queueChanged();
-    emit currentChanged();
+    notifyCursor();
 }
 
 int PlayQueue::originalPositionOf(quint64 key) const
@@ -203,8 +230,9 @@ void PlayQueue::insertEntry(int row, const MediaItem &item, bool originalAfterCu
 
     emitRowMetaChanged();
     emit queueChanged();
-    // hasNext/hasPrevious hang off currentChanged, and both can flip on an insert.
-    emit currentChanged();
+    // hasNext/hasPrevious hang off currentChanged, and both can flip on an
+    // insert. The cursor itself only moved if this was the first item.
+    notifyCursor();
 }
 
 void PlayQueue::playNext(const QVariant &item)
@@ -238,7 +266,7 @@ void PlayQueue::removeAt(int row)
     if (m_entries.isEmpty()) {
         m_currentIndex = -1;
         emit queueChanged();
-        emit currentChanged();
+        notifyCursor();
         emit exhausted();
         return;
     }
@@ -253,7 +281,7 @@ void PlayQueue::removeAt(int row)
 
     emitRowMetaChanged();
     emit queueChanged();
-    emit currentChanged();
+    notifyCursor(wasCurrent);
 }
 
 void PlayQueue::moveItem(int from, int to)
@@ -287,7 +315,7 @@ void PlayQueue::moveItem(int from, int to)
 
     emitRowMetaChanged();
     emit queueChanged();
-    emit currentChanged();
+    notifyCursor();
 }
 
 void PlayQueue::clear()
@@ -301,7 +329,7 @@ void PlayQueue::clear()
     syncView();
     endResetModel();
     emit queueChanged();
-    emit currentChanged();
+    notifyCursor();
 }
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
@@ -312,7 +340,7 @@ void PlayQueue::setCurrentIndex(int row)
         return;
     m_currentIndex = row;
     emitRowMetaChanged();
-    emit currentChanged();
+    notifyCursor();
 }
 
 int PlayQueue::nextIndex() const
@@ -418,7 +446,7 @@ void PlayQueue::setShuffled(bool shuffled)
         }
         syncView();
         endResetModel();
-        emit currentChanged();
+        notifyCursor();
     }
 
     emit shuffledChanged();

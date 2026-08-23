@@ -47,8 +47,18 @@ void MusicController::setLibrary(const QString &libraryId)
         return;
     m_libraryId = libraryId;
     emit scopeChanged();
+    // Re-targeting invalidates the pages already in flight. Clearing the models
+    // is not enough on its own: a page requested for the old library lands a
+    // moment later and setItems() drops it straight into the new scope, so the
+    // grid shows one library's albums under another library's name.
+    ++m_albumGeneration;
+    ++m_artistGeneration;
     m_albums->clear();
     m_artists->clear();
+    // Those dropped replies were the ones that would have cleared `loading`,
+    // and nothing has been requested for the new scope yet — so clear it here
+    // or the grid shimmers until some unrelated fetch happens to finish.
+    setLoading(false);
 }
 
 void MusicController::loadAlbums()
@@ -92,7 +102,7 @@ void MusicController::fetchAlbums(int startIndex)
             if (startIndex == 0)
                 m_albums->setItems(result.value.items, result.value.totalRecordCount);
             else
-                m_albums->appendItems(result.value.items);
+                m_albums->appendItems(result.value.items, result.value.totalRecordCount);
             emit albumsChanged();
         });
 }
@@ -131,7 +141,7 @@ void MusicController::fetchArtists(int startIndex)
         if (startIndex == 0)
             m_artists->setItems(result.value.items, result.value.totalRecordCount);
         else
-            m_artists->appendItems(result.value.items);
+            m_artists->appendItems(result.value.items, result.value.totalRecordCount);
         emit artistsChanged();
     });
 }

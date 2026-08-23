@@ -161,8 +161,12 @@ void RemoteControlService::handlePlay(const QJsonObject &data)
 
     qCInfo(logApp) << "remote: play" << command << items.size() << "item(s)";
     if (command == QLatin1String("PlayNext")) {
-        for (const QVariant &item : items)
-            m_actions->playNext(item);
+        // Each playNext() inserts directly after the current item, so walking
+        // the list forwards would leave the queue holding it backwards: sending
+        // [A, B] queued B then A. Walk it from the end and the sent order is
+        // what ends up in the queue.
+        for (auto it = items.crbegin(); it != items.crend(); ++it)
+            m_actions->playNext(*it);
     } else if (command == QLatin1String("PlayLast")) {
         for (const QVariant &item : items)
             m_actions->addToQueue(item);
@@ -171,9 +175,19 @@ void RemoteControlService::handlePlay(const QJsonObject &data)
         // reading of a Play command.
         const qint64 startTicks =
             data.value(QLatin1String("StartPositionTicks")).toVariant().toLongLong();
+        if (startTicks > 0) {
+            // "Play from the resume point" has to travel with the queue entry.
+            // Seeking after playAllFrom() cannot work: the PlaybackInfo fetch is
+            // async, so the seek runs against an engine with nothing loaded and
+            // is silently dropped — the item then restarts from zero. The queue
+            // entry's own resume point is what startQueueCurrent() reads, and it
+            // gates on isResumable(), which is position AND not-played.
+            QVariantMap first = items.constFirst().toMap();
+            first.insert(QStringLiteral("positionMs"), startTicks / kTicksPerMs);
+            first.insert(QStringLiteral("played"), false);
+            items[0] = first;
+        }
         m_actions->playAllFrom(items, 0);
-        if (startTicks > 0 && m_player)
-            m_player->seekTo(startTicks / kTicksPerMs);
     }
 }
 

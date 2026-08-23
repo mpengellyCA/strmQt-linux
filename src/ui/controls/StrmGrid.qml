@@ -50,9 +50,11 @@ FocusScope {
 
     readonly property alias currentIndex: view.currentIndex
 
-    // See StrmRail.hoveredIndex: hover is published separately from focus.
+    // See StrmRail.hoveredIndex: hover is published separately from focus, and
+    // its owner is the delegate object rather than an index.
     readonly property int hoveredIndex: grid._hoveredIndex
     property int _hoveredIndex: -1
+    property Item _hoverOwner: null
     readonly property alias count: view.count
 
     // "wide" is StrmCard's 16:9 variant; there is no fifth card shape here.
@@ -202,11 +204,28 @@ FocusScope {
             readonly property int itemUnplayed: cell.model.unplayedCount !== undefined
                                                 ? cell.model.unplayedCount : 0
 
+            // Ownership is the delegate itself, not its index: `index` is
+            // already reset to -1 by the time Component.onDestruction runs, so
+            // an index comparison there can never match, and a card removed
+            // from under a resting pointer left the published index pointing at
+            // a row that no longer exists — with nothing left alive to clear it.
             function setHovered(on) {
-                if (on)
+                if (on) {
                     grid._hoveredIndex = cell.index
-                else if (grid._hoveredIndex === cell.index)
+                    grid._hoverOwner = cell
+                } else if (grid._hoverOwner === cell) {
+                    grid._hoverOwner = null
                     grid._hoveredIndex = -1
+                }
+            }
+
+            Component.onDestruction: cell.setHovered(false)
+
+            // A row removed above this card renumbers it without the pointer
+            // moving, so the published index has to follow it.
+            onIndexChanged: {
+                if (grid._hoverOwner === cell && cell.index >= 0)
+                    grid._hoveredIndex = cell.index
             }
 
             // Click and Return both mean "open", and both take the keyboard

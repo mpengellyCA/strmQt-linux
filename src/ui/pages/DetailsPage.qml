@@ -1636,6 +1636,12 @@ FocusScope {
                                                              infoColumn.proseWidth
                                                              - Theme.scale(110)))
                                     model: page.versionModel
+                                    // page.versionIndex is the only copy of the
+                                    // choice: the label reads it, Play reads it,
+                                    // and restoreVersion() writes it when the
+                                    // remembered source resolves. The select
+                                    // asks and never writes, so the two cannot
+                                    // drift apart.
                                     currentIndex: page.versionIndex
                                     onActivated: index => page.selectVersion(index)
 

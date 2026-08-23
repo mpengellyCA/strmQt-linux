@@ -28,6 +28,12 @@ Item {
     // ── Contract ────────────────────────────────────────────────────────────
     // "" | "tracks" | "chapters" | "queue" | "settings"
     property string panelKey: ""
+    // Which page of the open panel is showing. The OSD owns it rather than the
+    // panel because the button row lights from the same value — the Subtitles
+    // button has to mean "the subtitle list is the one on screen", and a second
+    // copy of that state inside the panel would drift the moment either side
+    // moved alone. Only the tracks panel has more than one page.
+    property int panelTab: 0
     property bool statsVisible: false
     // Rendered state of the window, supplied by the page.
     property bool fullscreen: false
@@ -128,17 +134,21 @@ Item {
             hideTimer.restart();
     }
 
-    function openPanel(key: string, origin: Item): void {
+    function openPanel(key: string, origin: Item, tab: int): void {
         osd.panelOrigin = origin;
+        osd.panelTab = tab;
         osd.panelKey = key;
         osd.wake();
     }
 
-    function togglePanel(key: string, origin: Item): void {
-        if (osd.panelKey === key)
+    // The tab is part of the identity of what is open: Subtitles pressed while
+    // the Audio list is up switches pages rather than closing the panel, which
+    // is what the two buttons over one panel have to mean.
+    function togglePanel(key: string, origin: Item, tab: int): void {
+        if (osd.panelKey === key && osd.panelTab === tab)
             osd.closePanel();
         else
-            osd.openPanel(key, origin);
+            osd.openPanel(key, origin, tab);
     }
 
     // True when something was actually closed — the page uses that to decide
@@ -173,9 +183,25 @@ Item {
     }
 
     // Keyboard/gamepad entry point into the controls.
+    //
+    // wake() first, then focus in the same call, and that ordering is load
+    // bearing: a DISABLED item declines focus outright (measured on 6.11 —
+    // an invisible one accepts it, a disabled one does not), and `chrome` is
+    // disabled for as long as the OSD is down. `enabled` follows `shown`
+    // directly rather than the animated opacity, so the wake above has already
+    // re-enabled the chrome by the time the line below runs; there is nothing
+    // to wait for and the already-visible case costs nothing.
+    //
+    // The scrubber has a second `enabled` of its own — a stream with no
+    // duration cannot be seeked — and Down would otherwise be a dead key on a
+    // live stream, since the page accepts the event either way. Fall through to
+    // the transport, which is always live.
     function focusScrubber(): void {
         osd.wake();
-        scrubber.forceActiveFocus(Qt.OtherFocusReason);
+        if (scrubber.enabled)
+            scrubber.forceActiveFocus(Qt.OtherFocusReason);
+        else
+            osd.focusControls();
     }
 
     function focusControls(): void {
@@ -443,13 +469,14 @@ Item {
 
                     width: parent.width
                     panelKey: osd.panelKey
+                    panelTab: osd.panelTab
                     statsVisible: osd.statsVisible
                     fullscreen: osd.fullscreen
                     hasChapters: osd.hasChapters
                     focusAbove: scrubber
 
                     onWoken: osd.wake()
-                    onPanelRequested: (key, origin) => osd.togglePanel(key, origin)
+                    onPanelRequested: (key, origin, tab) => osd.togglePanel(key, origin, tab)
                     onStatsRequested: osd.toggleStats()
                     onFullscreenRequested: osd.fullscreenRequested()
                 }
@@ -616,6 +643,11 @@ Item {
         id: tracksPanel
 
         TrackPanel {
+            // The panel asks and the OSD grants, so the tab the button row is
+            // lit for and the tab the list is showing are the same value rather
+            // than two that agree until one of them moves.
+            tab: osd.panelTab
+            onTabRequested: index => osd.panelTab = index
             onCloseRequested: osd.closePanel()
         }
     }

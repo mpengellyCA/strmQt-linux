@@ -221,59 +221,99 @@ FocusScope {
             target.append(records[i])
     }
 
-    function rebuildSections() {
-        const model = SearchCtl.model
-        const total = model ? model.count : 0
-        var movies = []
-        var series = []
-        var episodes = []
-        var sets = []
-        var artists = []
-        var albums = []
-        var tracks = []
-        var other = []
+    function appendAll(target, records) {
+        for (var i = 0; i < records.length; ++i)
+            target.append(records[i])
+    }
 
-        for (var row = 0; row < total; ++row) {
+    // Sorts model rows [from, to) into one bucket per section, in the order the
+    // model holds them. Split out of rebuildSections() so that a full rebuild
+    // and an append of only the rows that just arrived group them by exactly the
+    // same rules — two copies of this chain would drift the first time a type is
+    // added to one of them.
+    function bucketRows(from, to) {
+        const model = SearchCtl.model
+        const buckets = { movies: [], series: [], episodes: [], sets: [],
+                          artists: [], albums: [], tracks: [], other: [] }
+        if (!model)
+            return buckets
+
+        for (var row = from; row < to; ++row) {
             const item = model.get(row)
             const record = page.displayRecord(item, row)
             const type = item.type !== undefined ? String(item.type) : ""
             if (type === "Movie")
-                movies.push(record)
+                buckets.movies.push(record)
             else if (type === "Series")
-                series.push(record)
+                buckets.series.push(record)
             else if (type === "Episode")
-                episodes.push(record)
+                buckets.episodes.push(record)
             else if (type === "BoxSet")
-                sets.push(record)
+                buckets.sets.push(record)
             else if (type === "MusicArtist")
-                artists.push(record)
+                buckets.artists.push(record)
             else if (type === "MusicAlbum")
-                albums.push(record)
+                buckets.albums.push(record)
             else if (type === "Audio")
-                tracks.push(record)
+                buckets.tracks.push(record)
             else
                 // A type the buckets above do not name still gets drawn. The
                 // grouped page must never show fewer results than the flat grid
                 // it replaced, whatever the server decides to return next.
-                other.push(record)
+                buckets.other.push(record)
         }
+        return buckets
+    }
 
-        page.fill(movieModel, movies)
-        page.fill(seriesModel, series)
-        page.fill(episodeModel, episodes)
-        page.fill(collectionModel, sets)
-        page.fill(artistModel, artists)
-        page.fill(albumModel, albums)
-        page.fill(trackModel, tracks)
-        page.fill(otherModel, other)
+    // The query the sections currently on screen were built from. Not for
+    // display: it is what tells a *replaced* result set apart from the same
+    // one arriving again, and only the first has any business moving the
+    // viewport the user is reading from.
+    property string builtQuery: ""
 
-        // A new result set is a new page: staying at the old scroll offset would
-        // land the user in the middle of results they have not seen the top of.
-        scrollAnim.stop()
-        scroll.contentY = 0
+    function rebuildSections() {
+        const model = SearchCtl.model
+        const buckets = page.bucketRows(0, model ? model.count : 0)
+
+        page.fill(movieModel, buckets.movies)
+        page.fill(seriesModel, buckets.series)
+        page.fill(episodeModel, buckets.episodes)
+        page.fill(collectionModel, buckets.sets)
+        page.fill(artistModel, buckets.artists)
+        page.fill(albumModel, buckets.albums)
+        page.fill(trackModel, buckets.tracks)
+        page.fill(otherModel, buckets.other)
+
+        // A new QUERY is a new page: staying at the old scroll offset would land
+        // the user in the middle of results they have not seen the top of. The
+        // same query's rows landing again is not that — the page they are
+        // reading is still the page they asked for — so the viewport stays put.
+        if (page.builtQuery !== SearchCtl.query) {
+            page.builtQuery = SearchCtl.query
+            scrollAnim.stop()
+            scroll.contentY = 0
+        }
         // Deferred: the sections' visibility settles after this frame's
         // bindings, so "is anything still focusable" is not answerable yet.
         Qt.callLater(page.restoreFocus)
+    }
+
+    // Rows [first, last] arrived on top of what is already drawn. Nothing is
+    // cleared, so the scroll offset, every rail's currentIndex and the track
+    // list's row all survive — which is the whole point: a display copy that is
+    // emptied and refilled hands its rail a currentIndex of 0, and StrmRail
+    // publishes currentIndex read-only, so no caller can put the keyboard back.
+    function appendSections(first, last) {
+        const buckets = page.bucketRows(first, last + 1)
+
+        page.appendAll(movieModel, buckets.movies)
+        page.appendAll(seriesModel, buckets.series)
+        page.appendAll(episodeModel, buckets.episodes)
+        page.appendAll(collectionModel, buckets.sets)
+        page.appendAll(artistModel, buckets.artists)
+        page.appendAll(albumModel, buckets.albums)
+        page.appendAll(trackModel, buckets.tracks)
+        page.appendAll(otherModel, buckets.other)
     }
 
     // A section that disappears takes the keyboard with it: Qt clears active
@@ -314,9 +354,37 @@ FocusScope {
     ListModel { id: trackModel }
     ListModel { id: otherModel }
 
+    // `count` changing says only that the number of results moved; it cannot
+    // tell "the user asked something else" from "more of what is already here
+    // arrived", and treating both as the first is what empties eight display
+    // copies — and with them the scroll offset and every rail's cursor —
+    // underneath someone who is still reading. The model's own reset/insert
+    // signals do draw that line:
+    //
+    //  * a RESET is the result set being replaced, which is the only thing
+    //    SearchController does for a new query (runSearch() calls setItems(),
+    //    and an emptied query calls clear(), which is setItems({}));
+    //  * INSERTED rows are an addition to the set already on screen — what
+    //    MediaItemModel::appendItems() emits — and are appended here too.
     Connections {
         target: SearchCtl.model
-        function onCountChanged() { page.rebuildSections() }
+
+        function onModelReset() { page.rebuildSections() }
+
+        // `parentIndex` rather than the signal's own `parent`, which would
+        // shadow this item's parent property inside the handler; the model is
+        // flat, so it is never anything but an invalid index anyway.
+        function onRowsInserted(parentIndex, first, last) {
+            // Only a true append keeps `srcRow` honest. Rows inserted anywhere
+            // else shift every row after them, and a display copy built before
+            // the shift would then point a card's verbs at a different item
+            // from the one it draws — a silently wrong play, not a visible bug.
+            if (first !== SearchCtl.model.count - (last - first + 1)) {
+                page.rebuildSections()
+                return
+            }
+            page.appendSections(first, last)
+        }
     }
 
     Connections {

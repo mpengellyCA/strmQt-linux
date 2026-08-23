@@ -24,28 +24,37 @@ void SeriesController::open(const QString &seriesId, const QString &seriesName)
     m_currentSeason = -1;
     emit currentSeasonChanged();
     recomputeNextUnwatched();
-    setLoading(true);
 
     // The series' own record. A one-row model is used rather than duplicating
     // the role-name mapping here, so `series` and every item elsewhere in the
     // app speak exactly the same vocabulary and cannot drift.
     m_series.clear();
     emit seriesMetadataChanged();
-    if (!seriesId.isEmpty()) {
-        m_client->itemDetails(seriesId).then(
-            this, [this, seriesGeneration](const Result<ItemDetails> &result) {
-                if (seriesGeneration != m_seriesGeneration || !result.ok())
-                    return;
-                MediaItemModel one;
-                one.setItems({result.value.item});
-                m_series = one.get(0);
-                // Details-only fields the browse roles do not carry.
-                m_series.insert(QStringLiteral("overview"), result.value.item.overview);
-                m_series.insert(QStringLiteral("genres"), result.value.genres);
-                m_series.insert(QStringLiteral("tagline"), result.value.tagline);
-                emit seriesMetadataChanged();
-            });
+
+    // An empty id is a page reset, not a series. The guard used to cover the
+    // details fetch only, so /Shows//Episodes and /Shows//Seasons went out
+    // anyway — two requests whose only possible answer is 404, one of them
+    // logged as a load failure. Nothing is requested here, so nothing is
+    // loading either.
+    if (seriesId.isEmpty()) {
+        setLoading(false);
+        return;
     }
+    setLoading(true);
+
+    m_client->itemDetails(seriesId).then(
+        this, [this, seriesGeneration](const Result<ItemDetails> &result) {
+            if (seriesGeneration != m_seriesGeneration || !result.ok())
+                return;
+            MediaItemModel one;
+            one.setItems({result.value.item});
+            m_series = one.get(0);
+            // Details-only fields the browse roles do not carry.
+            m_series.insert(QStringLiteral("overview"), result.value.item.overview);
+            m_series.insert(QStringLiteral("genres"), result.value.genres);
+            m_series.insert(QStringLiteral("tagline"), result.value.tagline);
+            emit seriesMetadataChanged();
+        });
 
     // Whole-series episode list, once per page entry. An empty seasonId asks
     // Emby for every episode of the series, so "next unwatched" is a real

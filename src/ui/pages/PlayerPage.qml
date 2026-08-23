@@ -131,6 +131,14 @@ FocusScope {
 
         property string actionId: ""
         property var fallback: []
+        // Opt-in, and off by default for the same reason Keys.onPressed below
+        // rejects auto-repeat: every action wired through here so far is a
+        // toggle or a jump, and a held key machine-guns it. That guard cannot
+        // help here — QShortcutMap matches before the key is ever delivered to
+        // the page — so the default has to live on the component. A seek
+        // shortcut added later genuinely wants a held key to keep firing; it
+        // says so by setting this, rather than inheriting it by accident.
+        property bool repeats: false
 
         signal activated
 
@@ -140,6 +148,7 @@ FocusScope {
                 return (bound !== undefined && bound.length > 0) ? bound : mapped.fallback;
             }
             enabled: PlayerCtl.active
+            autoRepeat: mapped.repeats
             onActivated: {
                 Input.noteInput("keyboard");
                 mapped.activated();

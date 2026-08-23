@@ -4,6 +4,8 @@
 
 #include "MockEmbyServer.h"
 #include "app/controllers/DetailsController.h"
+#include "app/controllers/MusicController.h"
+#include "app/controllers/PlaylistController.h"
 #include "app/controllers/SearchController.h"
 #include "app/controllers/SeriesController.h"
 #include "app/models/MediaItemModel.h"
@@ -35,6 +37,9 @@ private slots:
     void detailsExposesEveryEnrichment();
     void detailsClearsBetweenItems();
     void seriesFetchesItsOwnRecord();
+    void seriesIgnoresAnEmptyId();
+    void playlistFetchesDoNotStrandEachOther();
+    void musicRetargetDropsTheInFlightPage();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -265,6 +270,109 @@ void ContentControllersTest::seriesFetchesItsOwnRecord()
              QStringLiteral("Continuing"));
     QCOMPARE(series.series().value(QStringLiteral("overview")).toString(),
              QStringLiteral("Work-life balance."));
+}
+
+// An empty id reaches here whenever the page is reset rather than opened. The
+// guard used to cover the details fetch only, so /Shows//Episodes and
+// /Shows//Seasons went out anyway and came back 404 — and `loading`, set above
+// them, was left true because no 404 path clears it.
+void ContentControllersTest::seriesIgnoresAnEmptyId()
+{
+    SeriesController series(m_client);
+    series.open(QString(), QString());
+
+    QVERIFY(!series.loading());
+    QTest::qWait(150);
+    QCOMPARE(m_mock->requestCount(), 0);
+    QVERIFY(series.series().isEmpty());
+    QCOMPARE(series.seasons()->rowCount(), 0);
+}
+
+// The playlist LIST and the members of the OPEN playlist are independent
+// fetches. They shared one generation counter, so each silently cancelled the
+// other: create()/rename()/remove() end in refresh(), and that refresh dropped
+// an in-flight reload() reply ABOVE setLoading(false) — an empty list under a
+// spinner that never stopped.
+void ContentControllersTest::playlistFetchesDoNotStrandEachOther()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"pl1\",\"Name\":\"Road "
+                                       "Trip\",\"Type\":\"Playlist\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Playlists/pl1/Items"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"t1\",\"Name\":\"Bad\","
+                                       "\"Type\":\"Audio\",\"PlaylistItemId\":\"e1\"}],"
+                                       "\"TotalRecordCount\":1}"));
+
+    PlaylistController playlists(m_client);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Road Trip"));
+    QVERIFY(playlists.loading());
+
+    // Making a playlist from a picker refreshes the list while the open
+    // playlist's members are still on the wire.
+    playlists.refresh();
+
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.items()->rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(playlists.playlists()->rowCount(), 1);
+
+    // And the other way round: opening a playlist must not cancel a page of the
+    // list that is already on its way, or the picker silently loses it.
+    PlaylistController second(m_client);
+    second.refresh();
+    second.open(QStringLiteral("pl1"), QStringLiteral("Road Trip"));
+
+    QTRY_COMPARE_WITH_TIMEOUT(second.playlists()->rowCount(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(second.items()->rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!second.loading(), 5000);
+}
+
+// Re-targeting the music scope is a supersede like any other (ARCHITECTURE.md):
+// a page requested for one library must not land under another. Clearing the
+// models was not enough — the reply in flight put the old library's albums
+// straight back, under the new library's name.
+void ContentControllersTest::musicRetargetDropsTheInFlightPage()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"al1\",\"Name\":\"Kind Of "
+                                       "Blue\",\"Type\":\"MusicAlbum\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"ar1\",\"Name\":\"Miles "
+                                       "Davis\",\"Type\":\"MusicArtist\"}],"
+                                       "\"TotalRecordCount\":1}"));
+
+    MusicController music(m_client);
+    QSignalSpy albums(&music, &MusicController::albumsChanged);
+    QSignalSpy artists(&music, &MusicController::artistsChanged);
+
+    music.setLibrary(QStringLiteral("lib-a"));
+    music.loadAlbums();
+    music.loadArtists();
+    QVERIFY(music.loading());
+
+    music.setLibrary(QStringLiteral("lib-b"));
+    // Nothing has been asked for in the new scope, and the replies that would
+    // have cleared the flag are now going to be dropped, so the spinner has to
+    // come down here or it never does.
+    QVERIFY(!music.loading());
+
+    music.loadAlbums();
+    music.loadArtists();
+    QTRY_COMPARE_WITH_TIMEOUT(albums.count(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(artists.count(), 1, 5000);
+
+    // Library A's pages have long since been served; if either landed, its
+    // model signal fired a second time.
+    QTest::qWait(250);
+    QCOMPARE(albums.count(), 1);
+    QCOMPARE(artists.count(), 1);
+    QCOMPARE(music.albums()->rowCount(), 1);
+    QCOMPARE(music.artists()->rowCount(), 1);
+    QCOMPARE(QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath).query)
+                 .queryItemValue(QStringLiteral("ParentId")),
+             QStringLiteral("lib-b"));
 }
 
 QTEST_MAIN(ContentControllersTest)

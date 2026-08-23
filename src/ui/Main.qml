@@ -43,6 +43,14 @@ ApplicationWindow {
 
     readonly property bool playerOnTop: stack.currentItem !== null
                                         && stack.currentItem.objectName === "playerPage"
+
+    // The overlays are z-stacked Items, not modal Popups, so nothing stops a
+    // window shortcut from firing straight through one: with the shortcut sheet
+    // up, Ctrl+K used to open the command palette on top of it and "/" pushed
+    // Search *behind* it. Anything that opens a destination or a second overlay
+    // stands down while one is showing.
+    readonly property bool overlayOpen: shortcutSheet.opened || commandPalette.opened
+                                        || resumePrompt.visible
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 
     readonly property var currentEntry: root.navTrail.length > 0
@@ -435,6 +443,20 @@ ApplicationWindow {
         focus: true
         initialItem: Session.authenticated ? homeComponent : loginComponent
 
+        // focusMemory is keyed by depth, and only the depth being restored ever
+        // deleted its own entry. Abandon a branch — go back three pages, then
+        // walk a different way — and the entries above the new depth still hold
+        // references to items that were destroyed with their pages, so the next
+        // restore at that depth reads a dead object and throws (masked by the
+        // try/catch in restoreFocusToPage). Anything deeper than the stack is by
+        // definition gone, so this is where it gets dropped.
+        onDepthChanged: {
+            for (const key in root.focusMemory) {
+                if (Number(key) > stack.depth)
+                    delete root.focusMemory[key];
+            }
+        }
+
         // Page-construction self-test (STRMQT_SELFTEST=1). See main.cpp: a
         // plain offscreen run only ever builds StackView's initialItem, so a
         // QML type error in any page reached by a push survives a clean
@@ -670,14 +692,15 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "library.search"
         fallback: ["/"]
-        active: Session.authenticated && !PlayerCtl.active && root.currentKey !== "search"
+        active: Session.authenticated && !PlayerCtl.active && !root.overlayOpen
+                && root.currentKey !== "search"
         onActivated: root.openSearch()
     }
 
     MappedShortcut {
         actionId: "app.settings"
         fallback: ["F2"]
-        active: Session.authenticated && !PlayerCtl.active
+        active: Session.authenticated && !PlayerCtl.active && !root.overlayOpen
         onActivated: root.openSettings()
     }
 
@@ -694,6 +717,7 @@ ApplicationWindow {
         actionId: "app.shortcuts"
         fallback: ["?"]
         active: Session.authenticated && !root.playerOnTop
+                && !commandPalette.opened && !resumePrompt.visible
         onActivated: shortcutSheet.toggle()
     }
 
@@ -701,6 +725,7 @@ ApplicationWindow {
         actionId: "app.commandPalette"
         fallback: ["Ctrl+K"]
         active: Session.authenticated && !root.playerOnTop
+                && !shortcutSheet.opened && !resumePrompt.visible
         onActivated: commandPalette.toggle()
     }
 
@@ -740,14 +765,14 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "nav.nextTab"
         fallback: ["Ctrl+Tab"]
-        active: Session.authenticated && !root.playerOnTop
+        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
         onActivated: root.cycleDestination(1)
     }
 
     MappedShortcut {
         actionId: "nav.previousTab"
         fallback: ["Ctrl+Shift+Tab"]
-        active: Session.authenticated && !root.playerOnTop
+        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
         onActivated: root.cycleDestination(-1)
     }
 
@@ -757,7 +782,7 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "app.toggleMenu"
         fallback: ["M"]
-        active: Session.authenticated && !root.playerOnTop
+        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
         onActivated: {
             if (navRail.pinned) {
                 navRail.pinned = false;

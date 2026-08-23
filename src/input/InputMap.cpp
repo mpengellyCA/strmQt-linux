@@ -465,8 +465,14 @@ void InputMap::load()
                 break;
             }
         }
-        if (conflicted)
+        if (conflicted) {
+            // Drop the stale override from the store as well, exactly as the
+            // branch above does. Leaving it there means the same warning on
+            // every launch for the rest of the installation's life, and a
+            // "custom" binding the remap UI can never show.
+            m_store.remove(kOverrideGroup + def.id);
             continue;
+        }
         m_overrides.insert(def.id, sequences);
     }
 }

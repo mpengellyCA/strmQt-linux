@@ -56,6 +56,8 @@ private slots:
     void removingTheCurrentItemContinuesWithTheNext();
     void repeatOneReplaysTheSameItem();
     void aBarePlayItemIsAOneItemQueue();
+    void queueEditsAfterStopDoNotStartPlayback();
+    void changingItemClosesTheOutgoingSession();
 
 private:
     QVariantList threeItems() const;
@@ -433,6 +435,89 @@ void QueuePlaybackTest::aBarePlayItemIsAOneItemQueue()
     QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
     QCOMPARE(m_controller->title(), QStringLiteral("Next Up"));
     QCOMPARE(stoppedSpy.count(), 0);
+}
+
+// stop() leaves the queue standing — the panel still lists it and the mini
+// player still shows what was playing. Every edit made to it from there is an
+// edit, not a play verb: none of them may restart the session.
+void QueuePlaybackTest::queueEditsAfterStopDoNotStartPlayback()
+{
+    m_controller->playQueue(threeItems(), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    m_controller->stop();
+    QVERIFY(!m_controller->active());
+    QCOMPARE(m_controller->queue()->rowCount(), 3); // the queue survives the stop
+
+    // Enqueuing after the cursor.
+    m_controller->queue()->playNext(itemMap(QStringLiteral("301003"), QStringLiteral("Later")));
+    // Appending at the tail.
+    m_controller->queue()->addToQueue(itemMap(QStringLiteral("301002"), QStringLiteral("Last")));
+    // Removing a row above the cursor — here the cursor is row 0, so remove
+    // one below it and then the row that was playing itself.
+    m_controller->queue()->removeAt(3);
+    // The row that was playing: the next one is promoted, which while a session
+    // is running means "playback continues with it" and while one is not means
+    // nothing at all.
+    m_controller->queue()->removeAt(0);
+
+    QTest::qWait(50);
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QVERIFY(!m_controller->active());
+
+    // An explicit verb still works on the same queue.
+    m_controller->playNext();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(m_controller->active());
+}
+
+// Every path that swaps the item under the playhead has to close the server
+// session for the outgoing one first. The queue-driven paths (a jumpTo, the
+// current row being removed, a remote PlayNow) used not to, so the item stayed
+// open on the server and the 10 s progress timer kept running across the swap —
+// reporting the NEW item id against the OLD play session.
+void QueuePlaybackTest::changingItemClosesTheOutgoingSession()
+{
+    m_controller->playQueue(threeItems(), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(60'000);
+    m_backend->simulatePosition(12'000);
+    QCOMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")), 0);
+
+    m_controller->queue()->jumpTo(2);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")),
+                 1);
+    const QJsonObject stopped =
+        QJsonDocument::fromJson(m_mock
+                                    ->lastRequestFor(QStringLiteral("POST"),
+                                                     QStringLiteral("/Sessions/Playing/Stopped"))
+                                    .body)
+            .object();
+    // The outgoing item, at the position it was actually at — not the incoming
+    // one, and not its runtime.
+    QCOMPARE(stopped.value(QLatin1String("ItemId")).toString(), QStringLiteral("301001"));
+    QCOMPARE(static_cast<qint64>(stopped.value(QLatin1String("PositionTicks")).toDouble()),
+             Q_INT64_C(12000) * kTicksPerMs);
+
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_controller->title(), QStringLiteral("Episode Three"));
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    // Removing the row that is playing is the same swap by another route.
+    m_backend->simulatePosition(3'000);
+    m_controller->queue()->removeAt(m_controller->queue()->currentIndex());
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")),
+                 2);
+    QCOMPARE(QJsonDocument::fromJson(m_mock
+                                         ->lastRequestFor(QStringLiteral("POST"),
+                                                          QStringLiteral("/Sessions/Playing/Stopped"))
+                                         .body)
+                 .object()
+                 .value(QLatin1String("ItemId"))
+                 .toString(),
+             QStringLiteral("301003"));
 }
 
 QTEST_GUILESS_MAIN(QueuePlaybackTest)

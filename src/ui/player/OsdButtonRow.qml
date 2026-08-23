@@ -20,6 +20,11 @@ FocusScope {
 
     // ── Contract ────────────────────────────────────────────────────────────
     property string panelKey: ""
+    // Which page of the open panel is showing. Only the tracks panel has more
+    // than one, and it is why audio and subtitles are two buttons over one
+    // panel: without this both would light together and neither would say which
+    // list is actually on screen.
+    property int panelTab: 0
     property bool statsVisible: false
     property bool fullscreen: false
     property bool hasChapters: false
@@ -29,8 +34,9 @@ FocusScope {
     // Any use of the row is user input; the OSD's idle timer restarts on it.
     signal woken
     // key is one of "tracks" | "chapters" | "queue" | "settings"; origin is the
-    // button that asked, so focus can go back to it when the panel closes.
-    signal panelRequested(string key, Item origin)
+    // button that asked, so focus can go back to it when the panel closes; tab
+    // is the page of that panel the button means (0 for the single-page ones).
+    signal panelRequested(string key, Item origin, int tab)
     signal statsRequested
     signal fullscreenRequested
 
@@ -307,8 +313,10 @@ FocusScope {
             iconName: "audio-track"
             tooltip: qsTr("Audio track")
             shortcut: row.shortcutFor("player.cycleAudio", "A")
-            checked: row.panelKey === "tracks"
-            onClicked: row.panelRequested("tracks", audioButton)
+            // Lit only for its own half of the panel, never for the subtitle
+            // list sharing it.
+            checked: row.panelKey === "tracks" && row.panelTab === 0
+            onClicked: row.panelRequested("tracks", audioButton, 0)
 
             KeyNavigation.left: muteButton
             KeyNavigation.right: subtitleButton
@@ -322,8 +330,8 @@ FocusScope {
             iconName: "subtitles"
             tooltip: qsTr("Subtitles")
             shortcut: row.shortcutFor("player.cycleSubtitle", "C")
-            checked: row.panelKey === "tracks"
-            onClicked: row.panelRequested("tracks", subtitleButton)
+            checked: row.panelKey === "tracks" && row.panelTab === 1
+            onClicked: row.panelRequested("tracks", subtitleButton, 1)
 
             KeyNavigation.left: audioButton
             KeyNavigation.right: chaptersButton
@@ -338,7 +346,7 @@ FocusScope {
             tooltip: qsTr("Chapters")
             enabled: row.hasChapters
             checked: row.panelKey === "chapters"
-            onClicked: row.panelRequested("chapters", chaptersButton)
+            onClicked: row.panelRequested("chapters", chaptersButton, 0)
 
             KeyNavigation.left: subtitleButton
             KeyNavigation.right: queueButton
@@ -352,7 +360,7 @@ FocusScope {
             iconName: "queue"
             tooltip: qsTr("Play queue")
             checked: row.panelKey === "queue"
-            onClicked: row.panelRequested("queue", queueButton)
+            onClicked: row.panelRequested("queue", queueButton, 0)
 
             KeyNavigation.left: chaptersButton
             KeyNavigation.right: settingsButton
@@ -366,7 +374,7 @@ FocusScope {
             iconName: "settings"
             tooltip: qsTr("Playback settings")
             checked: row.panelKey === "settings"
-            onClicked: row.panelRequested("settings", settingsButton)
+            onClicked: row.panelRequested("settings", settingsButton, 0)
 
             KeyNavigation.left: queueButton
             KeyNavigation.right: statsButton

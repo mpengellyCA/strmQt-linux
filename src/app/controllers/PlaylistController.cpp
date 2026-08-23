@@ -36,7 +36,7 @@ void PlaylistController::loadMorePlaylists()
 
 void PlaylistController::fetchPlaylistPage(int startIndex)
 {
-    const int generation = ++m_generation;
+    const int generation = ++m_listGeneration;
     ItemsQuery query;
     query.includeItemTypes = {QStringLiteral("Playlist")};
     query.recursive = true;
@@ -45,7 +45,7 @@ void PlaylistController::fetchPlaylistPage(int startIndex)
     query.limit = kMemberLimit;
     m_client->items(query).then(
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
-            if (generation != m_generation)
+            if (generation != m_listGeneration)
                 return;
             if (!result.ok()) {
                 setError(result.error);
@@ -54,7 +54,7 @@ void PlaylistController::fetchPlaylistPage(int startIndex)
             if (startIndex == 0)
                 m_playlists->setItems(result.value.items, result.value.totalRecordCount);
             else
-                m_playlists->appendItems(result.value.items);
+                m_playlists->appendItems(result.value.items, result.value.totalRecordCount);
             emit playlistsChanged();
         });
 }
@@ -74,11 +74,17 @@ void PlaylistController::reload()
 {
     if (m_currentId.isEmpty())
         return;
-    const int generation = ++m_generation;
+    const int generation = ++m_itemsGeneration;
     setLoading(true);
     m_client->playlistItems(m_currentId, 0, kMemberLimit)
         .then(this, [this, generation](const Result<ItemsPage> &result) {
-            if (generation != m_generation)
+            // The stale check stays above setLoading(false), which is correct
+            // now that this counter is the members fetch's alone: the only way
+            // to be stale here is that a newer reload() set the flag and is
+            // still in flight, and clearing it would drop the spinner while
+            // that page is still coming. The flag is never stranded, because
+            // whichever reload() currently owns it always gets its own reply.
+            if (generation != m_itemsGeneration)
                 return;
             setLoading(false);
             if (!result.ok()) {

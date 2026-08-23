@@ -202,7 +202,7 @@ void MediaItemModel::setItems(QList<MediaItem> items, int totalRecordCount)
     emit totalRecordCountChanged();
 }
 
-void MediaItemModel::appendItems(const QList<MediaItem> &items)
+void MediaItemModel::appendItems(const QList<MediaItem> &items, int totalRecordCount)
 {
     if (items.isEmpty())
         return;
@@ -210,6 +210,15 @@ void MediaItemModel::appendItems(const QList<MediaItem> &items)
     beginInsertRows(QModelIndex(), first, first + static_cast<int>(items.size()) - 1);
     m_items.append(items);
     endInsertRows();
+
+    // Keep the total coherent with the rows: see the header for why a stale
+    // total is worse than an approximate one.
+    const int rows = static_cast<int>(m_items.size());
+    const int total = qMax(totalRecordCount >= 0 ? totalRecordCount : m_totalRecordCount, rows);
+    if (total != m_totalRecordCount) {
+        m_totalRecordCount = total;
+        emit totalRecordCountChanged();
+    }
     emit countChanged();
 }
 

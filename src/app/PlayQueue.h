@@ -106,6 +106,18 @@ public:
 
 signals:
     void currentChanged();
+    // A *different* entry is now under the cursor and is meant to be played: a
+    // jumpTo, an advance, a new queue, or the first item dropped into an empty
+    // one. A row merely shifting under the cursor — an insert, or a removal
+    // above it — is not this, which is what keeps a queue edit from restarting
+    // whatever is playing.
+    void currentItemChanged();
+    // The entry that was current was REMOVED and the row below slid into its
+    // place. Deliberately separate from currentItemChanged(): it is not a
+    // request to play. stop() leaves the queue intact, so an edit made while
+    // nothing is playing must not resurrect the session; playback continues
+    // into the promoted row only when it was already running.
+    void currentItemDisplaced();
     void queueChanged();
     void shuffledChanged();
     void repeatModeChanged();
@@ -124,6 +136,11 @@ private:
 
     void emitRowMetaChanged();
     void syncView();
+    // Identity of the entry under the cursor, 0 when there is none.
+    quint64 currentKey() const;
+    // Emits currentChanged() and, when the entry under the cursor is a
+    // different one, exactly one of the two cursor signals above.
+    void notifyCursor(bool displaced = false);
     void setCurrentIndex(int row);
     void insertEntry(int row, const MediaItem &item, bool originalAfterCurrent);
     int originalPositionOf(quint64 key) const;
@@ -132,6 +149,9 @@ private:
     QList<quint64> m_originalKeys; // the order items were given in
     quint64 m_nextKey = 1;
     int m_currentIndex = -1;
+    // Key of the entry the cursor was last reported on, so a re-index can be
+    // told apart from an actual change of item.
+    quint64 m_currentKey = 0;
     bool m_shuffled = false;
     RepeatMode m_repeatMode = RepeatOff;
     // Role parity with rails and grids, for free: the queue delegates data() to

@@ -711,15 +711,11 @@ FocusScope {
                                     KeyNavigation.right: speedPlus
                                     KeyNavigation.down: audioRow.focusItem
 
-                                    // StrmSelect writes its own currentIndex on
-                                    // activation, which drops the binding above.
-                                    // Re-establishing it is what keeps the
-                                    // control showing the player's speed rather
-                                    // than the last thing that was clicked.
-                                    onActivated: index => {
-                                        panel.applySpeed(Number(panel.speedOptions[index].value));
-                                        speedSelect.currentIndex = Qt.binding(() => panel.speedIndex);
-                                    }
+                                    // Asks the player, and lets the binding
+                                    // above answer: the control shows the
+                                    // speed mpv actually took, not the rung
+                                    // that was clicked at it.
+                                    onActivated: index => panel.applySpeed(Number(panel.speedOptions[index].value))
                                 }
 
                                 StrmIconButton {
@@ -823,14 +819,11 @@ FocusScope {
                             KeyNavigation.up: tabs
                             KeyNavigation.down: bitrateSelect
 
-                            // The re-binding matters most here: the controller
-                            // refuses to switch to an unplayable source, and a
-                            // picker left showing a version that was rejected
-                            // is worse than one that snaps back.
-                            onActivated: index => {
-                                PlayerCtl.setPreferredSource(index);
-                                versionSelect.currentIndex = Qt.binding(() => panel.sourceIndex);
-                            }
+                            // The controlled currentIndex matters most here: the
+                            // controller refuses to switch to an unplayable
+                            // source, and a picker left showing a version that
+                            // was rejected is worse than one that snaps back.
+                            onActivated: index => PlayerCtl.setPreferredSource(index)
                         }
 
                         Text {
@@ -876,9 +869,11 @@ FocusScope {
                             KeyNavigation.up: panel.hasVersions ? versionSelect : tabs
                             KeyNavigation.down: modeAuto
 
+                            // Settings clamps a cap it will not take, so the
+                            // preference — not the click — is what the binding
+                            // above brings back.
                             onActivated: index => {
                                 Prefs.maxBitrateKbps = Number(panel.bitrateOptions[index].value);
-                                bitrateSelect.currentIndex = Qt.binding(() => panel.bitrateIndex);
                             }
                         }
 
@@ -1075,9 +1070,10 @@ FocusScope {
                                 KeyNavigation.up: sizeRow.focusItem
                                 KeyNavigation.down: backgroundRow.focusItem
 
+                                // Settings refuses anything that is not #RRGGBB,
+                                // so the stored colour is the one that answers.
                                 onActivated: index => {
                                     Prefs.subtitleColor = String(panel.colorOptions[index].value);
-                                    colorSelect.currentIndex = Qt.binding(() => panel.colorIndex);
                                 }
                             }
                         }

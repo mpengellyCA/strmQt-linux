@@ -26,8 +26,13 @@ FocusScope {
 
     signal closeRequested
 
-    // 0 = audio, 1 = subtitles.
+    // 0 = audio, 1 = subtitles. Set by the host, never here: the OSD's Audio and
+    // Subtitles buttons are two doors into this one panel and they light from
+    // the same value, so the tab bar below ASKS rather than assigns. A local
+    // write would also sever the host's binding, and the two would then disagree
+    // the first time either side moved alone.
     property int tab: 0
+    signal tabRequested(int index)
 
     readonly property var backend: PlayerCtl.backend
 
@@ -115,6 +120,15 @@ FocusScope {
             PlayerCtl.setSubtitleTrack(trackId);
     }
 
+    // StrmTabBar moves its own currentIndex on a click, which severs the binding
+    // from `tab` below; re-asserting it here is what keeps the bar pointing at
+    // the tab the host actually granted — including one the OSD's own buttons
+    // changed while the panel was already open.
+    onTabChanged: {
+        trackTabs.currentIndex = panel.tab;
+        list.currentIndex = 0;
+    }
+
     // Esc closes the panel; the page only stops playback once nothing is open.
     Keys.onEscapePressed: event => {
         panel.closeRequested();
@@ -169,10 +183,7 @@ FocusScope {
 
             KeyNavigation.down: list
 
-            onTabSelected: index => {
-                panel.tab = index;
-                list.currentIndex = 0;
-            }
+            onTabSelected: index => panel.tabRequested(index)
         }
 
         ListView {

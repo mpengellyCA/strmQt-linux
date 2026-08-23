@@ -7,6 +7,10 @@
 
 class QTimer;
 
+// Opaque SDL handle, forward-declared so this header stays SDL-free: it is
+// included by Application.cpp, which knows nothing about SDL.
+struct SDL_Gamepad;
+
 namespace strmqt {
 
 class InputMap;
@@ -30,6 +34,13 @@ class InputMap;
 //     repeat accelerates the longer it is held.
 //   · the triggers and the shoulder buttons were either unread or fixed to
 //     seeking, so there was no way to move between libraries at all.
+//
+// A synthesized event says what it is. A held direction presses its key and
+// leaves it down, repeats are flagged as auto-repeat, and the release at the
+// end is the only plain one — the same shape a keyboard produces. Controls
+// already read that flag (StrmSlider nudges per step and commits one seek on a
+// non-repeat release), so a hold that lied about being a repeat committed a
+// seek per step: up to 26 server round-trips a second.
 class GamepadManager : public QObject
 {
     Q_OBJECT
@@ -54,6 +65,13 @@ private:
         QElapsedTimer heldFor;
         int emitted = 0;
         qint64 nextAtMs = 0;
+        // Resolved once, when the hold starts. A rebind mid-hold would
+        // otherwise release a different key than the one pressed, leaving the
+        // first one down for the rest of the session. Zero means the hold sends
+        // nothing (no single-key binding, or suppressed by a focused field).
+        int key = 0;
+        int modifiers = 0;
+        bool seeking = false; // clamps the repeat rate: a scrub is not a cursor
     };
 
     void poll();
@@ -64,10 +82,20 @@ private:
     // control: a diagonal is an imprecise request to move one way, not a
     // request to move two ways at once.
     void evaluateStick();
-    // Digital view of a direction: starts a repeat, or ends one.
+    // Digital view of a direction: starts a hold, or ends one.
     void setDirection(int slot, const QString &actionId, bool active);
-    void fire(const QString &actionId);
-    void sendKey(int qtKey, int modifiers, bool pressed);
+    // Ends a hold, sending the plain release that tells a control the gesture
+    // is over. Every path that forgets a hold goes through here.
+    void releaseDirection(int slot);
+    void releaseAll();
+    // A discrete press: press and release back to back, neither a repeat.
+    void tap(const QString &actionId);
+    // Current binding for an action, and whether it may be delivered at all.
+    // False leaves *key and *modifiers zeroed.
+    bool resolveKey(const QString &actionId, int *key, int *modifiers) const;
+    void sendKey(int qtKey, int modifiers, bool pressed, bool autoRepeat);
+    // Closes an open SDL handle, if this instance id has one.
+    void closePad(quint32 instanceId);
     // Action for a button in the current context, or an empty string.
     QString actionForButton(int sdlButton) const;
 
@@ -81,6 +109,10 @@ private:
     QHash<int, Repeat> m_held;
     // Latched digital state per analog axis, so a trigger reports one press.
     QHash<int, int> m_axisState;
+    // SDL instance id → open handle. SDL hands out a handle on connect and
+    // expects it back on disconnect; keeping the map is also what makes a
+    // removal event for a device we never opened a no-op rather than a guess.
+    QHash<quint32, SDL_Gamepad *> m_pads;
 
     // Raw left-stick position, and which axis currently owns it (-1 = neither).
     // Ownership is what stops a long horizontal sweep that wanders slightly up

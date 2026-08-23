@@ -65,6 +65,10 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     }
 
     connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::onQueueCurrentChanged);
+    connect(m_queue, &PlayQueue::currentItemChanged, this,
+            [this] { onQueueItemChanged(false); });
+    connect(m_queue, &PlayQueue::currentItemDisplaced, this,
+            [this] { onQueueItemChanged(true); });
     connect(m_queue, &PlayQueue::exhausted, this, &PlayerController::onQueueExhausted);
     connect(m_queue, &PlayQueue::queueChanged, this, [this] {
         emit queueStateChanged();
@@ -294,6 +298,10 @@ void PlayerController::playItem(const QString &itemId, const QString &title,
 void PlayerController::startItem(const QString &itemId, const QString &title,
                                  qint64 startPositionMs, int preferredSourceIndex, bool fromQueue)
 {
+    // Every entry point into a new item funnels through here, so this is the one
+    // place that can guarantee the outgoing one was closed off properly.
+    closeCurrentSession();
+
     if (!fromQueue) {
         // A bare play verb replaces the queue with just this item, so that a
         // later "play next" lands *after* what is on screen instead of ahead of
@@ -434,6 +442,9 @@ void PlayerController::setPreferredSource(int index)
 
 void PlayerController::playUrl(const QUrl &url, const QString &title)
 {
+    // A raw URL replaces the playing item like any other start does, and the
+    // server session it replaces still has to be closed.
+    closeCurrentSession();
     {
         // Nothing about a raw URL belongs in a server-item queue, and a stale
         // queue must not auto-advance out of it.
@@ -565,8 +576,7 @@ void PlayerController::escalateStall()
         } else {
             m_watchdog.stop();
             setError(QStringLiteral("Playback stalled and could not recover"));
-            if (m_reporting)
-                report(2);
+            closeCurrentSession();
             m_backend->stop();
             finishSession();
         }
@@ -687,6 +697,10 @@ void PlayerController::previousChapter()
 
 void PlayerController::onBackendError(const QString &message)
 {
+    // Same rule as onEndReached(): an engine that reports a failure *after* the
+    // session was torn down must not restart the ladder into a stopped player.
+    if (!m_active)
+        return;
     m_progressTimer.stop();
 
     // Broken tail (the Emby-web-player bug class): an error at effectively the
@@ -714,8 +728,7 @@ void PlayerController::onBackendError(const QString &message)
 
     setBusy(false);
     setError(QStringLiteral("Playback failed: %1").arg(message));
-    if (m_reporting && m_started)
-        report(2);
+    closeCurrentSession();
     finishSession();
 }
 
@@ -731,12 +744,10 @@ void PlayerController::onEndReached()
     // down (some do, on stop()) must not resurrect it into the next item.
     if (!m_active)
         return;
-    m_progressTimer.stop();
-    if (m_reporting) {
-        // Report the full runtime so the server marks the item played.
+    // Report the full runtime so the server marks the item played.
+    if (m_reporting)
         m_lastPositionMs = qMax(m_lastPositionMs, durationMs());
-        report(2);
-    }
+    closeCurrentSession();
     setUpNext(false, 0);
     if (advanceToNext())
         return;
@@ -865,13 +876,10 @@ void PlayerController::playNext()
 {
     if (!m_queue->hasNext())
         return;
-    if (m_active) {
-        m_progressTimer.stop();
-        // A skip is a stop at the real position, not at the runtime: the server
-        // must not mark a half-watched episode played because it was skipped.
-        if (m_reporting && m_started)
-            report(2);
-    }
+    // The stop report is startItem()'s closeCurrentSession(), which runs while
+    // this item, its ticket and its position are still current: a skip is a stop
+    // at the real position, not at the runtime, so the server must not mark a
+    // half-watched episode played because it was skipped.
     setUpNext(false, 0);
     {
         const QScopedValueRollback<bool> guard(m_queueDriving, true);
@@ -892,11 +900,6 @@ void PlayerController::playPrevious()
             seekTo(0);
         return;
     }
-    if (m_active) {
-        m_progressTimer.stop();
-        if (m_reporting && m_started)
-            report(2);
-    }
     setUpNext(false, 0);
     {
         const QScopedValueRollback<bool> guard(m_queueDriving, true);
@@ -912,19 +915,31 @@ void PlayerController::cancelUpNext()
     setUpNext(false, 0);
 }
 
-// The queue moved without us: a jumpTo() from the queue panel, or the current
-// row being removed. Either way, play what the cursor now points at.
+// The property side of every queue signal: hasNext / hasPrevious / nextItem and
+// the Up Next card. Starting playback is NOT done here — an insert or a removal
+// above the cursor reaches this too, and neither is a request to play.
 void PlayerController::onQueueCurrentChanged()
 {
     emit queueStateChanged();
     updateUpNext();
     if (m_queueDriving)
         return;
-    if (m_queue->currentIndex() < 0) {
-        if (m_active)
-            stop();
+    if (m_queue->currentIndex() < 0 && m_active)
+        stop();
+}
+
+// The queue moved without us: a jumpTo() from the queue panel, an item dropped
+// into an empty queue, or the row that was playing being removed.
+void PlayerController::onQueueItemChanged(bool displaced)
+{
+    if (m_queueDriving)
         return;
-    }
+    // A queue edit is not a play verb. stop() leaves the queue intact, so
+    // removing the row that was playing promotes another one — and starting it
+    // would resurrect a session the user had just ended. Playback follows the
+    // promotion only when there is playback to follow it with.
+    if (displaced && !m_active)
+        return;
     startQueueCurrent(false);
 }
 
@@ -970,16 +985,23 @@ void PlayerController::stop()
     if (!m_active)
         return;
     ++m_generation; // cancel any in-flight ticket fetch
-    m_progressTimer.stop();
-    if (m_reporting && m_started)
-        report(2);
+    closeCurrentSession();
     m_backend->stop();
     finishSession();
 }
 
 void PlayerController::seekTo(qint64 positionMs)
 {
-    m_backend->seekTo(qMax<qint64>(0, positionMs));
+    const qint64 target = qMax<qint64>(0, positionMs);
+    m_backend->seekTo(target);
+    // The engine publishes the new position asynchronously, so until it lands
+    // m_lastPositionMs is where the playhead *was*. Adopting the target now is
+    // what makes the report below carry the seek rather than the position it
+    // seeked away from — and it is also what stops a fast repeat of
+    // seekRelative() (a held key or a gamepad shoulder, 38 ms apart) from
+    // recomputing every step off the same stale base: two taps of skip-forward
+    // move 20 s, not 10.
+    m_lastPositionMs = target;
     if (m_reporting && m_started)
         reportProgress();
 }
@@ -1181,6 +1203,25 @@ void PlayerController::report(int kind)
         m_client->reportPlaybackStopped(progress);
         break;
     }
+}
+
+// Two things go wrong when an item is replaced without this. The server never
+// hears that the old one stopped, so its session stays open and the item keeps
+// its stale resume point; and the 10 s progress timer keeps running across the
+// swap, so the next tick reports the NEW item id against the OLD playSessionId
+// and mediaSourceId — a progress record for a pairing that never played.
+// It runs before startItem() touches any of that state, so the report it sends
+// still carries the outgoing item, its ticket and its real position.
+void PlayerController::closeCurrentSession()
+{
+    m_progressTimer.stop();
+    if (!m_active || !m_reporting || !m_started)
+        return;
+    report(2);
+    // Idempotent on purpose: a clean end reports the full runtime and *then*
+    // advances, so the startItem() behind the advance must not send a second
+    // stop for the item it just closed.
+    m_started = false;
 }
 
 void PlayerController::finishSession()

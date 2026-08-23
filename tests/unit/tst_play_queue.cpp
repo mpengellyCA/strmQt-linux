@@ -56,6 +56,7 @@ private slots:
     void insertingIntoAnEmptyQueueStartsIt();
     void moveItemKeepsTheCursorOnTheSameItem();
     void jumpToAndClear();
+    void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
 };
 
@@ -363,6 +364,70 @@ void PlayQueueTest::jumpToAndClear()
     QCOMPARE(queue.currentIndex(), -1);
     // clear() is an explicit act, not the queue running out.
     QCOMPARE(exhaustedSpy.count(), 0);
+}
+
+// currentChanged() answers "hasNext/hasPrevious may have flipped" and fires for
+// every structural change; the cursor signals answer "a different entry is under
+// the cursor". Conflating them is what let a queue edit made while nothing was
+// playing start playback, so the split is asserted signal by signal.
+void PlayQueueTest::cursorSignalsTellAMoveFromAReIndex()
+{
+    PlayQueue queue;
+    QSignalSpy changedSpy(&queue, &PlayQueue::currentChanged);
+    QSignalSpy movedSpy(&queue, &PlayQueue::currentItemChanged);
+    QSignalSpy displacedSpy(&queue, &PlayQueue::currentItemDisplaced);
+
+    // The first item of an empty queue is a move: it is how "play next" and
+    // "add to queue" mean "play".
+    queue.playNext(QStringLiteral("ep9"));
+    QCOMPARE(changedSpy.count(), 1);
+    QCOMPARE(movedSpy.count(), 1);
+
+    queue.setItems(episodes(4), 1);
+    QCOMPARE(movedSpy.count(), 2);
+
+    // Inserting on either side of the cursor re-indexes it without changing what
+    // it points at.
+    queue.playNext(QStringLiteral("ep-later"));
+    queue.addToQueue(QStringLiteral("ep-last"));
+    QCOMPARE(queue.current().id, QStringLiteral("ep2"));
+    QCOMPARE(movedSpy.count(), 2);
+    QCOMPARE(displacedSpy.count(), 0);
+    QVERIFY(changedSpy.count() > 2); // hasNext/hasPrevious still restated
+
+    // So does removing a row above it.
+    queue.removeAt(0);
+    QCOMPARE(queue.current().id, QStringLiteral("ep2"));
+    QCOMPARE(movedSpy.count(), 2);
+    QCOMPARE(displacedSpy.count(), 0);
+
+    // Removing the row the cursor is on promotes another: a different item, but
+    // not one the user asked to play.
+    queue.removeAt(queue.currentIndex());
+    QCOMPARE(queue.current().id, QStringLiteral("ep-later"));
+    QCOMPARE(displacedSpy.count(), 1);
+    QCOMPARE(movedSpy.count(), 2);
+
+    // Deliberate cursor moves are the other kind.
+    queue.jumpTo(2);
+    QCOMPARE(movedSpy.count(), 3);
+    queue.advance();
+    QCOMPARE(movedSpy.count(), 4);
+    queue.goBack();
+    QCOMPARE(movedSpy.count(), 5);
+    QCOMPARE(displacedSpy.count(), 1);
+
+    // Shuffling and re-ordering keep the same item playing, so neither is one.
+    queue.setShuffled(true);
+    queue.setShuffled(false);
+    queue.moveItem(0, queue.rowCount() - 1);
+    QCOMPARE(movedSpy.count(), 5);
+    QCOMPARE(displacedSpy.count(), 1);
+
+    // An emptied queue has no new item to play: that is exhausted(), not a move.
+    queue.clear();
+    QCOMPARE(movedSpy.count(), 5);
+    QCOMPARE(displacedSpy.count(), 1);
 }
 
 void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
