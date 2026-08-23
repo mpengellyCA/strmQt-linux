@@ -1,0 +1,651 @@
+// Bound: the inline panel Components and the scrubber's preview reach out to
+// this file's ids (osd, scrubber), which is only well-defined — and only
+// lint-clean — with bound component behaviour.
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import StrmQt
+
+// PlayerOsd — the player's whole control surface (ARCHITECTURE.md).
+//
+// What this replaces: a title, a stream-method string, a non-interactive
+// progress bar and two timestamps. What it is now: a draggable scrubber with a
+// buffered range, chapter ticks and a hover preview; a transport row; volume;
+// real track, chapter and queue panels; a settings sheet; and a stats overlay.
+//
+// Auto-hide is preserved exactly as the page had it: 3 s of idle hides the
+// chrome, it stays up while paused, and any input wakes it. The two additions
+// are that an open panel holds it up (a list that vanished mid-scroll would be
+// unusable) and that the page hides the cursor with it (ARCHITECTURE.md).
+//
+// Division of labour: this file owns OSD state — visibility, which panel is
+// open, where focus goes when one closes. Transport verbs go straight to
+// PlayerCtl, because they are the player's state and not the OSD's. The one
+// thing the OSD cannot own is the window, so fullscreen is a signal to the page.
+Item {
+    id: osd
+
+    // ── Contract ────────────────────────────────────────────────────────────
+    // "" | "tracks" | "chapters" | "queue" | "settings"
+    property string panelKey: ""
+    property bool statsVisible: false
+    // Rendered state of the window, supplied by the page.
+    property bool fullscreen: false
+
+    signal fullscreenRequested
+
+    // Auto-hide. `requested` is what the timer and toggleOsd() move; everything
+    // else reads `shown`.
+    property bool requested: true
+    readonly property bool shown: osd.requested
+    // Where focus goes when the open panel closes.
+    property Item panelOrigin: null
+
+    // ── Derived player state ────────────────────────────────────────────────
+    // Every one of these guards `undefined`: three agents are extending
+    // PlayerController in parallel with this file, and a binding that throws
+    // takes the whole OSD down with it. A missing property reads as "the
+    // feature is not available", which is exactly what a disabled control means.
+    readonly property var backend: PlayerCtl.backend
+
+    readonly property var chapters: {
+        const list = PlayerCtl.chapters;
+        return (list !== undefined && list !== null) ? list : [];
+    }
+    readonly property bool hasChapters: osd.chapters.length > 0
+
+    readonly property var chapterMarkers: {
+        const out = [];
+        for (let i = 0; i < osd.chapters.length; ++i) {
+            const ms = Number(osd.chapters[i].startMs);
+            if (!isNaN(ms) && ms > 0)
+                out.push(ms);
+        }
+        return out;
+    }
+
+    readonly property real bufferedPosition: {
+        const ahead = osd.backend.bufferedMs;
+        // bufferedMs is measured *ahead of the playhead*; StrmSlider wants an
+        // absolute value on the same axis as `value`.
+        return (ahead !== undefined ? Number(ahead) : 0) + PlayerCtl.positionMs;
+    }
+
+    // PlayerCtl.title is MediaItemModel's label, i.e. "Series — S5E14 — Name"
+    // for an episode and a plain name for anything else. Splitting it here is
+    // what gives the OSD an episode subline without the controller having to
+    // grow a second title property.
+    readonly property var titleParts: {
+        const raw = PlayerCtl.title;
+        const parts = raw.split(" — ");
+        if (parts.length >= 3)
+            return ({ "title": parts.slice(2).join(" — "), "subline": parts[0] + "  ·  " + parts[1] });
+        return ({ "title": raw, "subline": "" });
+    }
+
+    // Technical readouts, mono, as chips. Same information the old OSD put in
+    // one grey line at the top right.
+    readonly property var techChips: {
+        const out = [];
+        const method = PlayerCtl.streamMethod;
+        if (method !== undefined && method.length > 0)
+            out.push(method);
+
+        const source = PlayerCtl.currentSource;
+        const video = PlayerCtl.videoStream;
+        const bits = [];
+        if (source && source.resolutionLabel)
+            bits.push(String(source.resolutionLabel));
+        if (video && video.codec)
+            bits.push(String(video.codec).toUpperCase());
+        if (bits.length > 0)
+            out.push(bits.join(" "));
+        if (source && source.isHdr === true)
+            out.push("HDR");
+
+        const hwdec = osd.backend.decoderInfo;
+        if (hwdec !== undefined && hwdec.length > 0)
+            out.push("hwdec " + hwdec);
+        return out;
+    }
+
+    readonly property string endsAt: {
+        if (PlayerCtl.durationMs <= 0)
+            return "";
+        const remaining = Math.max(0, PlayerCtl.durationMs - PlayerCtl.positionMs);
+        return Qt.formatTime(new Date(Date.now() + remaining), Locale.ShortFormat);
+    }
+
+    // ── API used by the page ────────────────────────────────────────────────
+    function wake(): void {
+        osd.requested = true;
+        hideTimer.restart();
+    }
+
+    function toggleOsd(): void {
+        osd.requested = !osd.requested;
+        if (osd.requested)
+            hideTimer.restart();
+    }
+
+    function openPanel(key: string, origin: Item): void {
+        osd.panelOrigin = origin;
+        osd.panelKey = key;
+        osd.wake();
+    }
+
+    function togglePanel(key: string, origin: Item): void {
+        if (osd.panelKey === key)
+            osd.closePanel();
+        else
+            osd.openPanel(key, origin);
+    }
+
+    // True when something was actually closed — the page uses that to decide
+    // whether Esc closes a panel or stops playback.
+    function closePanel(): bool {
+        if (osd.panelKey.length === 0)
+            return false;
+        osd.panelKey = "";
+        const origin = osd.panelOrigin;
+        osd.panelOrigin = null;
+        if (origin !== null && origin.enabled && origin.visible)
+            origin.forceActiveFocus(Qt.OtherFocusReason);
+        osd.wake();
+        return true;
+    }
+
+    // Esc order: the stats overlay is dismissed after any panel, because it is
+    // the least modal thing on screen.
+    function closeTopmost(): bool {
+        if (osd.closePanel())
+            return true;
+        if (osd.statsVisible) {
+            osd.statsVisible = false;
+            return true;
+        }
+        return false;
+    }
+
+    function toggleStats(): void {
+        osd.statsVisible = !osd.statsVisible;
+        osd.wake();
+    }
+
+    // Keyboard/gamepad entry point into the controls.
+    function focusScrubber(): void {
+        osd.wake();
+        scrubber.forceActiveFocus(Qt.OtherFocusReason);
+    }
+
+    function focusControls(): void {
+        osd.wake();
+        buttons.focusPrimary();
+    }
+
+    function showToast(message: string): void {
+        toast.text = message;
+        toast.opacity = 1;
+        toastTimer.restart();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function formatTime(ms: real): string {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds / 60) % 60);
+        const seconds = totalSeconds % 60;
+        const pad = v => (v < 10 ? "0" : "") + v;
+        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
+                         : minutes + ":" + pad(seconds);
+    }
+
+    function chapterIndexAt(ms: real): int {
+        let found = -1;
+        for (let i = 0; i < osd.chapters.length; ++i) {
+            if (Number(osd.chapters[i].startMs) <= ms)
+                found = i;
+            else
+                break;
+        }
+        return found;
+    }
+
+    function chapterNameAt(ms: real): string {
+        const index = osd.chapterIndexAt(ms);
+        if (index < 0)
+            return "";
+        const name = osd.chapters[index].name;
+        return (name !== undefined && String(name).length > 0)
+                ? String(name) : qsTr("Chapter %1").arg(index + 1);
+    }
+
+    // Hiding never happens while paused (that is today's behaviour) nor while a
+    // panel is open.
+    Timer {
+        id: hideTimer
+        interval: 3000
+        running: true
+        onTriggered: {
+            if (!PlayerCtl.paused && osd.panelKey.length === 0)
+                osd.requested = false;
+        }
+    }
+
+    // ── Chrome ──────────────────────────────────────────────────────────────
+    // One fading container so nothing inside has to animate itself, and
+    // `enabled` follows opacity so a hidden OSD cannot be clicked or tabbed to.
+    Item {
+        id: chrome
+
+        anchors.fill: parent
+        opacity: osd.shown ? 1 : 0
+        enabled: osd.shown
+        visible: chrome.opacity > 0.01
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.animNormalMs
+                easing.type: Theme.easeStandard
+            }
+        }
+
+        // ── Top: title, subline, technical chips ────────────────────────────
+        Rectangle {
+            id: topBar
+
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: topBlock.implicitHeight + Theme.pageMarginValue
+
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.scrimColor }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+
+            Column {
+                id: topBlock
+
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: Theme.spacingValue
+                anchors.leftMargin: Theme.pageMarginValue
+                anchors.rightMargin: Theme.pageMarginValue
+                spacing: Theme.scale(4)
+
+                Text {
+                    width: parent.width
+                    text: osd.titleParts.title
+                    color: Theme.textPrimaryColor
+                    font.family: Theme.fontDisplay
+                    font.pixelSize: Theme.fontHeading
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    visible: osd.titleParts.subline.length > 0
+                    text: osd.titleParts.subline
+                    color: Theme.textSecondaryColor
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontBodySize
+                    elide: Text.ElideRight
+                }
+
+                // Mono chips: booth-gear data, tabular and non-reflowing.
+                Row {
+                    spacing: Theme.spacingTight
+                    topPadding: Theme.scale(4)
+
+                    Repeater {
+                        model: osd.techChips
+
+                        delegate: Rectangle {
+                            required property string modelData
+
+                            width: chipLabel.implicitWidth + Theme.spacingValue
+                            height: Theme.scale(24)
+                            radius: Theme.radiusChip
+                            color: Theme.surfaceColor
+                            border.width: 1
+                            border.color: Theme.hairline
+
+                            Text {
+                                id: chipLabel
+
+                                anchors.centerIn: parent
+                                text: parent.modelData
+                                color: Theme.textSecondaryColor
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Bottom: scrubber, times, transport ──────────────────────────────
+        Rectangle {
+            id: bottomBar
+
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: bottomBlock.implicitHeight + Theme.pageMarginValue
+
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 1.0; color: Theme.scrimColor }
+            }
+
+            Column {
+                id: bottomBlock
+
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottomMargin: Theme.spacingValue
+                anchors.leftMargin: Theme.pageMarginValue
+                anchors.rightMargin: Theme.pageMarginValue
+                spacing: Theme.spacingTight
+
+                // The scrubber. Seeks commit on release, never per motion event.
+                StrmSlider {
+                    id: scrubber
+
+                    width: parent.width
+                    from: 0
+                    to: Math.max(1, PlayerCtl.durationMs)
+                    value: PlayerCtl.positionMs
+                    buffered: osd.bufferedPosition
+                    markers: osd.chapterMarkers
+                    // Matches the ±10 s seek convention rather than the control's
+                    // default twentieth-of-the-media step.
+                    stepSize: 10000
+                    enabled: PlayerCtl.durationMs > 0
+                    previewComponent: scrubPreview
+
+                    KeyNavigation.down: buttons
+                    KeyNavigation.up: null
+
+                    // Live readout while dragging; the seek itself waits for the
+                    // release, which is what keeps one scrub from becoming
+                    // eight demuxer seeks.
+                    onMoved: value => {
+                        osd.wake();
+                        positionLabel.scrubMs = value;
+                    }
+                    onCommitted: value => {
+                        PlayerCtl.seekTo(Math.round(value));
+                        positionLabel.scrubMs = -1;
+                        osd.wake();
+                    }
+                }
+
+                // Times. Mono everywhere: tabular figures must not reflow as
+                // they tick (ARCHITECTURE.md).
+                Item {
+                    width: parent.width
+                    height: positionLabel.implicitHeight
+
+                    Text {
+                        id: positionLabel
+
+                        // >= 0 while a drag is in progress: the readout follows
+                        // the pointer even though the player has not moved yet.
+                        property real scrubMs: -1
+
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        // A word rather than a glyph: the pause pictographs
+                        // are not in IBM Plex Mono, and a tofu box in the
+                        // timecode is worse than four extra characters.
+                        text: (PlayerCtl.paused ? qsTr("Paused") + "  ·  " : "")
+                              + osd.formatTime(positionLabel.scrubMs >= 0 ? positionLabel.scrubMs
+                                                                          : PlayerCtl.positionMs)
+                              + "  /  " + osd.formatTime(PlayerCtl.durationMs)
+                        color: Theme.textPrimaryColor
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSmall
+                    }
+
+                    Text {
+                        id: chapterHere
+
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: chapterHere.text.length > 0
+                        text: osd.chapterNameAt(PlayerCtl.positionMs)
+                        color: Theme.textSecondaryColor
+                        font.family: Theme.fontBody
+                        font.pixelSize: Theme.fontSmall
+                        elide: Text.ElideRight
+                        width: Math.min(implicitWidth, parent.width * 0.4)
+                    }
+
+                    Text {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: osd.endsAt.length > 0
+                        text: qsTr("Ends at %1").arg(osd.endsAt)
+                        color: Theme.textSecondaryColor
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSmall
+                    }
+                }
+
+                OsdButtonRow {
+                    id: buttons
+
+                    width: parent.width
+                    panelKey: osd.panelKey
+                    statsVisible: osd.statsVisible
+                    fullscreen: osd.fullscreen
+                    hasChapters: osd.hasChapters
+                    focusAbove: scrubber
+
+                    onWoken: osd.wake()
+                    onPanelRequested: (key, origin) => osd.togglePanel(key, origin)
+                    onStatsRequested: osd.toggleStats()
+                    onFullscreenRequested: osd.fullscreenRequested()
+                }
+            }
+        }
+
+        // ── Panels ──────────────────────────────────────────────────────────
+        // Loaded on demand: four list views that are never opened are four
+        // list views not built. The Loader gives its item the size below.
+        Loader {
+            id: panelLoader
+
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.pageMarginValue
+            anchors.bottom: bottomBar.top
+            anchors.bottomMargin: Theme.spacingTight
+            // The settings sheet carries labelled rows and sliders rather than a
+            // list of names, so it gets more room than the three list panels.
+            width: osd.panelKey === "settings" ? Theme.scale(444) : Theme.scale(400)
+            height: Math.min(osd.panelKey === "settings" ? Theme.scale(560) : Theme.scale(480),
+                             Math.max(Theme.scale(200), osd.height - bottomBar.height
+                                                        - topBar.height - Theme.spacingLoose))
+            active: osd.panelKey.length > 0
+            sourceComponent: osd.panelKey === "tracks" ? tracksPanel
+                           : osd.panelKey === "chapters" ? chaptersPanel
+                           : osd.panelKey === "queue" ? queuePanel
+                           : osd.panelKey === "settings" ? settingsPanel
+                           : null
+
+            // A panel that opens without focus is a panel a gamepad cannot use.
+            // Loader.item is typed QObject; the cast is what lets this call the
+            // Item API instead of reaching through an untyped handle.
+            onLoaded: {
+                const loaded = panelLoader.item as Item;
+                if (loaded !== null)
+                    loaded.forceActiveFocus(Qt.OtherFocusReason);
+            }
+
+            opacity: panelLoader.active ? 1 : 0
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: Theme.animFastMs
+                    easing.type: Theme.easeStandard
+                }
+            }
+        }
+    }
+
+    // ── Surfaces that outlive the chrome ────────────────────────────────────
+    // Up Next and the stats overlay deliberately sit outside `chrome`: both are
+    // meant to be readable while the OSD is hidden and the film is playing.
+    UpNextCard {
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: Theme.pageMarginValue
+        anchors.bottomMargin: osd.shown ? bottomBar.height + Theme.spacingTight
+                                        : Theme.pageMarginValue
+
+        Behavior on anchors.bottomMargin {
+            NumberAnimation {
+                duration: Theme.animNormalMs
+                easing.type: Theme.easeStandard
+            }
+        }
+
+        onDismissed: osd.wake()
+    }
+
+    StatsOverlay {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.topMargin: osd.shown ? topBar.height : Theme.pageMarginValue
+        width: Theme.scale(440)
+
+        shown: osd.statsVisible
+
+        onCloseRequested: osd.statsVisible = false
+    }
+
+    // Track-switch toast, preserved from the page it moved out of: A and C
+    // still report what they landed on (ARCHITECTURE.md).
+    StrmToast {
+        id: toast
+
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: Theme.scale(130)
+        opacity: 0
+        visible: toast.opacity > 0.01
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.animNormalMs
+                easing.type: Theme.easeStandard
+            }
+        }
+
+        onDismissRequested: toast.opacity = 0
+    }
+
+    Timer {
+        id: toastTimer
+        interval: 2200
+        onTriggered: toast.opacity = 0
+    }
+
+    Connections {
+        target: PlayerCtl
+
+        function onTrackChanged(description) {
+            osd.showToast(description);
+        }
+    }
+
+    // ── Components ──────────────────────────────────────────────────────────
+    Component {
+        id: scrubPreview
+
+        Rectangle {
+            width: previewColumn.implicitWidth + Theme.spacingValue
+            height: previewColumn.implicitHeight + Theme.spacingTight * 2
+            radius: Theme.radiusChip
+            color: Theme.surfaceOverlay
+            border.width: 1
+            border.color: Theme.hairline
+
+            // Chapter-thumbnail hook: when the server's chapter image endpoint
+            // is wired up (it is not yet), an Image sourced from
+            // image://emby/<itemId>/Chapter/<index> goes here, above the two
+            // labels, and this Rectangle grows to fit it.
+            Column {
+                id: previewColumn
+
+                anchors.centerIn: parent
+                spacing: Theme.scale(2)
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: osd.formatTime(scrubber.hoverValue)
+                    color: Theme.textPrimaryColor
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontSmall
+                }
+
+                Text {
+                    id: previewChapter
+
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: previewChapter.text.length > 0
+                    text: osd.chapterNameAt(scrubber.hoverValue)
+                    color: Theme.textSecondaryColor
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontCaption
+                    elide: Text.ElideRight
+                    width: Math.min(previewChapter.implicitWidth, Theme.scale(240))
+                }
+            }
+        }
+    }
+
+    Component {
+        id: tracksPanel
+
+        TrackPanel {
+            onCloseRequested: osd.closePanel()
+        }
+    }
+
+    Component {
+        id: chaptersPanel
+
+        ChapterPanel {
+            chapters: osd.chapters
+            positionMs: PlayerCtl.positionMs
+            onCloseRequested: osd.closePanel()
+        }
+    }
+
+    Component {
+        id: queuePanel
+
+        QueuePanel {
+            onCloseRequested: osd.closePanel()
+        }
+    }
+
+    // D9/D10/D11/D13 grew the settings sheet past what belonged inline here:
+    // a version picker, a bitrate ladder, a playback mode, speed, two sync
+    // controls and four subtitle-appearance controls. It is its own file now.
+    Component {
+        id: settingsPanel
+
+        PlaybackSettingsPanel {
+            onCloseRequested: osd.closePanel()
+        }
+    }
+}

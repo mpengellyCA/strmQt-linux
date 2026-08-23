@@ -1,0 +1,262 @@
+# Flatpak manifest for StrmQt (ca.mikesdev.StrmQt).
+#
+# Build:
+#   flatpak-builder --user --force-clean --ccache \
+#       --repo=build/flatpak-repo build/flatpak-build \
+#       packaging/flatpak/ca.mikesdev.StrmQt.yml
+#
+# Runtime: org.kde.Platform//6.11 (freedesktop-sdk 25.08 base). That runtime already
+# ships Qt 6.11.1, FFmpeg 7.1 (H.264/HEVC/AAC/AC-3/DTS decoders, vaapi + vulkan
+# hwaccels), libva 2.22, libdrm, EGL/GL/GLES, Vulkan 1.4, shaderc, glslang, dav1d,
+# SDL3 3.2.30, PipeWire, PulseAudio and fontconfig/freetype/harfbuzz — so none of
+# those are rebuilt here.
+#
+# Deliberately NOT built: ffmpeg. The runtime's 7.1 covers every decoder and hwaccel
+# StrmQt plays back with; KDE's own org.kde.haruna does the same on this runtime.
+# Deliberately NOT referenced: org.freedesktop.Platform.ffmpeg-full — it does not
+# exist on the 25.08 base. It was superseded by
+# org.freedesktop.Platform.codecs-extra//25.08-extra, which flatpak installs
+# alongside the runtime automatically and which only adds *encoders*.
+#
+# What the runtime does NOT ship, and this manifest therefore builds:
+#   libXpresent, libass, uchardet, libplacebo, libmpv.
+# (libdisplay-info is also absent — see the -Ddrm note on the mpv module.)
+
+id: ca.mikesdev.StrmQt
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: strmqt
+
+finish-args:
+  # ── Display ────────────────────────────────────────────────────────────────
+  # Native Wayland is the primary target (KWin); fallback-x11 keeps the app usable
+  # on X11 sessions without granting X11 access when Wayland is available.
+  - --socket=wayland
+  - --socket=fallback-x11
+  # Required by both Wayland and X11 for shared-memory buffer transport; without it
+  # the compositor connection degrades to slow-path copies (or fails outright on X11).
+  - --share=ipc
+  # /dev/dri — mandatory for GPU rendering (Qt RHI/OpenGL) *and* for VAAPI hardware
+  # decode. Without it mpv silently falls back to software decoding.
+  - --device=dri
+  # ── Input ──────────────────────────────────────────────────────────────────
+  # SDL3 gamepad support reads evdev nodes directly. This is the one broad
+  # permission in this manifest: --device=input exposes ALL /dev/input/event*
+  # nodes, which includes the keyboard, and Flatpak offers no finer granularity
+  # (there is no per-device or gamepad-only variant). Accepted knowingly as the
+  # cost of controller navigation on a couch-facing client.
+  - --device=input
+  # ── Audio ──────────────────────────────────────────────────────────────────
+  # PulseAudio socket covers both real PulseAudio and pipewire-pulse.
+  - --socket=pulseaudio
+  # Native PipeWire path for mpv's ao=pipewire. Read-only: the app only needs to
+  # connect to the daemon socket, never to write into the runtime dir.
+  - --filesystem=xdg-run/pipewire-0:ro
+  # ── Network ────────────────────────────────────────────────────────────────
+  # The entire point of the app: HTTP(S) to the Emby server, plus streaming.
+  - --share=network
+  # ── D-Bus ──────────────────────────────────────────────────────────────────
+  # KWallet is the SecretsStore backend (AGENTS.md: no plaintext credentials).
+  # Load-bearing: without this name the wallet is unreachable inside the sandbox
+  # and SecretsStore falls back to storing the Emby token in plaintext config.
+  - --talk-name=org.kde.kwalletd6
+  # MPRIS2: media-key handling, KDE Connect remote control, Plasma media applet.
+  - --own-name=org.mpris.MediaPlayer2.strmqt
+  # The wildcard is required for the `org.mpris.MediaPlayer2.strmqt.instance<pid>`
+  # fallback name a second instance registers when the plain name is already taken.
+  - --own-name=org.mpris.MediaPlayer2.strmqt.*
+  # Screensaver/idle inhibition during playback (PowerInhibit). Two names because
+  # implementations differ across Plasma versions and non-KDE desktops.
+  - --talk-name=org.freedesktop.ScreenSaver
+  - --talk-name=org.freedesktop.PowerManagement
+  # ── Environment ────────────────────────────────────────────────────────────
+  # Force the OpenGL RHI backend. The mpv render API integration (MpvVideoItem)
+  # is written against mpv_render_context with MPV_RENDER_API_TYPE_OPENGL and
+  # shares Qt's GL context; letting Qt pick Vulkan at runtime would break it.
+  - --env=QSG_RHI_BACKEND=opengl
+
+# Development cruft that must not reach the final tree. Static archives and libtool
+# descriptors in particular would otherwise bloat the image with dead weight.
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+  - /share/doc
+  - /share/aclocal
+  - '*.a'
+  - '*.la'
+
+modules:
+  # ── libXpresent ────────────────────────────────────────────────────────────
+  # Not in the runtime. mpv's `x11` feature hard-requires xpresent, and x11 must be
+  # enabled so that vaapi-x11 (and, via the same X/Wayland pair, vaapi-wayland) can
+  # be built. Without this module mpv's x11 check fails and the vaapi trio below
+  # takes the whole build down with it.
+  - name: libXpresent
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://xorg.freedesktop.org/archive/individual/lib/libXpresent-1.0.2.tar.xz
+        sha256: 4e5b21b4812206a4b223013606ae31170502c1043038777a1ef8f70c09d37602
+
+  # ── libass ─────────────────────────────────────────────────────────────────
+  # Not in the runtime. Subtitle rendering; a hard, non-optional dependency of
+  # mpv (`-Dlibass=enabled` below) — mpv will not configure without it.
+  - name: libass
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.gz
+        sha256: caab4b993dd7be6187c55623b789ed75dddefea6e65938af134637c732fe094a
+
+  # ── uchardet ───────────────────────────────────────────────────────────────
+  # Not in the runtime. Character-set detection for non-UTF-8 external subtitle
+  # files — without it, legacy-encoded .srt files render as mojibake.
+  - name: uchardet
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_STATIC=0
+      # uchardet 0.0.8 still declares cmake_minimum_required(VERSION 2.8), which
+      # CMake >= 4 rejects outright. This policy floor makes it configure again.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    cleanup:
+      - /bin
+    sources:
+      - type: archive
+        url: https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz
+        sha256: e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0
+
+  # ── libplacebo ─────────────────────────────────────────────────────────────
+  # Not in the runtime. MANDATORY: mpv 0.41 links libplacebo unconditionally (it is
+  # the backbone of vo=gpu-next, and of the tone-mapping path M6 depends on) — there
+  # is no meson option to build mpv without it.
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Ddemos=false
+    sources:
+      # `type: git` is required, NOT an archive of the release tarball: libplacebo
+      # keeps glad, jinja, markupsafe, Vulkan-Headers and fast_float as git
+      # submodules, and a GitHub source tarball contains none of them. Only the git
+      # source recurses submodules (flatpak-builder does so by default), and it
+      # does it in the download phase, where network access is still permitted.
+      # The tag is annotated: 719cc95 is the tag object, cee9b07 the commit it
+      # peels to, and `commit:` must be the peeled commit.
+      - type: git
+        url: https://github.com/haasn/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
+
+  # ── libmpv ─────────────────────────────────────────────────────────────────
+  # Not in the runtime. The primary playback engine (PLAN §3.2).
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=true
+      - -Dcplayer=true
+      - -Dbuild-date=false
+      - -Ddebug=false
+      - -Dmanpage-build=disabled
+      # Scripting engines are dead weight for an embedded libmpv host.
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      # Audio: PipeWire/Pulse only, matching the finish-args above.
+      - -Dalsa=disabled
+      - -Dpipewire=enabled
+      - -Dpulse=enabled
+      # GL/EGL render API — MpvVideoItem drives mpv_render_context on Qt's context.
+      - -Dgl=enabled
+      - -Dplain-gl=enabled
+      - -Degl=enabled
+      - -Dx11=enabled
+      - -Dwayland=enabled
+      # -Ddrm MUST stay `auto`. Not `disabled`: mpv gates the dmabuf-interop-gl
+      # source on the raw `drm.found()` dependency, NOT on `features['drm']`, so
+      # disabling drm silently drops dmabuf_interop_gl.c and kills zero-copy
+      # VAAPI -> GL import (every frame would round-trip through system memory).
+      # Not `enabled` either: `features['drm']` additionally requires
+      # libdisplay-info, which this runtime does not ship, so `enabled` hard-fails
+      # configure. `auto` gets the interop without demanding the KMS feature.
+      - -Ddrm=auto
+      - -Dgbm=auto
+      # The vaapi trio is deliberately `enabled`, not `auto`: hardware decode is a
+      # release requirement, and `auto` would let a missing dependency quietly
+      # produce a software-only libmpv that only shows up as a fan-speed bug on a
+      # 4K HEVC file. Fail the build loudly instead.
+      - -Dvaapi=enabled
+      - -Dvaapi-x11=enabled
+      - -Dvaapi-wayland=enabled
+      - -Dvaapi-drm=auto
+      - -Dvulkan=auto
+      - -Duchardet=enabled
+      # NOTE: there is deliberately no -Dlibass= option here. mpv 0.41 removed the
+      # toggle entirely — libass is now an unconditional hard requirement, so the
+      # libass module above is mandatory and passing -Dlibass=enabled is a build
+      # error ("Unknown option: libass"), not a no-op.
+      # Optical media and niche VOs: no path to them from inside the sandbox.
+      - -Dcdda=disabled
+      - -Ddvdnav=disabled
+      - -Ddvbin=disabled
+      - -Dlibbluray=disabled
+      - -Dsixel=disabled
+      - -Dcaca=disabled
+      - -Dvapoursynth=disabled
+      - -Dzimg=disabled
+    # MANDATORY cleanup, not cosmetic: -Dcplayer=true installs mpv.desktop and
+    # mpv's icons, and `flatpak build-export` REFUSES to export any file under
+    # share/applications whose name is not prefixed with the app id — the export
+    # step would fail outright. The cplayer binary itself is kept on purpose:
+    # `flatpak run --command=mpv ca.mikesdev.StrmQt --hwdec=vaapi <file>` is the
+    # single best in-sandbox diagnostic for hardware decode.
+    cleanup:
+      - /share/applications
+      - /share/icons
+      # mpv.metainfo.xml is not fatal (build-export declines it with a
+      # "non-allowed export filename" notice rather than failing), but it is dead
+      # weight and trips AppStream linters, so drop it too. Module cleanup is
+      # scoped to the files THIS module installed, so this does not touch
+      # ca.mikesdev.StrmQt.metainfo.xml from the strmqt module.
+      - /share/metainfo
+      - /share/bash-completion
+      - /share/zsh
+      - /share/fish
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
+        sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+
+  # ── strmqt ─────────────────────────────────────────────────────────────────
+  - name: strmqt
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      # Warnings must not fail a packaging build: the runtime's compiler is not
+      # the one the dev preset is tuned against.
+      - -DSTRMQT_WERROR=OFF
+      # mpv-only inside the Flatpak. libVLC is the optional fallback engine and
+      # bringing it in would mean building the whole VLC stack for no gain.
+      - -DSTRMQT_WITH_VLC=OFF
+    post-install:
+      # Unlike the Arch package, a Flatpak inherits no shared /usr/share/licenses
+      # directory, so the GPL-3.0-or-later text must travel inside the payload.
+      # The `../` is load-bearing: with `builddir: true` flatpak-builder runs
+      # post-install with the cwd set to the out-of-tree `_flatpak_build`
+      # directory, not the source root, so bare `COPYING` would not resolve.
+      - install -Dm644 ../COPYING /app/share/licenses/ca.mikesdev.StrmQt/COPYING
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - .git
+          - .flatpak-builder
+          - .cache
+          - compile_commands.json

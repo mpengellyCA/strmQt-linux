@@ -1,0 +1,52 @@
+#include "LibraryListModel.h"
+
+#include "MediaItemModel.h"
+
+namespace strmqt {
+
+LibraryListModel::LibraryListModel(QObject *parent) : QAbstractListModel(parent) {}
+
+int LibraryListModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : static_cast<int>(m_libraries.size());
+}
+
+QVariant LibraryListModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_libraries.size())
+        return {};
+    const Library &library = m_libraries[index.row()];
+
+    switch (role) {
+    case IdRole:
+        return library.id;
+    case NameRole:
+        return library.name;
+    case CollectionTypeRole:
+        return library.collectionType;
+    case ImageUrlRole:
+        return embyImageSource(library.id, QStringLiteral("Primary"), library.primaryImageTag);
+    default:
+        return {};
+    }
+}
+
+QHash<int, QByteArray> LibraryListModel::roleNames() const
+{
+    return {
+        {IdRole, "libraryId"},
+        {NameRole, "name"},
+        {CollectionTypeRole, "collectionType"},
+        {ImageUrlRole, "imageUrl"},
+    };
+}
+
+void LibraryListModel::setLibraries(QList<Library> libraries)
+{
+    beginResetModel();
+    m_libraries = std::move(libraries);
+    endResetModel();
+    emit countChanged();
+}
+
+} // namespace strmqt

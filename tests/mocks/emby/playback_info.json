@@ -1,0 +1,47 @@
+{
+    "MediaSources": [
+        {
+            "Protocol": "File",
+            "Id": "ms301001",
+            "Path": "/media/movies/The Matrix (1999)/The Matrix.mkv",
+            "Type": "Default",
+            "Container": "mkv",
+            "Size": 4232567890,
+            "Name": "The Matrix",
+            "IsRemote": false,
+            "RunTimeTicks": 81840000000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": true,
+            "SupportsDirectPlay": true,
+            "IsInfiniteStream": false,
+            "RequiresOpening": false,
+            "RequiresClosing": false,
+            "RequiresLooping": false,
+            "SupportsProbing": true,
+            "MediaStreams": [
+                {
+                    "Codec": "h264",
+                    "Type": "Video",
+                    "Index": 0,
+                    "Width": 1920,
+                    "Height": 1080,
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "dts",
+                    "Language": "eng",
+                    "Type": "Audio",
+                    "Index": 1,
+                    "Channels": 6,
+                    "IsDefault": true
+                }
+            ],
+            "Bitrate": 6892345,
+            "DirectStreamUrl": "/videos/301001/stream.mkv?DeviceId=test-device&MediaSourceId=ms301001&Static=true",
+            "TranscodingUrl": "/videos/301001/master.m3u8?DeviceId=test-device&MediaSourceId=ms301001&PlaySessionId=ps0011&api_key=not-a-real-token-fixture-only&VideoCodec=h264&AudioCodec=aac",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        }
+    ],
+    "PlaySessionId": "ps0011"
+}

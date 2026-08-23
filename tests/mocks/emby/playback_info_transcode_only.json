@@ -1,0 +1,16 @@
+{
+    "MediaSources": [
+        {
+            "Id": "ms999",
+            "Container": "wmv",
+            "RunTimeTicks": 30000000000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": false,
+            "SupportsDirectPlay": false,
+            "TranscodingUrl": "/videos/999/master.m3u8?DeviceId=test-device&MediaSourceId=ms999&PlaySessionId=ps0999&api_key=not-a-real-token-fixture-only",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        }
+    ],
+    "PlaySessionId": "ps0999"
+}

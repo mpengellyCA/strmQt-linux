@@ -1,0 +1,41 @@
+{
+    "Items": [
+        {
+            "Name": "Season 1",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "400100",
+            "IndexNumber": 1,
+            "IsFolder": true,
+            "Type": "Season",
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "UserData": {
+                "UnplayedItemCount": 0,
+                "PlaybackPositionTicks": 0,
+                "PlayCount": 0,
+                "IsFavorite": false,
+                "Played": true
+            },
+            "ImageTags": { "Primary": "season1tag" }
+        },
+        {
+            "Name": "Season 2",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "400200",
+            "IndexNumber": 2,
+            "IsFolder": true,
+            "Type": "Season",
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "UserData": {
+                "UnplayedItemCount": 5,
+                "PlaybackPositionTicks": 0,
+                "PlayCount": 0,
+                "IsFavorite": false,
+                "Played": false
+            },
+            "ImageTags": { "Primary": "season2tag" }
+        }
+    ],
+    "TotalRecordCount": 2
+}

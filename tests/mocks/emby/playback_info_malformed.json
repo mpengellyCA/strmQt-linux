@@ -1,0 +1,45 @@
+{
+    "PlaySessionId": 12345,
+    "MediaSources": [
+        null,
+        "not-an-object",
+        42,
+        {
+            "Id": null,
+            "Container": 7,
+            "Name": null,
+            "Size": "big",
+            "Bitrate": null,
+            "RunTimeTicks": "abc",
+            "Protocol": [],
+            "SupportsDirectPlay": "true",
+            "SupportsDirectStream": null,
+            "SupportsTranscoding": 1,
+            "DirectStreamUrl": null,
+            "TranscodingUrl": null,
+            "TranscodeReasons": { "unexpected": "object" },
+            "MediaStreams": "nope"
+        },
+        {
+            "Id": "msok",
+            "Container": "mkv",
+            "SupportsDirectPlay": true,
+            "MediaStreams": [
+                null,
+                5,
+                "text",
+                {
+                    "Type": 9,
+                    "Index": "x",
+                    "Codec": null,
+                    "Width": "1920",
+                    "Height": null,
+                    "VideoRange": 3,
+                    "IsDefault": "yes",
+                    "Channels": {},
+                    "BitRate": []
+                }
+            ]
+        }
+    ]
+}

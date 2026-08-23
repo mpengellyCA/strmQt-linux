@@ -1,0 +1,129 @@
+{
+    "MediaSources": [
+        {
+            "Protocol": "File",
+            "Id": "ms4242uhd",
+            "Path": "/media/movies/Dune (2021)/Dune.2021.UHD.Remux.mkv",
+            "Type": "Default",
+            "Container": "mkv",
+            "Size": 68719476736,
+            "Name": "4K Remux",
+            "IsRemote": false,
+            "RunTimeTicks": 93960000000,
+            "Bitrate": 78450000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": true,
+            "SupportsDirectPlay": true,
+            "TranscodeReasons": ["VideoBitrateNotSupported", "AudioCodecNotSupported"],
+            "MediaStreams": [
+                {
+                    "Codec": "hevc",
+                    "Type": "Video",
+                    "Index": 0,
+                    "Width": 3840,
+                    "Height": 2160,
+                    "VideoRange": "HDR10",
+                    "Profile": "Main 10",
+                    "BitDepth": 10,
+                    "BitRate": 72000000,
+                    "RealFrameRate": 23.976,
+                    "DisplayTitle": "4K HEVC HDR10",
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "truehd",
+                    "Type": "Audio",
+                    "Index": 1,
+                    "Language": "eng",
+                    "Channels": 8,
+                    "ChannelLayout": "7.1",
+                    "SampleRate": 48000,
+                    "BitRate": 4500000,
+                    "DisplayTitle": "English TrueHD Atmos 7.1",
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "ac3",
+                    "Type": "Audio",
+                    "Index": 2,
+                    "Language": "fre",
+                    "Channels": 6,
+                    "ChannelLayout": "5.1",
+                    "SampleRate": 48000,
+                    "DisplayTitle": "Français AC3 5.1"
+                },
+                {
+                    "Codec": "pgssub",
+                    "Type": "Subtitle",
+                    "Index": 3,
+                    "Language": "eng",
+                    "Title": "English (Forced)",
+                    "IsForced": true,
+                    "IsDefault": true,
+                    "IsExternal": false
+                },
+                {
+                    "Codec": "subrip",
+                    "Type": "Subtitle",
+                    "Index": 4,
+                    "Language": "nld",
+                    "DisplayTitle": "Nederlands SRT",
+                    "IsExternal": true
+                },
+                {
+                    "Codec": "mjpeg",
+                    "Type": "Embedded Image",
+                    "Index": 5
+                }
+            ],
+            "DirectStreamUrl": "/videos/4242/stream.mkv?DeviceId=test-device&MediaSourceId=ms4242uhd&Static=true",
+            "TranscodingUrl": "/videos/4242/master.m3u8?DeviceId=test-device&MediaSourceId=ms4242uhd&PlaySessionId=ps4242&api_key=not-a-real-token-fixture-only",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        },
+        {
+            "Protocol": "File",
+            "Id": "ms4242hd",
+            "Path": "/media/movies/Dune (2021)/Dune.2021.1080p.mp4",
+            "Type": "Default",
+            "Container": "mp4",
+            "Size": 8589934592,
+            "Name": "1080p",
+            "RunTimeTicks": 93960000000,
+            "Bitrate": 7312000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": false,
+            "SupportsDirectPlay": true,
+            "TranscodeReasons": "ContainerNotSupported",
+            "MediaStreams": [
+                {
+                    "Codec": "h264",
+                    "Type": "Video",
+                    "Index": 0,
+                    "Width": 1920,
+                    "Height": 1080,
+                    "VideoRange": "SDR",
+                    "Profile": "High",
+                    "BitDepth": 8,
+                    "BitRate": 6800000,
+                    "AverageFrameRate": 23.976,
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "aac",
+                    "Type": "Audio",
+                    "Index": 1,
+                    "Language": "eng",
+                    "Channels": 2,
+                    "ChannelLayout": "stereo",
+                    "SampleRate": 48000,
+                    "IsDefault": true
+                }
+            ],
+            "TranscodingUrl": "/videos/4242/master.m3u8?DeviceId=test-device&MediaSourceId=ms4242hd&PlaySessionId=ps4242&api_key=not-a-real-token-fixture-only",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        }
+    ],
+    "PlaySessionId": "ps4242"
+}

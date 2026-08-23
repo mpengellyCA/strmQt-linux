@@ -1,0 +1,16 @@
+# StrmQt static analysis baseline. Kept intentionally focused: bug-prone patterns,
+# performance, and modernization that fits Qt idioms.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-braces-around-statements,
+  readability-container-size-empty,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -bugprone-easily-swappable-parameters,
+  -performance-avoid-endl
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/src/.*'
+FormatStyle: file

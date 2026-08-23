@@ -1,0 +1,32 @@
+{
+    "Items": [
+        {
+            "Name": "Ozymandias",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "402014",
+            "RunTimeTicks": 28470000000,
+            "IndexNumber": 14,
+            "ParentIndexNumber": 5,
+            "IsFolder": false,
+            "Type": "Episode",
+            "ParentBackdropItemId": "400001",
+            "ParentBackdropImageTags": ["deadbeef01"],
+            "UserData": {
+                "PlaybackPositionTicks": 12000000000,
+                "PlayedPercentage": 42.149631,
+                "PlayCount": 0,
+                "IsFavorite": false,
+                "Played": false
+            },
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "SeasonId": "400500",
+            "SeasonName": "Season 5",
+            "ImageTags": { "Primary": "0badc0de99" },
+            "BackdropImageTags": [],
+            "MediaType": "Video"
+        }
+    ],
+    "TotalRecordCount": 1,
+    "StartIndex": 0
+}

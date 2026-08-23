@@ -1,0 +1,28 @@
+{
+    "Items": [
+        {
+            "Name": "Granite State",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "402015",
+            "RunTimeTicks": 33000000000,
+            "IndexNumber": 15,
+            "ParentIndexNumber": 5,
+            "IsFolder": false,
+            "Type": "Episode",
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "SeasonId": "400500",
+            "SeasonName": "Season 5",
+            "UserData": {
+                "PlaybackPositionTicks": 0,
+                "PlayCount": 0,
+                "IsFavorite": false,
+                "Played": false
+            },
+            "ImageTags": { "Primary": "77aa88bb" },
+            "BackdropImageTags": [],
+            "MediaType": "Video"
+        }
+    ],
+    "TotalRecordCount": 1
+}

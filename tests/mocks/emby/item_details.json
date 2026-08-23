@@ -1,0 +1,24 @@
+{
+    "Name": "The Matrix",
+    "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+    "Id": "301001",
+    "Type": "Movie",
+    "Overview": "A computer hacker learns the true nature of his reality.",
+    "Taglines": ["Welcome to the Real World"],
+    "Genres": ["Action", "Science Fiction"],
+    "RunTimeTicks": 81840000000,
+    "ProductionYear": 1999,
+    "OfficialRating": "R",
+    "CommunityRating": 8.7,
+    "People": [
+        { "Name": "Keanu Reeves", "Id": "p1", "Role": "Neo", "Type": "Actor" },
+        { "Name": "Carrie-Anne Moss", "Id": "p2", "Role": "Trinity", "Type": "Actor" },
+        { "Name": "Laurence Fishburne", "Id": "p3", "Role": "Morpheus", "Type": "Actor" },
+        { "Name": "Lana Wachowski", "Id": "p4", "Type": "Director" },
+        { "Name": "Lilly Wachowski", "Id": "p5", "Type": "Director" }
+    ],
+    "Studios": [{ "Name": "Warner Bros.", "Id": "s1" }],
+    "UserData": { "PlaybackPositionTicks": 0, "Played": true, "IsFavorite": true },
+    "ImageTags": { "Primary": "aaa111" },
+    "BackdropImageTags": ["ccc333"]
+}

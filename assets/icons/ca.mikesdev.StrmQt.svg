@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
+     viewBox="0 0 512 512" role="img" aria-label="StrmQt">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e2731"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#6fd0f7"/>
+      <stop offset="1" stop-color="#2b8fd0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3daee9" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#3daee9" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#tile)"/>
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112"
+        fill="none" stroke="#2a3949" stroke-width="4" stroke-opacity="0.9"/>
+  <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
+  <g transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="168" fill="none" stroke="#2a3949" stroke-width="22"/>
+    <circle cx="256" cy="256" r="168" fill="none"
+            stroke="url(#accent)" stroke-width="22" stroke-linecap="round"
+            stroke-dasharray="718 338"/>
+  </g>
+  <polygon points="211,176 211,336 347,256"
+           fill="url(#accent)" stroke="url(#accent)"
+           stroke-width="26" stroke-linejoin="round"/>
+</svg>

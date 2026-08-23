@@ -1,0 +1,161 @@
+#pragma once
+
+#include "app/models/MediaItemModel.h"
+#include "server/dto/ItemsQuery.h"
+
+#include <QHash>
+#include <QList>
+#include <QObject>
+#include <QPointer>
+#include <QString>
+#include <QVariant>
+#include <QVariantMap>
+
+namespace strmqt {
+
+class PlayerController;
+
+namespace emby {
+class EmbyClient;
+}
+
+// One implementation of every item verb (ARCHITECTURE.md), shared by cards, context
+// menus, the details page, the series page and the player. Before this existed
+// DetailsPage.qml and SeriesPage.qml each re-derived the resume position and
+// mirrored played/favorite state locally; now they call one place.
+//
+// Every verb accepts either an item id (QString) or an item map as produced by
+// MediaItemModel::get(row). Given a bare id, the item is looked up in the models
+// registered with registerModel(); verbs that need more than an id fall back to
+// safe behaviour and log when the lookup misses.
+//
+// Written state (played / favorite) is applied optimistically: the signal fires
+// before the request, the registered models are patched through
+// MediaItemModel::updateUserData(), and a failed reply rolls the value back and
+// emits actionFailed(). Requests coalesce per item id, so a held auto-repeating
+// key cannot leave the server and the UI disagreeing.
+class ItemActions : public QObject
+{
+    Q_OBJECT
+
+public:
+    ItemActions(emby::EmbyClient *client, PlayerController *player, QObject *parent = nullptr);
+
+    // Models kept in sync on a played/favorite change. Registration is weak: a
+    // model that is destroyed drops out on its own.
+    Q_INVOKABLE void registerModel(strmqt::MediaItemModel *model);
+    Q_INVOKABLE void unregisterModel(strmqt::MediaItemModel *model);
+
+    // Resume when the item is resumable, otherwise start from the beginning.
+    // True for item kinds that hold media rather than being media (an album, a
+    // series, a collection). Playing one means playing its contents.
+    static bool isContainer(const QString &type);
+
+    Q_INVOKABLE void play(const QVariant &item);
+    Q_INVOKABLE void playFromStart(const QVariant &item);
+    // Resume; falls back to the start when there is no stored position.
+    Q_INVOKABLE void resume(const QVariant &item);
+
+    // ── Queue verbs (ARCHITECTURE.md) ─────────────────────────────────────
+    // Enqueue straight after whatever is playing; with an empty queue this is
+    // simply "play". Both emit queueChanged() so a toast can confirm it.
+    Q_INVOKABLE void playNext(const QVariant &item);
+    Q_INVOKABLE void addToQueue(const QVariant &item);
+    // "Play all" / "Shuffle" on a library, a collection, a series or a season.
+    // `collectionType` is the server's library kind ("tvshows", "movies",
+    // "music", "boxsets", ...) and only narrows which item types are fetched;
+    // an empty string means "anything playable".
+    Q_INVOKABLE void playAll(const QString &parentId,
+                             const QString &collectionType = QString());
+    Q_INVOKABLE void shuffle(const QString &parentId, const QString &collectionType = QString());
+    // A collection plays in the order the collection was curated in, so this is
+    // NOT playAll() with a different parent: playAll sorts (SortName for mixed
+    // types), which queues a franchise alphabetically while the grid above it
+    // shows release order. It is also non-recursive, for the same reason
+    // LibraryController::openCollection is — recursing would queue every
+    // episode of a series that happens to be in the collection.
+    Q_INVOKABLE void playCollection(const QString &collectionId);
+    // Every episode of a series, in a random order, starting anywhere.
+    Q_INVOKABLE void shuffleSeries(const QString &seriesId);
+    // Queue items the caller already has (an episode list, a search result set).
+    Q_INVOKABLE void playAllFrom(const QVariantList &items, int startIndex = 0);
+
+    Q_INVOKABLE void setPlayed(const QString &itemId, bool played);
+    Q_INVOKABLE void togglePlayed(const QVariant &item);
+    Q_INVOKABLE void setFavorite(const QString &itemId, bool favorite);
+    Q_INVOKABLE void toggleFavorite(const QVariant &item);
+
+    // Navigation is a request, not a command: C++ never drives the QML stack.
+    // Scoped browse views reached from a details page: a genre chip, a cast
+    // member, a studio. Verbs live here for the same reason the others do —
+    // a page states intent and never pushes anything itself.
+    Q_INVOKABLE void browseGenre(const QString &genreId, const QString &name);
+    Q_INVOKABLE void browsePerson(const QString &personId, const QString &name);
+    Q_INVOKABLE void browseStudio(const QString &studioId, const QString &name);
+    Q_INVOKABLE void browseCollection(const QString &collectionId, const QString &name);
+
+    Q_INVOKABLE void openDetails(const QVariant &item);
+    Q_INVOKABLE void openSeries(const QVariant &item);
+
+    // Best effort: Emby's /Items/{id}/Refresh is not on EmbyClient yet, so this
+    // logs and returns false rather than pretending to have done something.
+    Q_INVOKABLE bool refreshMetadata(const QString &itemId);
+
+    // Best-known user state, including changes not yet confirmed by the server.
+    Q_INVOKABLE bool isPlayed(const QString &itemId) const;
+    Q_INVOKABLE bool isFavorite(const QString &itemId) const;
+    // The item map for an id, or an empty map when no registered model has it.
+    Q_INVOKABLE QVariantMap itemFor(const QString &itemId) const;
+
+signals:
+    void playedChanged(const QString &itemId, bool played);
+    void favoriteChanged(const QString &itemId, bool favorite);
+    // Human-readable reason a verb failed; the UI surfaces it as a toast.
+    void actionFailed(const QString &message);
+    void detailsRequested(const QVariantMap &item);
+    // The play queue was replaced or added to — the UI confirms with a toast.
+    void queueChanged();
+    void seriesRequested(const QString &seriesId, const QString &seriesName);
+    // `kind` is "genre" | "person" | "studio" | "collection"; one signal rather
+    // keeps Main.qml to a single handler and the routing in one place.
+    void browseRequested(const QString &kind, const QString &id, const QString &name);
+
+private:
+    // A change that has been shown to the user and is on its way to the server.
+    struct InFlight
+    {
+        bool requested = false; // value the outstanding request carries
+        bool baseline = false;  // value to roll back to if it fails
+        bool hasQueued = false;
+        bool queued = false; // newest value asked for while the request ran
+    };
+
+    struct UserState
+    {
+        bool played = false;
+        bool favorite = false;
+    };
+
+    QVariantMap resolve(const QVariant &item) const;
+    void startPlayback(const QVariant &item, bool fromStart);
+    // One fetch path for playAll()/shuffle(): runs the query, then hands the
+    // page to the player as a queue. `randomStart` picks the first item at
+    // random, which is what makes a shuffle of an ordered fetch a real shuffle.
+    void fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart);
+    bool requireQueueTarget();
+    UserState knownState(const QString &itemId) const;
+    void applyPlayed(const QString &itemId, bool played);
+    void applyFavorite(const QString &itemId, bool favorite);
+    void patchModels(const QString &itemId, const UserState &state);
+    void sendPlayed(const QString &itemId, bool played, bool baseline);
+    void sendFavorite(const QString &itemId, bool favorite, bool baseline);
+
+    emby::EmbyClient *m_client;
+    PlayerController *m_player;
+    QList<QPointer<MediaItemModel>> m_models;
+    QHash<QString, UserState> m_state;
+    QHash<QString, InFlight> m_playedRequests;
+    QHash<QString, InFlight> m_favoriteRequests;
+};
+
+} // namespace strmqt

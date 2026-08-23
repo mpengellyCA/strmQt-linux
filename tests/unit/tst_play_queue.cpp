@@ -1,0 +1,398 @@
+#include <QSignalSpy>
+#include <QtTest>
+
+#include "app/PlayQueue.h"
+#include "app/models/MediaItemModel.h"
+
+using namespace strmqt;
+
+namespace {
+
+MediaItem episode(int number)
+{
+    MediaItem item;
+    item.id = QStringLiteral("ep%1").arg(number);
+    item.name = QStringLiteral("Episode %1").arg(number);
+    item.type = QStringLiteral("Episode");
+    item.seriesName = QStringLiteral("Fixture Series");
+    item.parentIndexNumber = 1;
+    item.indexNumber = number;
+    item.runtimeTicks = 20 * 60 * kTicksPerSecond;
+    return item;
+}
+
+QList<MediaItem> episodes(int count)
+{
+    QList<MediaItem> items;
+    for (int i = 1; i <= count; ++i)
+        items.append(episode(i));
+    return items;
+}
+
+QStringList idsOf(const PlayQueue &queue)
+{
+    QStringList ids;
+    for (int row = 0; row < queue.rowCount(); ++row)
+        ids.append(queue.itemAt(row).value(QStringLiteral("itemId")).toString());
+    return ids;
+}
+
+} // namespace
+
+class PlayQueueTest : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void rolesMatchMediaItemModel();
+    void setItemsEstablishesTheCursor();
+    void shuffleKeepsTheCurrentItemAndRestoresTheOriginalOrder();
+    void shuffleSurvivesAnInsertAndUnShufflesInPlace();
+    void advanceHonoursEveryRepeatMode();
+    void goBackHonoursEveryRepeatMode();
+    void removingTheCurrentRowPromotesTheNextOne();
+    void removingTheLastRowEmptiesAndExhausts();
+    void playNextInsertsAfterCurrentAndAddToQueueAppends();
+    void insertingIntoAnEmptyQueueStartsIt();
+    void moveItemKeepsTheCursorOnTheSameItem();
+    void jumpToAndClear();
+    void itemFromVariantRoundTripsAModelMap();
+};
+
+// The whole point of the queue being a model is that the queue panel can use the
+// same delegates as every rail: identical role names *and* identical values.
+void PlayQueueTest::rolesMatchMediaItemModel()
+{
+    MediaItemModel model;
+    model.setItems(episodes(2));
+    PlayQueue queue;
+    queue.setItems(episodes(2));
+
+    const QHash<int, QByteArray> modelRoles = model.roleNames();
+    const QHash<int, QByteArray> queueRoles = queue.roleNames();
+    for (auto it = modelRoles.cbegin(); it != modelRoles.cend(); ++it) {
+        QVERIFY2(queueRoles.contains(it.key()), it.value().constData());
+        QCOMPARE(queueRoles.value(it.key()), it.value());
+        QCOMPARE(queue.data(queue.index(0), it.key()), model.data(model.index(0), it.key()));
+    }
+    QCOMPARE(queueRoles.value(PlayQueue::QueueIndexRole), QByteArray("queueIndex"));
+    QCOMPARE(queueRoles.value(PlayQueue::IsCurrentRole), QByteArray("isCurrent"));
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("isCurrent")).toBool(), true);
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("isCurrent")).toBool(), false);
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("queueIndex")).toInt(), 1);
+    // The label the OSD shows comes through unchanged.
+    QCOMPARE(queue.currentItem().value(QStringLiteral("label")).toString(),
+             QStringLiteral("Fixture Series — S1E1 — Episode 1"));
+}
+
+void PlayQueueTest::setItemsEstablishesTheCursor()
+{
+    PlayQueue queue;
+    QCOMPARE(queue.rowCount(), 0);
+    QCOMPARE(queue.currentIndex(), -1);
+    QVERIFY(queue.current().id.isEmpty());
+    QVERIFY(queue.currentItem().isEmpty());
+    QVERIFY(!queue.hasNext());
+    QVERIFY(!queue.hasPrevious());
+
+    QSignalSpy currentSpy(&queue, &PlayQueue::currentChanged);
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    queue.setItems(episodes(5), 2);
+    QCOMPARE(queue.rowCount(), 5);
+    QCOMPARE(queue.currentIndex(), 2);
+    QCOMPARE(queue.current().id, QStringLiteral("ep3"));
+    QCOMPARE(currentSpy.count(), 1);
+    QCOMPARE(queueSpy.count(), 1);
+    QVERIFY(queue.hasNext());
+    QVERIFY(queue.hasPrevious());
+
+    // Out-of-range start indexes are clamped, never crash.
+    queue.setItems(episodes(3), 99);
+    QCOMPARE(queue.currentIndex(), 2);
+    queue.setItems(episodes(3), -4);
+    QCOMPARE(queue.currentIndex(), 0);
+    queue.setItems({}, 0);
+    QCOMPARE(queue.currentIndex(), -1);
+}
+
+void PlayQueueTest::shuffleKeepsTheCurrentItemAndRestoresTheOriginalOrder()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(12), 4);
+    const QStringList original = idsOf(queue);
+    QCOMPARE(queue.current().id, QStringLiteral("ep5"));
+
+    QSignalSpy shuffledSpy(&queue, &PlayQueue::shuffledChanged);
+    queue.setShuffled(true);
+    QCOMPARE(shuffledSpy.count(), 1);
+    QVERIFY(queue.shuffled());
+
+    // What is playing keeps playing, and keeps its row.
+    QCOMPARE(queue.currentIndex(), 4);
+    QCOMPARE(queue.current().id, QStringLiteral("ep5"));
+    // Nothing is lost or duplicated by the deal.
+    QStringList shuffled = idsOf(queue);
+    QCOMPARE(shuffled.size(), original.size());
+    QStringList sortedShuffled = shuffled;
+    QStringList sortedOriginal = original;
+    sortedShuffled.sort();
+    sortedOriginal.sort();
+    QCOMPARE(sortedShuffled, sortedOriginal);
+
+    queue.setShuffled(false);
+    QCOMPARE(shuffledSpy.count(), 2);
+    QVERIFY(!queue.shuffled());
+    // Restored, not re-sorted — and still on the same item.
+    QCOMPARE(idsOf(queue), original);
+    QCOMPARE(queue.currentIndex(), 4);
+    QCOMPARE(queue.current().id, QStringLiteral("ep5"));
+}
+
+void PlayQueueTest::shuffleSurvivesAnInsertAndUnShufflesInPlace()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(6), 0);
+    queue.setShuffled(true);
+
+    MediaItem extra = episode(99);
+    QVariantMap map;
+    map.insert(QStringLiteral("itemId"), extra.id);
+    map.insert(QStringLiteral("name"), extra.name);
+    queue.playNext(map);
+    QCOMPARE(queue.rowCount(), 7);
+    QCOMPARE(queue.itemAt(queue.currentIndex() + 1).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("ep99"));
+
+    const QString currentId = queue.current().id;
+    queue.setShuffled(false);
+    // The insert lands right after the current item in the restored order too,
+    // rather than being flung to the end of the queue.
+    const QStringList restored = idsOf(queue);
+    QCOMPARE(restored.size(), 7);
+    QCOMPARE(restored.indexOf(QStringLiteral("ep99")), restored.indexOf(currentId) + 1);
+    QCOMPARE(queue.current().id, currentId);
+}
+
+void PlayQueueTest::advanceHonoursEveryRepeatMode()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(3), 0);
+    QSignalSpy exhaustedSpy(&queue, &PlayQueue::exhausted);
+
+    QVERIFY(queue.advance());
+    QCOMPARE(queue.currentIndex(), 1);
+    QVERIFY(queue.advance());
+    QCOMPARE(queue.currentIndex(), 2);
+    QVERIFY(!queue.hasNext());
+    QVERIFY(!queue.advance());
+    QCOMPARE(queue.currentIndex(), 2);
+    QCOMPARE(exhaustedSpy.count(), 1);
+
+    // RepeatAll wraps instead of running out.
+    queue.setRepeatMode(PlayQueue::RepeatAll);
+    QVERIFY(queue.hasNext());
+    QVERIFY(queue.advance());
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(exhaustedSpy.count(), 1);
+
+    // RepeatOne never moves, and never runs out.
+    queue.jumpTo(1);
+    queue.setRepeatMode(PlayQueue::RepeatOne);
+    QVERIFY(queue.hasNext());
+    QVERIFY(queue.advance());
+    QCOMPARE(queue.currentIndex(), 1);
+    QVERIFY(queue.advance());
+    QCOMPARE(queue.currentIndex(), 1);
+    QCOMPARE(exhaustedSpy.count(), 1);
+
+    // A single-item queue: only RepeatOff is a dead end.
+    PlayQueue single;
+    single.setItems(episodes(1), 0);
+    QVERIFY(!single.advance());
+    single.setRepeatMode(PlayQueue::RepeatAll);
+    QVERIFY(single.advance());
+    QCOMPARE(single.currentIndex(), 0);
+}
+
+void PlayQueueTest::goBackHonoursEveryRepeatMode()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(3), 2);
+    QVERIFY(queue.goBack());
+    QCOMPARE(queue.currentIndex(), 1);
+    QVERIFY(queue.goBack());
+    QCOMPARE(queue.currentIndex(), 0);
+    QVERIFY(!queue.hasPrevious());
+    QVERIFY(!queue.goBack());
+
+    queue.setRepeatMode(PlayQueue::RepeatAll);
+    QVERIFY(queue.hasPrevious());
+    QVERIFY(queue.goBack());
+    QCOMPARE(queue.currentIndex(), 2);
+
+    queue.setRepeatMode(PlayQueue::RepeatOne);
+    QVERIFY(queue.goBack());
+    QCOMPARE(queue.currentIndex(), 2);
+}
+
+void PlayQueueTest::removingTheCurrentRowPromotesTheNextOne()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(4), 1);
+    QSignalSpy currentSpy(&queue, &PlayQueue::currentChanged);
+    QSignalSpy exhaustedSpy(&queue, &PlayQueue::exhausted);
+
+    queue.removeAt(1);
+    QCOMPARE(queue.rowCount(), 3);
+    QCOMPARE(queue.currentIndex(), 1);
+    QCOMPARE(queue.current().id, QStringLiteral("ep3")); // what was next now plays
+    QCOMPARE(currentSpy.count(), 1);
+    QCOMPARE(exhaustedSpy.count(), 0);
+
+    // Removing above the cursor keeps the same item current.
+    queue.removeAt(0);
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(queue.current().id, QStringLiteral("ep3"));
+
+    // Removing the current row at the tail falls back to the new last row.
+    queue.jumpTo(1);
+    queue.removeAt(1);
+    QCOMPARE(queue.rowCount(), 1);
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(queue.current().id, QStringLiteral("ep3"));
+    QCOMPARE(exhaustedSpy.count(), 0);
+
+    queue.removeAt(9); // out of range: no-op, no signals
+    QCOMPARE(queue.rowCount(), 1);
+}
+
+void PlayQueueTest::removingTheLastRowEmptiesAndExhausts()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(1), 0);
+    QSignalSpy exhaustedSpy(&queue, &PlayQueue::exhausted);
+
+    queue.removeAt(0);
+    QCOMPARE(queue.rowCount(), 0);
+    QCOMPARE(queue.currentIndex(), -1);
+    QVERIFY(queue.current().id.isEmpty());
+    QCOMPARE(exhaustedSpy.count(), 1);
+}
+
+void PlayQueueTest::playNextInsertsAfterCurrentAndAddToQueueAppends()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(3), 1);
+
+    QVariantMap wanted;
+    wanted.insert(QStringLiteral("itemId"), QStringLiteral("movie-1"));
+    wanted.insert(QStringLiteral("name"), QStringLiteral("Dune"));
+    queue.playNext(wanted);
+    QCOMPARE(queue.rowCount(), 4);
+    QCOMPARE(idsOf(queue),
+             QStringList({QStringLiteral("ep1"), QStringLiteral("ep2"), QStringLiteral("movie-1"),
+                          QStringLiteral("ep3")}));
+    QCOMPARE(queue.currentIndex(), 1); // still playing what it was
+
+    QVariantMap later;
+    later.insert(QStringLiteral("itemId"), QStringLiteral("movie-2"));
+    queue.addToQueue(later);
+    QCOMPARE(idsOf(queue).last(), QStringLiteral("movie-2"));
+    QCOMPARE(queue.currentIndex(), 1);
+
+    // An item with no id is not a queue entry.
+    queue.addToQueue(QVariantMap{});
+    QCOMPARE(queue.rowCount(), 5);
+}
+
+void PlayQueueTest::insertingIntoAnEmptyQueueStartsIt()
+{
+    PlayQueue queue;
+    QSignalSpy currentSpy(&queue, &PlayQueue::currentChanged);
+    queue.playNext(QStringLiteral("ep7"));
+    QCOMPARE(queue.rowCount(), 1);
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(queue.current().id, QStringLiteral("ep7"));
+    QCOMPARE(currentSpy.count(), 1);
+}
+
+void PlayQueueTest::moveItemKeepsTheCursorOnTheSameItem()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(4), 0);
+
+    queue.moveItem(3, 1);
+    QCOMPARE(idsOf(queue),
+             QStringList({QStringLiteral("ep1"), QStringLiteral("ep4"), QStringLiteral("ep2"),
+                          QStringLiteral("ep3")}));
+    QCOMPARE(queue.currentIndex(), 0);
+
+    // Moving the current item takes the cursor with it.
+    queue.moveItem(0, 2);
+    QCOMPARE(queue.currentIndex(), 2);
+    QCOMPARE(queue.current().id, QStringLiteral("ep1"));
+
+    // A move over the cursor shifts it by one.
+    queue.moveItem(0, 3);
+    QCOMPARE(queue.currentIndex(), 1);
+    QCOMPARE(queue.current().id, QStringLiteral("ep1"));
+
+    queue.moveItem(0, 0);
+    queue.moveItem(-1, 2);
+    queue.moveItem(0, 99);
+    QCOMPARE(queue.rowCount(), 4);
+}
+
+void PlayQueueTest::jumpToAndClear()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(3), 0);
+    QSignalSpy currentSpy(&queue, &PlayQueue::currentChanged);
+
+    queue.jumpTo(2);
+    QCOMPARE(queue.currentIndex(), 2);
+    QCOMPARE(currentSpy.count(), 1);
+    queue.jumpTo(2); // already there
+    QCOMPARE(currentSpy.count(), 1);
+    queue.jumpTo(7); // out of range
+    QCOMPARE(queue.currentIndex(), 2);
+
+    QSignalSpy exhaustedSpy(&queue, &PlayQueue::exhausted);
+    queue.clear();
+    QCOMPARE(queue.rowCount(), 0);
+    QCOMPARE(queue.currentIndex(), -1);
+    // clear() is an explicit act, not the queue running out.
+    QCOMPARE(exhaustedSpy.count(), 0);
+}
+
+void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
+{
+    MediaItem source = episode(4);
+    source.primaryImageTag = QStringLiteral("tag-abc");
+    source.playbackPositionTicks = 90 * kTicksPerSecond;
+    source.favorite = true;
+
+    MediaItemModel model;
+    model.setItems({source});
+
+    const MediaItem restored = PlayQueue::itemFromVariant(model.get(0));
+    QCOMPARE(restored.id, source.id);
+    QCOMPARE(restored.name, source.name);
+    QCOMPARE(restored.type, source.type);
+    QCOMPARE(restored.seriesName, source.seriesName);
+    QCOMPARE(restored.indexNumber, source.indexNumber);
+    QCOMPARE(restored.parentIndexNumber, source.parentIndexNumber);
+    QCOMPARE(restored.runtimeMs(), source.runtimeMs());
+    QCOMPARE(restored.positionMs(), source.positionMs());
+    QCOMPARE(restored.favorite, true);
+    QVERIFY(restored.isResumable());
+    // The poster survives the trip through QML as a tag, not as a dead URL.
+    QCOMPARE(restored.primaryImageTag, QStringLiteral("tag-abc"));
+
+    // A bare id is a legal item, and anything else is simply not one.
+    QCOMPARE(PlayQueue::itemFromVariant(QStringLiteral("ep9")).id, QStringLiteral("ep9"));
+    QVERIFY(PlayQueue::itemFromVariant(QVariant()).id.isEmpty());
+}
+
+QTEST_GUILESS_MAIN(PlayQueueTest)
+#include "tst_play_queue.moc"

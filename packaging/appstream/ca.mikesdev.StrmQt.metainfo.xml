@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>ca.mikesdev.StrmQt</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>StrmQt</name>
+  <summary>Watch your Emby library on the big screen</summary>
+
+  <developer id="ca.mikesdev">
+    <name>Mike Pengelly</name>
+  </developer>
+
+  <description>
+    <p>
+      StrmQt is a native Qt 6 client for Emby media servers, built for KDE Plasma and
+      designed to be driven from the couch with a remote, a gamepad, or the keyboard.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Hardware-accelerated playback through libmpv, with libVLC as a fallback engine</li>
+      <li>Ten-foot interface: home rails, library grids, series drill-down, and search</li>
+      <li>Resume playback, watched state, and favourites synchronised with the server</li>
+      <li>MPRIS2 media controls, so KDE Connect and the Plasma applet just work</li>
+      <li>Credentials stored in KWallet, never in plain text on disk</li>
+      <li>HDR-aware tone mapping and screensaver inhibition during playback</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">ca.mikesdev.StrmQt.desktop</launchable>
+
+  <provides>
+    <binary>strmqt</binary>
+    <binary>strmqt-cli</binary>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>Player</category>
+  </categories>
+
+  <keywords>
+    <keyword>emby</keyword>
+    <keyword>media</keyword>
+    <keyword>streaming</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/mikesdev/StrmQt</url>
+  <url type="bugtracker">https://github.com/mikesdev/StrmQt/issues</url>
+
+  <content_rating type="oars-1.1" />
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>gamepad</control>
+  </recommends>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <releases>
+    <release version="0.2.0" date="2026-08-22" type="development">
+      <description>
+        <p>The "first-party feel" release: mouse and pointer support throughout,
+        live updates from the server, a play queue with shuffle and auto-advance,
+        a full player OSD, library sorting and filtering, collections, playlists,
+        person pages, remote control from other Emby clients, and music.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-08-22" type="development">
+      <description>
+        <p>First packaged release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,216 @@
+#pragma once
+
+#include "playback/PlayerBackend.h"
+
+#include <QList>
+#include <QStringList>
+
+// Scriptable engine for PlayerController tests: records calls, lets the test
+// drive state transitions.
+class FakePlayerBackend : public strmqt::PlayerBackend
+{
+    Q_OBJECT
+
+public:
+    using strmqt::PlayerBackend::PlayerBackend;
+
+    QString engineName() const override { return QStringLiteral("fake"); }
+
+    void load(const QUrl &url, qint64 startMs) override
+    {
+        loadedUrls.append(url);
+        loadedStarts.append(startMs);
+        m_state = State::Loading;
+        emit stateChanged(m_state);
+    }
+
+    void setPaused(bool paused) override
+    {
+        if (m_state != State::Playing && m_state != State::Paused)
+            return;
+        simulateState(paused ? State::Paused : State::Playing);
+    }
+
+    void stop() override
+    {
+        stopCalls++;
+        simulateState(State::Idle);
+    }
+
+    void seekTo(qint64 positionMs) override
+    {
+        seeks.append(positionMs);
+        simulatePosition(positionMs);
+    }
+
+    void setVolume(int) override {}
+
+    // ── Track surface ─────────────────────────────────────────────────────────
+    QVariantList audioTracks() const override { return m_audioTracks; }
+    QVariantList subtitleTracks() const override { return m_subtitleTracks; }
+    int currentAudioTrackId() const override { return m_audioTrackId; }
+    int currentSubtitleTrackId() const override { return m_subtitleTrackId; }
+
+    void setAudioTrack(int id) override
+    {
+        audioTrackRequests.append(id);
+        m_audioTrackId = selectIn(m_audioTracks, id);
+        emit tracksChanged();
+    }
+
+    void setSubtitleTrack(int id) override
+    {
+        subtitleTrackRequests.append(id);
+        m_subtitleTrackId = selectIn(m_subtitleTracks, id);
+        emit tracksChanged();
+    }
+
+    qint64 bufferedMs() const override { return m_bufferedMs; }
+    qreal playbackSpeed() const override { return m_speed; }
+    void setPlaybackSpeed(qreal speed) override
+    {
+        m_speed = speed;
+        emit playbackSpeedChanged();
+    }
+    int audioDelayMs() const override { return m_audioDelayMs; }
+    void setAudioDelayMs(int ms) override
+    {
+        m_audioDelayMs = ms;
+        emit audioDelayChanged();
+    }
+    int subtitleDelayMs() const override { return m_subtitleDelayMs; }
+    void setSubtitleDelayMs(int ms) override
+    {
+        m_subtitleDelayMs = ms;
+        emit subtitleDelayChanged();
+    }
+    QVariantMap videoStats() const override { return m_videoStats; }
+    void screenshotToFile(const QString &path) override { screenshots.append(path); }
+
+    // Build a track map shaped exactly like a real engine's, so tests and the
+    // OSD see the same keys without hand-writing them each time.
+    static QVariantMap makeTrack(int id, const QString &title, const QString &language = {},
+                                 const QString &codec = {}, bool selected = false)
+    {
+        QVariantMap track;
+        track[QStringLiteral("id")] = id;
+        track[QStringLiteral("title")] = title;
+        track[QStringLiteral("language")] = language;
+        track[QStringLiteral("codec")] = codec;
+        track[QStringLiteral("channels")] = 0;
+        track[QStringLiteral("channelLayout")] = QString();
+        track[QStringLiteral("isDefault")] = false;
+        track[QStringLiteral("isForced")] = false;
+        track[QStringLiteral("isExternal")] = false;
+        track[QStringLiteral("selected")] = selected;
+        return track;
+    }
+
+    State state() const override { return m_state; }
+    bool buffering() const override { return m_buffering; }
+    qint64 positionMs() const override { return m_positionMs; }
+    qint64 durationMs() const override { return m_durationMs; }
+
+    // Test drivers
+    void simulateBuffering(bool buffering)
+    {
+        m_buffering = buffering;
+        emit bufferingChanged(buffering);
+    }
+    void simulateState(State state)
+    {
+        m_state = state;
+        emit stateChanged(state);
+    }
+    void simulatePosition(qint64 ms)
+    {
+        m_positionMs = ms;
+        emit positionChanged(ms);
+    }
+    void simulateDuration(qint64 ms)
+    {
+        m_durationMs = ms;
+        emit durationChanged(ms);
+    }
+    void simulateError(const QString &message)
+    {
+        m_state = State::Error;
+        emit stateChanged(m_state);
+        emit errorOccurred(message);
+    }
+    void simulateEnd()
+    {
+        m_state = State::Ended;
+        emit stateChanged(m_state);
+        emit endReached();
+    }
+
+    void simulateTracks(const QVariantList &audio, const QVariantList &subtitles)
+    {
+        m_audioTracks = audio;
+        m_subtitleTracks = subtitles;
+        m_audioTrackId = selectedIdOf(audio);
+        m_subtitleTrackId = selectedIdOf(subtitles);
+        emit tracksChanged();
+    }
+    void simulateBufferedMs(qint64 ms)
+    {
+        m_bufferedMs = ms;
+        emit bufferedMsChanged();
+    }
+    void simulateVideoStats(const QVariantMap &stats)
+    {
+        m_videoStats = stats;
+        emit videoStatsChanged();
+    }
+
+    QList<QUrl> loadedUrls;
+    QList<qint64> loadedStarts;
+    QList<qint64> seeks;
+    QList<int> audioTrackRequests;
+    QList<int> subtitleTrackRequests;
+    QStringList screenshots;
+    int stopCalls = 0;
+
+private:
+    static int selectedIdOf(const QVariantList &tracks)
+    {
+        for (const QVariant &entry : tracks) {
+            const QVariantMap track = entry.toMap();
+            if (track.value(QStringLiteral("selected")).toBool())
+                return track.value(QStringLiteral("id")).toInt();
+        }
+        return -1;
+    }
+
+    // Move the "selected" flag onto id (or nowhere, for -1), the way a real
+    // engine's read-back would; returns the id that actually took effect.
+    static int selectIn(QVariantList &tracks, int id)
+    {
+        int applied = -1;
+        for (QVariant &entry : tracks) {
+            QVariantMap track = entry.toMap();
+            const bool selected = id >= 0 && track.value(QStringLiteral("id")).toInt() == id;
+            if (selected)
+                applied = id;
+            track[QStringLiteral("selected")] = selected;
+            entry = track;
+        }
+        return applied;
+    }
+
+    State m_state = State::Idle;
+    bool m_buffering = false;
+    qint64 m_positionMs = 0;
+    qint64 m_durationMs = 0;
+
+    QVariantList m_audioTracks;
+    QVariantList m_subtitleTracks;
+    int m_audioTrackId = -1;
+    int m_subtitleTrackId = -1;
+    qint64 m_bufferedMs = 0;
+    qreal m_speed = 1.0;
+    int m_audioDelayMs = 0;
+    int m_subtitleDelayMs = 0;
+    QVariantMap m_videoStats;
+};

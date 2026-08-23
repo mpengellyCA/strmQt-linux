@@ -1,0 +1,56 @@
+{
+    "Items": [
+        {
+            "Name": "The Matrix",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "301001",
+            "RunTimeTicks": 81840000000,
+            "ProductionYear": 1999,
+            "IsFolder": false,
+            "Type": "Movie",
+            "Overview": "A computer hacker learns from mysterious rebels about the true nature of his reality.",
+            "OfficialRating": "R",
+            "CommunityRating": 8.7,
+            "UserData": {
+                "PlaybackPositionTicks": 0,
+                "PlayCount": 2,
+                "IsFavorite": true,
+                "Played": true,
+                "LastPlayedDate": "2026-06-11T20:00:00.0000000Z"
+            },
+            "ImageTags": { "Primary": "aaa111", "Logo": "bbb222" },
+            "BackdropImageTags": ["ccc333", "ddd444"],
+            "MediaType": "Video",
+            "Container": "mkv",
+            "FutureUnknownField": { "nested": [1, 2, 3] }
+        },
+        {
+            "Name": "Blade Runner 2049",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "301002",
+            "RunTimeTicks": 98280000000,
+            "ProductionYear": 2017,
+            "IsFolder": false,
+            "Type": "Movie",
+            "OfficialRating": "R",
+            "CommunityRating": 8.0,
+            "UserData": {
+                "PlaybackPositionTicks": 23400000000,
+                "PlayedPercentage": 23.809523,
+                "PlayCount": 1,
+                "IsFavorite": false,
+                "Played": false
+            },
+            "ImageTags": { "Primary": "eee555" },
+            "BackdropImageTags": ["fff666"],
+            "MediaType": "Video"
+        },
+        {
+            "Name": "Sparse Item With Missing Fields",
+            "Id": "301003",
+            "Type": "Movie"
+        }
+    ],
+    "TotalRecordCount": 42,
+    "StartIndex": 0
+}

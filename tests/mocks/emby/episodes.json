@@ -1,0 +1,52 @@
+{
+    "Items": [
+        {
+            "Name": "Seven Thirty-Seven",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "402001",
+            "RunTimeTicks": 28470000000,
+            "IndexNumber": 1,
+            "ParentIndexNumber": 2,
+            "IsFolder": false,
+            "Type": "Episode",
+            "Overview": "Walt and Jesse realize how dire their situation is.",
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "SeasonId": "400200",
+            "SeasonName": "Season 2",
+            "UserData": {
+                "PlaybackPositionTicks": 0,
+                "PlayCount": 1,
+                "IsFavorite": false,
+                "Played": true
+            },
+            "ImageTags": { "Primary": "ep1tag" },
+            "MediaType": "Video"
+        },
+        {
+            "Name": "Grilled",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "402002",
+            "RunTimeTicks": 28230000000,
+            "IndexNumber": 2,
+            "ParentIndexNumber": 2,
+            "IsFolder": false,
+            "Type": "Episode",
+            "Overview": "Walt and Jesse are held captive.",
+            "SeriesName": "Breaking Bad",
+            "SeriesId": "400001",
+            "SeasonId": "400200",
+            "SeasonName": "Season 2",
+            "UserData": {
+                "PlaybackPositionTicks": 8000000000,
+                "PlayedPercentage": 28.343,
+                "PlayCount": 0,
+                "IsFavorite": false,
+                "Played": false
+            },
+            "ImageTags": { "Primary": "ep2tag" },
+            "MediaType": "Video"
+        }
+    ],
+    "TotalRecordCount": 2
+}

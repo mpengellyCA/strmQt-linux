@@ -1,0 +1,7 @@
+src/
+pkg/
+*.pkg.tar.zst
+*.log
+# makepkg's SRCDEST defaults to $startdir, so the git clone of the checkout
+# lands here as ./strmqt/.
+strmqt/

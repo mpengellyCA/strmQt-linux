@@ -1,0 +1,212 @@
+#pragma once
+
+#include "core/Result.h"
+#include "server/dto/ItemDetails.h"
+#include "server/dto/ItemsPage.h"
+#include "server/dto/ItemsQuery.h"
+#include "server/dto/Library.h"
+#include "server/dto/MediaItem.h"
+#include "server/dto/PlaybackTicket.h"
+#include "server/dto/ServerInfo.h"
+#include "server/dto/SessionInfo.h"
+
+#include <QFuture>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QObject>
+#include <QPromise>
+#include <QUrl>
+#include <QUrlQuery>
+
+#include <QNetworkRequest>
+
+#include <functional>
+#include <memory>
+
+class QNetworkAccessManager;
+class QNetworkReply;
+
+namespace strmqt::emby {
+
+// Raw Emby 4.x REST client (QtNetwork only, PLAN §3.4). Owns the access token for
+// the lifetime of the object; persistence is the caller's job (SecretsStore).
+// All request methods return QFuture<Result<T>> resolved on this object's thread.
+class EmbyClient : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit EmbyClient(QObject *parent = nullptr);
+
+    QUrl baseUrl() const { return m_baseUrl; }
+    void setBaseUrl(const QUrl &url) { m_baseUrl = url; }
+
+    // Device identity used in X-Emby-Authorization (stable per install).
+    void setDeviceId(const QString &id) { m_deviceId = id; }
+    void setDeviceName(const QString &name) { m_deviceName = name; }
+
+    // Restore a previous session without re-authenticating.
+    void setSession(const QString &accessToken, const QString &userId);
+    QString accessToken() const { return m_accessToken; }
+    QString userId() const { return m_userId; }
+    bool hasSession() const { return !m_accessToken.isEmpty() && !m_userId.isEmpty(); }
+
+    // GET /System/Info/Public — no auth required.
+    QFuture<Result<ServerInfo>> publicSystemInfo();
+
+    // POST /Users/AuthenticateByName. On success the client adopts the new session.
+    QFuture<Result<SessionInfo>> authenticateByName(const QString &username,
+                                                    const QString &password);
+
+    // GET /Users/Public — the users the server advertises on a login screen.
+    // No auth required. Measured on the target server: it returned ONE user,
+    // and not the one actually signed in, because Emby hides users flagged
+    // that way. So this can seed a picker but must never replace the
+    // username field — a user missing from it is normal, not an error.
+    QFuture<Result<QList<MediaItem>>> publicUsers();
+
+    // GET /Users/{uid}/Views
+    QFuture<Result<QList<Library>>> userViews();
+    // GET /Users/{uid}/Items
+    QFuture<Result<ItemsPage>> items(const ItemsQuery &query);
+    // GET /Users/{uid}/Items/Resume
+    QFuture<Result<ItemsPage>> resumeItems(int limit = 20);
+    // GET /Users/{uid}/Items/Latest (bare array on the wire)
+    QFuture<Result<QList<MediaItem>>> latestItems(const QString &parentId = QString(),
+                                                  int limit = 20);
+    // GET /Shows/NextUp
+    QFuture<Result<ItemsPage>> nextUp(int limit = 20);
+
+    // The episode that follows `episodeId` in series order, across a season
+    // boundary. Uses StartItemId, which returns the list FROM that episode
+    // onward, so the answer is the second row.
+    //
+    // Deliberately not AdjacentTo: this server ignores it silently and returns
+    // the entire series (measured: 151 episodes), which would have looked like
+    // a working query returning the wrong answer.
+    QFuture<Result<QList<MediaItem>>> nextEpisode(const QString &seriesId,
+                                                  const QString &episodeId);
+
+    // GET /Shows/{seriesId}/Seasons and /Shows/{seriesId}/Episodes
+    QFuture<Result<ItemsPage>> seasons(const QString &seriesId);
+    QFuture<Result<ItemsPage>> episodes(const QString &seriesId, const QString &seasonId);
+
+    // GET /Users/{uid}/Items/{id} — full payload for the Details page.
+    QFuture<Result<ItemDetails>> itemDetails(const QString &itemId);
+    // GET /Persons and /Genres. Both take a SearchTerm and both answer with an
+    // ItemsPage whose **TotalRecordCount is 0 even when Items is populated** —
+    // measured on 4.9.5.0. Anything that pages on that count renders nothing,
+    // so callers must use the returned list's own size.
+    // GET /Artists and /Artists/AlbumArtists. Different endpoints, not a filter
+    // on one: measured on the target server they return 3,789 and 2,394.
+    QFuture<Result<ItemsPage>> musicArtists(const QString &parentId, int startIndex, int limit);
+    QFuture<Result<ItemsPage>> albumArtists(const QString &parentId, int startIndex, int limit);
+
+    QFuture<Result<QList<MediaItem>>> persons(const QString &searchTerm, int limit = 12);
+    QFuture<Result<QList<MediaItem>>> genres(const QString &searchTerm, int limit = 12);
+
+    // GET /Items/{id}/Similar — "More like this".
+    QFuture<Result<QList<MediaItem>>> similar(const QString &itemId, int limit = 12);
+
+    // POST (or DELETE) /Users/{uid}/PlayedItems/{id} and .../FavoriteItems/{id}
+    QFuture<Result<bool>> setPlayed(const QString &itemId, bool played);
+    QFuture<Result<bool>> setFavorite(const QString &itemId, bool favorite);
+
+    // POST /Items/{id}/Refresh — ask the server to re-read metadata and images
+    // for an item. `recursive` extends it to children (a series' seasons and
+    // episodes). The two modes are Emby's MetadataRefreshMode / ImageRefreshMode
+    // vocabulary: "None" | "ValidationOnly" | "Default" | "FullRefresh".
+    // The server answers 204 and does the work in the background, so a success
+    // here means "accepted", not "finished".
+    QFuture<Result<bool>> refreshMetadata(
+        const QString &itemId, bool recursive = false,
+        const QString &metadataRefreshMode = QStringLiteral("FullRefresh"),
+        const QString &imageRefreshMode = QStringLiteral("FullRefresh"));
+
+    // POST /Items/{id}/PlaybackInfo with our DeviceProfile → ordered stream ladder.
+    // Quality preferences applied to the DeviceProfile sent with PlaybackInfo
+    // (ARCHITECTURE.md). Set by the app from Settings; the client itself has no
+    // opinion about them.
+    //   maxBitrateKbps  0 = uncapped. NOT the same as a huge number: a cap
+    //                   makes the server transcode, so asking it to transcode
+    //                   to 200 Mbps is worse than not asking.
+    //   mode            "auto" | "directPlay" | "transcode"
+    void setQualityPreferences(int maxBitrateKbps, const QString &mode);
+
+    QFuture<Result<PlaybackTicket>> playbackInfo(const QString &itemId,
+                                                 qint64 startPositionTicks = 0);
+
+    // ── Playlists (ARCHITECTURE.md) ──────────────────────────────────────────
+    // Members come back with a PlaylistItemId per row: the ENTRY key, not the
+    // item id. The same track can appear twice in a playlist, so removal and
+    // reordering address entries, exactly as PlayQueue does.
+    QFuture<Result<ItemsPage>> playlistItems(const QString &playlistId, int startIndex = 0,
+                                             int limit = 200);
+    // POST /Playlists — returns the new playlist's id.
+    QFuture<Result<QString>> createPlaylist(const QString &name, const QStringList &itemIds,
+                                            const QString &mediaType = QString());
+    // POST /Playlists/{id}/Items
+    QFuture<Result<bool>> addToPlaylist(const QString &playlistId, const QStringList &itemIds);
+    // DELETE /Playlists/{id}/Items — takes ENTRY ids (PlaylistItemId).
+    QFuture<Result<bool>> removeFromPlaylist(const QString &playlistId,
+                                             const QStringList &entryIds);
+    // POST /Items/{id} — Emby's UpdateItem. There is no rename endpoint, so a
+    // rename is a full-item update: fetch the item, change Name, post it back.
+    // Anything less than the whole object risks clearing fields the server
+    // treats as absent-means-empty.
+    QFuture<Result<bool>> renameItem(const QString &itemId, const QString &name);
+    // DELETE /Items/{id}. Irreversible on the server; callers must confirm.
+    QFuture<Result<bool>> deleteItem(const QString &itemId);
+
+    // POST /Playlists/{id}/Items/{entryId}/Move/{newIndex}
+    QFuture<Result<bool>> movePlaylistItem(const QString &playlistId, const QString &entryId,
+                                           int newIndex);
+
+    // POST /Sessions/Capabilities/Full — tells the server what this client can
+    // be asked to do. Until this is sent, /Sessions reports the session with
+    // SupportsRemoteControl=false and zero SupportedCommands, so no other Emby
+    // app will even offer it as a target (verified against the live server:
+    // StrmQt showed 0 commands where Emby Web showed 39).
+    QFuture<Result<bool>> reportCapabilities(const QStringList &commands,
+                                             bool supportsMediaControl);
+
+    // POST /Sessions/Playing[/Progress|/Stopped] — playback state reports.
+    QFuture<Result<bool>> reportPlaybackStart(const PlaybackProgress &progress);
+    QFuture<Result<bool>> reportPlaybackProgress(const PlaybackProgress &progress);
+    QFuture<Result<bool>> reportPlaybackStopped(const PlaybackProgress &progress);
+
+    // Synchronous URL builder for the image pipeline (M2 wires it to ImageProvider).
+    QUrl imageUrl(const QString &itemId, const QString &imageType, int maxWidth,
+                  const QString &tag = QString()) const;
+
+private:
+    QNetworkReply *startGet(const QString &path, const QUrlQuery &query);
+    QNetworkReply *startPost(const QString &path, const QJsonObject &body);
+    // Emby's action endpoints take their arguments in the query string and an
+    // empty body. Deliberately not an overload of startPost(): `startPost(p, {})`
+    // would become ambiguous at every existing call site.
+    QNetworkReply *startPostQuery(const QString &path, const QUrlQuery &query);
+    QNetworkReply *startDelete(const QString &path);
+    QNetworkRequest baseRequest(const QUrl &url) const;
+    // For endpoints whose response body we ignore: ok ⇔ HTTP success.
+    QFuture<Result<bool>> finishStatus(QNetworkReply *reply);
+    QUrl requestUrl(const QString &path, const QUrlQuery &query) const;
+    QString authorizationHeader() const;
+
+    // Resolves the reply into Result<T> via parse(QJsonDocument) once finished.
+    template<class T>
+    QFuture<Result<T>> finishJson(QNetworkReply *reply,
+                                  std::function<Result<T>(const QJsonDocument &)> parse);
+    template<class T> static QFuture<Result<T>> failedFuture(const QString &error);
+
+    QUrl m_baseUrl;
+    QString m_deviceId;
+    QString m_deviceName;
+    QString m_accessToken;
+    QString m_userId;
+    QNetworkAccessManager *m_nam = nullptr;
+    int m_maxBitrateKbps = 0;
+    QString m_playbackMode = QStringLiteral("auto");
+};
+
+} // namespace strmqt::emby

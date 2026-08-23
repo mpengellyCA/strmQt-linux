@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=StrmQt
+GenericName=Emby Client
+Comment=Watch your Emby library on the big screen
+Icon=ca.mikesdev.StrmQt
+Exec=strmqt
+TryExec=strmqt
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=Emby;media;streaming;movies;TV;series;player;
+StartupNotify=true
+StartupWMClass=ca.mikesdev.StrmQt
+SingleMainWindow=true

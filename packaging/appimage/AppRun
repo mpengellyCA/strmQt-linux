@@ -1,0 +1,68 @@
+#!/bin/sh
+# AppRun — StrmQt AppImage entry point.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# POSIX sh on purpose: this runs before anything of ours, on whatever host the
+# user has, and must not assume bash.
+
+set -eu
+
+HERE="$(dirname "$(readlink -f "${0}")")"
+
+# ==============================================================================
+# DO NOT SET LD_LIBRARY_PATH HERE. NOT NOW, NOT "JUST FOR DEBUGGING".
+# ==============================================================================
+#
+# It is tempting, because it is what every AppImage tutorial does. It is wrong
+# for this application, for two independent reasons:
+#
+# 1. LD_LIBRARY_PATH is INHERITED BY CHILD PROCESSES. StrmQt spawns host
+#    helpers -- `kscreen-doctor` for the HDR probe (src/platform), and libmpv
+#    may exec host tools. Those children would then load OUR bundled Qt and
+#    codec libraries instead of the host's. A host binary linked against host
+#    Qt 6.11 loading our Qt 6.11 copy is a coin flip; against a host with a
+#    different Qt it is a guaranteed crash.
+#
+# 2. LD_LIBRARY_PATH OUTRANKS DT_RUNPATH. Mesa's DRI drivers, the VA-API
+#    drivers (/usr/lib/dri/*_drv_video.so) and libvulkan's ICDs are dlopen'd
+#    and rely on their own RUNPATH to find their private dependencies. An
+#    LD_LIBRARY_PATH pointing at our lib dir wins over that RUNPATH and can
+#    hand a Mesa driver our copy of a library it was not built against ->
+#    "failed to load driver" or a hard abort inside the GL driver.
+#
+# Instead, every bundled object carries an $ORIGIN-relative RPATH, applied by
+# build-appimage.sh (patchelf pass 2). $ORIGIN is per-object and is NOT
+# inherited by children, which is exactly the property we want.
+#
+# If you are here because a bundled library is not being found: the bug is a
+# missing or wrong RPATH on that object. Fix it with patchelf in
+# build-appimage.sh. Do not paper over it here.
+# ==============================================================================
+
+# The mpv render path is GL; Qt's RHI must agree. src/app/main.cpp already does
+# this (qputenv when unset), but set it here too so the CLI tool, any helper
+# process, and a user who runs the payload binary directly all agree.
+export QSG_RHI_BACKEND="${QSG_RHI_BACKEND:-opengl}"
+
+# Let the desktop entry, icons and AppStream metadata inside the AppDir be
+# visible to anything that consults XDG_DATA_DIRS (icon lookup for the window,
+# notification actions). Appended, never replacing, so host themes still win
+# where they should.
+export XDG_DATA_DIRS="${HERE}/usr/share${XDG_DATA_DIRS:+:${XDG_DATA_DIRS}}:/usr/local/share:/usr/share"
+
+# We deliberately do NOT ship KDEPlasmaPlatformTheme6 (it would drag the whole
+# KF6 stack into the AppImage). On a Plasma host QT_QPA_PLATFORMTHEME=kde would
+# make Qt look for that plugin, fail, and log a warning on every start -- and on
+# some versions fall back with broken dialog styling. Clear it and let Qt pick
+# its default theme.
+unset QT_QPA_PLATFORMTHEME
+
+# Headless Emby probe tool, reachable without a second AppImage:
+#     ./StrmQt-x86_64.AppImage --strmqt-cli <args...>
+if [ "${1-}" = "--strmqt-cli" ]; then
+    shift
+    exec "${HERE}/usr/bin/strmqt-cli" "$@"
+fi
+
+exec "${HERE}/usr/bin/strmqt" "$@"

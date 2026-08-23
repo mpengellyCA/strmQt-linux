@@ -1,0 +1,18 @@
+build/
+.cache/
+.clangd/
+compile_commands.json
+CMakeLists.txt.user
+*.user
+*.autosave
+.agentkate/
+.agents/
+.claude/
+
+# Packaging output
+.flatpak-builder/
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/strmqt/
+*.pkg.tar.zst
+*.AppImage

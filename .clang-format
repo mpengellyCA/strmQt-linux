@@ -1,0 +1,28 @@
+# StrmQt C++ style — Qt-adjacent, 4-space indent, 100 columns.
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterStruct: true
+  AfterEnum: true
+  AfterControlStatement: Never
+  BeforeElse: false
+PointerAlignment: Right
+ReferenceAlignment: Right
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: All
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+IndentPPDirectives: None
+KeepEmptyLinesAtTheStartOfBlocks: false
+SpaceAfterTemplateKeyword: false
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: true

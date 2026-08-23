@@ -1,0 +1,41 @@
+{
+    "User": {
+        "Name": "mike",
+        "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+        "Id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "HasPassword": true,
+        "HasConfiguredPassword": true,
+        "EnableAutoLogin": false,
+        "LastLoginDate": "2026-07-30T21:14:07.0000000Z",
+        "LastActivityDate": "2026-07-30T21:14:07.0000000Z",
+        "Configuration": {
+            "PlayDefaultAudioTrack": true,
+            "DisplayMissingEpisodes": false,
+            "SubtitleMode": "Default",
+            "OrderedViews": [],
+            "LatestItemsExcludes": [],
+            "MyMediaExcludes": [],
+            "HidePlayedInLatest": true,
+            "RememberAudioSelections": true,
+            "RememberSubtitleSelections": true,
+            "EnableNextEpisodeAutoPlay": true
+        },
+        "Policy": {
+            "IsAdministrator": false,
+            "IsHidden": false,
+            "IsDisabled": false,
+            "EnableRemoteAccess": true,
+            "EnableMediaPlayback": true,
+            "EnableAudioPlaybackTranscoding": true,
+            "EnableVideoPlaybackTranscoding": true,
+            "EnablePlaybackRemuxing": true
+        }
+    },
+    "SessionInfo": {
+        "PlayState": { "CanSeek": false, "IsPaused": false },
+        "Id": "f00ba7",
+        "ServerId": "6c17e0e282e84f7c92e8358ebf054111"
+    },
+    "AccessToken": "not-a-real-token-fixture-only",
+    "ServerId": "6c17e0e282e84f7c92e8358ebf054111"
+}

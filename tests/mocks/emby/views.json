@@ -1,0 +1,55 @@
+{
+    "Items": [
+        {
+            "Name": "Movies",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+            "Etag": "07be1cf28e47ba7f1b6f45cc38e94a6f",
+            "DateCreated": "2024-02-01T00:00:00.0000000Z",
+            "CanDelete": false,
+            "CanDownload": false,
+            "SortName": "movies",
+            "ExternalUrls": [],
+            "Path": "/media/movies",
+            "Taglines": [],
+            "Genres": [],
+            "PlayAccess": "Full",
+            "RemoteTrailers": [],
+            "ProviderIds": {},
+            "IsFolder": true,
+            "ParentId": "2",
+            "Type": "CollectionFolder",
+            "PresentationUniqueKey": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+            "DisplayPreferencesId": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+            "CollectionType": "movies",
+            "ImageTags": { "Primary": "c78d3f5e6a1b2c3d4e5f6a7b8c9d0e1f" },
+            "BackdropImageTags": [],
+            "LockedFields": [],
+            "LockData": false
+        },
+        {
+            "Name": "TV Shows",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "767bffe4f11c93ef34b805451a696a4e",
+            "CanDelete": false,
+            "SortName": "tv shows",
+            "PlayAccess": "Full",
+            "IsFolder": true,
+            "ParentId": "2",
+            "Type": "CollectionFolder",
+            "CollectionType": "tvshows",
+            "ImageTags": { "Primary": "9f8e7d6c5b4a39281706f5e4d3c2b1a0" },
+            "BackdropImageTags": []
+        },
+        {
+            "Name": "Unclassified Folder",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Id": "aa11bb22cc33dd44ee55ff6677889900",
+            "IsFolder": true,
+            "Type": "CollectionFolder",
+            "ImageTags": {},
+            "BackdropImageTags": []
+        }
+    ],
+    "TotalRecordCount": 3
+}

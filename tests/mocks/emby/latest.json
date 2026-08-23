@@ -1,0 +1,37 @@
+[
+    {
+        "Name": "Dune: Part Two",
+        "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+        "Id": "301099",
+        "RunTimeTicks": 99960000000,
+        "ProductionYear": 2024,
+        "IsFolder": false,
+        "Type": "Movie",
+        "CommunityRating": 8.5,
+        "UserData": {
+            "PlaybackPositionTicks": 0,
+            "PlayCount": 0,
+            "IsFavorite": false,
+            "Played": false
+        },
+        "ImageTags": { "Primary": "11aa22bb" },
+        "BackdropImageTags": ["33cc44dd"],
+        "MediaType": "Video"
+    },
+    {
+        "Name": "Severance",
+        "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+        "Id": "405000",
+        "IsFolder": true,
+        "Type": "Series",
+        "UserData": {
+            "UnplayedItemCount": 9,
+            "PlaybackPositionTicks": 0,
+            "PlayCount": 0,
+            "IsFavorite": false,
+            "Played": false
+        },
+        "ImageTags": { "Primary": "55ee66ff" },
+        "BackdropImageTags": []
+    }
+]

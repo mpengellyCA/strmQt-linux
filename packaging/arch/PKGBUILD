@@ -1,0 +1,74 @@
+# Maintainer: Mike Pengelly <mike@leadrix.io>
+#
+# Local-source PKGBUILD. Not intended for the AUR: it clones the checkout that
+# contains this file (packaging/arch/../..) at the release tag. Everything must
+# be committed and tagged before makepkg will see it. While iterating on the
+# packaging files, swap "#tag=v$pkgver" for "#branch=main".
+
+pkgname=strmqt
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Native Qt 6 Emby client for KDE Plasma, built for the couch"
+arch=('x86_64')
+url="https://github.com/mikesdev/StrmQt"
+license=('GPL-3.0-or-later')
+
+# SDL3 and libvlc are link-time DT_NEEDED dependencies of the strmqt binary, so
+# they are hard depends, not optdepends. Only kwallet (reached over D-Bus) and
+# kscreen (shelled out to via QProcess) degrade gracefully at runtime.
+#
+# libmpv.so / libvlc.so are soname depends -- `mpv` provides libmpv.so=2-64 and
+# `libvlc` provides libvlc.so=5-64 -- so an ABI bump forces a rebuild. `sdl3`
+# publishes no .so provide, so the plain package name is the correct spelling.
+#
+# No qt6-wayland: libQt6WaylandClient.so is owned by qt6-base on this distro.
+# qt6-websockets is a HARD dependency, not optional: the live-update service
+# links libQt6WebSockets.so.6, so the binary will not start without it.
+# Caught by namcap as an error after M10 added it and this list was not
+# updated — exactly the class of miss !autodeps makes possible.
+depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'hicolor-icon-theme'
+         'libmpv.so' 'libvlc.so' 'sdl3')
+# Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).
+makedepends=('cmake' 'ninja' 'pkgconf' 'git')
+optdepends=(
+  'kwallet: store Emby credentials in KWallet instead of a plaintext INI file'
+  'kscreen: HDR display detection via kscreen-doctor'
+)
+
+# Builds the tagged release. Swap for "#branch=main" while iterating on packaging.
+source=("$pkgname::git+file://$startdir/../..#tag=v$pkgver")
+sha256sums=('SKIP')
+
+# No install= scriptlet: pacman hooks already refresh the desktop database, the
+# hicolor icon cache and the AppStream cache.
+#
+# No license install either: GPL-3.0 is a "common" Arch license, covered by
+# /usr/share/licenses/common/GPL3.
+
+build() {
+  # CMAKE_BUILD_TYPE=None keeps makepkg's CFLAGS/CXXFLAGS authoritative. On this
+  # CachyOS box those are -march=native -O3; RelWithDebInfo would append its own
+  # -O2 *after* them and quietly win.
+  #
+  # CMAKE_SKIP_INSTALL_RPATH=ON undoes the "$ORIGIN;$ORIGIN/../lib" install
+  # RPATH that qt_standard_project_setup() injects; without it namcap reports
+  # "insecure RUNPATH '$ORIGIN'". This lives in the PKGBUILD rather than in
+  # CMakeLists.txt on purpose -- the AppImage genuinely wants $ORIGIN/../lib.
+  cmake -S "$pkgname" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_SKIP_INSTALL_RPATH=ON \
+    -DSTRMQT_WERROR=OFF \
+    -DSTRMQT_WITH_VLC=ON \
+    -DSTRMQT_WITH_SDL3=ON \
+    -Wno-dev
+  cmake --build build
+}
+
+check() {
+  ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
