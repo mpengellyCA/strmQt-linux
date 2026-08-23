@@ -688,7 +688,12 @@ FocusScope {
             }
         }
 
-        ListView {
+        // The shared table (ARCHITECTURE.md): one tab stop, Up/Down and the
+        // page keys owned internally, type-to-jump for a playlist long enough
+        // that arrow keys are not navigation. No disc grouping and no artist
+        // rule — a playlist is not a record, and its rows may not even be
+        // music.
+        TrackTable {
             id: memberList
 
             anchors.left: parent.left
@@ -696,13 +701,11 @@ FocusScope {
             anchors.top: memberHeader.bottom
             anchors.bottom: parent.bottom
             anchors.topMargin: Theme.spacingValue
-            clip: true
             model: PlaylistCtl.items
-            currentIndex: 0
-            keyNavigationWraps: false
-            highlightMoveDuration: Theme.animFastMs
-            boundsBehavior: Flickable.StopAtBounds
-            cacheBuffer: Theme.scale(64) * 6
+            rowHeight: Theme.scale(64)
+            // The composed display string, which for an episode carries the
+            // series and the number the bare name does not.
+            jumpRole: "label"
             // Opacity, not visibility: an invisible view drops active focus and
             // never gets it back, so a reload would eject the keyboard from the
             // page on every move.
@@ -712,29 +715,21 @@ FocusScope {
                 NumberAnimation { duration: Theme.animFastMs; easing.type: Theme.easeStandard }
             }
 
-            ScrollBar.vertical: StrmScrollBar {}
-
             KeyNavigation.left: browseList
             KeyNavigation.up: playAllButton
 
-            function pageStep() {
-                return Math.max(1, Math.floor(memberList.height / Math.max(1, Theme.scale(64))));
-            }
+            onActivated: index => page.playFrom(index)
 
-            Keys.onReturnPressed: event => {
-                if (!event.isAutoRepeat)
-                    page.playFrom(memberList.currentIndex);
-            }
-            Keys.onEnterPressed: event => {
-                if (!event.isAutoRepeat)
-                    page.playFrom(memberList.currentIndex);
-            }
-
-            // The edit verbs on the keyboard. Alt+Up/Alt+Down rather than plain
-            // arrows, which have to keep meaning "move the cursor"; Delete is
-            // the platform's remove key and is auto-repeat guarded so a held key
-            // cannot walk down the playlist deleting it.
-            Keys.onPressed: event => {
+            // The edit verbs on the keyboard, handed to the table rather than
+            // declared as this view's own Keys.onPressed — re-declaring that
+            // attached handler here would replace the table's and take Page
+            // Up/Down, Home/End and type-to-jump away with it.
+            //
+            // Alt+Up/Alt+Down rather than plain arrows, which have to keep
+            // meaning "move the cursor"; Delete is the platform's remove key
+            // and is auto-repeat guarded so a held key cannot walk down the
+            // playlist deleting it.
+            onKeyPressed: event => {
                 if (memberList.count === 0)
                     return;
                 const row = memberList.currentIndex;
@@ -758,36 +753,43 @@ FocusScope {
                         page.showMemberMenu(row, p.x, p.y);
                     }
                     event.accepted = true;
-                } else if (event.key === Qt.Key_PageDown) {
-                    memberList.currentIndex = Math.min(memberList.count - 1,
-                                                       row + memberList.pageStep());
-                    event.accepted = true;
-                } else if (event.key === Qt.Key_PageUp) {
-                    memberList.currentIndex = Math.max(0, row - memberList.pageStep());
-                    event.accepted = true;
-                } else if (event.key === Qt.Key_Home) {
-                    memberList.currentIndex = 0;
-                    event.accepted = true;
-                } else if (event.key === Qt.Key_End) {
-                    memberList.currentIndex = memberList.count - 1;
-                    event.accepted = true;
                 }
             }
 
-            delegate: Item {
+            // The shared row (ARCHITECTURE.md), configured for a playlist: an
+            // ordinal rather than a track number, because a playlist row's
+            // position is the playlist's fact and not the record's; a cover,
+            // because a playlist mixes records and the art is how you find your
+            // place; and the four edit verbs declared inline, which is what
+            // TrackRow's default property is for.
+            //
+            // `activeFocusOnTab: false` throughout, on the extras here and on
+            // TrackRow's built-in pair: the table is one tab stop and owns the
+            // arrow keys, and five focusable buttons per row would make Tab walk
+            // the playlist instead of leaving it. The keyboard reaches all of
+            // these through the table's key handler above.
+            delegate: TrackRow {
                 id: memberRow
 
                 required property int index
                 required property var model
 
-                readonly property bool current: memberRow.ListView.isCurrentItem
-                                                && memberList.activeFocus
-                readonly property bool hovered: memberHover.hovered
-                // Both may be true at once, and the actions appear for either:
-                // the pointer needs them under the cursor, the keyboard needs
-                // them on the row it is standing on.
-                readonly property bool showActions: memberRow.hovered || memberRow.current
-                readonly property string art: {
+                width: memberList.width
+
+                rowHeight: Theme.scale(64)
+                surfaceTopMargin: Theme.scale(2)
+                surfaceBottomMargin: Theme.scale(2)
+                surfaceRightMargin: Theme.spacingTight
+                // Tabular, so the column does not jitter between 9 and 10.
+                numberColumn: Theme.scale(42)
+                number: memberRow.index + 1
+                hoverPlayGlyph: false
+                showCover: true
+                coverSize: Theme.scale(44)
+
+                // Poster first, still second: a playlist holds films and
+                // episodes as well as tracks, and only the latter have a thumb.
+                coverUrl: {
                     const poster = memberRow.model.posterUrl !== undefined
                                  ? String(memberRow.model.posterUrl) : "";
                     if (poster.length > 0)
@@ -795,243 +797,81 @@ FocusScope {
                     return memberRow.model.thumbUrl !== undefined
                            ? String(memberRow.model.thumbUrl) : "";
                 }
-                readonly property string title: {
+                title: {
                     const label = memberRow.model.label !== undefined
                                 ? String(memberRow.model.label) : "";
                     if (label.length > 0)
                         return label;
                     return memberRow.model.name !== undefined ? String(memberRow.model.name) : "";
                 }
+                secondary: {
+                    const parts = [];
+                    const sub = memberRow.model.subtitle !== undefined
+                              ? String(memberRow.model.subtitle) : "";
+                    if (sub.length > 0)
+                        parts.push(sub);
+                    const runtime = page.formatRuntime(memberRow.model.runtimeMs);
+                    if (runtime.length > 0)
+                        parts.push(runtime);
+                    return parts.join("  ·  ");
+                }
+                played: memberRow.model.played === true
 
-                width: memberList.width
-                height: Theme.scale(64)
+                current: memberRow.ListView.isCurrentItem && memberList.activeFocus
+                showMenu: true
+                // Both may be true at once, and the actions appear for either:
+                // the pointer needs them under the cursor, the keyboard needs
+                // them on the row it is standing on.
+                verbsRevealed: memberRow.hovered || memberRow.current
 
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.topMargin: Theme.scale(2)
-                    anchors.bottomMargin: Theme.scale(2)
-                    anchors.rightMargin: Theme.spacingTight
-                    radius: Theme.radiusChip
-                    color: memberRow.hovered ? Theme.hoverTint : "transparent"
-
-                    Behavior on color {
-                        ColorAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
-                    }
+                onActivated: {
+                    memberList.currentIndex = memberRow.index;
+                    memberList.forceActiveFocus(Qt.MouseFocusReason);
+                    page.playFrom(memberRow.index);
                 }
 
-                // Tabular, so the column does not jitter between 9 and 10.
-                Text {
-                    id: ordinal
+                onMenuRequested: (sceneX, sceneY) => page.showMemberMenu(memberRow.index,
+                                                                        sceneX, sceneY)
 
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Theme.scale(34)
-                    horizontalAlignment: Text.AlignRight
-                    text: memberRow.index + 1
-                    color: memberRow.current ? Theme.accentColor : Theme.textTertiary
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontSmall
+                StrmIconButton {
+                    iconName: "play"
+                    round: true
+                    size: Theme.scale(28)
+                    activeFocusOnTab: false
+                    tooltip: qsTr("Play from here")
+                    onClicked: page.playFrom(memberRow.index)
                 }
 
-                Rectangle {
-                    id: artFrame
-
-                    anchors.left: ordinal.right
-                    anchors.leftMargin: Theme.spacingValue
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Theme.scale(44)
-                    height: Theme.scale(44)
-                    radius: Theme.radiusChip
-                    color: Theme.surfaceColor
-                    clip: true
-
-                    Image {
-                        anchors.fill: parent
-                        source: memberRow.art
-                        sourceSize.width: Theme.scale(44)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        opacity: status === Image.Ready ? 1 : 0
-
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Theme.animNormalMs
-                                easing.type: Theme.easeStandard
-                            }
-                        }
-                    }
-
-                    // Played state, kept off the label so a long title never
-                    // pushes it out of sight.
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        width: Theme.scale(16)
-                        height: Theme.scale(16)
-                        radius: height / 2
-                        visible: memberRow.model.played === true
-                        color: Theme.positive
-
-                        StrmIcon {
-                            anchors.centerIn: parent
-                            name: "check"
-                            size: Theme.scale(11)
-                            color: Theme.accentText
-                        }
-                    }
+                StrmIconButton {
+                    iconName: "chevron-up"
+                    round: true
+                    size: Theme.scale(28)
+                    activeFocusOnTab: false
+                    enabled: memberRow.index > 0
+                    tooltip: qsTr("Move up")
+                    shortcut: "Alt+Up"
+                    onClicked: page.moveRow(memberRow.index, -1)
                 }
 
-                Column {
-                    id: memberLabels
-
-                    anchors.left: artFrame.right
-                    anchors.leftMargin: Theme.spacingValue
-                    anchors.right: rowActions.left
-                    anchors.rightMargin: Theme.spacingValue
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.scale(2)
-
-                    Text {
-                        width: parent.width
-                        text: memberRow.title
-                        color: (memberRow.current || memberRow.hovered)
-                               ? Theme.textPrimaryColor : Theme.textSecondaryColor
-                        font.family: Theme.fontBody
-                        font.pixelSize: Theme.fontBodySize
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-
-                    Text {
-                        width: parent.width
-                        visible: text.length > 0
-                        text: {
-                            const parts = [];
-                            const sub = memberRow.model.subtitle !== undefined
-                                      ? String(memberRow.model.subtitle) : "";
-                            if (sub.length > 0)
-                                parts.push(sub);
-                            const runtime = page.formatRuntime(memberRow.model.runtimeMs);
-                            if (runtime.length > 0)
-                                parts.push(runtime);
-                            return parts.join("  ·  ");
-                        }
-                        color: Theme.textTertiary
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
+                StrmIconButton {
+                    iconName: "chevron-down"
+                    round: true
+                    size: Theme.scale(28)
+                    activeFocusOnTab: false
+                    enabled: memberRow.index < page.memberCount - 1
+                    tooltip: qsTr("Move down")
+                    shortcut: "Alt+Down"
+                    onClicked: page.moveRow(memberRow.index, 1)
                 }
 
-                // The edit verbs, for the pointer. `activeFocusOnTab: false`
-                // throughout: the list is one tab stop and owns the arrow keys,
-                // and five focusable buttons per row would make Tab walk the
-                // playlist instead of leaving it. The keyboard reaches all of
-                // these through the list's own key handler.
-                Row {
-                    id: rowActions
-
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingValue
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.scale(2)
-                    opacity: memberRow.showActions ? 1 : 0
-                    visible: opacity > 0.01
-                    enabled: visible
-
-                    Behavior on opacity {
-                        NumberAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
-                    }
-
-                    StrmIconButton {
-                        iconName: "play"
-                        round: true
-                        size: Theme.scale(30)
-                        activeFocusOnTab: false
-                        tooltip: qsTr("Play from here")
-                        onClicked: page.playFrom(memberRow.index)
-                    }
-
-                    StrmIconButton {
-                        iconName: "chevron-up"
-                        round: true
-                        size: Theme.scale(30)
-                        activeFocusOnTab: false
-                        enabled: memberRow.index > 0
-                        tooltip: qsTr("Move up")
-                        shortcut: "Alt+Up"
-                        onClicked: page.moveRow(memberRow.index, -1)
-                    }
-
-                    StrmIconButton {
-                        iconName: "chevron-down"
-                        round: true
-                        size: Theme.scale(30)
-                        activeFocusOnTab: false
-                        enabled: memberRow.index < page.memberCount - 1
-                        tooltip: qsTr("Move down")
-                        shortcut: "Alt+Down"
-                        onClicked: page.moveRow(memberRow.index, 1)
-                    }
-
-                    StrmIconButton {
-                        iconName: "trash"
-                        round: true
-                        size: Theme.scale(30)
-                        activeFocusOnTab: false
-                        tooltip: qsTr("Remove from this playlist")
-                        shortcut: "Del"
-                        onClicked: page.removeRow(memberRow.index)
-                    }
-
-                    StrmIconButton {
-                        id: memberMore
-                        iconName: "more-horizontal"
-                        round: true
-                        size: Theme.scale(30)
-                        activeFocusOnTab: false
-                        tooltip: qsTr("More…")
-                        onClicked: {
-                            const p = memberMore.mapToItem(null, 0, memberMore.height);
-                            page.showMemberMenu(memberRow.index, p.x, p.y);
-                        }
-                    }
-                }
-
-                FocusRing {
-                    active: memberRow.current
-                    anchors.fill: parent
-                    anchors.rightMargin: Theme.spacingTight
-                    radius: Theme.radiusChip
-                    inset: -Theme.scale(1)
-                }
-
-                HoverHandler {
-                    id: memberHover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: {
-                        memberList.currentIndex = memberRow.index;
-                        memberList.forceActiveFocus(Qt.MouseFocusReason);
-                        page.playFrom(memberRow.index);
-                    }
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: eventPoint => {
-                        const p = memberRow.mapToItem(null, eventPoint.position.x,
-                                                      eventPoint.position.y);
-                        page.showMemberMenu(memberRow.index, p.x, p.y);
-                    }
+                StrmIconButton {
+                    iconName: "trash"
+                    round: true
+                    size: Theme.scale(28)
+                    activeFocusOnTab: false
+                    tooltip: qsTr("Remove from this playlist")
+                    shortcut: "Del"
+                    onClicked: page.removeRow(memberRow.index)
                 }
             }
         }

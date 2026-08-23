@@ -5,6 +5,7 @@
 #include "MockEmbyServer.h"
 #include "app/ItemActions.h"
 #include "app/PlayQueue.h"
+#include "app/controllers/MusicController.h"
 #include "app/controllers/PlayerController.h"
 #include "app/models/MediaItemModel.h"
 #include "core/Settings.h"
@@ -48,6 +49,7 @@ private slots:
     void playNextAndAddToQueueDoNotInterrupt();
     void aFailedFetchSaysSoInsteadOfDoingNothing();
     void anEmptyResultSaysSoToo();
+    void playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -267,6 +269,51 @@ void ItemActionsQueueTest::anEmptyResultSaysSoToo()
     QTRY_COMPARE(failedSpy.count(), 1);
     QCOMPARE(m_player->queue()->rowCount(), 0);
     QVERIFY(!m_player->active());
+}
+
+// MusicPage's ▸ used to be a side channel: openAlbum() followed by a QML guard
+// watching the shared `tracks` model fill, which meant playing a record
+// *navigated controller state* and would have fought the album page the moment
+// both were live. playAlbum() is the verb that replaced it — its own fetch, its
+// own scratch model, and the album page's list left alone.
+void ItemActionsQueueTest::playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum()
+{
+    m_mock->addRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        QByteArrayLiteral("{\"Items\":["
+                          "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\","
+                          "\"IndexNumber\":1},"
+                          "{\"Id\":\"301002\",\"Name\":\"Freddie Freeloader\",\"Type\":\"Audio\","
+                          "\"IndexNumber\":2},"
+                          "{\"Id\":\"301003\",\"Name\":\"Blue In Green\",\"Type\":\"Audio\","
+                          "\"IndexNumber\":3}],\"TotalRecordCount\":3}"));
+
+    MusicController music(m_client, this);
+    music.setActions(m_actions);
+
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    music.playAlbum(QStringLiteral("al-kob"));
+
+    QTRY_COMPARE(queueSpy.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 3);
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
+    // Disc/track order, which is the order the server returned. An album queued
+    // alphabetically is the bug this verb exists to avoid.
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301003"));
+
+    // The whole point of the scratch list: nothing the album page reads moved.
+    QCOMPARE(music.tracks()->rowCount(), 0);
+    QVERIFY(music.albumId().isEmpty());
+
+    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
+    QVERIFY2(query.contains(QStringLiteral("ParentId=al-kob")), qPrintable(query));
+    // Neither sorted nor recursive: an album's children already come back in
+    // disc then track order, and recursing an album folder means nothing.
+    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
+    QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
 }
 
 QTEST_GUILESS_MAIN(ItemActionsQueueTest)

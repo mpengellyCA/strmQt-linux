@@ -125,37 +125,23 @@ FocusScope {
         return (item && item.itemId !== undefined) ? String(item.itemId) : ""
     }
 
-    function nameOf(item) {
-        return (item && item.name !== undefined) ? String(item.name) : ""
-    }
-
     // ── Playing an album from the grid ─────────────────────────────────────
-    // An album is a container, and Actions.playAll(albumId, "music") is the
-    // wrong verb for it: playAll fixes SortBy=SortName, which queues a record
-    // in alphabetical order by track title. The only ordering that is right is
-    // the server's own disc/track order, which is what MusicCtl.openAlbum()
-    // fetches — so "play this album" is load-its-tracks-then-queue-them, and
-    // the queue verb is playAllFrom(), the same one the album page uses.
+    // One call, because "play this record" is a verb and lives in C++
+    // (ARCHITECTURE.md rule 3). MusicController::playAlbum() fetches the
+    // album's children into a scratch model of its own and hands ItemActions
+    // the ordered items.
     //
-    // The pending id is matched against MusicCtl.albumId before anything is
-    // queued, so clicking ▸ on two albums in quick succession plays the second
-    // one and never the first one's tracks under the second one's name.
-    property string pendingPlayAlbumId: ""
-
+    // This page used to do it by calling openAlbum() and watching the shared
+    // `tracks` model fill behind a pending-id guard — which meant playing an
+    // album navigated controller state, and would have fought the album page
+    // the moment both were live.
     function playAlbum(item) {
-        const id = page.idOf(item)
-        if (id.length === 0)
-            return
-        page.pendingPlayAlbumId = id
-        MusicCtl.openAlbum(id, page.nameOf(item))
+        MusicCtl.playAlbum(page.idOf(item))
     }
 
     function requestAlbum(item) {
         if (page.idOf(item).length === 0)
             return
-        // Navigating supersedes any queued auto-play: the album page is about
-        // to reuse the very same tracks model.
-        page.pendingPlayAlbumId = ""
         Actions.openDetails(item)
     }
 
@@ -163,33 +149,6 @@ FocusScope {
         if (page.idOf(item).length === 0)
             return
         Actions.openDetails(item)
-    }
-
-    Connections {
-        target: MusicCtl.tracks
-
-        function onCountChanged() {
-            if (page.pendingPlayAlbumId.length === 0)
-                return
-            if (MusicCtl.albumId !== page.pendingPlayAlbumId || MusicCtl.tracks.count === 0)
-                return
-            const items = []
-            for (let i = 0; i < MusicCtl.tracks.count; ++i)
-                items.push(MusicCtl.tracks.get(i))
-            page.pendingPlayAlbumId = ""
-            Actions.playAllFrom(items, 0)
-        }
-    }
-
-    Connections {
-        target: MusicCtl
-
-        // The open album moved somewhere this page did not send it: whatever
-        // was waiting to be played is no longer what will arrive.
-        function onAlbumChanged() {
-            if (MusicCtl.albumId !== page.pendingPlayAlbumId)
-                page.pendingPlayAlbumId = ""
-        }
     }
 
     // ── Header ─────────────────────────────────────────────────────────────

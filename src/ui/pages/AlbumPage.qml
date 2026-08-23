@@ -29,6 +29,10 @@ import StrmQt
 //     single-disc and `ParentIndexNumber` is frequently absent altogether, so a
 //     "Disc 1" banner above every record would be pure furniture.
 //
+// (2) and (3) are `TrackTable`'s now — this page was where they were worked
+// out, and lifting them there is what stopped the queue panel and the playlist
+// pane from having to work them out again.
+//
 // Navigation contract: the page pushes nothing. Opening the album artist goes
 // through `Actions.openDetails()`, which Main.qml routes by item type — a
 // MusicArtist lands on the artist page, exactly as an album card does from the
@@ -79,91 +83,15 @@ FocusScope {
     readonly property bool hasTracks: MusicCtl.tracks.count > 0
 
     // ── Derived once per track load ────────────────────────────────────────
-    // One pass over the loaded tracks answers everything the table needs to
-    // know about itself: the album's running time, whether it is a multi-disc
-    // set, where each disc starts, and whether the artist column is worth a
-    // column at all. Recomputing any of that per delegate would re-marshal the
-    // whole model on every scrolled pixel.
-    property int totalRuntimeMs: 0
-    property bool multiDisc: false
-    property bool showArtistColumn: false
-    // Row index → disc number, for the rows that begin a disc. Empty unless
-    // the set actually has more than one.
-    property var discStartAt: ({})
-    property string derivedAlbumArtist: ""
+    // The one pass over the loaded tracks — running time, multi-disc, where the
+    // discs start, and whether the artist column is worth a column at all —
+    // now lives in TrackTable, which does it once per model load rather than
+    // per delegate. The album's credit still starts here, because only this
+    // page has the album's own item map; the table falls back to what the first
+    // track says when the map carried no album artist.
+    readonly property string albumArtistName: trackList.albumArtistName
 
-    readonly property string albumArtistName: page.mapAlbumArtist.length > 0
-                                              ? page.mapAlbumArtist : page.derivedAlbumArtist
-
-    function artistLineOf(item) {
-        if (!item)
-            return ""
-        const names = item.artists
-        if (names !== undefined && names !== null && names.length > 0)
-            return Array.prototype.join.call(names, ", ")
-        return (item.albumArtist !== undefined && item.albumArtist !== null)
-                ? String(item.albumArtist) : ""
-    }
-
-    function rebuildTrackMeta() {
-        const model = MusicCtl.tracks
-        const count = model ? model.count : 0
-        let total = 0
-        let discs = []
-        let starts = ({})
-        let previousDisc = -32768
-        let differs = false
-
-        let credited = page.mapAlbumArtist
-        if (credited.length === 0 && count > 0) {
-            const first = model.get(0)
-            credited = (first.albumArtist !== undefined && first.albumArtist !== null)
-                       ? String(first.albumArtist) : ""
-        }
-
-        for (let i = 0; i < count; ++i) {
-            const track = model.get(i)
-            total += (track.runtimeMs !== undefined) ? Number(track.runtimeMs) : 0
-
-            const disc = (track.parentIndexNumber !== undefined)
-                       ? Number(track.parentIndexNumber) : -1
-            if (disc > 0 && discs.indexOf(disc) < 0)
-                discs.push(disc)
-            // Only a NUMBERED disc gets a banner. Measured on this server, a
-            // 52-track deluxe edition comes back as discs [-1, 1, 2, 3]: the
-            // record proper carries no ParentIndexNumber at all and the bonus
-            // discs do. Captioning that first block would mean inventing a
-            // name for it, so it simply starts, and the banners mark the
-            // numbered discs that follow.
-            if (disc !== previousDisc) {
-                if (disc > 0)
-                    starts[i] = disc
-                previousDisc = disc
-            }
-
-            const line = page.artistLineOf(track)
-            if (line.length > 0 && line !== credited)
-                differs = true
-        }
-
-        page.derivedAlbumArtist = credited
-        page.totalRuntimeMs = total
-        page.multiDisc = discs.length > 1
-        page.discStartAt = discs.length > 1 ? starts : ({})
-        page.showArtistColumn = differs
-    }
-
-    Connections {
-        target: MusicCtl.tracks
-        function onCountChanged() { page.rebuildTrackMeta() }
-    }
-
-    // One handler, because QML allows exactly one per signal: the table's
-    // derived metrics and the album's user state are both first computed here.
-    Component.onCompleted: {
-        page.rebuildTrackMeta()
-        page.syncFavorite()
-    }
+    Component.onCompleted: page.syncFavorite()
 
     // Likewise: an album page reused for a second album re-reads both.
     onAlbumIdChanged: {
@@ -449,7 +377,7 @@ FocusScope {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: page.totalRuntimeMs > 0
+                    visible: trackList.totalRuntimeMs > 0
                     text: "·"
                     color: Theme.textTertiary
                     font.family: Theme.fontBody
@@ -458,8 +386,8 @@ FocusScope {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: page.totalRuntimeMs > 0
-                    text: page.formatTotal(page.totalRuntimeMs)
+                    visible: trackList.totalRuntimeMs > 0
+                    text: page.formatTotal(trackList.totalRuntimeMs)
                     color: Theme.textSecondaryColor
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontSmall
@@ -548,7 +476,7 @@ FocusScope {
     readonly property int numberColumn: Theme.scale(46)
     readonly property int durationColumn: Theme.scale(64)
     readonly property int verbsColumn: Theme.scale(72)
-    readonly property int artistColumn: page.showArtistColumn ? Theme.scale(220) : 0
+    readonly property int artistColumn: trackList.showArtistColumn ? Theme.scale(220) : 0
 
     // ── Table head ─────────────────────────────────────────────────────────
     // A gear label, in mono and letterspaced, exactly as the library's size
@@ -593,7 +521,7 @@ FocusScope {
             anchors.right: parent.right
             anchors.rightMargin: page.durationColumn + page.verbsColumn + Theme.spacingValue
             anchors.verticalCenter: parent.verticalCenter
-            visible: page.showArtistColumn
+            visible: trackList.showArtistColumn
             width: page.artistColumn
             text: qsTr("ARTIST")
             color: Theme.textTertiary
@@ -628,7 +556,11 @@ FocusScope {
     }
 
     // ── The tracks ─────────────────────────────────────────────────────────
-    ListView {
+    // The shared table (ARCHITECTURE.md): one tab stop, Up/Down and the page
+    // keys owned internally, disc grouping and the artist-column rule decided
+    // once above the rows, and type-to-jump for a box set that arrow keys
+    // cannot navigate.
+    TrackTable {
         id: trackList
 
         anchors.left: parent.left
@@ -639,289 +571,71 @@ FocusScope {
         anchors.rightMargin: Theme.pageMarginValue
         anchors.topMargin: Theme.spacingTight
         anchors.bottomMargin: Theme.spacingValue
-        clip: true
         focus: page.hasTracks
         visible: page.hasTracks
         model: MusicCtl.tracks
-        currentIndex: 0
-        keyNavigationWraps: false
-        highlightMoveDuration: Theme.animFastMs
-        boundsBehavior: Flickable.StopAtBounds
-        cacheBuffer: page.rowHeight * 12
+        rowHeight: page.rowHeight
 
-        ScrollBar.vertical: StrmScrollBar {}
+        discGrouping: true
+        artistRule: true
+        // The album's own credit, when the item map carried one. Empty means
+        // "ask the first track", which is what the table then does.
+        albumArtist: page.mapAlbumArtist
 
         KeyNavigation.up: playButton
 
-        Keys.onReturnPressed: event => {
-            if (!event.isAutoRepeat)
-                page.playFrom(trackList.currentIndex)
-        }
-        Keys.onEnterPressed: event => {
-            if (!event.isAutoRepeat)
-                page.playFrom(trackList.currentIndex)
-        }
+        onActivated: index => page.playFrom(index)
 
-        // A screen at a time, and the ends of a 300-track box set in one press.
-        Keys.onPressed: event => {
-            if (trackList.count === 0)
-                return;
-            const perScreen = Math.max(1, Math.floor(trackList.height / page.rowHeight));
-            if (event.key === Qt.Key_PageDown) {
-                trackList.currentIndex = Math.min(trackList.count - 1,
-                                                  trackList.currentIndex + perScreen);
-                event.accepted = true;
-            } else if (event.key === Qt.Key_PageUp) {
-                trackList.currentIndex = Math.max(0, trackList.currentIndex - perScreen);
-                event.accepted = true;
-            } else if (event.key === Qt.Key_Home) {
-                trackList.currentIndex = 0;
-                event.accepted = true;
-            } else if (event.key === Qt.Key_End) {
-                trackList.currentIndex = trackList.count - 1;
-                event.accepted = true;
-            }
-        }
-
-        delegate: Item {
+        delegate: TrackRow {
             id: trackRow
 
             required property int index
             required property var model
 
-            readonly property bool current: trackList.currentIndex === trackRow.index
-                                            && trackList.activeFocus
             readonly property string trackId: trackRow.model.itemId !== undefined
                                               ? String(trackRow.model.itemId) : ""
-            readonly property bool playingNow: trackRow.trackId.length > 0
-                                               && trackRow.trackId === page.nowPlayingId
-            readonly property bool favorite: page.favoriteOf(trackRow.trackId,
-                                                             trackRow.model.favorite === true)
-            readonly property string artistLine: page.artistLineOf(trackRow.model)
-            // The rule: only when it differs from the album's own credit.
-            readonly property string shownArtist:
-                (page.showArtistColumn && trackRow.artistLine.length > 0
-                 && trackRow.artistLine !== page.albumArtistName) ? trackRow.artistLine : ""
-            readonly property int trackNumber: trackRow.model.indexNumber !== undefined
-                                               ? Number(trackRow.model.indexNumber) : -1
-            // A disc banner sits above the first row of each disc, and only in
-            // a set that has more than one.
-            readonly property bool startsDisc:
-                page.multiDisc && page.discStartAt[trackRow.index] !== undefined
-            readonly property int discNumber: trackRow.startsDisc
-                                              ? Number(page.discStartAt[trackRow.index]) : -1
 
             width: trackList.width
-            height: page.rowHeight + (trackRow.startsDisc ? page.discHeaderHeight : 0)
 
-            function open() {
+            rowHeight: page.rowHeight
+            discHeaderHeight: page.discHeaderHeight
+            numberColumn: page.numberColumn
+            durationColumn: page.durationColumn
+            verbsColumn: page.verbsColumn
+            artistColumn: page.artistColumn
+
+            title: trackRow.model.name !== undefined ? String(trackRow.model.name) : ""
+            // The rule: only when it differs from the album's own credit, and
+            // only where the table decided there is a column at all.
+            artist: trackList.shownArtistFor(trackRow.model)
+            durationText: page.formatDuration(trackRow.model.runtimeMs)
+            number: trackRow.model.indexNumber !== undefined
+                    ? Number(trackRow.model.indexNumber) : -1
+            discNumber: trackList.discFor(trackRow.index)
+
+            current: trackList.currentIndex === trackRow.index && trackList.activeFocus
+            playing: trackRow.trackId.length > 0 && trackRow.trackId === page.nowPlayingId
+            favorite: page.favoriteOf(trackRow.trackId, trackRow.model.favorite === true)
+            showFavorite: true
+            showMenu: true
+            // A favourited row keeps its filled heart on show; the rest of the
+            // verbs belong to the pointer.
+            verbsRevealed: trackRow.hovered || trackRow.favorite
+
+            onActivated: {
                 trackList.currentIndex = trackRow.index
                 trackList.forceActiveFocus(Qt.MouseFocusReason)
                 page.playFrom(trackRow.index)
             }
 
-            Item {
-                id: discBanner
-
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: trackRow.startsDisc ? page.discHeaderHeight : 0
-                visible: trackRow.startsDisc
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: Theme.scale(4)
-                    text: qsTr("DISC %1").arg(trackRow.discNumber)
-                    color: Theme.textTertiary
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontCaption
-                    font.letterSpacing: Theme.fontCaption * Theme.trackLabel
-                }
+            onFavoriteToggled: {
+                const item = page.trackAt(trackRow.index)
+                if (item)
+                    Actions.toggleFavorite(item)
             }
 
-            Rectangle {
-                id: rowSurface
-
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: discBanner.bottom
-                height: page.rowHeight - Theme.scale(2)
-                radius: Theme.radiusChip
-                color: rowHover.hovered ? Theme.surfaceRaisedColor : "transparent"
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: Theme.animInstant
-                        easing.type: Theme.easeInstant
-                    }
-                }
-
-                // Hover follows the cursor and never touches the keyboard's
-                // place (ARCHITECTURE.md). Clicking is what moves focus.
-                HoverHandler {
-                    id: rowHover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.LeftButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: trackRow.open()
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: eventPoint => {
-                        const p = rowSurface.mapToItem(null, eventPoint.position.x,
-                                                       eventPoint.position.y)
-                        trackMenu.popupForItemNoDetails(page.trackAt(trackRow.index), p.x, p.y)
-                    }
-                }
-
-                // Number, and the ▸ that replaces it under the cursor: the row
-                // is clickable, so the column says so where the pointer is.
-                Text {
-                    id: numberCell
-
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: page.numberColumn - Theme.spacingTight
-                    horizontalAlignment: Text.AlignRight
-                    visible: !rowHover.hovered
-                    text: trackRow.trackNumber > 0 ? String(trackRow.trackNumber) : "·"
-                    color: trackRow.playingNow ? Theme.accentColor : Theme.textTertiary
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontSmall
-                }
-
-                StrmIcon {
-                    anchors.right: numberCell.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: rowHover.hovered
-                    name: "play"
-                    size: Theme.scale(16)
-                    color: Theme.textPrimaryColor
-                }
-
-                Text {
-                    id: titleCell
-
-                    anchors.left: parent.left
-                    anchors.leftMargin: page.numberColumn + Theme.spacingValue
-                    anchors.right: artistCell.left
-                    anchors.rightMargin: Theme.spacingValue
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: trackRow.model.name !== undefined ? trackRow.model.name : ""
-                    color: trackRow.playingNow ? Theme.accentColor
-                         : (rowHover.hovered || trackRow.current) ? Theme.textPrimaryColor
-                         : Theme.textSecondaryColor
-                    font.family: Theme.fontBody
-                    font.pixelSize: Theme.fontBodySize
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: Theme.animInstant
-                            easing.type: Theme.easeInstant
-                        }
-                    }
-                }
-
-                Text {
-                    id: artistCell
-
-                    anchors.right: durationCell.left
-                    anchors.rightMargin: Theme.spacingValue
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: page.artistColumn
-                    visible: page.showArtistColumn
-                    text: trackRow.shownArtist
-                    color: Theme.textTertiary
-                    font.family: Theme.fontBody
-                    font.pixelSize: Theme.fontSmall
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
-
-                Text {
-                    id: durationCell
-
-                    anchors.right: parent.right
-                    anchors.rightMargin: page.verbsColumn
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: page.durationColumn
-                    horizontalAlignment: Text.AlignRight
-                    text: page.formatDuration(trackRow.model.runtimeMs)
-                    color: trackRow.playingNow ? Theme.accentColor : Theme.textTertiary
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontSmall
-                }
-
-                // Laid out always, faded on hover: if these appeared and
-                // disappeared, the duration column would reflow every time the
-                // pointer crossed a row. `enabled` follows the fade, which is
-                // also what keeps them out of Tab traversal while hidden.
-                Item {
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: rowVerbs.implicitWidth
-                    height: rowVerbs.implicitHeight
-                    opacity: (rowHover.hovered || trackRow.favorite) ? 1 : 0
-                    enabled: rowHover.hovered
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.animInstant
-                            easing.type: Theme.easeInstant
-                        }
-                    }
-
-                    Row {
-                        id: rowVerbs
-                        spacing: Theme.scale(2)
-
-                        StrmIconButton {
-                            iconName: trackRow.favorite ? "heart-filled" : "heart"
-                            size: Theme.scale(28)
-                            checked: trackRow.favorite
-                            tooltip: trackRow.favorite ? qsTr("Remove from favourites")
-                                                       : qsTr("Add to favourites")
-                            onClicked: {
-                                const item = page.trackAt(trackRow.index)
-                                if (item)
-                                    Actions.toggleFavorite(item)
-                            }
-                        }
-
-                        StrmIconButton {
-                            id: rowMore
-
-                            iconName: "more-horizontal"
-                            size: Theme.scale(28)
-                            tooltip: qsTr("More…")
-                            onClicked: {
-                                const p = rowMore.mapToItem(null, rowMore.width / 2,
-                                                            rowMore.height)
-                                trackMenu.popupForItemNoDetails(page.trackAt(trackRow.index),
-                                                                p.x, p.y)
-                            }
-                        }
-                    }
-                }
-
-                // Inset to zero, not outset: the list clips, and a ring drawn
-                // outside the row would be sliced off against the viewport
-                // edge on the first and last track.
-                FocusRing {
-                    active: trackRow.current
-                    radius: Theme.radiusChip
-                    inset: 0
-                }
+            onMenuRequested: (sceneX, sceneY) => {
+                trackMenu.popupForItemNoDetails(page.trackAt(trackRow.index), sceneX, sceneY)
             }
         }
     }

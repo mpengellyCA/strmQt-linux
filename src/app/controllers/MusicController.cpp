@@ -1,5 +1,6 @@
 #include "MusicController.h"
 
+#include "app/ItemActions.h"
 #include "core/Log.h"
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
@@ -17,8 +18,14 @@ constexpr int kTrackLimit = 500;
 MusicController::MusicController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_albums(new MediaItemModel(this)),
       m_artists(new MediaItemModel(this)), m_tracks(new MediaItemModel(this)),
-      m_artistAlbums(new MediaItemModel(this)), m_artistTracks(new MediaItemModel(this))
+      m_artistAlbums(new MediaItemModel(this)), m_artistTracks(new MediaItemModel(this)),
+      m_playScratch(new MediaItemModel(this))
 {
+}
+
+void MusicController::setActions(ItemActions *actions)
+{
+    m_actions = actions;
 }
 
 bool MusicController::canLoadMoreAlbums() const
@@ -178,6 +185,42 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
             return;
         }
         m_tracks->setItems(result.value.items, result.value.totalRecordCount);
+    });
+}
+
+void MusicController::playAlbum(const QString &albumId)
+{
+    if (albumId.isEmpty())
+        return;
+
+    const int generation = ++m_playGeneration;
+    ItemsQuery query;
+    query.parentId = albumId;
+    // The same query openAlbum() issues, and for the same reason: NOT recursive
+    // and NOT sorted, because the server already returns an album's children in
+    // disc then track order.
+    query.recursive = false;
+    query.limit = kTrackLimit;
+    query.fields = {QStringLiteral("MediaSources")};
+
+    m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
+        if (generation != m_playGeneration)
+            return;
+        if (!result.ok()) {
+            setError(result.error);
+            return;
+        }
+        if (!m_actions) {
+            qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
+            return;
+        }
+        m_playScratch->setItems(result.value.items, result.value.totalRecordCount);
+        QVariantList items;
+        items.reserve(m_playScratch->rowCount());
+        for (int row = 0; row < m_playScratch->rowCount(); ++row)
+            items.append(m_playScratch->get(row));
+        // playAllFrom() says its own piece when the list is empty.
+        m_actions->playAllFrom(items, 0);
     });
 }
 

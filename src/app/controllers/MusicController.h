@@ -7,6 +7,8 @@
 
 namespace strmqt {
 
+class ItemActions;
+
 namespace emby {
 class EmbyClient;
 }
@@ -81,6 +83,25 @@ public:
     Q_INVOKABLE void openAlbum(const QString &albumId, const QString &name);
     Q_INVOKABLE void openArtist(const QString &artistId, const QString &name);
 
+    // Play a whole record from a card, without opening it.
+    //
+    // A real verb rather than the side channel this used to be: MusicPage
+    // called openAlbum() and watched the shared `tracks` model fill, so playing
+    // an album *navigated controller state* and would have fought the album
+    // page the moment both were live. This fetches into a scratch model of its
+    // own, with its own generation counter so a second ▸ cannot strand the
+    // first, and hands ItemActions the ordered items.
+    //
+    // Not Actions.playAll(albumId, "music"): that verb pins SortBy=SortName,
+    // which queues a record alphabetically by track title. An album's children
+    // come back from the server in disc/track order and nothing may re-sort
+    // them.
+    Q_INVOKABLE void playAlbum(const QString &albumId);
+
+    // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), so this
+    // controller has to be able to reach them.
+    void setActions(ItemActions *actions);
+
 signals:
     void scopeChanged();
     void albumChanged();
@@ -97,11 +118,15 @@ private:
     void setError(const QString &message);
 
     emby::EmbyClient *m_client;
+    ItemActions *m_actions = nullptr;
     MediaItemModel *m_albums;
     MediaItemModel *m_artists;
     MediaItemModel *m_tracks;
     MediaItemModel *m_artistAlbums;
     MediaItemModel *m_artistTracks;
+    // Never published to QML. playAlbum() must not touch `tracks`: that model
+    // is what the album page is reading.
+    MediaItemModel *m_playScratch;
 
     QString m_libraryId;
     QString m_albumId;
@@ -114,6 +139,7 @@ private:
     int m_generation = 0;
     int m_albumGeneration = 0;
     int m_artistGeneration = 0;
+    int m_playGeneration = 0;
 };
 
 } // namespace strmqt

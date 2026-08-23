@@ -93,6 +93,11 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
                                    m_music->tracks(), m_music->artistAlbums(),
                                    m_music->artistTracks(), m_playlists->items() })
         m_actions->registerModel(model);
+    // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), and
+    // MusicController::playAlbum() needs them: it fetches an album's tracks
+    // into a scratch list of its own and hands the ordered items over, so that
+    // playing an album never has to navigate the open-album state to do it.
+    m_music->setActions(m_actions);
     // SeriesController keeps a whole-series episode list to answer "next
     // unwatched"; it has to hear about played toggles to stay right. Connected
     // here rather than forwarded through QML because the dependency is a real

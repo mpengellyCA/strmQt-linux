@@ -136,30 +136,26 @@ FocusScope {
             }
         }
 
-        ListView {
+        TrackTable {
             id: list
 
             width: parent.width
             height: Math.max(Theme.scale(64),
                              panel.height - 2 * surface.padding - headerRow.height
                              - Theme.spacingTight)
-            clip: true
             focus: true
             spacing: Theme.scale(2)
             model: panel.queue
-            keyNavigationWraps: false
-            highlightMoveDuration: Theme.animFastMs
+            rowHeight: Theme.scale(58)
+            // The queue is not an album: no discs, and every row's credit is
+            // its own, so there is nothing to decide once for the table. What
+            // it does want is type-to-jump — a shuffled 300-track queue is not
+            // navigable by arrow key either — and the queue's display string is
+            // the composed `label`, not the bare name.
+            jumpRole: "label"
 
-            ScrollBar.vertical: StrmScrollBar {}
+            onActivated: index => panel.jump(index)
 
-            Keys.onReturnPressed: event => {
-                if (!event.isAutoRepeat)
-                    panel.jump(list.currentIndex);
-            }
-            Keys.onEnterPressed: event => {
-                if (!event.isAutoRepeat)
-                    panel.jump(list.currentIndex);
-            }
             // Delete removes the highlighted row. Guarded like every other
             // activation: a held key must not empty the queue.
             Keys.onDeletePressed: event => {
@@ -194,138 +190,54 @@ FocusScope {
                 horizontalAlignment: Text.AlignHCenter
             }
 
-            delegate: Item {
+            // The shared row (ARCHITECTURE.md). A queue entry has no track
+            // number — its position is not a fact about the record — so the
+            // number column is off and the entry that is playing is marked by
+            // the amber spine instead. `posterUrl` is read straight off the
+            // model: MediaItem::coverSource() already resolves a track to its
+            // album's cover rather than the ripper's embedded art, which is
+            // what stopped a queue of one record looking like a ransom note.
+            delegate: TrackRow {
                 id: queueRow
 
                 required property int index
                 required property var model
 
-                readonly property bool hovered: rowHover.hovered
-                readonly property bool highlighted: queueRow.ListView.isCurrentItem
-                                                    && list.activeFocus
-                readonly property bool playing: queueRow.model.isCurrent === true
+                width: list.width
 
-                width: ListView.view.width
-                height: Theme.scale(58)
+                rowHeight: Theme.scale(58)
+                surfaceBottomMargin: 0
+                showNumber: false
+                showPlayingMarker: true
+                hoverPlayGlyph: false
+                showCover: true
+                coverSize: Theme.scale(40)
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Theme.radiusChip
-                    color: queueRow.highlighted ? Theme.surfaceRaisedColor
-                         : queueRow.hovered ? Theme.hoverTint
-                         : "transparent"
+                coverUrl: queueRow.model.posterUrl !== undefined
+                          ? String(queueRow.model.posterUrl) : ""
+                title: queueRow.model.label !== undefined ? String(queueRow.model.label) : ""
+                secondary: queueRow.model.subtitle !== undefined
+                           ? String(queueRow.model.subtitle) : ""
 
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: queueRow.highlighted ? Theme.animFastMs : Theme.animInstant
-                            easing.type: queueRow.highlighted ? Theme.easeStandard
-                                                              : Theme.easeInstant
-                        }
-                    }
-                }
+                playing: queueRow.model.isCurrent === true
+                current: queueRow.ListView.isCurrentItem && list.activeFocus
+                verbsRevealed: queueRow.hovered || queueRow.current
 
-                Rectangle {
-                    id: marker
-
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Theme.scale(3)
-                    height: parent.height * 0.55
-                    radius: width / 2
-                    color: queueRow.playing ? Theme.accentColor : "transparent"
-                }
-
-                Rectangle {
-                    id: thumb
-
-                    anchors.left: marker.right
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Theme.scale(40)
-                    height: Theme.scale(40)
-                    radius: Theme.radiusChip
-                    color: Theme.surfaceColor
-                    clip: true
-
-                    Image {
-                        anchors.fill: parent
-                        source: queueRow.model.posterUrl !== undefined
-                                ? queueRow.model.posterUrl : ""
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        sourceSize.width: Theme.scale(80)
-                        visible: status === Image.Ready
-                    }
-                }
-
-                Column {
-                    anchors.left: thumb.right
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.right: removeButton.left
-                    anchors.rightMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.scale(2)
-
-                    Text {
-                        width: parent.width
-                        text: queueRow.model.label !== undefined ? queueRow.model.label : ""
-                        color: queueRow.playing ? Theme.accentColor : Theme.textPrimaryColor
-                        font.family: Theme.fontBody
-                        font.pixelSize: Theme.fontSmall
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        id: subtitleText
-
-                        width: parent.width
-                        visible: subtitleText.text.length > 0
-                        text: queueRow.model.subtitle !== undefined ? queueRow.model.subtitle : ""
-                        color: Theme.textSecondaryColor
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                    }
+                onActivated: {
+                    list.currentIndex = queueRow.index;
+                    list.forceActiveFocus(Qt.MouseFocusReason);
+                    panel.jump(queueRow.index);
                 }
 
                 // Visible on hover or focus, like a card's overlay actions: a
                 // permanent ✕ on every row turns a queue into a minefield.
                 StrmIconButton {
-                    id: removeButton
-
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
                     iconName: "close"
                     round: true
                     size: Theme.scale(28)
                     tooltip: qsTr("Remove from queue")
-                    opacity: (queueRow.hovered || queueRow.highlighted) ? 1 : 0
-                    enabled: queueRow.hovered || queueRow.highlighted
                     activeFocusOnTab: false
                     onClicked: panel.remove(queueRow.index)
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.animInstant
-                            easing.type: Theme.easeInstant
-                        }
-                    }
-                }
-
-                HoverHandler {
-                    id: rowHover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                TapHandler {
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: {
-                        list.currentIndex = queueRow.index;
-                        list.forceActiveFocus(Qt.MouseFocusReason);
-                        panel.jump(queueRow.index);
-                    }
                 }
             }
         }
