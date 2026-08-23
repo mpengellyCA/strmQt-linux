@@ -34,6 +34,7 @@ private slots:
     void wideArtPicksPerItemKind();
     void squareArtPrefersTheAlbumCover();
     void musicGenresMapAndPageOnTheArray();
+    void artistIdsLineUpWithTheNamesTheyBelongTo();
 };
 
 // /MusicGenres, from a payload recorded off the live 4.9.5.0 server.
@@ -359,6 +360,47 @@ void EmbyDtoTest::emptyJsonDoesNotCrash()
     const ItemsPage page = emby::parseItemsPage(QJsonObject());
     QVERIFY(page.items.isEmpty());
     QCOMPARE(page.totalRecordCount, 0);
+}
+
+// `Artists` and `ArtistItems` are two different lists, not one list twice:
+// Emby credits performers by name whether or not it has an artist item for
+// them. Appending the ids in ArtistItems order therefore paired a name with
+// whatever id happened to land at the same index, and "go to artist" read one
+// artist and navigated to another.
+void EmbyDtoTest::artistIdsLineUpWithTheNamesTheyBelongTo()
+{
+    const MediaItem track = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90210", "Name": "Threnody", "Type": "Audio",
+        "AlbumArtist": "Main Band",
+        "Artists": ["Featured Guest", "Main Band"],
+        "ArtistItems": [ { "Id": "ar-band", "Name": "Main Band" } ]
+    })json").object());
+    QCOMPARE(track.artists,
+             (QStringList{QStringLiteral("Featured Guest"), QStringLiteral("Main Band")}));
+    // The band's id sits under the band's name; the guest, whom the server has
+    // no artist item for, keeps a hole rather than borrowing it.
+    QCOMPARE(track.artistIds, (QStringList{QString(), QStringLiteral("ar-band")}));
+
+    // An artist item the name list did not mention is still credited, and still
+    // brings its own id with it.
+    const MediaItem extra = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90211", "Name": "Storm", "Type": "Audio",
+        "Artists": ["Main Band"],
+        "ArtistItems": [ { "Id": "ar-band", "Name": "Main Band" },
+                         { "Id": "ar-guest", "Name": "Featured Guest" } ]
+    })json").object());
+    QCOMPARE(extra.artists,
+             (QStringList{QStringLiteral("Main Band"), QStringLiteral("Featured Guest")}));
+    QCOMPARE(extra.artistIds,
+             (QStringList{QStringLiteral("ar-band"), QStringLiteral("ar-guest")}));
+
+    // Names with no ArtistItems array at all: no ids, and nothing invented.
+    const MediaItem namesOnly = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90212", "Name": "Loose", "Type": "Audio",
+        "Artists": ["Main Band"]
+    })json").object());
+    QCOMPARE(namesOnly.artists, QStringList{QStringLiteral("Main Band")});
+    QVERIFY(namesOnly.artistIds.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(EmbyDtoTest)

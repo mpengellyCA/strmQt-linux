@@ -70,6 +70,7 @@ private slots:
     void currentChangedLeadsTheControllersTitleAndDuration();
     void isAudioFollowsTheQueuesItemType();
     void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
+    void isAudioDoesNotLingerFromTheOutgoingItemsTicket();
 
 private:
     QVariantList threeItems() const;
@@ -94,6 +95,11 @@ void QueuePlaybackTest::init()
                                          QStringLiteral("/Items/%1/PlaybackInfo").arg(id),
                                          fixturePath(QStringLiteral("playback_info.json"))));
     }
+    // ...and a fourth whose only stream is audio, which is what makes the
+    // source-based fallback answer "music" for it.
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Items/301004/PlaybackInfo"),
+                                     fixturePath(QStringLiteral("playback_info_audio.json"))));
     m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing"), 204, {});
     m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Progress"), 204, {});
     m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"), 204, {});
@@ -619,6 +625,37 @@ void QueuePlaybackTest::isAudioFallsBackToTheSourceWhenTheTypeIsUnknown()
     QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
     // The fixture's source carries an h264 stream, so it stays video.
     QVERIFY(!m_controller->isAudio());
+}
+
+// The ticket outlives the item it was fetched for: it is only replaced when the
+// PlaybackInfo reply for the NEXT item lands. So the fallback above must answer
+// for its own item and no other — a track's audio-only source reported the movie
+// that followed it as music for the whole round trip, which is exactly the flash
+// the type-first ordering exists to prevent, in the other direction.
+void QueuePlaybackTest::isAudioDoesNotLingerFromTheOutgoingItemsTicket()
+{
+    // A track, played the way a queue verb plays one: the type is carried.
+    m_controller->playQueue({audioMap(QStringLiteral("301004"), QStringLiteral("Storm"))}, 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QVERIFY(m_controller->isAudio());
+
+    // Play on a movie card. ItemActions routes every leaf item through
+    // playItem(), and a caller with no type at all — a crash resume, a remote
+    // client — is the case the fallback exists for.
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"));
+    // Synchronously false: the film is loading, and the track's ticket says
+    // nothing about it.
+    QVERIFY(!m_controller->isAudio());
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(!m_controller->isAudio());
+
+    // And the type ItemActions does have takes the answer straight there,
+    // without a round trip: the seed carries it onto the one-item queue.
+    m_controller->playItem(QStringLiteral("301004"), QStringLiteral("Storm"), 0, -1,
+                           QStringLiteral("Audio"));
+    QVERIFY(m_controller->isAudio());
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QVERIFY(m_controller->isAudio());
 }
 
 QTEST_GUILESS_MAIN(QueuePlaybackTest)

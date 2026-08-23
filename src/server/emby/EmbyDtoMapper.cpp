@@ -111,17 +111,33 @@ MediaItem parseMediaItem(const QJsonObject &json)
         if (!name.isEmpty())
             item.artists.append(name);
     }
-    // ArtistItems carries the ids the names alone cannot be navigated by.
-    // Kept in the same order as `artists` so index i in one matches the other,
-    // and only appended when a name is present so the two cannot desynchronise.
-    for (const QJsonValue &entry : json.value(QLatin1String("ArtistItems")).toArray()) {
-        const QJsonObject artist = entry.toObject();
-        const QString name = artist.value(QLatin1String("Name")).toString();
-        if (name.isEmpty())
-            continue;
-        if (item.artists.isEmpty() || !item.artists.contains(name))
+    // ArtistItems carries the ids the names alone cannot be navigated by, and it
+    // is the only place the name→id pairing exists at all: `Artists` is a bare
+    // list of names, and the two arrays are NOT the same list. A performer the
+    // server has no artist item for appears in one and not the other, so
+    // appending ids in ArtistItems order does not align them — Artists
+    // ["Featured Guest", "Main Band"] with ArtistItems [Main Band] pairs the
+    // guest's name with the band's id, and a "go to artist" built on index 0
+    // then reads one artist and navigates to another.
+    //
+    // Each id is therefore written AT the index of its own name, and a credited
+    // name with no artist item keeps an empty id rather than borrowing the next
+    // one. Index i means the same artist in both lists, or nothing at all.
+    const QJsonArray artistItems = json.value(QLatin1String("ArtistItems")).toArray();
+    for (const QJsonValue &entry : artistItems) {
+        const QString name = entry.toObject().value(QLatin1String("Name")).toString();
+        if (!name.isEmpty() && !item.artists.contains(name))
             item.artists.append(name);
-        item.artistIds.append(artist.value(QLatin1String("Id")).toVariant().toString());
+    }
+    if (!artistItems.isEmpty()) {
+        item.artistIds.resize(item.artists.size());
+        for (const QJsonValue &entry : artistItems) {
+            const QJsonObject artist = entry.toObject();
+            const qsizetype index =
+                item.artists.indexOf(artist.value(QLatin1String("Name")).toString());
+            if (index >= 0)
+                item.artistIds[index] = artist.value(QLatin1String("Id")).toVariant().toString();
+        }
     }
     for (const QJsonValue &place : json.value(QLatin1String("ProductionLocations")).toArray()) {
         const QString name = place.toString();

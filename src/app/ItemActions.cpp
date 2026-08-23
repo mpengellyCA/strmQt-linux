@@ -225,7 +225,11 @@ void ItemActions::startPlayback(const QVariant &item, bool fromStart)
     qint64 startMs = 0;
     if (!fromStart && map.value(QStringLiteral("resumable")).toBool())
         startMs = map.value(QStringLiteral("positionMs")).toLongLong();
-    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs));
+    // The type travels with the item. A bare play seeds a one-item queue, and
+    // that seed is what PlayerController::isAudio reads first: without the type
+    // the answer waits on the network and the bar lays itself out for whatever
+    // was playing before.
+    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs), -1, type);
 }
 
 void ItemActions::play(const QVariant &item)
@@ -254,7 +258,8 @@ void ItemActions::resume(const QVariant &item)
     // Unlike play(), an explicit resume honours a stored position even for an
     // item already marked played (which clears the "resumable" role).
     const qint64 startMs = map.value(QStringLiteral("positionMs")).toLongLong();
-    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs));
+    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs), -1,
+                       map.value(QStringLiteral("type")).toString());
 }
 
 // ── Queue (ARCHITECTURE.md) ────────────────────────────────────────────────
@@ -660,6 +665,42 @@ void ItemActions::openSeries(const QVariant &item)
         return;
     }
     emit seriesRequested(seriesId, seriesName);
+}
+
+// The ALBUM artist wins over the first credited performer whenever the item
+// names one: an artist page is a discography, and a discography is filed under
+// the album artist. Landing a compilation track's "go to artist" on its guest
+// vocalist opens a page with no albums on it.
+//
+// The name and the id always describe the SAME artist, or the id is left out.
+// EmbyDtoMapper keeps `artists` and `artistIds` index-aligned — an id is empty
+// where a credited name has no artist item on the server — so a pair is only
+// ever read out of one index, never one from each list.
+QVariantMap ItemActions::artistTarget(const QVariant &item) const
+{
+    const QVariantMap map = resolve(item);
+    const QStringList names = map.value(QStringLiteral("artists")).toStringList();
+    const QStringList ids = map.value(QStringLiteral("artistIds")).toStringList();
+    const QString albumArtist = map.value(QStringLiteral("albumArtist")).toString();
+
+    qsizetype index = names.isEmpty() ? -1 : 0;
+    if (!albumArtist.isEmpty()) {
+        const qsizetype credited = names.indexOf(albumArtist);
+        if (credited >= 0)
+            index = credited;
+    }
+    // No performer list at all: the album artist is still a name worth printing,
+    // and an album page reached without one is better than a dead line.
+    const QString name = index >= 0 ? names.at(index) : albumArtist;
+    const QString id = (index >= 0 && index < ids.size()) ? ids.at(index) : QString();
+    if (name.isEmpty() && id.isEmpty())
+        return {};
+
+    QVariantMap target;
+    target.insert(kItemIdKey, id);
+    target.insert(QStringLiteral("name"), name);
+    target.insert(QStringLiteral("type"), QStringLiteral("MusicArtist"));
+    return target;
 }
 
 bool ItemActions::refreshMetadata(const QString &itemId)

@@ -1,0 +1,41 @@
+{
+    "MediaSources": [
+        {
+            "Protocol": "File",
+            "Id": "ms301004",
+            "Path": "/media/music/Godspeed You! Black Emperor/Lift Yr Skinny Fists/01 Storm.flac",
+            "Type": "Default",
+            "Container": "flac",
+            "Size": 214567890,
+            "Name": "Storm",
+            "IsRemote": false,
+            "RunTimeTicks": 133200000000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": true,
+            "SupportsDirectPlay": true,
+            "IsInfiniteStream": false,
+            "RequiresOpening": false,
+            "RequiresClosing": false,
+            "RequiresLooping": false,
+            "SupportsProbing": true,
+            "MediaStreams": [
+                {
+                    "Codec": "flac",
+                    "Language": "eng",
+                    "Type": "Audio",
+                    "Index": 0,
+                    "Channels": 2,
+                    "SampleRate": 96000,
+                    "BitDepth": 24,
+                    "IsDefault": true
+                }
+            ],
+            "Bitrate": 2304000,
+            "DirectStreamUrl": "/audio/301004/stream.flac?DeviceId=test-device&MediaSourceId=ms301004&Static=true",
+            "TranscodingUrl": "/audio/301004/master.m3u8?DeviceId=test-device&MediaSourceId=ms301004&PlaySessionId=ps0014&api_key=not-a-real-token-fixture-only&AudioCodec=aac",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        }
+    ],
+    "PlaySessionId": "ps0014"
+}

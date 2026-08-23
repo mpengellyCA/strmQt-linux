@@ -101,6 +101,17 @@ public:
     // logs and returns false rather than pretending to have done something.
     Q_INVOKABLE bool refreshMetadata(const QString &itemId);
 
+    // ── Music navigation (MUSIC.md §4) ────────────────────────────────────
+    // Which artist a track or an album leads to: {itemId, name, type} in the
+    // shape openDetails() takes, or an empty map when the item credits nobody.
+    // `itemId` is empty when the credited artist has no artist item on the
+    // server — a name to print, nowhere to go.
+    //
+    // One rule, in one place, because "go to artist" has to land somewhere the
+    // user recognises whether it was asked for from the context menu or from the
+    // docked bar's subline.
+    Q_INVOKABLE QVariantMap artistTarget(const QVariant &item) const;
+
     // Best-known user state, including changes not yet confirmed by the server.
     Q_INVOKABLE bool isPlayed(const QString &itemId) const;
     Q_INVOKABLE bool isFavorite(const QString &itemId) const;

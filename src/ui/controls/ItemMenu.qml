@@ -141,42 +141,23 @@ StrmMenu {
     }
 
     // A track's or an album's artist, by id — `artists` alone is a list of
-    // names and a name is not navigable. The two roles run in the same order
-    // (MediaItemModel keeps them parallel from ArtistItems), so the index found
-    // in one indexes the other.
-    //
-    // The ALBUM artist is preferred over the first performer when both are
-    // present: an artist page is a discography, and a discography is filed
-    // under AlbumArtistIds. Landing a compilation track's "Go to artist" on the
-    // guest vocalist would open a page with no albums on it.
+    // names and a name is not navigable. Which of them the link means is
+    // ItemActions.artistTarget()'s rule and not this menu's: the docked bar's
+    // subline follows the same link, and one verb gets one destination. What
+    // stays here is the type gate, which is about which ROW makes sense rather
+    // than about where the row would lead.
     function artistTargetOf(item) {
         if (!item)
             return null
         const type = root.typeOf(item)
         if (type !== "Audio" && type !== "MusicAlbum")
             return null
-        const ids = item.artistIds
-        if (!ids || ids.length === 0)
+        const target = Actions.artistTarget(item)
+        // No id, no row: something that looks navigable and goes nowhere is
+        // worse than no entry at all.
+        if (!target || !target.itemId || String(target.itemId).length === 0)
             return null
-        const names = item.artists
-        const albumArtist = (item.albumArtist !== undefined && item.albumArtist !== null)
-                            ? String(item.albumArtist) : ""
-        var index = 0
-        if (albumArtist.length > 0 && names) {
-            for (var i = 0; i < names.length && i < ids.length; ++i) {
-                if (String(names[i]) === albumArtist) {
-                    index = i
-                    break
-                }
-            }
-        }
-        const id = String(ids[index])
-        if (id.length === 0)
-            return null
-        var name = (names && index < names.length) ? String(names[index]) : ""
-        if (name.length === 0)
-            name = albumArtist
-        return { itemId: id, name: name, type: "MusicArtist" }
+        return target
     }
 
     // ── Building the list ──────────────────────────────────────────────────

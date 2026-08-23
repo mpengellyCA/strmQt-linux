@@ -50,6 +50,8 @@ private slots:
     void aFailedFetchSaysSoInsteadOfDoingNothing();
     void anEmptyResultSaysSoToo();
     void playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum();
+    void playCarriesTheItemsTypeOntoTheSeededQueue();
+    void artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwnId();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -314,6 +316,82 @@ void ItemActionsQueueTest::playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum(
     // disc then track order, and recursing an album folder means nothing.
     QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
     QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
+}
+
+// A bare play seeds a one-item queue, and that seed is the first thing
+// PlayerController::isAudio() reads. Every leaf item goes down this path — the
+// menu's "Play", a card's Play button, a search result — so dropping the type
+// here is what left the docked bar laid out for the previous item until the
+// ticket came back.
+void ItemActionsQueueTest::playCarriesTheItemsTypeOntoTheSeededQueue()
+{
+    QVariantMap track;
+    track.insert(QStringLiteral("itemId"), QStringLiteral("301001"));
+    track.insert(QStringLiteral("name"), QStringLiteral("So What"));
+    track.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+
+    m_actions->play(track);
+    // Synchronously, before any reply: nothing here waited on the network.
+    QCOMPARE(m_player->queue()->rowCount(), 1);
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("type")).toString(),
+             QStringLiteral("Audio"));
+    QVERIFY(m_player->isAudio());
+
+    QVariantMap movie;
+    movie.insert(QStringLiteral("itemId"), QStringLiteral("301002"));
+    movie.insert(QStringLiteral("name"), QStringLiteral("Blade Runner 2049"));
+    movie.insert(QStringLiteral("type"), QStringLiteral("Movie"));
+
+    m_actions->play(movie);
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("type")).toString(),
+             QStringLiteral("Movie"));
+    QVERIFY(!m_player->isAudio());
+}
+
+// One rule for "go to artist", wherever it is asked from (MUSIC.md §4). The
+// album artist wins, and the name and the id it hands back describe the same
+// person even when the server credits a performer it has no artist item for.
+void ItemActionsQueueTest::artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwnId()
+{
+    QVariantMap track;
+    track.insert(QStringLiteral("itemId"), QStringLiteral("301001"));
+    track.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+    track.insert(QStringLiteral("artists"),
+                 QStringList{QStringLiteral("Featured Guest"), QStringLiteral("Main Band")});
+    // The mapper leaves a hole where a credited name has no artist item, so the
+    // guest's name does not borrow the band's id.
+    track.insert(QStringLiteral("artistIds"), QStringList{QString(), QStringLiteral("ar-band")});
+    track.insert(QStringLiteral("albumArtist"), QStringLiteral("Main Band"));
+
+    const QVariantMap target = m_actions->artistTarget(track);
+    QCOMPARE(target.value(QStringLiteral("itemId")).toString(), QStringLiteral("ar-band"));
+    QCOMPARE(target.value(QStringLiteral("name")).toString(), QStringLiteral("Main Band"));
+    QCOMPARE(target.value(QStringLiteral("type")).toString(), QStringLiteral("MusicArtist"));
+
+    // No album artist: the first credit, with its own id.
+    QVariantMap other;
+    other.insert(QStringLiteral("itemId"), QStringLiteral("301002"));
+    other.insert(QStringLiteral("artists"),
+                 QStringList{QStringLiteral("Main Band"), QStringLiteral("Featured Guest")});
+    other.insert(QStringLiteral("artistIds"),
+                 QStringList{QStringLiteral("ar-band"), QStringLiteral("ar-guest")});
+    const QVariantMap first = m_actions->artistTarget(other);
+    QCOMPARE(first.value(QStringLiteral("itemId")).toString(), QStringLiteral("ar-band"));
+    QCOMPARE(first.value(QStringLiteral("name")).toString(), QStringLiteral("Main Band"));
+
+    // A name with nowhere to go is still a name: the bar prints it and drops
+    // the link rather than navigating to somebody else.
+    QVariantMap nameless;
+    nameless.insert(QStringLiteral("itemId"), QStringLiteral("301003"));
+    nameless.insert(QStringLiteral("artists"), QStringList{QStringLiteral("Featured Guest")});
+    const QVariantMap unlinked = m_actions->artistTarget(nameless);
+    QCOMPARE(unlinked.value(QStringLiteral("name")).toString(), QStringLiteral("Featured Guest"));
+    QVERIFY(unlinked.value(QStringLiteral("itemId")).toString().isEmpty());
+
+    // Nothing credited at all: no target, and therefore no menu row.
+    QVariantMap bare;
+    bare.insert(QStringLiteral("itemId"), QStringLiteral("301003"));
+    QVERIFY(m_actions->artistTarget(bare).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ItemActionsQueueTest)

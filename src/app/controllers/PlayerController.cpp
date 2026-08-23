@@ -306,13 +306,15 @@ void PlayerController::selectSource(qsizetype index)
 }
 
 void PlayerController::playItem(const QString &itemId, const QString &title,
-                                qint64 startPositionMs, int preferredSourceIndex)
+                                qint64 startPositionMs, int preferredSourceIndex,
+                                const QString &itemType)
 {
-    startItem(itemId, title, startPositionMs, preferredSourceIndex, false);
+    startItem(itemId, title, startPositionMs, preferredSourceIndex, false, itemType);
 }
 
 void PlayerController::startItem(const QString &itemId, const QString &title,
-                                 qint64 startPositionMs, int preferredSourceIndex, bool fromQueue)
+                                 qint64 startPositionMs, int preferredSourceIndex, bool fromQueue,
+                                 const QString &itemType)
 {
     // Every entry point into a new item funnels through here, so this is the one
     // place that can guarantee the outgoing one was closed off properly.
@@ -325,6 +327,10 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
         MediaItem seed;
         seed.id = itemId;
         seed.name = title;
+        // Carried whenever the caller has it, because the seed is what
+        // computeIsAudio() reads first and the ticket that would answer for it
+        // otherwise is still the OUTGOING item's until the reply below lands.
+        seed.type = itemType;
         const QScopedValueRollback<bool> guard(m_queueDriving, true);
         m_queue->setItems({seed}, 0);
         emit queueStateChanged();
@@ -337,6 +343,9 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     const int generation = m_generation;
 
     m_itemId = itemId;
+    // The ticket in hand is still the OUTGOING item's — it is only replaced when
+    // the reply below lands — so it stops describing what is playing here.
+    m_ticketItemId.clear();
     m_title = title;
     emit titleChanged();
     if (!m_chapters.isEmpty()) {
@@ -368,7 +377,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     m_lastPositionMs = startPositionMs;
 
     m_client->playbackInfo(itemId, msToTicks(startPositionMs))
-        .then(this, [this, generation, startPositionMs](const Result<PlaybackTicket> &result) {
+        .then(this, [this, generation, startPositionMs, itemId](const Result<PlaybackTicket> &result) {
             if (generation != m_generation)
                 return;
             if (!result.ok()) {
@@ -378,6 +387,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
                 return;
             }
             m_ticket = result.value;
+            m_ticketItemId = itemId;
             m_rung = 0;
             qsizetype index = m_ticket.defaultSourceIndex();
             if (m_preferredSourceIndex >= 0 && m_ticket.source(m_preferredSourceIndex) &&
@@ -483,6 +493,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     setError({});
     m_reporting = false;
     m_ticket = {};
+    m_ticketItemId.clear();
     m_rung = 0;
     m_sourceIndex = -1;
     m_preferredSourceIndex = -1;
@@ -633,6 +644,7 @@ void PlayerController::recoverMidStream()
                 const QString previousSourceId = hasTicket() ? currentCandidate()->mediaSourceId
                                                             : QString();
                 m_ticket = result.value;
+                m_ticketItemId = m_itemId; // the same item, a fresh ticket for it
                 // Re-bind to the same version by id: source order is not
                 // guaranteed stable across PlaybackInfo calls.
                 qsizetype index = m_ticket.indexOfSourceId(previousSourceId);
@@ -1317,25 +1329,36 @@ void PlayerController::setBusy(bool busy)
 }
 
 // Music, or a picture? The type the server put on the queue entry answers it
-// outright whenever there is one, and that is the common case: everything that
-// reaches the queue through ItemActions carries its type.
+// outright whenever there is one, and that is the common case: every queue verb
+// carries the type, and so does a bare play — ItemActions hands the type it
+// already has to playItem(), which seeds it onto the one-item queue.
 //
-// Only a bare playItem() — a crash resume, a remote-control play-by-id — seeds
-// the queue with an id and a title and nothing else, and that is the one case
-// that has to ask the stream instead: a source the server offered with no video
-// stream in it is music. The order matters, because the reverse is not true. A
-// picture whose ticket has not resolved yet has no streams to inspect either,
-// and treating "nothing known" as audio would flash the now-playing panel over
-// the first second of every film.
+// What is left with no type is a play-by-id from a caller that never had one: a
+// crash resume (only the id, the title and a position are persisted) and a
+// remote client naming an item id. There the media source is the only answer
+// there is — a source the server offered with no video stream in it is music —
+// but it is only an answer once the ticket for THIS item has arrived. A ticket
+// outlives its item: it is replaced when the next PlaybackInfo reply lands, so
+// between seeding the queue and that reply the ticket in hand still describes
+// the item that just stopped. Consulting it there reported a film as audio for
+// a whole round trip because the track before it was audio, which is the flash
+// this ordering exists to prevent, in the other direction.
+//
+// So the fallback answers only for its own item, and "nothing known yet" reads
+// as video: guessing audio would put the now-playing panel over the first
+// second of every film and then take it back.
 bool PlayerController::computeIsAudio() const
 {
     if (!m_active)
         return false;
-    const QString type = m_queue->current().type;
+    const MediaItem current = m_queue->current();
+    const QString type = current.type;
     if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
         || type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0)
         return true;
     if (!type.isEmpty())
+        return false;
+    if (m_ticketItemId.isEmpty() || m_ticketItemId != current.id)
         return false;
     const MediaSourceCandidates *entry = m_ticket.source(m_sourceIndex);
     return entry != nullptr && entry->source.videoStream() == nullptr;

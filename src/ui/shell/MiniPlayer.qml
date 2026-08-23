@@ -61,7 +61,8 @@ import StrmQt
 //    the bar already reserved rather than the strip being grown to fit it.
 //    Anything that floats over the page would hide the last row of every grid
 //    in the app. The queue peek is the one exception and it is a Popup, so it
-//    lives in the window's overlay and is dismissed by clicking away from it.
+//    lives in the window's overlay and is dismissed by clicking away from the
+//    bar — the bar itself, because the button that toggles it stands on it.
 //
 // Tooltips here carry no keyboard shortcut on purpose. The InputMap bindings
 // for play/pause and stop live in the *player* context, and this bar is only
@@ -209,21 +210,28 @@ FocusScope {
     // Emperor" already fills the line it is on, and the link has one
     // destination anyway. The rest of the credit is on the album page the link
     // leads to.
+    //
+    // WHICH credit is not decided here. ItemActions.artistTarget() owns that
+    // rule and the context menu's "Go to artist" follows the same one: the
+    // album artist over the first performer, because an artist page is a
+    // discography and a compilation track's first performer opens a page with
+    // no albums on it. It also hands back a name and an id that describe the
+    // same artist — reading `artists[0]` and `artistIds[0]` as a pair did not,
+    // because the two lists are only aligned where the server has an artist
+    // item for every credited name.
+    readonly property var artistTarget: {
+        const target = Actions.artistTarget(mini.nowItem);
+        return (target !== undefined && target !== null) ? target : ({});
+    }
+
     readonly property string artistText: {
-        const item = mini.nowItem;
-        const list = item.artists;
-        if (list !== undefined && list !== null && list.length > 0)
-            return String(list[0]);
-        if (item.albumArtist !== undefined)
-            return String(item.albumArtist);
-        return "";
+        const name = mini.artistTarget.name;
+        return (name !== undefined) ? String(name) : "";
     }
 
     readonly property string artistId: {
-        const ids = mini.nowItem.artistIds;
-        if (ids !== undefined && ids !== null && ids.length > 0)
-            return String(ids[0]);
-        return "";
+        const id = mini.artistTarget.itemId;
+        return (id !== undefined) ? String(id) : "";
     }
 
     readonly property string albumText: {
@@ -346,9 +354,18 @@ FocusScope {
     // 9:59 → 10:00, and a right-aligned box of a KNOWN width is what stops
     // that, too. The template is this item's own longest form with every digit
     // replaced, so it measures exactly what will be drawn into it.
+    //
+    // Measured against the longer of the two clocks, not against the duration:
+    // a live stream — or any source whose duration never resolves — leaves
+    // `durationMs` at 0 while the elapsed side keeps counting, and a box
+    // measured for "0:00" with "1:23:45  /  --:--" drawn right-aligned into it
+    // paints three characters outside its own bounds. The right-hand side is
+    // taken verbatim when there is no remaining time to show, because "--:--"
+    // is what is drawn there and it is shorter than the clock it replaces.
     readonly property string timeTemplate: {
-        const shape = mini.formatTime(mini.durationMs).replace(/[0-9]/g, "0");
-        return shape + "  /  −" + shape;
+        const shape = mini.formatTime(Math.max(mini.durationMs, mini.positionMs))
+                          .replace(/[0-9]/g, "0");
+        return shape + "  /  " + (mini.seekable ? "−" + shape : mini.remainingText);
     }
 
     TextMetrics {
@@ -361,6 +378,18 @@ FocusScope {
     }
 
     // ── Keyboard entry and exit ─────────────────────────────────────────────
+    // Where the keyboard was when the queue peek went up, in the shape
+    // StrmMenu._focusEscrow uses — and typed Item for the same reason, so QML
+    // nulls it for us if the item is destroyed while the peek is open.
+    property Item peekFocusEscrow: null
+
+    // Taken on the peek's aboutToShow rather than its onOpened: the popup takes
+    // focus when its enter transition finishes, so by `opened` the item worth
+    // remembering is already the one being restored from.
+    function notePeekFocus(): void {
+        mini.peekFocusEscrow = mini.Window.activeFocusItem;
+    }
+
     // The owner's way in. Nothing in this file calls it by itself.
     function focusTransport(): void {
         if (mini.shown)
@@ -370,7 +399,15 @@ FocusScope {
     // A bar that vanished while holding the keyboard would leave focus nowhere,
     // which is a dead arrow key until the user clicks something.
     onShownChanged: {
-        if (!mini.shown && mini.activeFocus)
+        if (mini.shown)
+            return;
+        // The peek renders in the window's overlay rather than inside the bar,
+        // so it does not leave with it: hiding a popup's parent leaves the popup
+        // open and floating (measured, Qt 6.11). It has to be dismissed here, or
+        // expanding into the player page from a bar with the peek open would
+        // strand a queue popover over the page that replaced it.
+        queuePeek.close();
+        if (mini.activeFocus)
             mini.dismissed();
     }
 
@@ -946,6 +983,11 @@ FocusScope {
     Popup {
         id: queuePeek
 
+        // The bar, not the window: `x` and `y` below are read in its
+        // coordinates, and it is also the region the close policy tests
+        // against.
+        parent: mini
+
         // Anchored to the button that opened it and sitting on top of the bar,
         // which is where the eye already is.
         x: Math.max(Theme.spacingTight, mini.width - queuePeek.width - Theme.spacingValue)
@@ -963,8 +1005,22 @@ FocusScope {
         // QueuePanel draws its own StrmPanel surface; a second background
         // behind it would double the border and the shadow.
         background: null
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-                     | Popup.CloseOnReleaseOutside
+        // OutsideParent, not Outside, which is the distinction QQuickComboBox
+        // draws for its own popup and for the same reason. A press outside the
+        // popup closes it there and then — the exit transition is prepared
+        // synchronously, so `opened` is false immediately — while StrmIconButton
+        // fires `clicked` on RELEASE. The queue button is outside the popup, so
+        // the press shut the peek and the release of that same click reopened
+        // it: the button could open the peek but never close it, and only Esc or
+        // a click elsewhere could. (Measured on Qt 6.11 with a standalone probe:
+        // two clicks on the button gave two opens and one close.)
+        //
+        // The parent is the bar, so the button — and the rest of the strip — is
+        // no longer "outside": nothing acts on the press, the toggle on the
+        // release is the only thing that runs, and a press anywhere off the bar
+        // still dismisses the peek.
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                     | Popup.CloseOnReleaseOutsideParent
 
         enter: Transition {
             NumberAnimation {
@@ -985,6 +1041,11 @@ FocusScope {
             }
         }
 
+        // Not the assignment itself: qmllint cannot resolve an attached type
+        // through an id from inside a Popup's bindings (see spaceAboveBar), so
+        // the Window lookup is made where it can see it.
+        onAboutToShow: mini.notePeekFocus()
+
         // A peek that closed while holding the keyboard would leave focus
         // nowhere. Deferred the way every other overlay in the app defers its
         // restore: `closed` fires inside the popup's own teardown, which is
@@ -999,9 +1060,55 @@ FocusScope {
         }
     }
 
+    // Give the keyboard back to whatever the peek took it from — and only when
+    // the peek is what left it homeless. `closed` fires for EVERY close, the
+    // press-outside one included, and that press has usually already landed on
+    // something with a better claim than this bar: with the peek open, click a
+    // poster in the grid behind it and the page that push produces holds the
+    // keyboard by the time this runs. Focusing the bar on top of that would
+    // walk the arrow keys along the strip instead of the new page — the bar
+    // taking focus on its own, which is the one thing this file promises not to
+    // do (see the header).
+    //
+    // What is repaired is therefore only what QQC2 leaves behind when nothing
+    // else claimed the keyboard: nothing focused, or bare window content. That
+    // is StrmMenu._restoreFocus()'s test, down to the two different items
+    // "bare" means under an ApplicationWindow, and it is right here for the
+    // same reasons it is right there.
     function restorePeekFocus(): void {
-        if (mini.shown && queueButton.visible && queueButton.enabled)
-            queueButton.forceActiveFocus(Qt.OtherFocusReason);
+        // Re-opened while the restore was queued: the escrow belongs to that
+        // open now and its own close will return it.
+        if (queuePeek.visible)
+            return;
+        const remembered = mini.peekFocusEscrow;
+        mini.peekFocusEscrow = null;
+        if (!mini.shown || remembered === null)
+            return;
+        const current = mini.Window.activeFocusItem;
+        const win = mini.Window.window;
+        const bare = current === mini.Window.contentItem
+                     || (win !== null && current === win.contentItem);
+        if (current !== null && !bare)
+            return;
+        if (remembered.visible && remembered.enabled)
+            remembered.forceActiveFocus(Qt.OtherFocusReason);
+    }
+
+    // Crossing the audio/video boundary hides six of the eleven controls, and
+    // Qt does not take the keyboard off an item it has just hidden: a hidden
+    // control keeps activeFocus (measured, Qt 6.11), so the focus ring vanishes
+    // from the screen while Space still activates whatever it was on. Arrow
+    // keys do walk out of it — KeyNavigation skips invisible links — so this is
+    // a ring nobody can find rather than a dead strip, but it is the same
+    // hazard PlayerPage re-seats for at PlayerPage.qml:72: the keyboard must
+    // not be left inside chrome that has just become invisible.
+    function reseatFocusAfterMode(): void {
+        if (!mini.shown || !mini.activeFocus)
+            return;
+        const focused = mini.Window.activeFocusItem;
+        if (focused !== null && focused !== mini && focused.visible && focused.enabled)
+            return;
+        playPause.forceActiveFocus(Qt.OtherFocusReason);
     }
 
     // The peek is about what is queued, and what is queued is a music idea. A
@@ -1011,5 +1118,8 @@ FocusScope {
     onIsAudioChanged: {
         if (!mini.isAudio)
             queuePeek.close();
+        // One turn later: the controls' own `visible` bindings react to this
+        // same change, and nothing orders them against this handler.
+        Qt.callLater(mini.reseatFocusAfterMode);
     }
 }

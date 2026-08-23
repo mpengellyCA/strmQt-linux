@@ -134,8 +134,14 @@ public:
     Q_INVOKABLE void previousChapter();
 
     // `preferredSourceIndex` < 0 means "let the ticket decide" (server order).
+    // `itemType` is the server's item type ("Audio", "Movie", ...) when the
+    // caller knows it: this path seeds the queue with a single entry, and the
+    // type is what `isAudio` reads first. Callers that genuinely have no type —
+    // a crash resume, a remote client naming a bare id — leave it empty and the
+    // answer waits for the ticket.
     Q_INVOKABLE void playItem(const QString &itemId, const QString &title,
-                              qint64 startPositionMs = 0, int preferredSourceIndex = -1);
+                              qint64 startPositionMs = 0, int preferredSourceIndex = -1,
+                              const QString &itemType = QString());
     // Pick a version. Applies immediately when a session is running (reloads at
     // the current position, ladder restarts at the top rung of the new source);
     // otherwise it is remembered for the next playItem() that does not override it.
@@ -271,7 +277,8 @@ private:
     // what stops a plain playItem() from being mistaken for queue playback (it
     // reseeds the queue as a one-item queue instead).
     void startItem(const QString &itemId, const QString &title, qint64 startPositionMs,
-                   int preferredSourceIndex, bool fromQueue);
+                   int preferredSourceIndex, bool fromQueue,
+                   const QString &itemType = QString());
     // Plays whatever the queue's cursor points at. Without `force`, an item that
     // is already the running one is left alone (a re-index is not a restart).
     bool startQueueCurrent(bool force);
@@ -344,6 +351,11 @@ private:
     QTimer m_persistTimer;
 
     PlaybackTicket m_ticket;
+    // Which item the ticket above was fetched for. A ticket outlives the item
+    // it belongs to: it is only replaced when the async PlaybackInfo reply for
+    // the NEXT item lands, so anything that reads the ticket to describe what
+    // is playing has to be able to tell "not resolved yet" from "resolved".
+    QString m_ticketItemId;
     QString m_itemId;
     // Remembered tracks are applied once per item, when the engine first
     // publishes its track list; re-applying would fight the user's own picks.
