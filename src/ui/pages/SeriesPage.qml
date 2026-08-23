@@ -194,6 +194,12 @@ FocusScope {
         // seasons landing again for the series already on screen is a refresh,
         // and snapping the selection back to SeriesCtl.currentSeason there
         // would drop the user out of the season they walked over to read.
+        //
+        // Today this guard cannot fire: SeriesController::open() clears the
+        // model before it fills it, so every arrival passes through an empty
+        // tab list and `arrived` is always "" first. It is kept because it is
+        // the thing that makes an in-place refresh — seasons re-fetched without
+        // a clear, which is what a live update would do — safe to add later.
         const arrived = tabs.length > 0 ? SeriesCtl.seriesId : ""
         if (page.tabbedSeriesId === arrived)
             return

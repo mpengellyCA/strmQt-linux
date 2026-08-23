@@ -46,8 +46,8 @@
     <keyword>streaming</keyword>
   </keywords>
 
-  <url type="homepage">https://github.com/mikesdev/StrmQt</url>
-  <url type="bugtracker">https://github.com/mikesdev/StrmQt/issues</url>
+  <url type="homepage">https://github.com/mpengellyCA/strmQt-linux</url>
+  <url type="bugtracker">https://github.com/mpengellyCA/strmQt-linux/issues</url>
 
   <content_rating type="oars-1.1" />
 
@@ -62,6 +62,17 @@
   </requires>
 
   <releases>
+    <release version="0.3.0~rc1" date="2026-08-22" type="development">
+      <description>
+        <p>
+          Fixes a review pass over input handling and playback session
+          handoff: selection controls no longer disagree with the value
+          they display, context menus return keyboard focus, queue edits
+          after stop no longer restart playback, and a held gamepad stick
+          commits one seek instead of one per repeat step.
+        </p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-08-22" type="development">
       <description>
         <p>The "first-party feel" release: mouse and pointer support throughout,

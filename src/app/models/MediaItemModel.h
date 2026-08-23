@@ -67,14 +67,18 @@ public:
 
     void setItems(QList<MediaItem> items, int totalRecordCount = -1);
     // `totalRecordCount` is the count the appended page itself reported; -1
-    // means "the caller has none". Either way the total ends up at least the
-    // number of rows now held, because canLoadMore() is `rowCount <
-    // totalRecordCount` and a total left behind by a growing library reads as
-    // "there is nothing more" while a page is sitting in the model unpaged —
-    // and on /Persons and /Genres, which report 0 while returning rows, the
-    // grid would stop after the first page. A count that arrives with a page is
-    // newer than the one setItems() recorded, so it wins over the stored value;
-    // it never shrinks the total below what is actually here.
+    // means "the caller has none". A count arriving with a page is newer than
+    // the one setItems() recorded, so it wins; and either way the total ends up
+    // at least the number of rows now held, because canLoadMore() is
+    // `rowCount < totalRecordCount` and a stale total left behind by a growing
+    // library reads as "there is nothing more" while a page is already sitting
+    // in the model unpaged.
+    //
+    // The floor is NOT what rescues /Persons and /Genres, which report
+    // TotalRecordCount = 0 while returning rows: setItems() records that 0, so
+    // canLoadMore() is already false and appendItems() is never reached. Those
+    // callers have to use the returned list's own size (§ server behaviours),
+    // and this floor cannot substitute for that.
     void appendItems(const QList<MediaItem> &items, int totalRecordCount = -1);
     void clear();
 

@@ -992,7 +992,18 @@ void PlayerController::stop()
 
 void PlayerController::seekTo(qint64 positionMs)
 {
-    const qint64 target = qMax<qint64>(0, positionMs);
+    // Clamped at BOTH ends. The floor has always been here; the ceiling became
+    // load-bearing the moment m_lastPositionMs started adopting the target
+    // below, because that field is no longer only an observation: nearEnd()
+    // reads it to decide whether a later engine error is a clean end (stop
+    // report at full runtime, auto-advance) or a mid-stream stall to recover
+    // from. Without a ceiling, holding skip-forward past the end walks
+    // m_lastPositionMs beyond the runtime and reports a position the engine
+    // never reached.
+    const qint64 duration = durationMs();
+    qint64 target = qMax<qint64>(0, positionMs);
+    if (duration > 0)
+        target = qMin(target, duration);
     m_backend->seekTo(target);
     // The engine publishes the new position asynchronously, so until it lands
     // m_lastPositionMs is where the playhead *was*. Adopting the target now is

@@ -28,7 +28,7 @@ against a live Emby 4.9 server:
 - Playlists, favourites, resume, and watch state reported back to the server
 - Remote control from another Emby client, and MPRIS2 for KDE Connect
 
-The build is clean under `-Werror`, `ctest` passes 22/22, `strmqt_qmllint` reports no
+The build is clean under `-Werror`, `ctest` passes 23/23, `strmqt_qmllint` reports no
 type errors, and `STRMQT_SELFTEST=1` constructs all 13 pages.
 
 **Caveats worth knowing before you try it.** The interface has been verified by tests,

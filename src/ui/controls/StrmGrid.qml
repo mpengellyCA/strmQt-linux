@@ -169,7 +169,14 @@ FocusScope {
 
         ScrollBar.vertical: StrmScrollBar {}
 
-        delegate: Item {
+        // A FocusScope rather than a plain Item, for the same reason StrmRail's
+        // delegate is one: a card's ✓/♥/⋯ are real buttons that take focus on
+        // tap, and a plain Item never reports activeFocus for a focused
+        // descendant. Without this, tapping a verb on cell 7 left currentIndex
+        // on cell 3 — the focus ring drew on a card the keyboard had left, and
+        // the next arrow key moved from there. Focus only: hover still never
+        // moves the cursor.
+        delegate: FocusScope {
             id: cell
 
             required property int index
@@ -177,6 +184,11 @@ FocusScope {
 
             width: view.cellWidth
             height: view.cellHeight
+
+            onActiveFocusChanged: {
+                if (cell.activeFocus)
+                    view.currentIndex = cell.index
+            }
 
             readonly property bool current: cell.GridView.isCurrentItem && view.activeFocus
             // A wide card asks for wide art. An episode's "poster" is a 16:9

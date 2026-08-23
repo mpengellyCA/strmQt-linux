@@ -246,7 +246,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 22 suites
+ctest --preset dev                     # 23 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
@@ -324,3 +324,16 @@ assertion catches the rot.
   each needs a verb or an id grammar the current interfaces do not have.
 - The AppImage's glibc floor is set by the bundled FFmpeg, not by this code. It runs
   on current Arch and little else.
+- **Season badges go stale outside the loaded season.** `SeriesController`'s seasons
+  model is not registered with `ItemActions` and nothing recomputes its unplayed
+  counts, so marking an episode watched updates the badge only for the season
+  currently on screen. A real fix needs the server's `UserData.UnplayedItemCount`
+  refetched per season, not a UI hook.
+- **Held volume on a gamepad is unclamped.** Held horizontal seeks are floored at
+  250 ms, but Up/Down still run the fast ladder at 5% per step. Horizontal repeat
+  in player context is floored everywhere, including the OSD button row, because
+  `GamepadManager` can see the action and the context but not which control has
+  focus.
+- **`Component.onDestruction` cannot read a delegate's `index`** — it has already
+  been reset to -1 by then. Any cleanup keyed on index there is dead code; track
+  the delegate's identity instead (`StrmRail`, `StrmGrid`, `HomePage` do).

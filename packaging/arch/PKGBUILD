@@ -3,14 +3,17 @@
 # Local-source PKGBUILD. Not intended for the AUR: it clones the checkout that
 # contains this file (packaging/arch/../..) at the release tag. Everything must
 # be committed and tagged before makepkg will see it. While iterating on the
-# packaging files, swap "#tag=v$pkgver" for "#branch=main".
+# packaging files, swap "#tag=$_tag" for "#branch=main".
 
 pkgname=strmqt
-pkgver=0.2.0
+pkgver=0.3.0rc1
+# An Arch pkgver may not contain a hyphen, but the git tag is spelled the
+# conventional way, so the two are kept separate rather than renaming the tag.
+_tag=v0.3.0-rc1
 pkgrel=1
 pkgdesc="Native Qt 6 Emby client for KDE Plasma, built for the couch"
 arch=('x86_64')
-url="https://github.com/mikesdev/StrmQt"
+url="https://github.com/mpengellyCA/strmQt-linux"
 license=('GPL-3.0-or-later')
 
 # SDL3 and libvlc are link-time DT_NEEDED dependencies of the strmqt binary, so
@@ -36,7 +39,7 @@ optdepends=(
 )
 
 # Builds the tagged release. Swap for "#branch=main" while iterating on packaging.
-source=("$pkgname::git+file://$startdir/../..#tag=v$pkgver")
+source=("$pkgname::git+file://$startdir/../..#tag=$_tag")
 sha256sums=('SKIP')
 
 # No install= scriptlet: pacman hooks already refresh the desktop database, the
