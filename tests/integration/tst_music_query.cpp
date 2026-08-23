@@ -38,8 +38,11 @@ private slots:
     void genresPageOnTheArrayNotTheCount();
     void aGenreWalkThatStoppedHalfwayIsRetried();
     void switchingLibraryDropsThatLibrarysFilters();
+    void switchingLibraryAnnouncesEveryListItCleared();
     void randomIsASinglePageSort();
     void aPreferenceSetBeforeAnythingLoadsFiresNoRequest();
+    void artistModeAnnouncesItselfWithoutWaitingForTheWire();
+    void artistModeSetBeforeAnythingLoadsFiresNoRequest();
     void playlistsAreScopedToTheLibraryNotProbedOneByOne();
     void anUnscopedControllerFetchesNoPlaylists();
     void createdPlaylistsReappearInTheMusicTab();
@@ -47,6 +50,17 @@ private slots:
     void aPlaylistFetchWithNoLibraryDoesNotStrandLoading();
 
 private:
+    // One row of `type`, over a total the server claims is much larger — the
+    // shape that makes canLoadMore* true with a single page loaded.
+    static QByteArray onePageOf(const char *type, int total)
+    {
+        return QStringLiteral("{\"Items\":[{\"Id\":\"x1\",\"Name\":\"One\",\"Type\":\"%1\"}],"
+                              "\"TotalRecordCount\":%2}")
+            .arg(QLatin1String(type))
+            .arg(total)
+            .toUtf8();
+    }
+
     // `count` MusicGenre rows numbered from `from`, as /MusicGenres answers them.
     static QByteArray genrePage(int from, int count)
     {
@@ -522,6 +536,47 @@ void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
              QStringLiteral("2000001"));
 }
 
+// Re-targeting clears all four models, so all four have to say so. Three of the
+// properties bound to those signals are not about the rows at all —
+// canLoadMoreAlbums, canLoadMoreArtists and artistMode all notify on
+// albumsChanged/artistsChanged — and without an emit they keep answering for
+// the library that has just been left: "there is more" in front of a grid
+// holding nothing, which is a paging request against the wrong ParentId waiting
+// for a scroll.
+void MusicQueryTest::switchingLibraryAnnouncesEveryListItCleared()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     onePageOf("MusicAlbum", 5037));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 200,
+                     onePageOf("MusicArtist", 2394));
+
+    m_music->loadAlbums();
+    settle();
+    m_music->loadArtists();
+    settle();
+    QVERIFY(m_music->canLoadMoreAlbums());
+    QVERIFY(m_music->canLoadMoreArtists());
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+    QCOMPARE(m_music->artists()->rowCount(), 1);
+
+    QSignalSpy albumSpy(m_music, &MusicController::albumsChanged);
+    QSignalSpy artistSpy(m_music, &MusicController::artistsChanged);
+    QSignalSpy songSpy(m_music, &MusicController::songsChanged);
+    QSignalSpy playlistSpy(m_music, &MusicController::playlistsChanged);
+
+    m_music->setLibrary(QStringLiteral("2000001"));
+
+    QCOMPARE(m_music->albums()->rowCount(), 0);
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QVERIFY(!m_music->canLoadMoreAlbums());
+    QVERIFY(!m_music->canLoadMoreArtists());
+    // The two that were already announced, and the two that were not.
+    QCOMPARE(songSpy.count(), 1);
+    QCOMPARE(playlistSpy.count(), 1);
+    QCOMPARE(albumSpy.count(), 1);
+    QCOMPARE(artistSpy.count(), 1);
+}
+
 // Emby reshuffles SortBy=Random on every request and has no seed, so page 2
 // drawn at StartIndex = rowCount() is a different shuffle: rows already on
 // screen repeat and others never appear — and on the Songs tab those duplicates
@@ -609,6 +664,69 @@ void MusicQueryTest::aPreferenceSetBeforeAnythingLoadsFiresNoRequest()
              QStringLiteral("Q"));
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
+    delete fresh;
+}
+
+// `artistMode` notifies on artistsChanged, and the two chips that render it are
+// bound straight to it. The only other emit on this path is inside
+// fetchArtists()'s reply lambda, which is skipped on !ok() — so a setter with no
+// emit of its own left the chips on the old mode until the network answered,
+// and on it for good if the network failed. Both halves are checked here: a
+// slow route and a failing one.
+void MusicQueryTest::artistModeAnnouncesItselfWithoutWaitingForTheWire()
+{
+    m_music->setTab(QStringLiteral("artists"));
+    m_music->loadArtists();
+    settle();
+    QCOMPARE(m_music->artistMode(), QStringLiteral("albumArtists"));
+
+    // Slow: the chips move on the click, not on the reply.
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/Artists"), 300);
+    QSignalSpy slowSpy(m_music, &MusicController::artistsChanged);
+    m_music->setArtistMode(QStringLiteral("artists"));
+    QCOMPARE(m_music->artistMode(), QStringLiteral("artists"));
+    QCOMPARE(slowSpy.count(), 1); // synchronous, with the request still in flight
+    settle();
+
+    // Failing: the reply lambda returns at setError() and never emits, so the
+    // setter's own is the only notification there will ever be.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 500,
+                     QByteArrayLiteral("{}"));
+    QSignalSpy failSpy(m_music, &MusicController::artistsChanged);
+    m_music->setArtistMode(QStringLiteral("albumArtists"));
+    QCOMPARE(m_music->artistMode(), QStringLiteral("albumArtists"));
+    QCOMPARE(failSpy.count(), 1);
+    settle();
+    QVERIFY(!m_music->errorMessage().isEmpty());
+    QCOMPARE(failSpy.count(), 1);
+}
+
+// The same contract every other setter keeps (see
+// aPreferenceSetBeforeAnythingLoadsFiresNoRequest and m_started): a mode chosen
+// before the first list was asked for is a preference. setArtistMode() used to
+// call loadArtists(), which sets m_started unconditionally and fires — the one
+// thing the contract says a setter must not do.
+void MusicQueryTest::artistModeSetBeforeAnythingLoadsFiresNoRequest()
+{
+    auto *fresh = new MusicController(m_client, this);
+    fresh->setLibrary(kMusicLibrary);
+    const int before = m_mock->requestCount();
+    QSignalSpy spy(fresh, &MusicController::artistsChanged);
+
+    fresh->setArtistMode(QStringLiteral("artists"));
+    QTest::qWait(50);
+    QCOMPARE(m_mock->requestCount(), before);
+    // …and the chips still move, because the value did.
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(fresh->artistMode(), QStringLiteral("artists"));
+
+    // The preference is honoured by the first real load: /Artists, and not the
+    // album-artist endpoint at all.
+    const int albumArtists = requestsFor(QStringLiteral("/Artists/AlbumArtists"));
+    fresh->loadArtists();
+    QTRY_VERIFY_WITH_TIMEOUT(!fresh->loading(), 5000);
+    QCOMPARE(requestsFor(QStringLiteral("/Artists/AlbumArtists")), albumArtists);
+    QVERIFY(requestsFor(QStringLiteral("/Artists")) > 0);
     delete fresh;
 }
 

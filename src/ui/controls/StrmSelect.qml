@@ -145,6 +145,18 @@ Item {
         }
     }
 
+    // Space has to beat the shortcuts, the same way TrackTable's letters do:
+    // `music.playPause` binds it and a window-scoped Shortcut is matched in
+    // QShortcutMap before the key reaches this item, so on a music page with a
+    // queue loaded the sort and genre dropdowns could not be opened from the
+    // keyboard at all. ShortcutOverride is delivered to the focus item first
+    // and accepting it suppresses that shortcut for that one press — claimed
+    // only while this control holds focus, and only for the key it answers.
+    Keys.onShortcutOverride: event => {
+        if (select.activeFocus && event.key === Qt.Key_Space)
+            event.accepted = true
+    }
+
     Keys.onReturnPressed: event => { if (!event.isAutoRepeat) select.toggle() }
     Keys.onEnterPressed: event => { if (!event.isAutoRepeat) select.toggle() }
     Keys.onSpacePressed: event => { if (!event.isAutoRepeat) select.toggle() }

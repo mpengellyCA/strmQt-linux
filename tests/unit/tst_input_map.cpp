@@ -26,6 +26,8 @@ private slots:
     void resetRestoresTheDefault();
     void resetAllClearsEveryOverride();
     void sequencesAreNormalised();
+    void typableSequencesAreSortedByKeyNotByLength();
+    void everyCatalogueSequenceClassifiesTheWayItsKeyReads();
     void keyLookupsResolveActions();
     void lastInputDeviceTracksTheUser();
 
@@ -457,6 +459,78 @@ void InputMapTest::lastInputDeviceTracksTheUser()
 
     InputMap reloaded(ini());
     QCOMPARE(reloaded.lastInputDevice(), QStringLiteral("mouse"));
+}
+
+// MappedShortcut splits its two Shortcuts on this, and the rule it replaced was
+// the length of the sequence STRING — which calls "Space" a chord and "F" a
+// typable key, one of which is wrong.
+void InputMapTest::typableSequencesAreSortedByKeyNotByLength()
+{
+    // Characters a field would receive. "Space" is the one the length rule got
+    // wrong: five characters, and the most typable key on the keyboard.
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Space")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Spacebar"))); // the alias too
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("S")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("/")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("?")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("+")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("7")));
+    // Shift is how a capital or a symbol is typed, so it is not what makes a
+    // chord — every other modifier is.
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Shift+S")));
+
+    // Editing and caret keys: a shortcut that fires on Backspace while a name
+    // is being corrected is no better than one that fires on a letter.
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Backspace")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Del")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Left")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("PgDown")));
+    QVERIFY(m_map->isTypableSequence(QStringLiteral("Return")));
+
+    // Chords and function keys: never typed, and they have to keep working
+    // inside a search box — Ctrl+K is the whole point of Ctrl+K.
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Ctrl+K")));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Ctrl+Shift+Tab")));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Alt+S")));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("F2")));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("F11")));
+    // Esc dismisses the overlay a field lives in; QQuickTextInput does not
+    // consume it and neither does this.
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Esc")));
+    // A media/browser key no keyboard types with.
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Back")));
+
+    QVERIFY(!m_map->isTypableSequence(QString()));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Ctrl+Nonsense")));
+}
+
+// The catalogue is what actually gets sorted, so sweep it rather than trusting
+// that the interesting cases above are the only ones in it. The point of the
+// sweep is that no answer depends on how long the sequence is spelled.
+void InputMapTest::everyCatalogueSequenceClassifiesTheWayItsKeyReads()
+{
+    int multiCharTypable = 0;
+    for (const QString &id : m_map->actionIds()) {
+        for (const QString &sequence : m_map->defaultBindings(id)) {
+            const bool typable = m_map->isTypableSequence(sequence);
+            if (typable && sequence.size() != 1)
+                ++multiCharTypable;
+            // Nothing carrying a real modifier may be called typable.
+            if (sequence.contains(QLatin1String("Ctrl+"))
+                || sequence.contains(QLatin1String("Alt+"))
+                || sequence.contains(QLatin1String("Meta+")))
+                QVERIFY2(!typable, qPrintable(id + QLatin1String(": ") + sequence));
+            // Every single character in the catalogue is typable, which is what
+            // the old length rule got right and is preserved here.
+            if (sequence.size() == 1)
+                QVERIFY2(typable, qPrintable(id + QLatin1String(": ") + sequence));
+        }
+    }
+    // …and at least one multi-character sequence is typable, which is what it
+    // got wrong. Today that is Space (nav.select, player.togglePause,
+    // music.playPause) and the Backspace of nav.back / player.minimize.
+    QVERIFY(multiCharTypable > 0);
+    QVERIFY(m_map->isTypableSequence(m_map->binding(QStringLiteral("music.playPause"))));
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)

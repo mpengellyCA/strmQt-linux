@@ -172,6 +172,59 @@ ParsedSequence parseSequence(const QString &raw)
     return out;
 }
 
+// Is this a key a focused text-editing item would use itself? Two groups, and
+// both are "typing" from the field's point of view:
+//
+//  · keys that put a character in — every letter, digit, the punctuation the
+//    table above can spell, and Space, which is the one the string-length rule
+//    this replaced got wrong;
+//  · keys that edit or move the caret — a Delete bound to a shortcut is no
+//    better than a letter if it fires while the user is fixing a typo.
+//
+// Escape is deliberately absent: QQuickTextInput does not consume it, and it is
+// how every overlay in this app is dismissed from inside a field.
+bool isTypableKey(int key)
+{
+    if (key >= Qt::Key_A && key <= Qt::Key_Z)
+        return true;
+    if (key >= Qt::Key_0 && key <= Qt::Key_9)
+        return true;
+    switch (key) {
+    case Qt::Key_Space:
+    case Qt::Key_Plus:
+    case Qt::Key_Minus:
+    case Qt::Key_Equal:
+    case Qt::Key_Slash:
+    case Qt::Key_Backslash:
+    case Qt::Key_Comma:
+    case Qt::Key_Period:
+    case Qt::Key_Semicolon:
+    case Qt::Key_Apostrophe:
+    case Qt::Key_BracketLeft:
+    case Qt::Key_BracketRight:
+    case Qt::Key_Question:
+    case Qt::Key_Asterisk:
+    case Qt::Key_Backspace:
+    case Qt::Key_Delete:
+    case Qt::Key_Insert:
+    case Qt::Key_Home:
+    case Qt::Key_End:
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab:
+        return true;
+    default:
+        return false;
+    }
+}
+
 QString formatSequence(int key, int modifiers)
 {
     const QString name = canonicalKeyName(key);
@@ -819,6 +872,19 @@ QString InputMap::sequenceForKey(int key, int modifiers) const
     // Keypad/auto-repeat flags carry no meaning for a binding.
     return formatSequence(key, modifiers & (Qt::ControlModifier | Qt::AltModifier |
                                             Qt::ShiftModifier | Qt::MetaModifier));
+}
+
+bool InputMap::isTypableSequence(const QString &sequence) const
+{
+    const ParsedSequence parsed = parseSequence(sequence);
+    if (!parsed.valid)
+        return false;
+    // Shift is part of typing — a capital, a symbol, a shifted range extension.
+    // Every other modifier makes a chord, and a chord is exactly what must keep
+    // working while a field has focus.
+    if (parsed.modifiers & ~int(Qt::ShiftModifier))
+        return false;
+    return isTypableKey(parsed.key);
 }
 
 void InputMap::noteInput(const QString &device)

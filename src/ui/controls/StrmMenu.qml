@@ -278,19 +278,32 @@ Popup {
     }
 
     // A ListView, not a Column: it virtualises, so a 289-row genre filter builds
-    // the dozen delegates on screen instead of 289 — and rebuilds only those
-    // when a tick re-makes the actions array. The height is clamped to what the
-    // window has room for, and only then does it scroll. A menu that fits gets
-    // implicitHeight === naturalHeight === what the Column reported, is not
-    // interactive, and never moves under positionViewAtIndex(), so nothing about
-    // a six-row menu changes.
+    // the dozen delegates on screen instead of 289. The height is clamped to
+    // what the window has room for, and only then does it scroll. A menu that
+    // fits gets implicitHeight === naturalHeight === what the Column reported,
+    // is not interactive, and never moves under positionViewAtIndex(), so
+    // nothing about a six-row menu changes.
+    //
+    // ── The model is the COUNT, and the delegate reads the row ─────────────
+    // Not `model: menu.actions`, which is what a ListView normally wants.
+    // `actions` is rebuilt as a brand-new array on every pick — StrmSelect
+    // recomputes it from `isSelected(i)` — and assigning a ListView a new model
+    // clears the view and regenerates it, which puts contentY back to 0. With
+    // closeOnTrigger:false the menu deliberately stays open, so ticking a genre
+    // near the bottom of the 289 threw the user back to row 0 for the next
+    // pick, defeating the whole point of staying open.
+    //
+    // An int model does not change when the rows are re-made, only when there
+    // are a different NUMBER of them — so a re-tick re-evaluates the delegates'
+    // `action` binding in place (the tick appears, nothing moves) while a
+    // genuinely different list still rebuilds and opens at the top.
     contentItem: ListView {
         id: list
 
         focus: true
         clip: true
         spacing: 0
-        model: menu.actions
+        model: menu.actions.length
         implicitHeight: Math.min(menu.naturalHeight, menu.maxContentHeight)
         interactive: menu.scrollable
         boundsBehavior: Flickable.StopAtBounds
@@ -325,12 +338,18 @@ Popup {
         delegate: Item {
             id: row
 
-            required property var modelData
             required property int index
 
-            readonly property bool isSeparator: row.modelData.separator === true
-            readonly property bool rowEnabled: !row.isSeparator && row.modelData.enabled !== false
-            readonly property bool destructive: row.modelData.destructive === true
+            // The row itself, looked up rather than delivered: the view's model
+            // is a count (see above), so this is the binding that carries a
+            // re-made `actions` into an already-built delegate. `|| ({})` keeps
+            // the properties below reading like an action with nothing set,
+            // for the frame in which the count has grown and the array has not.
+            readonly property var action: menu.actions[row.index] || ({})
+
+            readonly property bool isSeparator: row.action.separator === true
+            readonly property bool rowEnabled: !row.isSeparator && row.action.enabled !== false
+            readonly property bool destructive: row.action.destructive === true
             readonly property bool current: menu.currentIndex === row.index
 
             // The view's width, which the Popup sizes to availableWidth — one
@@ -365,12 +384,12 @@ Popup {
             StrmIcon {
                 id: rowIcon
                 visible: !row.isSeparator
-                        && row.modelData.iconName !== undefined
-                        && String(row.modelData.iconName).length > 0
+                        && row.action.iconName !== undefined
+                        && String(row.action.iconName).length > 0
                 anchors.left: parent.left
                 anchors.leftMargin: Theme.spacingTight
                 anchors.verticalCenter: parent.verticalCenter
-                name: row.modelData.iconName !== undefined ? row.modelData.iconName : ""
+                name: row.action.iconName !== undefined ? row.action.iconName : ""
                 size: Theme.iconSize
                 color: !row.rowEnabled ? Theme.textDisabled
                      : row.destructive ? Theme.negative
@@ -384,7 +403,7 @@ Popup {
                 anchors.right: checkMark.left
                 anchors.rightMargin: Theme.spacingTight
                 anchors.verticalCenter: parent.verticalCenter
-                text: row.modelData.text !== undefined ? row.modelData.text : ""
+                text: row.action.text !== undefined ? row.action.text : ""
                 color: !row.rowEnabled ? Theme.textDisabled
                      : row.destructive ? Theme.negative
                      : Theme.textPrimaryColor
@@ -398,7 +417,7 @@ Popup {
                 anchors.right: parent.right
                 anchors.rightMargin: Theme.spacingTight
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !row.isSeparator && row.modelData.checked === true
+                visible: !row.isSeparator && row.action.checked === true
                 name: "check"
                 size: Theme.iconSize
                 color: Theme.accentColor

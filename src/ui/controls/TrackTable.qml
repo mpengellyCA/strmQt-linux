@@ -491,6 +491,13 @@ ListView {
             // by row index, and a reset is the one signal that means the rows
             // behind those indices are different rows.
             table.clearSelection()
+            // …and so does the derived metadata, for exactly the same reason.
+            // onCountChanged is the only other trigger for rebuildMeta(), so a
+            // setItems() landing on the SAME row count left showArtistColumn,
+            // multiDisc, discStartAt, derivedAlbumArtist and totalRuntimeMs
+            // describing the rows that were just replaced. The rule the throttle
+            // and the selection follow has to be the whole rule.
+            table.rebuildMeta()
         }
     }
     onCurrentIndexChanged: {

@@ -113,6 +113,18 @@ public:
     Q_INVOKABLE QString normalizeSequence(const QString &sequence) const;
     Q_INVOKABLE QString sequenceForKey(int key, int modifiers = 0) const;
 
+    // Would a focused text field consume this sequence? MappedShortcut splits
+    // its two `Shortcut`s on the answer: a sequence that is true here stands
+    // down while a text item owns the keyboard, and one that is false stays
+    // live — Ctrl+K has to open the palette from inside a search box.
+    //
+    // It has to be asked of the resolved KEY, not of the string. The QML side
+    // used to split on `sequence.length !== 1`, which sorts "Space" — five
+    // characters, one space bar — into the half that never stands down, and
+    // music.playPause is bound to Space. Only the key can answer the question;
+    // the length of its name never could.
+    Q_INVOKABLE bool isTypableSequence(const QString &sequence) const;
+
     QString lastInputDevice() const { return m_lastInputDevice; }
     bool gamepadActive() const { return m_lastInputDevice == QLatin1String("gamepad"); }
     // Reported by the UI on every real input event; unknown devices are ignored.

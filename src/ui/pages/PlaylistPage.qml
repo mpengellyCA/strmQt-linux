@@ -219,10 +219,20 @@ FocusScope {
 
     function removeSelection(): void {
         const entries = page.selectedEntryIds();
+        const picked = memberList.selectionCount;
         if (entries.length === 0) {
             toasts.show(qsTr("The server did not give these rows entry ids, so they cannot be removed."),
                         "error");
             return;
+        }
+        // A PARTIAL shortfall used to pass in silence: the rows with no entry id
+        // were dropped from the list and nothing said so, and the user watched
+        // three of the five they picked come back after the refetch. Report it
+        // before the call, because after it the selection is gone.
+        if (entries.length < picked) {
+            toasts.show(qsTr("%1 of %2 selected rows have no entry id and cannot be removed.")
+                            .arg(picked - entries.length).arg(picked),
+                        "warning");
         }
         // The refetch that follows is a model reset, and TrackTable drops the
         // selection on one — which is right: the rows those indices named are

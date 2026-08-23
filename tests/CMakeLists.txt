@@ -81,6 +81,14 @@ strmqt_add_test(tst_tap_modifiers unit/tst_tap_modifiers.cpp)
 target_link_libraries(tst_tap_modifiers PRIVATE Qt6::Quick)
 set_tests_properties(tst_tap_modifiers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# The other Qt semantic a control rests on, probed the same way: where a
+# window-scoped Shortcut sits relative to a focused text field. MappedShortcut's
+# two-Shortcut split is only correct if a chord gets past a field and a bare
+# typable key does not — and "Space" is the one that was on the wrong side.
+strmqt_add_test(tst_shortcut_typing unit/tst_shortcut_typing.cpp)
+target_link_libraries(tst_shortcut_typing PRIVATE Qt6::Quick)
+set_tests_properties(tst_shortcut_typing PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
 # is deliberately QtCore-only; the unit is compiled straight into the test. The
 # clamp is pure — an image in, a colour out — but the cache around it is driven

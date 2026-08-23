@@ -399,7 +399,18 @@ void MusicController::setArtistMode(const QString &mode)
     if (m_artistMode == wanted)
         return;
     m_artistMode = wanted;
-    loadArtists();
+    // `artistMode` notifies on artistsChanged, and the only other emit on this
+    // path is inside fetchArtists()'s reply — which never runs on an error. The
+    // two chips render this value, so without an emit here they sat on the old
+    // mode until the network answered and stayed on it for good if it did not:
+    // pressing "All artists" looked like it had done nothing.
+    emit artistsChanged();
+    // A mode chosen before the first list was asked for is a preference, not a
+    // query (see m_started): loadArtists() would have set the flag and fired a
+    // request, which is the one thing the contract says a setter must not do.
+    if (!m_started)
+        return;
+    fetchArtists(0);
 }
 
 void MusicController::setLibrary(const QString &libraryId)
@@ -429,6 +440,12 @@ void MusicController::setLibrary(const QString &libraryId)
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
+    // Four models cleared, four signals — applyQueryChange() does the same, and
+    // for the same reason. canLoadMoreAlbums, canLoadMoreArtists and artistMode
+    // all notify on these two, so leaving them out left "there is more" true for
+    // the previous library's 5,037 rows in front of a grid holding nothing.
+    emit albumsChanged();
+    emit artistsChanged();
     emit songsChanged();
     // The playlist list is scoped by the library id too, and more literally
     // than the rest: ParentId is the ONLY thing separating an audio playlist

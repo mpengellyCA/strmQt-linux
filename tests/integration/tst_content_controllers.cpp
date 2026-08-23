@@ -477,6 +477,14 @@ void ContentControllersTest::musicRetargetDropsTheInFlightPage()
     // come down here or it never does.
     QVERIFY(!music.loading());
 
+    // setLibrary() announces each of the four lists it just emptied, because
+    // canLoadMoreAlbums, canLoadMoreArtists and artistMode all notify on those
+    // signals and would otherwise keep answering for the library just left. So
+    // the count of interest starts here: what is being watched for below is a
+    // SECOND emission per list, meaning a dropped reply landed anyway.
+    albums.clear();
+    artists.clear();
+
     music.loadAlbums();
     music.loadArtists();
     QTRY_COMPARE_WITH_TIMEOUT(albums.count(), 1, 5000);

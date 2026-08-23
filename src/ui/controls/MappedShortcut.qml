@@ -13,10 +13,26 @@ import StrmQt
 // currently bound to.
 //
 // ── Two Shortcuts, not one ─────────────────────────────────────────────────
-// A one-character sequence ("/", "F", "S") is also something you can type into
-// a text field, so that half stands down while a field has focus. A chord or a
-// function key never can be typed and must keep working — including inside a
-// search box, which is the whole point of Ctrl+K.
+// A sequence a text field would use itself ("/", "F", "S", Space, Backspace)
+// stands down while a field has focus. A chord or a function key never can be
+// typed and must keep working — including inside a search box, which is the
+// whole point of Ctrl+K.
+//
+// The split asks `InputMap.isTypableSequence()`, which resolves the key. It
+// used to be `sequence.length !== 1`, and that rule reads "Space" — five
+// characters, one space bar — as a chord, which is the opposite of what the
+// paragraph above says the two halves are for. `music.playPause` binds Space,
+// so the one action most likely to be live while a name is being typed was in
+// the half that never stands down.
+//
+// It did not eat spaces, and the honest reason is worth recording: an editable
+// QQuickTextInput accepts the ShortcutOverride event for every no-modifier (or
+// Shift-only) key below Qt::Key_Escape, so Qt hands the key back before the
+// shortcut can fire — measured on TextInput, TextField and TextArea in
+// tests/unit/tst_shortcut_typing.cpp. That protection is Qt's, not this
+// component's, and it lapses the moment a field is read-only. `_editingText` is
+// this app's own statement of the rule, and a binding can only benefit from it
+// if it is sorted by what the key IS rather than by how long its name is.
 //
 // ── Where it lives ─────────────────────────────────────────────────────────
 // It began as an inline `component` in Main.qml, which was right while Main.qml
@@ -60,7 +76,7 @@ Item {
     }
 
     Shortcut {
-        sequences: mapped._sequences.filter(s => s.length !== 1)
+        sequences: mapped._sequences.filter(s => !Input.isTypableSequence(s))
         enabled: mapped.active
         onActivated: {
             Input.noteInput("keyboard");
@@ -69,7 +85,7 @@ Item {
     }
 
     Shortcut {
-        sequences: mapped._sequences.filter(s => s.length === 1)
+        sequences: mapped._sequences.filter(s => Input.isTypableSequence(s))
         enabled: mapped.active && !mapped._editingText
         onActivated: {
             Input.noteInput("keyboard");
