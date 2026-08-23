@@ -35,14 +35,26 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          # Arch's stock makepkg.conf splits out a -debug package. We do not
+          # ship one, and its build-id symlinks point into the main package,
+          # which namcap correctly reports as broken symlinks. OPTIONS is a
+          # makepkg.conf array, not a command-line flag, so it is set here.
+          sed -i 's/^OPTIONS=(\(.*\)debug/OPTIONS=(\1!debug/' /etc/makepkg.conf
+          grep '^OPTIONS=' /etc/makepkg.conf
 
       - name: makepkg
         run: |
           cd packaging/arch
+          # Arch's stock makepkg.conf splits out a -debug package. We do not
+          # ship one, and its build-id symlinks legitimately point at the main
+          # package, which namcap reports as errors. Build only what we ship.
           sudo -u builder makepkg -f --noconfirm
-          sudo -u builder namcap ./*.pkg.tar.zst | tee namcap.log
+          PKG=$(ls strmqt-*.pkg.tar.zst | grep -v -- '-debug-' | head -1)
+          echo "checking $PKG"
+          sudo -u builder namcap "$PKG" | tee namcap.log
           # A namcap ERROR is a genuine packaging defect — a missing dependency
-          # installs cleanly and then fails to start. Warnings are advisory.
+          # installs cleanly and then fails to start, which is what happened
+          # with qt6-websockets. Warnings are advisory.
           if grep " E: " namcap.log; then
             echo "::error::namcap reported errors"
             exit 1
@@ -51,7 +63,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: arch-package
-          path: packaging/arch/*.pkg.tar.zst
+          path: packaging/arch/strmqt-[0-9]*.pkg.tar.zst
 
   # ── AppImage ────────────────────────────────────────────────────────────────
   appimage:

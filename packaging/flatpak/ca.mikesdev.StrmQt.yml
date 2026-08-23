@@ -102,6 +102,12 @@ modules:
       - type: archive
         url: https://xorg.freedesktop.org/archive/individual/lib/libXpresent-1.0.2.tar.xz
         sha256: 4e5b21b4812206a4b223013606ae31170502c1043038777a1ef8f70c09d37602
+        # A single unreachable host must not fail the whole build. CI hit exactly
+        # that: "Failed to connect to xorg.freedesktop.org port 443". The
+        # checksum is what makes a mirror safe to trust.
+        mirror-urls:
+          - https://www.x.org/releases/individual/lib/libXpresent-1.0.2.tar.xz
+          - https://ftp.osuosl.org/pub/xorg/individual/lib/libXpresent-1.0.2.tar.xz
 
   # ── libass ─────────────────────────────────────────────────────────────────
   # Not in the runtime. Subtitle rendering; a hard, non-optional dependency of
@@ -114,6 +120,8 @@ modules:
       - type: archive
         url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.gz
         sha256: caab4b993dd7be6187c55623b789ed75dddefea6e65938af134637c732fe094a
+        mirror-urls:
+          - https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
 
   # ── uchardet ───────────────────────────────────────────────────────────────
   # Not in the runtime. Character-set detection for non-UTF-8 external subtitle
