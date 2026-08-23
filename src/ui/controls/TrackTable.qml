@@ -313,6 +313,22 @@ ListView {
         table._lastNearEndCount = -1
         table.rebuildMeta()
     }
+
+    // …and a different list is very often the SAME model object. MusicCtl.songs
+    // is a CONSTANT Q_PROPERTY, so `onModelChanged` above fires once in the life
+    // of the page and never again, while a filter or a sort change refills that
+    // one model in place. The refilled list is frequently exactly a page long —
+    // the same 100 rows the throttle last fired at — and then `count ===
+    // _lastNearEndCount` short-circuits forever and the bottom of the filtered
+    // list never loads page 2.
+    //
+    // MediaItemModel::setItems() is a model RESET, which is the one signal that
+    // means "these are different rows" whatever the count says.
+    Connections {
+        target: Qt.isQtObject(table.model) ? table.model : null
+        ignoreUnknownSignals: true
+        function onModelReset() { table._lastNearEndCount = -1 }
+    }
     onCurrentIndexChanged: table._checkNearEnd()
     onContentYChanged: table._checkNearEnd()
 

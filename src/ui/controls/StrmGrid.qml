@@ -126,6 +126,21 @@ FocusScope {
     // an unthrottled signal would be a request storm.
     property int _lastNearEndCount: -1
 
+    // The throttle is keyed on the loaded count, so it has to be told when the
+    // rows are replaced rather than added to. MusicCtl.albums and .artists are
+    // CONSTANT Q_PROPERTIES — the model object never changes — and a filter
+    // change clears and refills them in place. A refilled list that happens to
+    // be the same length as the old one would otherwise sit at
+    // `count === _lastNearEndCount` and never page again.
+    //
+    // MediaItemModel::setItems() is a model RESET, which is the signal that
+    // means "different rows" independently of how many there are.
+    Connections {
+        target: Qt.isQtObject(grid.gridModel) ? grid.gridModel : null
+        ignoreUnknownSignals: true
+        function onModelReset() { grid._lastNearEndCount = -1 }
+    }
+
     function _checkNearEnd() {
         if (view.count <= 0 || view.count === grid._lastNearEndCount)
             return

@@ -48,6 +48,73 @@ Popup {
     // is no longer reachable — hence the visible/enabled test on restore.
     property Item _focusEscrow: null
 
+    // ── How tall the menu wants to be, and how tall it may be ──────────────
+    // The contentItem used to be a plain Column in a Popup: no ceiling and
+    // nothing to scroll. Every consumer up to now had under twenty rows, so the
+    // ceiling was never reached — then the genre filter arrived with the
+    // measured library's 289 of them, which at Theme.controlHeight is a popup
+    // roughly 11,000 px tall. popupAt() only flips it, so all but the first
+    // screenful ran off the bottom of the window and could not be reached at
+    // all.
+    //
+    // `naturalHeight` is summed from `actions` rather than read off the view's
+    // contentHeight, and that is deliberate on two counts. It is exact, where a
+    // virtualised ListView's contentHeight is an estimate until every delegate
+    // has been built — a menu whose own height wobbled as it scrolled would be
+    // worse than one that did not scroll. And it is arrived at exactly the way
+    // the Column's implicitHeight was: the same rows, at the same heights,
+    // added up in the same order. A menu that fits is therefore the same size
+    // it has always been, to the pixel.
+    readonly property real naturalHeight: {
+        let total = 0
+        const rows = menu.actions
+        for (let i = 0; i < rows.length; ++i) {
+            total += (rows[i] && rows[i].separator === true) ? Theme.spacingTight
+                                                             : Theme.controlHeight
+        }
+        return total
+    }
+
+    // What the window has room for: its full height, less the margin popupAt()
+    // keeps at both edges and this popup's own padding. A menu shorter than
+    // this is never touched by it.
+    readonly property real maxContentHeight: {
+        const host = menu.parent
+        const winH = host ? host.Window.height : 0
+        if (winH <= 0)
+            return menu.naturalHeight // no window to measure against yet
+        return Math.max(Theme.controlHeight,
+                        winH - Theme.spacingTight * 2 - menu.topPadding - menu.bottomPadding)
+    }
+
+    readonly property bool scrollable: menu.naturalHeight > menu.maxContentHeight
+
+    // ── Width ──────────────────────────────────────────────────────────────
+    // Measured off one hidden ruler, walked over the labels, rather than off a
+    // hidden Text per action. QQuickText recomputes implicitWidth synchronously
+    // once implicitWidth has been read, so a single item reports exactly what N
+    // of them reported — the widest label, to the pixel — while a 289-row menu
+    // that rebuilds its actions on every tick (closeOnTrigger: false) no longer
+    // builds and throws away 289 text items each time.
+    //
+    // Assigned rather than bound: the loop reads ruler.implicitWidth, and a
+    // binding that both writes the ruler and depends on it is a binding-loop
+    // report waiting to happen. The two moments the answer can change are the
+    // actions changing and the menu being shown, and both call this.
+    function _remeasureWidth() {
+        let widest = 0
+        const rows = menu.actions
+        for (let i = 0; i < rows.length; ++i) {
+            const entry = rows[i]
+            ruler.text = (entry && entry.text !== undefined) ? entry.text : ""
+            widest = Math.max(widest, ruler.implicitWidth)
+        }
+        menu.contentWidth = Math.max(Theme.scale(200),
+                                     widest + Theme.iconSize + Theme.spacingLoose)
+    }
+
+    onActionsChanged: menu._remeasureWidth()
+
     // ── Placement ──────────────────────────────────────────────────────────
     // x/y arrive in SCENE coordinates (what StrmCard.menuRequested emits), and
     // are flipped rather than clamped when the menu would run off the window:
@@ -140,18 +207,25 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
 
-    contentWidth: Math.max(Theme.scale(200),
-                           metrics.implicitWidth + Theme.iconSize + Theme.spacingLoose)
-
     // aboutToShow, not onOpened: the popup takes focus when its enter
     // transition finishes, so by `opened` the item worth remembering is already
     // the one we would be trying to restore it from.
     onAboutToShow: {
+        // Catches a density change (Theme.scale) between one open and the next,
+        // which the actions themselves would not report.
+        menu._remeasureWidth()
         const host = menu.parent
         menu._focusEscrow = host ? host.Window.activeFocusItem : null
     }
 
     onOpened: menu.currentIndex = menu._step(-1, 1)
+    // Walking a long menu with the arrow keys has to bring the row into view.
+    // On a menu that fits this is a no-op — there is nowhere to scroll to — so
+    // small menus behave exactly as they did.
+    onCurrentIndexChanged: {
+        if (menu.currentIndex >= 0)
+            list.positionViewAtIndex(menu.currentIndex, ListView.Contain)
+    }
     // Deferred, the way Main.qml defers its own focus restores: `closed` fires
     // inside the popup's own teardown, which is still settling focus, and a
     // forceActiveFocus() made in the middle of that is simply overwritten.
@@ -180,10 +254,41 @@ Popup {
         border.color: Theme.hairline
     }
 
-    contentItem: Column {
-        id: column
+    // A ListView, not a Column: it virtualises, so a 289-row genre filter builds
+    // the dozen delegates on screen instead of 289 — and rebuilds only those
+    // when a tick re-makes the actions array. The height is clamped to what the
+    // window has room for, and only then does it scroll. A menu that fits gets
+    // implicitHeight === naturalHeight === what the Column reported, is not
+    // interactive, and never moves under positionViewAtIndex(), so nothing about
+    // a six-row menu changes.
+    contentItem: ListView {
+        id: list
+
         focus: true
+        clip: true
         spacing: 0
+        model: menu.actions
+        implicitHeight: Math.min(menu.naturalHeight, menu.maxContentHeight)
+        interactive: menu.scrollable
+        boundsBehavior: Flickable.StopAtBounds
+        // The menu owns Up/Down (they skip separators and disabled rows, which
+        // ListView's own key handling knows nothing about) and drives the
+        // highlight through menu.currentIndex.
+        keyNavigationEnabled: false
+        currentIndex: -1
+        cacheBuffer: Theme.controlHeight * 4
+
+        ScrollBar.vertical: StrmScrollBar {}
+
+        // Off-screen text measurement — see _remeasureWidth(). Invisible, so it
+        // draws nothing and costs no layout of its own; it is a child of the view
+        // only because the menu needs somewhere to keep it.
+        Text {
+            id: ruler
+            visible: false
+            font.family: Theme.fontBody
+            font.pixelSize: Theme.fontBodySize
+        }
 
         // Arrow keys are allowed to auto-repeat — holding Down should walk the
         // list. Only the activation keys below are auto-repeat guarded.
@@ -194,120 +299,100 @@ Popup {
         Keys.onReturnPressed: event => { if (!event.isAutoRepeat) menu._activate(menu.currentIndex) }
         Keys.onEnterPressed: event => { if (!event.isAutoRepeat) menu._activate(menu.currentIndex) }
 
-        // Off-screen text measurement. Positioners skip invisible children, so
-        // this never occupies a row; it exists only so `contentWidth` can be
-        // derived from the widest label WITHOUT the child-width ⇄ menu-width
-        // binding loop that measuring the visible rows would create.
-        Column {
-            id: metrics
-            visible: false
+        delegate: Item {
+            id: row
 
-            Repeater {
-                model: menu.actions
-                delegate: Text {
-                    required property var modelData
-                    text: modelData.text !== undefined ? modelData.text : ""
-                    font.family: Theme.fontBody
-                    font.pixelSize: Theme.fontBodySize
+            required property var modelData
+            required property int index
+
+            readonly property bool isSeparator: row.modelData.separator === true
+            readonly property bool rowEnabled: !row.isSeparator && row.modelData.enabled !== false
+            readonly property bool destructive: row.modelData.destructive === true
+            readonly property bool current: menu.currentIndex === row.index
+
+            // The view's width, which the Popup sizes to availableWidth — one
+            // step further out than before only because a delegate is not a
+            // direct child of the popup any more.
+            width: list.width
+            height: row.isSeparator ? Theme.spacingTight : Theme.controlHeight
+
+            // Separator: a hairline with breathing room, not a row.
+            Rectangle {
+                visible: row.isSeparator
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Theme.spacingTight
+                anchors.rightMargin: Theme.spacingTight
+                height: 1
+                color: Theme.hairline
+            }
+
+            Rectangle {
+                visible: !row.isSeparator
+                anchors.fill: parent
+                radius: Theme.radiusChip
+                color: row.current && row.rowEnabled ? Theme.hoverTint : "transparent"
+
+                Behavior on color {
+                    ColorAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
                 }
             }
-        }
 
-        Repeater {
-            model: menu.actions
+            StrmIcon {
+                id: rowIcon
+                visible: !row.isSeparator
+                        && row.modelData.iconName !== undefined
+                        && String(row.modelData.iconName).length > 0
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.spacingTight
+                anchors.verticalCenter: parent.verticalCenter
+                name: row.modelData.iconName !== undefined ? row.modelData.iconName : ""
+                size: Theme.iconSize
+                color: !row.rowEnabled ? Theme.textDisabled
+                     : row.destructive ? Theme.negative
+                     : Theme.textSecondaryColor
+            }
 
-            delegate: Item {
-                id: row
+            Text {
+                visible: !row.isSeparator
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.spacingTight * 2 + Theme.iconSize
+                anchors.right: checkMark.left
+                anchors.rightMargin: Theme.spacingTight
+                anchors.verticalCenter: parent.verticalCenter
+                text: row.modelData.text !== undefined ? row.modelData.text : ""
+                color: !row.rowEnabled ? Theme.textDisabled
+                     : row.destructive ? Theme.negative
+                     : Theme.textPrimaryColor
+                font.family: Theme.fontBody
+                font.pixelSize: Theme.fontBodySize
+                elide: Text.ElideRight
+            }
 
-                required property var modelData
-                required property int index
+            StrmIcon {
+                id: checkMark
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.spacingTight
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !row.isSeparator && row.modelData.checked === true
+                name: "check"
+                size: Theme.iconSize
+                color: Theme.accentColor
+            }
 
-                readonly property bool isSeparator: row.modelData.separator === true
-                readonly property bool rowEnabled: !row.isSeparator && row.modelData.enabled !== false
-                readonly property bool destructive: row.modelData.destructive === true
-                readonly property bool current: menu.currentIndex === row.index
+            HoverHandler {
+                enabled: row.rowEnabled
+                cursorShape: Qt.PointingHandCursor
+                // Preview only — hover moves the highlight, it never commits.
+                onHoveredChanged: if (hovered) menu.currentIndex = row.index
+            }
 
-                width: menu.availableWidth
-                height: row.isSeparator ? Theme.spacingTight : Theme.controlHeight
-
-                // Separator: a hairline with breathing room, not a row.
-                Rectangle {
-                    visible: row.isSeparator
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.rightMargin: Theme.spacingTight
-                    height: 1
-                    color: Theme.hairline
-                }
-
-                Rectangle {
-                    visible: !row.isSeparator
-                    anchors.fill: parent
-                    radius: Theme.radiusChip
-                    color: row.current && row.rowEnabled ? Theme.hoverTint : "transparent"
-
-                    Behavior on color {
-                        ColorAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
-                    }
-                }
-
-                StrmIcon {
-                    id: rowIcon
-                    visible: !row.isSeparator
-                            && row.modelData.iconName !== undefined
-                            && String(row.modelData.iconName).length > 0
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: row.modelData.iconName !== undefined ? row.modelData.iconName : ""
-                    size: Theme.iconSize
-                    color: !row.rowEnabled ? Theme.textDisabled
-                         : row.destructive ? Theme.negative
-                         : Theme.textSecondaryColor
-                }
-
-                Text {
-                    visible: !row.isSeparator
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingTight * 2 + Theme.iconSize
-                    anchors.right: checkMark.left
-                    anchors.rightMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: row.modelData.text !== undefined ? row.modelData.text : ""
-                    color: !row.rowEnabled ? Theme.textDisabled
-                         : row.destructive ? Theme.negative
-                         : Theme.textPrimaryColor
-                    font.family: Theme.fontBody
-                    font.pixelSize: Theme.fontBodySize
-                    elide: Text.ElideRight
-                }
-
-                StrmIcon {
-                    id: checkMark
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingTight
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: !row.isSeparator && row.modelData.checked === true
-                    name: "check"
-                    size: Theme.iconSize
-                    color: Theme.accentColor
-                }
-
-                HoverHandler {
-                    enabled: row.rowEnabled
-                    cursorShape: Qt.PointingHandCursor
-                    // Preview only — hover moves the highlight, it never commits.
-                    onHoveredChanged: if (hovered) menu.currentIndex = row.index
-                }
-
-                TapHandler {
-                    enabled: row.rowEnabled
-                    acceptedButtons: Qt.LeftButton
-                    gesturePolicy: TapHandler.ReleaseWithinBounds
-                    onTapped: menu._activate(row.index)
-                }
+            TapHandler {
+                enabled: row.rowEnabled
+                acceptedButtons: Qt.LeftButton
+                gesturePolicy: TapHandler.ReleaseWithinBounds
+                onTapped: menu._activate(row.index)
             }
         }
     }

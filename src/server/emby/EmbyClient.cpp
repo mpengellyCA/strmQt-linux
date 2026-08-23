@@ -449,6 +449,10 @@ QUrlQuery artistParams(const QString &userId, const ItemsQuery &query)
         params.addQueryItem(QStringLiteral("NameStartsWith"), query.nameStartsWith);
     if (!query.genreIds.isEmpty())
         params.addQueryItem(QStringLiteral("GenreIds"), query.genreIds.join(QLatin1Char(',')));
+    // Sent, but unmeasured — see the header. Every other parameter in this
+    // function changed the answer on the live server; this one could not be
+    // told apart from being ignored without writing a favourite into the user's
+    // library, so it is documented as unknown rather than claimed as honoured.
     if (!query.filters.isEmpty())
         params.addQueryItem(QStringLiteral("Filters"), query.filters.join(QLatin1Char(',')));
     return params;

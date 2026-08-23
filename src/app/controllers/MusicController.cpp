@@ -29,6 +29,25 @@ QVariantMap sortOption(const QString &key, const QString &label)
     return map;
 }
 
+// ── Random is a ONE-PAGE sort ────────────────────────────────────────────────
+// All three tabs fetch with StartIndex/Limit, and Emby re-randomises SortBy=
+// Random on every request with no seed parameter to pin the shuffle. So the
+// second page, drawn at StartIndex = rowCount(), is a *fresh* shuffle: it
+// repeats rows already on screen and silently omits others. On the Songs tab
+// that is worse than a cosmetic glitch — playSongFrom() builds the play queue
+// out of every loaded row, so the duplicates go into the queue.
+//
+// MUSIC.md §2.1 asks for Random on all three tabs, so the sort stays and the
+// paging goes: canLoadMore* is false under it, which makes both the grid's and
+// the table's prefetch inert and hides the "Load more" affordances. One honest
+// shuffled page of 100 beats an infinite list that is quietly wrong. Shuffling
+// the whole library, uncapped, is what the header's ▸ Shuffle button is for —
+// that one is server-side and never pages.
+bool isRandomSort(const QString &sortBy)
+{
+    return sortBy.compare(QLatin1String("Random"), Qt::CaseInsensitive) == 0;
+}
+
 // An album's whole track list in one request. The longest sets on the target
 // library are box sets in the low hundreds, so paging tracks would add a
 // loading seam to something that is read as one table.
@@ -50,16 +69,22 @@ void MusicController::setActions(ItemActions *actions)
 
 bool MusicController::canLoadMoreAlbums() const
 {
+    if (isRandomSort(m_albumSortBy))
+        return false; // see isRandomSort(): a second page is a second shuffle
     return m_albums->rowCount() < m_albums->totalRecordCount();
 }
 
 bool MusicController::canLoadMoreArtists() const
 {
+    if (isRandomSort(m_artistSortBy))
+        return false;
     return m_artists->rowCount() < m_artists->totalRecordCount();
 }
 
 bool MusicController::canLoadMoreSongs() const
 {
+    if (isRandomSort(m_songSortBy))
+        return false;
     return m_songs->rowCount() < m_songs->totalRecordCount();
 }
 
@@ -162,17 +187,24 @@ void MusicController::setSort(const QString &key, bool descending)
     // A sort is per tab, so it invalidates only the tab it belongs to — unlike
     // every filter below, which invalidates all three.
     emit queryChanged();
-    if (!m_started)
-        return;
+    // The tab's own list signal goes with it, because canLoadMore* now reads the
+    // sort (see isRandomSort()): picking Random has to retract "there is more"
+    // straight away rather than at whatever moment the next page happens to land.
     switch (currentTabIndex()) {
     case 1:
-        fetchArtists(0);
+        emit artistsChanged();
+        if (m_started)
+            fetchArtists(0);
         break;
     case 2:
-        fetchSongs(0);
+        emit songsChanged();
+        if (m_started)
+            fetchSongs(0);
         break;
     default:
-        fetchAlbums(0);
+        emit albumsChanged();
+        if (m_started)
+            fetchAlbums(0);
         break;
     }
 }
@@ -330,9 +362,31 @@ void MusicController::setLibrary(const QString &libraryId)
     // The genre list belongs to the library, not to the session: /MusicGenres
     // is scoped by ParentId (measured), so another library's 289 genres are the
     // wrong 289.
-    if (!m_genreOptions.isEmpty()) {
-        m_genreOptions.clear();
-        emit genresChanged();
+    m_genreOptions.clear();
+    m_genreNextIndex = 0;
+    m_genresComplete = false;
+    m_genreWalkActive = false;
+    m_genresFailed = false;
+    emit genresChanged();
+
+    // ── The FILTERS belong to the library too ────────────────────────────────
+    // A genre id is per-library — it is the id of a MusicGenre row scoped by
+    // ParentId — so carrying the selection across a scope change sends library
+    // A's GenreIds against library B's parent. Everything comes back empty,
+    // filtered() is still true so the page says "Nothing matches these filters",
+    // and the Genre select reads "1 selected" with no way to see WHICH, because
+    // that id is not in the new options list at all.
+    //
+    // The other three go with it rather than being kept "because a letter is a
+    // letter": one rule ("filters belong to the scope") is what keeps the Clear
+    // button, the alphabet strip, filtered() and the empty state telling the
+    // same story. The per-tab SORTS are library-neutral and do survive.
+    if (filtered()) {
+        m_nameStartsWith.clear();
+        m_genreIds.clear();
+        m_yearFilters.clear();
+        m_favoritesOnly = false;
+        emit queryChanged();
     }
     // Those dropped replies were the ones that would have cleared `loading`,
     // and nothing has been requested for the new scope yet — so clear it here
@@ -503,9 +557,20 @@ void MusicController::fetchSongs(int startIndex)
 
 void MusicController::loadGenres()
 {
-    if (!m_genreOptions.isEmpty())
-        return; // already have this library's list
-    fetchGenrePage(0, ++m_genreGeneration);
+    // NOT "the list is non-empty, so we are done". A walk that answered page 0
+    // and then failed on page 1 leaves 200 of the measured 289 genres behind,
+    // and an emptiness guard calls that finished for the life of the scope —
+    // 89 genres unreachable with no way to ask again. Only a walk that actually
+    // reached the end of the list is finished; anything else resumes from the
+    // page it stopped on, which is what turns every repeat call into a retry.
+    if (m_genresComplete || m_genreWalkActive)
+        return;
+    m_genreWalkActive = true;
+    if (m_genresFailed) {
+        m_genresFailed = false;
+        emit genresChanged();
+    }
+    fetchGenrePage(m_genreNextIndex, ++m_genreGeneration);
 }
 
 void MusicController::fetchGenrePage(int startIndex, int generation)
@@ -521,7 +586,17 @@ void MusicController::fetchGenrePage(int startIndex, int generation)
                 // leaves the filter control empty and everything else working,
                 // which is a smaller failure than claiming the library is
                 // broken.
-                qCWarning(logApp) << "music: genres failed:" << result.error;
+                //
+                // The walk stops here, but it is not *complete*: m_genreNextIndex
+                // still points at the page that failed, so the next loadGenres()
+                // picks it up again. genresFailed is what lets the filter control
+                // say why it has nothing to offer instead of just being greyed
+                // out for reasons the user cannot see.
+                qCWarning(logApp) << "music: genres failed at" << startIndex << ":"
+                                  << result.error;
+                m_genreWalkActive = false;
+                m_genresFailed = true;
+                emit genresChanged();
                 return;
             }
             for (const MediaItem &genre : result.value.items) {
@@ -532,14 +607,24 @@ void MusicController::fetchGenrePage(int startIndex, int generation)
                 option.insert(QStringLiteral("label"), genre.name);
                 m_genreOptions.append(option);
             }
-            emit genresChanged();
             // Page on the ARRAY's own size (ARCHITECTURE.md §2): a short page is
             // the end of the list, and TotalRecordCount is not to be trusted
-            // across this family of endpoints.
+            // across this family of endpoints. Advanced by what the SERVER
+            // returned, never by how many options survived the id/name check, or
+            // a row the mapper dropped would shift the walk over one genre.
             const int received = static_cast<int>(result.value.items.size());
-            const int nextIndex = startIndex + received;
-            if (received == kGenrePageSize && nextIndex < kGenrePageSize * kGenrePageLimit)
-                fetchGenrePage(nextIndex, generation);
+            m_genreNextIndex = startIndex + received;
+            emit genresChanged();
+            if (received == kGenrePageSize
+                && m_genreNextIndex < kGenrePageSize * kGenrePageLimit) {
+                fetchGenrePage(m_genreNextIndex, generation);
+                return;
+            }
+            // Either a short page (the end of the list) or the hard stop, which
+            // is deliberately also "done": a server that answers a full page
+            // forever must not be retried forever either.
+            m_genresComplete = true;
+            m_genreWalkActive = false;
         });
 }
 

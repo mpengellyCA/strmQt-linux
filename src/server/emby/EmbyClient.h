@@ -104,7 +104,22 @@ public:
     // the same narrowing axes /Users/{uid}/Items does — measured live on 4.9.5.0:
     // SortBy, SortOrder, NameStartsWith and GenreIds all changed the answer
     // (NameStartsWith=T cut 2,394 album artists to 75; one genre id cut it to 2).
-    // Everything else on the query is simply not sent.
+    //
+    // `filters` is sent as well, and it is the one axis on the query that is
+    // **not** measured. The test account has zero favourites of any music kind,
+    // so Filters=IsFavorite answering 0 rows is indistinguishable from the
+    // parameter being dropped on the floor, and settling it would mean
+    // favouriting somebody's artist — a write to the user's library to answer a
+    // documentation question. Sent rather than stripped because the two ways of
+    // being wrong are not symmetric: if the endpoint honours it, the Favourites
+    // toggle works on the Artists tab; if it ignores it, the toggle is a no-op
+    // there either way, and stripping it would guarantee what is currently only
+    // suspected. Measure it (Filters=IsFolder against Filters=IsNotFolder is a
+    // decisive read-only probe — a MusicArtist is a folder) before relying on it.
+    //
+    // Everything else on the query — years, parents other than ParentId, the
+    // item-type and person axes — is simply not sent. MusicController strips
+    // yearFilters for exactly that reason.
     QFuture<Result<ItemsPage>> musicArtists(const ItemsQuery &query);
     QFuture<Result<ItemsPage>> albumArtists(const ItemsQuery &query);
 

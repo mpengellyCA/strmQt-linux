@@ -27,4 +27,5 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/controls/StrmTabBar.qml
     ui/controls/TrackRow.qml
     ui/controls/TrackTable.qml
+    ui/controls/PlaylistPicker.qml
 )

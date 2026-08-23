@@ -111,28 +111,46 @@ FocusScope {
     // Guarded on the scope so a page constructed with none (the self-test)
     // issues no request at all, and on `count` so returning to a library
     // already loaded does not re-fetch it.
-    // The loading guard is for albums only, and it is not cosmetic: Main.qml
-    // arms MusicCtl and calls loadAlbums() *before* pushing this page, so
-    // without it the first request is always issued twice and the first reply
-    // always thrown away by the controller's generation counter.
+    // All three carry the `!MusicCtl.loading` guard, and it is not cosmetic on
+    // any of them.
+    //
+    // For albums: Main.qml arms MusicCtl and calls loadAlbums() *before* pushing
+    // this page, so without it the first request is always issued twice and the
+    // first reply always thrown away by the controller's generation counter.
+    //
+    // For artists and songs: `MusicCtl.tab = …` ends in the controller's own
+    // ensureCurrentTab(), which already issues the tab's first page when its
+    // model is empty. The request is async, so `count` is still 0 on the very
+    // next line — the guard the two used to have could not tell "nobody has
+    // asked" from "somebody asked a microsecond ago". That cost a wasted 100-row
+    // query against a 56,283-track library on every cold tab switch, and again
+    // after every filter change, since a query change empties the other two
+    // tabs. `loading` is true by then because fetchArtists()/fetchSongs() set it
+    // before returning, which is exactly the distinction that was missing.
     function ensureAlbums() {
         if (page.scopeId.length > 0 && MusicCtl.albums.count === 0 && !MusicCtl.loading)
             MusicCtl.loadAlbums()
     }
 
     function ensureArtists() {
-        if (page.scopeId.length > 0 && MusicCtl.artists.count === 0)
+        if (page.scopeId.length > 0 && MusicCtl.artists.count === 0 && !MusicCtl.loading)
             MusicCtl.loadArtists()
     }
 
     function ensureSongs() {
-        if (page.scopeId.length > 0 && MusicCtl.songs.count === 0)
+        if (page.scopeId.length > 0 && MusicCtl.songs.count === 0 && !MusicCtl.loading)
             MusicCtl.loadSongs()
     }
 
-    // /MusicGenres, once, for the filter bar's Genre select. Idempotent in the
-    // controller, and scoped by ParentId — measured: the music library answers
-    // 289 genres and every other library answers none.
+    // /MusicGenres for the filter bar's Genre select, scoped by ParentId —
+    // measured: the music library answers 289 genres and every other library
+    // answers none.
+    //
+    // Called on every tab switch as well as at open, because the controller's
+    // loadGenres() is a resume rather than a one-shot: a walk that answered page
+    // 0 and then failed picks up from the page that failed, and one that reached
+    // the end of the list turns every later call away. This is the app's only
+    // retry surface for a half-loaded genre list.
     function ensureGenres() {
         if (page.scopeId.length > 0)
             MusicCtl.loadGenres()
@@ -342,6 +360,7 @@ FocusScope {
                 page.ensureSongs()
             else
                 page.ensureAlbums()
+            page.ensureGenres()
         }
     }
 
@@ -369,9 +388,16 @@ FocusScope {
 
         // One page-supplied axis: genre. A multi-select and not chips — the
         // measured library has 289 of them.
+        //
+        // The label doubles as the failure surface. FilterBar disables a select
+        // with no options, and a control that is greyed out for reasons only the
+        // log knows is the same dead end as an empty list with no explanation:
+        // the walk failed, and saying so is the difference between "this library
+        // has no genres" and "ask again".
         extraFilters: [{
             key: "genre",
-            label: qsTr("Genre"),
+            label: (MusicCtl.genresFailed && MusicCtl.genreOptions.length === 0)
+                   ? qsTr("Genre unavailable") : qsTr("Genre"),
             options: MusicCtl.genreOptions,
             selected: MusicCtl.genreIds
         }]
@@ -581,11 +607,62 @@ FocusScope {
     }
 
     // The shared item menu, minus "Details": for a track the album page IS the
-    // details page, exactly as on AlbumPage.
+    // details page, exactly as on AlbumPage — and "exactly as on AlbumPage"
+    // has to include the playlist row. Right-clicking a track here and
+    // right-clicking the same track on its album page were offering different
+    // verbs for no reason anyone could state.
     ItemMenu {
         id: songMenu
 
-        allowAddToPlaylist: false
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => {
+            const id = (item && item.itemId !== undefined) ? String(item.itemId) : ""
+            const name = (item && item.name !== undefined) ? String(item.name) : ""
+            if (id.length > 0)
+                playlistPicker.show(name, [id])
+        }
+    }
+
+    // ── Add to playlist ────────────────────────────────────────────────────
+    // The same panel the album page raises, now a registered control rather
+    // than an inline component copied per page.
+    PlaylistPicker {
+        id: playlistPicker
+
+        z: 800
+        // Back to the table the row was picked from, not to the top of the
+        // page: an overlay that drops the keyboard somewhere else is the same
+        // bug as one that never gives it back.
+        onDismissed: {
+            if (page.songsTab && songsTable.count > 0)
+                songsTable.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    // `pending` is what tells this page's toast apart from a playlist edited on
+    // some other surface: PlaylistCtl's results are global.
+    Connections {
+        target: PlaylistCtl
+
+        function onActionSucceeded(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            musicToasts.show(message, "success")
+        }
+        function onActionFailed(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            musicToasts.show(message, "error")
+        }
+    }
+
+    StrmToastHost {
+        id: musicToasts
+
+        anchors.fill: parent
+        z: 900
     }
 
     // ── Context menu ───────────────────────────────────────────────────────

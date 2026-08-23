@@ -36,9 +36,28 @@ private slots:
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
     void genresPageOnTheArrayNotTheCount();
+    void aGenreWalkThatStoppedHalfwayIsRetried();
+    void switchingLibraryDropsThatLibrarysFilters();
+    void randomIsASinglePageSort();
     void aPreferenceSetBeforeAnythingLoadsFiresNoRequest();
 
 private:
+    // `count` MusicGenre rows numbered from `from`, as /MusicGenres answers them.
+    static QByteArray genrePage(int from, int count)
+    {
+        QByteArray page = QByteArrayLiteral("{\"Items\":[");
+        for (int i = 0; i < count; ++i) {
+            if (i > 0)
+                page += ',';
+            page += QStringLiteral("{\"Id\":\"g%1\",\"Name\":\"Genre %1\","
+                                   "\"Type\":\"MusicGenre\"}")
+                        .arg(from + i)
+                        .toUtf8();
+        }
+        page += QByteArrayLiteral("],\"TotalRecordCount\":289}");
+        return page;
+    }
+
     QUrlQuery lastItemsQuery() const
     {
         return QUrlQuery(
@@ -317,6 +336,18 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
     query = lastQueryFor(QStringLiteral("/Artists"));
     QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("T"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("PlayCount"));
+
+    // Filters IS forwarded, unlike Years — and unlike every other axis above it
+    // is *unmeasured*: this account has no music favourites, so 0 rows back
+    // cannot be told apart from the parameter being ignored, and settling it
+    // would mean writing a favourite into somebody's library. The header says
+    // so; this pins the behaviour the header describes, so the two cannot drift
+    // apart while the question is open.
+    m_music->setFavoritesOnly(true);
+    settle();
+    query = lastQueryFor(QStringLiteral("/Artists"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Filters")), QStringLiteral("IsFavorite"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("Years")));
 }
 
 // ARCHITECTURE.md §2: this family of endpoints reports TotalRecordCount = 0
@@ -371,6 +402,183 @@ void MusicQueryTest::genresPageOnTheArrayNotTheCount()
     m_music->loadGenres();
     QTest::qWait(50);
     QCOMPARE(requestsFor(QStringLiteral("/MusicGenres")), walked);
+}
+
+// A walk that answers page 0 and then fails on page 1 leaves the select holding
+// 200 of the measured 289 genres. The old guard — "the list is non-empty, so we
+// are done" — called that finished for the life of the scope and actively
+// prevented the retry, so 89 genres were unreachable and nothing said why.
+void MusicQueryTest::aGenreWalkThatStoppedHalfwayIsRetried()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 200,
+                     genrePage(0, 200));
+
+    // Page 0 is taken in, and the route turns into a 500 before the walk can ask
+    // for page 1. genresChanged is emitted from inside the reply handler, before
+    // the follow-up request goes out, which makes the break deterministic rather
+    // than a race with the event loop.
+    bool broken = false;
+    const QMetaObject::Connection breaker =
+        connect(m_music, &MusicController::genresChanged, m_music, [this, &broken] {
+            if (broken)
+                return;
+            broken = true;
+            m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 500,
+                             QByteArrayLiteral("{}"));
+        });
+
+    m_music->loadGenres();
+    QTRY_VERIFY_WITH_TIMEOUT(m_music->genresFailed(), 5000);
+    disconnect(breaker);
+    QCOMPARE(m_music->genreOptions().size(), 200);
+    QCOMPARE(requestsFor(QStringLiteral("/MusicGenres")), 2);
+
+    // Not setError(): a genre list that did not arrive is not a broken library.
+    QVERIFY(m_music->errorMessage().isEmpty());
+
+    // The retry RESUMES — StartIndex 200, not 0 — so the 200 already held are
+    // not fetched twice and not duplicated into the options list.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 200,
+                     genrePage(200, 89));
+    m_music->loadGenres();
+    QTRY_COMPARE_WITH_TIMEOUT(m_music->genreOptions().size(), 289, 5000);
+    QVERIFY(!m_music->genresFailed());
+    QCOMPARE(requestsFor(QStringLiteral("/MusicGenres")), 3);
+    const QUrlQuery third(
+        m_mock->requests().at(indexOfNthRequest(QStringLiteral("/MusicGenres"), 2)).query);
+    QCOMPARE(third.queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("200"));
+    QCOMPARE(m_music->genreOptions().last().toMap().value(QStringLiteral("key")).toString(),
+             QStringLiteral("g288"));
+
+    // A short page ended the walk, so now it really is done and the page may go
+    // on calling loadGenres() on every tab switch for nothing.
+    m_music->loadGenres();
+    QTest::qWait(50);
+    QCOMPARE(requestsFor(QStringLiteral("/MusicGenres")), 3);
+}
+
+// A genre id is a ParentId-scoped MusicGenre row, so it means nothing in another
+// library: carrying the selection across a scope change queries library A's ids
+// against library B's parent, everything comes back empty, and the page says
+// "Nothing matches these filters" over a Genre select reading "1 selected" whose
+// selection is not in its own options list.
+void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
+{
+    m_music->loadAlbums();
+    settle();
+    m_music->setSort(QStringLiteral("DateCreated"), true);
+    m_music->setGenreIds({QStringLiteral("1937444")});
+    m_music->setNameStartsWith(QStringLiteral("T"));
+    m_music->setYearFilters({QStringLiteral("1994")});
+    m_music->setFavoritesOnly(true);
+    settle();
+    QVERIFY(m_music->filtered());
+
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 200,
+                     genrePage(0, 3));
+    m_music->loadGenres();
+    QTRY_COMPARE_WITH_TIMEOUT(m_music->genreOptions().size(), 3, 5000);
+
+    QSignalSpy querySpy(m_music, &MusicController::queryChanged);
+    m_music->setLibrary(QStringLiteral("2000001"));
+
+    QVERIFY(!m_music->filtered());
+    QVERIFY(m_music->genreIds().isEmpty());
+    QVERIFY(m_music->nameStartsWith().isEmpty());
+    QVERIFY(m_music->yearFilters().isEmpty());
+    QVERIFY(!m_music->favoritesOnly());
+    // One notification, so the Clear button, the alphabet strip and the empty
+    // state all move together.
+    QCOMPARE(querySpy.count(), 1);
+    // The options went with them: those ids belong to the old parent.
+    QVERIFY(m_music->genreOptions().isEmpty());
+    // The per-tab SORT is library-neutral and survives.
+    QCOMPARE(m_music->sortBy(), QStringLiteral("DateCreated"));
+    QVERIFY(m_music->sortDescending());
+
+    // And the first query in the new scope really is unfiltered.
+    m_music->loadAlbums();
+    settle();
+    const QUrlQuery query = lastItemsQuery();
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("2000001"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("GenreIds")));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWith")));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("Years")));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("Filters")));
+
+    // The genre walk restarts for the new scope rather than being turned away by
+    // the completed walk of the old one.
+    m_music->loadGenres();
+    QTRY_COMPARE_WITH_TIMEOUT(m_music->genreOptions().size(), 3, 5000);
+    QCOMPARE(QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"),
+                                              QStringLiteral("/MusicGenres"))
+                           .query)
+                 .queryItemValue(QStringLiteral("ParentId")),
+             QStringLiteral("2000001"));
+}
+
+// Emby reshuffles SortBy=Random on every request and has no seed, so page 2
+// drawn at StartIndex = rowCount() is a different shuffle: rows already on
+// screen repeat and others never appear — and on the Songs tab those duplicates
+// go into the play queue, which is built from every loaded row. The sort stays
+// (MUSIC.md §2.1 asks for it on all three tabs); the paging is what goes.
+void MusicQueryTest::randomIsASinglePageSort()
+{
+    const auto itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"1\",\"Name\":\"Threnody\","
+                                       "\"Type\":\"Audio\"}],\"TotalRecordCount\":56283}"));
+
+    m_music->setTab(QStringLiteral("songs"));
+    m_music->loadSongs();
+    settle();
+    // 1 row of 56,283: under any other sort this list pages.
+    QVERIFY(m_music->canLoadMoreSongs());
+
+    QSignalSpy songsSpy(m_music, &MusicController::songsChanged);
+    m_music->setSort(QStringLiteral("Random"), false);
+    // Retracted at the moment of the pick, not whenever the next page happens to
+    // land: the grid and the table both read canLoadMore* out of a prefetch
+    // handler that can fire before the reply.
+    QVERIFY(songsSpy.count() >= 1);
+    QVERIFY(!m_music->canLoadMoreSongs());
+    settle();
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("Random"));
+    QVERIFY(!m_music->canLoadMoreSongs());
+
+    // The prefetch is inert: loadMoreSongs() is what StrmGrid's and TrackTable's
+    // nearEnd handlers call, and it must issue nothing.
+    const int before = requestsFor(itemsPath);
+    m_music->loadMoreSongs();
+    QTest::qWait(50);
+    QCOMPARE(requestsFor(itemsPath), before);
+
+    // Leaving Random gives the list its second page back.
+    m_music->setSort(QStringLiteral("SortName"), false);
+    settle();
+    QVERIFY(m_music->canLoadMoreSongs());
+    m_music->loadMoreSongs();
+    settle();
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("1"));
+
+    // Sort is per tab, so Random on the songs tab says nothing about the grids —
+    // and each grid answers for its own sort.
+    m_music->setTab(QStringLiteral("albums"));
+    m_music->loadAlbums();
+    settle();
+    QVERIFY(m_music->canLoadMoreAlbums());
+    m_music->setSort(QStringLiteral("Random"), false);
+    QVERIFY(!m_music->canLoadMoreAlbums());
+    settle();
+
+    m_music->setTab(QStringLiteral("artists"));
+    m_music->loadArtists();
+    settle();
+    // Still Random on the albums tab, and that is the albums tab's business.
+    QVERIFY(!m_music->canLoadMoreAlbums());
+    m_music->setSort(QStringLiteral("Random"), false);
+    QVERIFY(!m_music->canLoadMoreArtists());
 }
 
 // A sort or a filter set before any list was asked for is a preference, not a

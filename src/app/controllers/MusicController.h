@@ -51,6 +51,9 @@ class MusicController : public QObject
     Q_PROPERTY(QString artistName READ artistName NOTIFY artistChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
+    // False under SortBy=Random, whatever the totals say: Emby reshuffles per
+    // request and has no seed, so a second page is a second shuffle. See
+    // isRandomSort() in the .cpp for the whole reason.
     Q_PROPERTY(bool canLoadMoreAlbums READ canLoadMoreAlbums NOTIFY albumsChanged)
     Q_PROPERTY(bool canLoadMoreArtists READ canLoadMoreArtists NOTIFY artistsChanged)
     Q_PROPERTY(bool canLoadMoreSongs READ canLoadMoreSongs NOTIFY songsChanged)
@@ -97,6 +100,11 @@ class MusicController : public QObject
     Q_PROPERTY(bool filtered READ filtered NOTIFY queryChanged)
     // Genres available in this library, {key, label}, from /MusicGenres.
     Q_PROPERTY(QVariantList genreOptions READ genreOptions NOTIFY genresChanged)
+    // The genre walk stopped on an error and the list is incomplete. Exists so a
+    // filter control with nothing in it can say why rather than sitting greyed
+    // out for a reason only the log knows. Cleared by the next loadGenres(),
+    // which resumes the walk from the page that failed.
+    Q_PROPERTY(bool genresFailed READ genresFailed NOTIFY genresChanged)
 
 public:
     explicit MusicController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -132,6 +140,7 @@ public:
     bool favoritesOnly() const { return m_favoritesOnly; }
     bool filtered() const;
     QVariantList genreOptions() const { return m_genreOptions; }
+    bool genresFailed() const { return m_genresFailed; }
 
     // Each of these re-runs the visible tab from page 0 and invalidates the
     // other two, and each no-ops when the value is unchanged so a menu that
@@ -145,11 +154,21 @@ public:
     Q_INVOKABLE void clearFilters();
 
     // /MusicGenres for the current library, paged on the array's own size.
-    // Idempotent: a second call while a list is already loaded does nothing.
+    //
+    // Idempotent AND retryable: a call while the walk is running or once it has
+    // reached the end of the list does nothing, but a walk that stopped on an
+    // error resumes from the page that failed. A partial genre list is not a
+    // finished one, so callers may ask again whenever the list is about to be
+    // looked at.
     Q_INVOKABLE void loadGenres();
 
     // Scope every list to one music library. An empty id means "every music
     // library the server has", which is what search and Home want.
+    //
+    // Filters do not survive it: a genre id is a ParentId-scoped MusicGenre row,
+    // so carrying it into another library queries an id that does not exist
+    // there. See setLibrary() for why the other three axes go with it. The
+    // per-tab sorts, which are library-neutral, do survive.
     Q_INVOKABLE void setLibrary(const QString &libraryId);
 
     Q_INVOKABLE void loadAlbums();
@@ -268,6 +287,13 @@ private:
     QStringList m_yearFilters;
     bool m_favoritesOnly = false;
     QVariantList m_genreOptions;
+    // The genre walk's own state, so a walk that broke in the middle can be told
+    // apart from one that finished — the difference between "289 genres" and
+    // "the 200 that arrived before page 1 timed out".
+    int m_genreNextIndex = 0;
+    bool m_genresComplete = false;
+    bool m_genreWalkActive = false;
+    bool m_genresFailed = false;
 
     // Has anything been asked of this controller yet? A sort or a filter set
     // before the first list was requested is a preference, not a query, and
