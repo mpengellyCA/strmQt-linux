@@ -92,10 +92,15 @@ public:
     // own, with its own generation counter so a second ▸ cannot strand the
     // first, and hands ItemActions the ordered items.
     //
-    // Not Actions.playAll(albumId, "music"): that verb pins SortBy=SortName,
-    // which queues a record alphabetically by track title. An album's children
-    // come back from the server in disc/track order and nothing may re-sort
-    // them.
+    // Not Actions.playAll(albumId, "music"): that verb sorts, and for music it
+    // sorts by SortBy=IndexNumber,SortName (ItemActions' playAllSortFor). That
+    // is right for a single-disc album and wrong for a box set — track 1 of
+    // disc 1 and track 1 of disc 2 share IndexNumber == 1, so the discs come
+    // back interleaved. An album's own children, unsorted, are already in the
+    // server's disc-then-track order, so the fix is to not sort at all rather
+    // than to sort better. (ItemActions cannot simply switch to
+    // ParentIndexNumber,IndexNumber: the comment there records why — most of
+    // the library has no disc number, and a null disc sorts ahead of disc 1.)
     Q_INVOKABLE void playAlbum(const QString &albumId);
 
     // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), so this
@@ -110,6 +115,14 @@ signals:
     void artistsChanged();
     void loadingChanged();
     void errorChanged();
+    // A one-shot verb failed. Separate from errorMessage, which is the state of
+    // the *lists* — MusicPage renders that as "Couldn't load this music
+    // library" or, once a page is on screen, as a paging banner with a Retry
+    // that calls loadMoreAlbums(). A failed ▸ is neither of those: it has
+    // nothing to retry and nothing to keep showing, so it goes out as a toast,
+    // the way every other one-shot verb reports failure (ItemActions and
+    // PlaylistController both name the signal this).
+    void actionFailed(const QString &message);
 
 private:
     void fetchAlbums(int startIndex);

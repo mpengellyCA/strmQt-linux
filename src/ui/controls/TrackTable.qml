@@ -33,8 +33,10 @@ import StrmQt
 // A page that needs a key of its own connects `keyPressed` rather than
 // declaring its own `Keys.onPressed`: an attached handler re-declared at the
 // use site *replaces* this one, which would silently take Page Up, Home, End
-// and type-to-jump away. Handlers for a specific key (`Keys.onDeletePressed`,
-// `Keys.onUpPressed`) are separate signals and can still be declared outside.
+// and type-to-jump away. The same goes for `Keys.onShortcutOverride`, without
+// which type-to-jump never sees a letter that is also a shortcut. Handlers for
+// a specific key (`Keys.onDeletePressed`, `Keys.onUpPressed`) are separate
+// signals and can still be declared outside.
 //
 // ── Where multi-select goes ────────────────────────────────────────────────
 // Deferred until the batch verbs behind it exist (queue / add-to-playlist /
@@ -202,6 +204,25 @@ ListView {
     // the same row "s" did rather than skipping past it.
     property string _jumpBuffer: ""
 
+    // Is this keystroke typing rather than a shortcut? A printable character
+    // with no Ctrl/Alt/Meta — a modified key belongs to whatever bound it — and
+    // a bare space only once a word is already being typed, because until then
+    // space belongs to play/pause. Asked by both `Keys.onPressed` and
+    // `Keys.onShortcutOverride` so the key set they claim cannot drift apart.
+    function _consumesAsTyping(event): bool {
+        if (!table.typeToJump || table.count === 0)
+            return false
+        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+            return false
+        const typed = event.text
+        if (typed.length !== 1)
+            return false
+        const code = typed.charCodeAt(0)
+        if (code < 0x20 || code === 0x7F)
+            return false
+        return typed !== " " || table._jumpBuffer.length > 0
+    }
+
     function _jump(text): bool {
         const needle = text.toLowerCase()
         const count = table.count
@@ -249,6 +270,26 @@ ListView {
 
     ScrollBar.vertical: StrmScrollBar {}
 
+    // ── Letters have to beat the shortcuts ─────────────────────────────────
+    // Qt matches a QML `Shortcut` in QShortcutMap *before* the key is ever
+    // delivered as a key press, and this app binds a lot of bare letters:
+    // "M" pins the nav rail, "F" full-screens, "/" searches and "?" opens the
+    // shortcut sheet from Main.qml, and "K" "A" "C" "I" "L" "S" are player
+    // actions that are live whenever the queue panel is — which is exactly
+    // when a track table has focus. Without this, typing "m" on an album page
+    // moved focus to the nav rail instead of landing on "Master of Puppets".
+    //
+    // ShortcutOverride is delivered to the focus item before the shortcut
+    // fires, and accepting it suppresses that shortcut for that one keypress
+    // only. So the claim is kept as narrow as it can be: only while this table
+    // holds focus, and only for the keys `Keys.onPressed` below would treat as
+    // typing. Chords are never touched, and every shortcut works again the
+    // instant focus is anywhere else.
+    Keys.onShortcutOverride: event => {
+        if (table.activeFocus && table._consumesAsTyping(event))
+            event.accepted = true
+    }
+
     Keys.onReturnPressed: event => {
         if (!event.isAutoRepeat)
             table.activateAt(table.currentIndex)
@@ -289,22 +330,10 @@ ListView {
             return
         }
 
-        if (!table.typeToJump)
-            return
-        // Modified keys belong to whatever bound them; a bare space belongs to
-        // play/pause until a word is already being typed.
-        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
-            return
-        const typed = event.text
-        if (typed.length !== 1)
-            return
-        const code = typed.charCodeAt(0)
-        if (code < 0x20 || code === 0x7F)
-            return
-        if (typed === " " && table._jumpBuffer.length === 0)
+        if (!table._consumesAsTyping(event))
             return
 
-        const wanted = table._jumpBuffer + typed
+        const wanted = table._jumpBuffer + event.text
         if (table._jump(wanted)) {
             table._jumpBuffer = wanted
             jumpReset.restart()

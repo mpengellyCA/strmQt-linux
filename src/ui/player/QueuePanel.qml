@@ -2,7 +2,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls.Basic
 import StrmQt
 
 // QueuePanel — what is playing and what is next (ARCHITECTURE.md).

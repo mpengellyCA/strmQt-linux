@@ -206,12 +206,18 @@ void MusicController::playAlbum(const QString &albumId)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_playGeneration)
             return;
+        // actionFailed(), never setError(): the error property is the state of
+        // the album and artist *lists*, and MusicPage draws it as a paging
+        // banner offering to retry loadMoreAlbums() — the wrong message, the
+        // wrong retry, and one nothing here would ever clear. A verb that
+        // happened once reports once, as a toast.
         if (!result.ok()) {
-            setError(result.error);
+            emit actionFailed(tr("Could not play this album: %1").arg(result.error));
             return;
         }
         if (!m_actions) {
             qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
+            emit actionFailed(tr("Playback is not available."));
             return;
         }
         m_playScratch->setItems(result.value.items, result.value.totalRecordCount);

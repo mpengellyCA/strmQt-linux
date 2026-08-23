@@ -154,15 +154,18 @@ FocusScope {
             Actions.openDetails(item)
     }
 
-    // An album IS a parent folder, so this is a real ParentId query — unlike
-    // the artist-level play this page does not offer.
+    // The same verb the music grid's ▸ calls, not Actions.playAll(id, "music"):
+    // one implementation per verb (ARCHITECTURE.md rule 3), and the two used to
+    // disagree — playAll sorts music by IndexNumber,SortName, which interleaves
+    // the discs of a box set, while MusicCtl.playAlbum() takes the album's
+    // children in the server's own disc-then-track order.
     function playAlbum(index): void {
         const item = page.albumAt(index)
         if (!item)
             return
         const id = item.itemId !== undefined ? String(item.itemId) : ""
         if (id.length > 0)
-            Actions.playAll(id, "music")
+            MusicCtl.playAlbum(id)
     }
 
     function showMenu(index, sceneX, sceneY): void {

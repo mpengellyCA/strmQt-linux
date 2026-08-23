@@ -842,6 +842,17 @@ ApplicationWindow {
         }
     }
 
+    // ▸ on an album card is a one-shot verb, and neither MusicPage nor
+    // ArtistPage carries a toast host of its own. Here, so both are covered by
+    // one connection.
+    Connections {
+        target: MusicCtl
+
+        function onActionFailed(message) {
+            toasts.show(message, "error");
+        }
+    }
+
     // ── Controller wiring ──────────────────────────────────────────────────
     Connections {
         target: Actions
