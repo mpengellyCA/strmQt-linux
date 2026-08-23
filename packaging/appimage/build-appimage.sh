@@ -335,7 +335,25 @@ in packaging/appimage/Deploy.cmake."
 Check that PkgConfig::MPV is still linked into the strmqt target and that no
 PRE_EXCLUDE_REGEXES entry in Deploy.cmake accidentally matches 'libmpv'."
 
-log "  libqwayland.so, wayland-shell-integration/, libmpv.so.2 all present"
+[[ -f "${PLUGINS_DIR}/imageformats/libqsvg.so" ]] || die \
+"libqsvg.so is MISSING from the AppDir. EVERY UI ICON WOULD BE BLANK.
+
+The entire icon set is SVG compiled into the binary as qrc:/icons/*.svg, and
+QImageReader can only decode it through this plugin. Nothing links Qt6Svg -- it
+is loaded at runtime -- so a link-time dependency walk cannot see it, the build
+succeeds, and network JPEG artwork still renders. The nav rail, the search icon
+and every button glyph come up empty and nothing anywhere reports an error.
+
+This shipped once: the release workflow's AppImage job did not install qt6-svg,
+so there was nothing on the host for the deploy step to bundle.
+
+FIX: install qt6-svg (or the distro's Qt Svg package) before building."
+
+[[ -f "${PLUGINS_DIR}/iconengines/libqsvgicon.so" ]] || die \
+"libqsvgicon.so is MISSING from the AppDir. Same cause and same package as
+libqsvg.so above; this is the QIcon engine rather than the image reader."
+
+log "  libqwayland.so, wayland-shell-integration/, libmpv.so.2, libqsvg.so all present"
 
 # ─── 9. AppDir metadata ──────────────────────────────────────────────────────
 log "Populating AppDir metadata"

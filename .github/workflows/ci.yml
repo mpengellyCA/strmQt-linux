@@ -20,7 +20,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake ninja pkgconf gcc \
-            qt6-base qt6-declarative qt6-websockets qt6-tools \
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg \
             mpv vlc sdl3 \
             xorg-server-xvfb
 

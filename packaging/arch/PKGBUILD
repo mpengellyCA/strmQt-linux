@@ -12,7 +12,7 @@ pkgname=strmqt
 # strings agree, and all three package jobs went green anyway.
 # An Arch pkgver may not contain a hyphen, so it is stripped here rather than
 # spelling the git tag unconventionally to suit one packager.
-_tag=v0.3.0-rc4
+_tag=v0.3.0-rc5
 pkgver=${_tag#v}
 pkgver=${pkgver//-/}
 pkgrel=1
@@ -34,8 +34,12 @@ license=('GPL-3.0-or-later')
 # links libQt6WebSockets.so.6, so the binary will not start without it.
 # Caught by namcap as an error after M10 added it and this list was not
 # updated — exactly the class of miss !autodeps makes possible.
-depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'hicolor-icon-theme'
-         'libmpv.so' 'libvlc.so' 'sdl3')
+# qt6-svg is a RUNTIME plugin dependency, not a link-time one: the whole icon
+# set is SVG in qrc and QImageReader decodes it through qt6-svg's imageformats
+# plugin. Nothing links libQt6Svg, so neither the linker nor namcap can see the
+# dependency — without it the package installs cleanly and every icon is blank.
+depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg'
+         'hicolor-icon-theme' 'libmpv.so' 'libvlc.so' 'sdl3')
 # Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).
 makedepends=('cmake' 'ninja' 'pkgconf' 'git')
 optdepends=(

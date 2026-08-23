@@ -23,7 +23,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake ninja pkgconf gcc namcap \
-            qt6-base qt6-declarative qt6-websockets qt6-tools mpv vlc sdl3
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv vlc sdl3
 
       - uses: actions/checkout@v4
         with:
@@ -95,7 +95,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake ninja pkgconf gcc patchelf fuse2 wget \
-            qt6-base qt6-declarative qt6-websockets qt6-tools mpv sdl3
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv sdl3
 
       - uses: actions/checkout@v4
 
