@@ -99,15 +99,16 @@ modules:
     config-opts:
       - --disable-static
     sources:
-      - type: archive
-        url: https://xorg.freedesktop.org/archive/individual/lib/libXpresent-1.0.2.tar.xz
-        sha256: 4e5b21b4812206a4b223013606ae31170502c1043038777a1ef8f70c09d37602
-        # A single unreachable host must not fail the whole build. CI hit exactly
-        # that: "Failed to connect to xorg.freedesktop.org port 443". The
-        # checksum is what makes a mirror safe to trust.
-        mirror-urls:
-          - https://www.x.org/releases/individual/lib/libXpresent-1.0.2.tar.xz
-          - https://ftp.osuosl.org/pub/xorg/individual/lib/libXpresent-1.0.2.tar.xz
+      # Git rather than the release tarball. xorg.freedesktop.org and
+      # www.freedesktop.org both went down and took CI with them, and the
+      # tarball is not mirrored anywhere carrying this version — Debian stops
+      # at 1.0.1 — so there was no mirror-urls answer. gitlab.freedesktop.org
+      # stayed up and carries the tag. Pinned to the tag's COMMIT, so the
+      # source is immutable even though a tag is not.
+      - type: git
+        url: https://gitlab.freedesktop.org/xorg/lib/libxpresent.git
+        commit: 4d92149372461bf575e8a09b1064a2884c38c3aa
+        tag: libXpresent-1.0.2
 
   # ── libass ─────────────────────────────────────────────────────────────────
   # Not in the runtime. Subtitle rendering; a hard, non-optional dependency of
@@ -137,9 +138,12 @@ modules:
     cleanup:
       - /bin
     sources:
-      - type: archive
-        url: https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz
-        sha256: e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0
+      # Same reason as libXpresent: www.freedesktop.org is the only host that
+      # serves this tarball, and it went down.
+      - type: git
+        url: https://gitlab.freedesktop.org/uchardet/uchardet.git
+        commit: ae6302a016088ad07177f86d417b20010053632b
+        tag: v0.0.8
 
   # ── libplacebo ─────────────────────────────────────────────────────────────
   # Not in the runtime. MANDATORY: mpv 0.41 links libplacebo unconditionally (it is
