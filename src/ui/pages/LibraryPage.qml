@@ -267,6 +267,13 @@ FocusScope {
         visible: !page.isCollection
         height: page.isCollection ? 0 : filterBar.implicitHeight
 
+        // The bar is shared with MusicPage now and names no controller of its
+        // own, so the page says which query it governs. Everything else about
+        // it — the sort set, the watched chips, the alphabet strip — is
+        // unchanged: LibraryCtl publishes watchedFilter, so the bar renders the
+        // same three chips it always did.
+        controller: LibraryCtl
+
         // Down out of the bar lands back in the content it governs.
         downTarget: viewSelect
     }

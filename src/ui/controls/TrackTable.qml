@@ -55,6 +55,12 @@ ListView {
     property bool discGrouping: false
     // Walk the model to decide whether the artist column is worth a column.
     property bool artistRule: false
+    // Skip that question and always give the artist a column. For a table whose
+    // rows come from ONE record the rule above is the right answer — printing
+    // "Opeth" six times is noise. For a library-wide song list the answer is
+    // known in advance (every row may differ), and asking anyway would walk a
+    // growing model on every page fetch to learn something already true.
+    property bool alwaysShowArtist: false
     // The album's own credit, when the page already knows it. Empty falls back
     // to what the first track says, which is what an album page with no item
     // map has to do.
@@ -81,10 +87,44 @@ ListView {
     readonly property string albumArtistName: table.albumArtist.length > 0
                                               ? table.albumArtist : table.derivedAlbumArtist
 
+    // ── Paging ─────────────────────────────────────────────────────────────
+    // How close to the end counts as "nearly there". 0 — the default — means
+    // this table never pages, which is right for every caller that fetches its
+    // whole list in one request (an album, a playlist, a queue). The Songs tab
+    // sets it, because 56,283 rows are not one request.
+    //
+    // The mirror of StrmGrid's prefetch, deliberately: the two conditions that
+    // mean "fetch now" are the keyboard cursor closing on the end OR the
+    // viewport showing the last rows, and a pointer user who never moves the
+    // cursor depends entirely on the second. It fires at most once per loaded
+    // count, so a handler may call loadMore() unconditionally — contentY moves
+    // on every scrolled pixel and an unthrottled signal is a request storm.
+    property int prefetchThreshold: 0
+
     signal activated(int index)
     // Raised before this component's own key handling; accept the event to
     // claim the key.
     signal keyPressed(var event)
+    signal nearEnd()
+
+    property int _lastNearEndCount: -1
+
+    function _checkNearEnd(): void {
+        if (table.prefetchThreshold <= 0 || table.count <= 0
+                || table.count === table._lastNearEndCount)
+            return
+        const cursorNear = table.currentIndex >= 0
+                           && table.count - table.currentIndex < table.prefetchThreshold
+        const lastVisible = table.indexAt(table.contentX + 1,
+                                          table.contentY + table.height - 1)
+        const viewportNear = table.atYEnd
+                             || (lastVisible >= 0
+                                 && table.count - lastVisible < table.prefetchThreshold)
+        if (cursorNear || viewportNear) {
+            table._lastNearEndCount = table.count
+            table.nearEnd()
+        }
+    }
 
     // ── Reading a row ──────────────────────────────────────────────────────
     // MediaItemModel calls it get(); PlayQueue calls it itemAt(). Tolerant
@@ -113,12 +153,16 @@ ListView {
 
     // The rule, applied to one row: the artist is shown only where the table
     // has decided there is a column at all AND this row's credit differs from
-    // the album's.
+    // the album's — unless the table was told the column is unconditional, in
+    // which case suppressing the rows that happen to match the FIRST row's
+    // credit would blank an arbitrary subset of a library-wide list.
     function shownArtistFor(item): string {
         if (!table.showArtistColumn)
             return ""
         const line = table.artistLineOf(item)
-        return (line.length > 0 && line !== table.albumArtistName) ? line : ""
+        if (line.length === 0)
+            return ""
+        return (table.alwaysShowArtist || line !== table.albumArtistName) ? line : ""
     }
 
     // > 0 when this row begins a numbered disc of a multi-disc set.
@@ -174,7 +218,7 @@ ListView {
         table.totalRuntimeMs = total
         table.multiDisc = discs.length > 1
         table.discStartAt = discs.length > 1 ? starts : ({})
-        table.showArtistColumn = differs
+        table.showArtistColumn = differs || table.alwaysShowArtist
     }
 
     // ── Cursor ─────────────────────────────────────────────────────────────
@@ -258,8 +302,19 @@ ListView {
         Component.onCompleted: table.rebuildMeta()
     }
 
-    onCountChanged: table.rebuildMeta()
-    onModelChanged: table.rebuildMeta()
+    onCountChanged: {
+        table.rebuildMeta()
+        table._checkNearEnd()
+    }
+    onModelChanged: {
+        // A different list is a different paging cursor: without this the
+        // throttle still holds the previous model's count and the first page of
+        // the new one never asks for a second.
+        table._lastNearEndCount = -1
+        table.rebuildMeta()
+    }
+    onCurrentIndexChanged: table._checkNearEnd()
+    onContentYChanged: table._checkNearEnd()
 
     clip: true
     currentIndex: 0

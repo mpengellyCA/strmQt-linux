@@ -33,7 +33,62 @@ private slots:
     void emptyJsonDoesNotCrash();
     void wideArtPicksPerItemKind();
     void squareArtPrefersTheAlbumCover();
+    void musicGenresMapAndPageOnTheArray();
 };
+
+// /MusicGenres, from a payload recorded off the live 4.9.5.0 server.
+//
+// Two things this guards, and the second is the one that has already burned a
+// caller of the sibling endpoint:
+//
+//  1. A genre is an ordinary item — id, name, Type "MusicGenre" — so it maps
+//     through the same parser everything else does, including the row whose
+//     ImageTags object is present but empty.
+//  2. **Page on the array's own size, never on TotalRecordCount.** The recorded
+//     payload happens to tell the truth (289, and /Genres does not — see
+//     ARCHITECTURE.md §2), but a StartIndex past the end answers 0 with an
+//     empty array, and a server that answered 0 with rows would render an empty
+//     filter for a library full of genres. The second half of this test is that
+//     shape.
+void EmbyDtoTest::musicGenresMapAndPageOnTheArray()
+{
+    const QJsonDocument doc = loadFixture(QStringLiteral("music_genres.json"));
+    QVERIFY(doc.isObject());
+
+    const ItemsPage page = emby::parseItemsPage(doc.object());
+    QCOMPARE(page.items.size(), 4);
+    QCOMPARE(page.items.at(0).id, QStringLiteral("1937444"));
+    QCOMPARE(page.items.at(0).name, QStringLiteral("Acid"));
+    QCOMPARE(page.items.at(0).type, QStringLiteral("MusicGenre"));
+    QCOMPARE(page.items.at(0).primaryImageTag,
+             QStringLiteral("d2ffa659c4998fc6d4d14ff0aa03ab95"));
+    // "Afro-pop": ImageTags present but empty. It is still a genre, and a filter
+    // that dropped it because it has no artwork would be missing a row of a list
+    // artwork has nothing to do with.
+    QCOMPARE(page.items.at(3).name, QStringLiteral("Afro-pop"));
+    QCOMPARE(page.items.at(3).primaryImageTag, QString());
+    // Truthful here — recorded, not assumed.
+    QCOMPARE(page.totalRecordCount, 289);
+
+    // The /Genres shape, which this family of endpoints can produce: rows with a
+    // count of zero beside them. The rows are the answer.
+    const ItemsPage lying = emby::parseItemsPage(QJsonDocument::fromJson(R"json({
+        "Items": [
+            { "Id": "1", "Name": "Doom Metal", "Type": "MusicGenre" },
+            { "Id": "2", "Name": "Drone", "Type": "MusicGenre" }
+        ],
+        "TotalRecordCount": 0
+    })json").object());
+    QCOMPARE(lying.totalRecordCount, 0);
+    QCOMPARE(lying.items.size(), 2);
+    QCOMPARE(lying.items.at(1).name, QStringLiteral("Drone"));
+
+    // The end of the walk: no rows, whatever the count says.
+    const ItemsPage past = emby::parseItemsPage(QJsonDocument::fromJson(R"json({
+        "Items": [], "TotalRecordCount": 0
+    })json").object());
+    QVERIFY(past.items.isEmpty());
+}
 
 // Which 16:9 source exists depends entirely on the item kind, so a wide card
 // cannot just ask for one image type. Shapes below are the ones the live server

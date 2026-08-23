@@ -3,25 +3,55 @@ import QtQuick
 import QtQuick.Controls.Basic
 import StrmQt
 
-// FilterBar — the library page's sort / filter / alphabet bar (ARCHITECTURE.md).
+// FilterBar — the sort / filter / alphabet bar (ARCHITECTURE.md).
 //
-// It decides nothing and stores nothing: LibraryCtl owns the query, and every
-// control here is a *rendering* of a controller property plus one call back into
-// it. That is deliberate — a bar that kept its own copy of "which sort is on"
-// would disagree with the grid the first time a scope change (a genre, a person,
-// Favorites) reset the query underneath it.
+// It decides nothing and stores nothing: the CONTROLLER owns the query, and
+// every control here is a *rendering* of a controller property plus one call
+// back into it. That is deliberate — a bar that kept its own copy of "which
+// sort is on" would disagree with the grid the first time a scope change (a
+// genre, a person, Favorites, a different music tab) reset the query underneath
+// it.
+//
+// ── One bar, two controllers ───────────────────────────────────────────────
+// `controller` is LibraryCtl on the library page and MusicCtl on the music
+// page. It used to name LibraryCtl in twenty-odd bindings, which meant music
+// could only have a filter bar by getting a second copy of this file — and two
+// copies of a bar this fiddly drift within one release.
+//
+// What it reads is a shape, not a type (the UpdateBanner pattern): `sortBy`,
+// `sortDescending`, `availableSorts`, `nameStartsWith`, `filtered`,
+// `setSort()`, `setNameStartsWith()`, `clearFilters()`. Two rows are optional
+// and appear only when the controller actually has them, so neither page has to
+// say which controls it wants:
+//
+//   `watchedFilter` + `setWatchedFilter()`  → the Unwatched / Watched /
+//                                             Favorites row (film and TV)
+//   `favoritesOnly` + `setFavoritesOnly()`  → a single Favourites toggle, which
+//                                             is the whole of that question for
+//                                             music: "unwatched songs" is not a
+//                                             thing anyone asks for
+//
+// `extraFilters` is how a page adds a narrowing axis of its own without this
+// file learning about it: a list of multi-select descriptors,
+// `{ key, label, options: [{key,label}], selected: [key] }`, rendered as
+// multi-select StrmSelects that report back through `extraFilterActivated`.
+// Music's Genre filter is one of these — and a multi-select rather than chips
+// because the measured library has 289 genres and chips stop scaling at about
+// six.
 //
 // Three rows of intent, in one bar:
 //
 //   sort field ▸ direction   what order
-//   watched chips            what subset
+//   watched chips / extras   what subset
 //   A B C … Z #              where in that order to land
 //
 // Two rules shape the layout:
 //
 // 1. **The height never changes.** The clear affordance and the compact/wide
 //    swap alter widths only, so nothing the user does here makes the grid below
-//    jump under the cursor.
+//    jump under the cursor. (`showAlphabet` does change it — but that is a
+//    property of the page, fixed for the life of the bar, not something the
+//    user can toggle.)
 // 2. **Narrow degrades, it does not wrap.** Below `compact` the filter chips
 //    collapse into one select, the labels drop to icons, and the alphabet
 //    strip — which is the one genuinely wide thing here — scrolls horizontally
@@ -36,16 +66,73 @@ import StrmQt
 FocusScope {
     id: bar
 
-    // Where Down leaves the bar. LibraryPage points this at its grid.
+    // The controller that owns the query. `var`, not a typed QtObject, for the
+    // same reason UpdateBanner.controller is: these arrive as context
+    // properties and have no QML type to check members against.
+    property var controller: null
+
+    // Off for a scope where jumping by first letter answers no question — a
+    // list short enough to see all of, or one whose order is not alphabetical.
+    property bool showAlphabet: true
+
+    // Page-supplied narrowing axes. See the header note for the shape.
+    property var extraFilters: []
+
+    // A row of `extraFilters` was picked. `values` is the new selection for
+    // that key; the page hands it straight to its controller.
+    signal extraFilterActivated(string key, var values)
+
+    // Where Down leaves the bar. The page points this at its content.
     property Item downTarget: null
-    // Where the grid should send Up: the alphabet strip is the bar's last row,
-    // so it is the row nearest the grid and the one Up should reach first.
-    readonly property alias entryItem: alphaStrip
+    // Where Up leaves the bar's FIRST row. Null — the library page's case —
+    // leaves Up doing nothing there, which is what it has always done. The
+    // music page sets it to its tab bar, because Up out of a music grid used to
+    // reach the tabs and a filter bar in between must not swallow that.
+    property Item upTarget: null
+    // Where the grid should send Up: the row nearest it. Normally the alphabet
+    // strip, and the sort select when there is no alphabet strip — never
+    // nothing, or Up out of a grid lands in a hole.
+    readonly property Item entryItem: bar.showAlphabet ? alphaStrip : sortSelect
 
     // Wide enough for the labelled chips and the labelled buttons? Measured
     // against a fixed threshold rather than against the row's own implicitWidth,
     // because the row's width depends on this flag and that is a binding loop.
     readonly property bool compact: bar.width > 0 && bar.width < Theme.scale(860)
+
+    // ── What the controller offers ─────────────────────────────────────────
+    // Read once here, so the twenty controls below are not each repeating a
+    // null test, and so what this bar needs of a controller is stated in one
+    // place rather than inferred from the bindings.
+    readonly property bool hasController: bar.controller !== null
+                                          && bar.controller !== undefined
+    readonly property bool hasWatchedFilter: bar.hasController
+                                             && bar.controller.watchedFilter !== undefined
+    readonly property bool hasFavoritesToggle: bar.hasController
+                                               && bar.controller.favoritesOnly !== undefined
+    readonly property string activeSort: bar.hasController
+                                         && bar.controller.sortBy !== undefined
+                                         ? String(bar.controller.sortBy) : ""
+    readonly property bool activeDescending: bar.hasController
+                                             && bar.controller.sortDescending === true
+    readonly property string activeLetter: bar.hasController
+                                           && bar.controller.nameStartsWith !== undefined
+                                           ? String(bar.controller.nameStartsWith) : ""
+    readonly property bool anyFilterOn: bar.hasController && bar.controller.filtered === true
+    readonly property string watchedValue: bar.hasWatchedFilter
+                                           ? String(bar.controller.watchedFilter) : "all"
+    readonly property bool favoritesOn: bar.hasFavoritesToggle
+                                        && bar.controller.favoritesOnly === true
+
+    // The control the extras (and, with no extras, the clear button) chain back
+    // to on Left: the last one of the fixed set that is actually on screen.
+    readonly property Item lastFixedControl: bar.hasFavoritesToggle ? favoritesToggle
+                                           : !bar.hasWatchedFilter ? directionButton
+                                           : bar.compact ? watchedSelect
+                                           : favoriteChip
+    // Right out of that same set. Named once because five controls want it.
+    readonly property Item firstExtraOrClear: extraRepeater.count > 0
+                                              ? extraRepeater.itemAt(0)
+                                              : (clearButton.visible ? clearButton : null)
 
     // A–Z then "#", which is the bucket Emby files everything non-alphabetic in.
     readonly property var letters: {
@@ -56,11 +143,15 @@ FocusScope {
         return out;
     }
 
-    // LibraryCtl.availableSorts is [{key, label}] and varies by library kind;
-    // StrmSelect wants [{text, value}].
+    // controller.availableSorts is [{key, label}] and varies by library kind and
+    // by music tab; StrmSelect wants [{text, value}].
     readonly property var sortModel: {
         const out = [];
-        const source = LibraryCtl.availableSorts;
+        if (!bar.hasController)
+            return out;
+        const source = bar.controller.availableSorts;
+        if (!source)
+            return out;
         for (let i = 0; i < source.length; ++i)
             out.push({ text: source[i].label, value: source[i].key });
         return out;
@@ -74,10 +165,14 @@ FocusScope {
     ]
 
     // Read from the controller, never from sortModel: both are recomputed from
-    // the same scopeChanged signal and their order is not guaranteed, so the
+    // the same scope/tab signal and their order is not guaranteed, so the
     // cached copy can be one signal stale exactly when a scope change needs it.
     function sortIndexFor(key: string): int {
-        const source = LibraryCtl.availableSorts;
+        if (!bar.hasController)
+            return -1;
+        const source = bar.controller.availableSorts;
+        if (!source)
+            return -1;
         for (let i = 0; i < source.length; ++i) {
             if (source[i].key === key)
                 return i;
@@ -97,9 +192,13 @@ FocusScope {
     // ascending" means oldest-first, which is nobody's idea of what picking
     // "Date added" was for; a name sort ascending is. Direction stays
     // user-changeable either way — this only picks the first guess.
+    //
+    // ProductionYear and PlayCount are music's: a release-year sort means
+    // newest records first, and "Most played" ascending is the least played.
     function defaultDescendingFor(key: string): bool {
         return key === "DateCreated" || key === "DatePlayed" || key === "PremiereDate"
-            || key === "CommunityRating" || key === "CriticRating";
+            || key === "CommunityRating" || key === "CriticRating"
+            || key === "ProductionYear" || key === "PlayCount";
     }
 
     // Index of the alphabet cell a typed character should land on.
@@ -112,25 +211,50 @@ FocusScope {
         return /^[0-9]$/.test(upper) ? bar.letters.length - 1 : -1;
     }
 
+    // ── Extra filters ──────────────────────────────────────────────────────
+    // Toggling one row of a multi-select, expressed as data so the controller
+    // stays the only thing that decides what a selection means.
+    function toggledSelection(entry, value): var {
+        const current = (entry && entry.selected) ? entry.selected : [];
+        const out = [];
+        let removed = false;
+        for (let i = 0; i < current.length; ++i) {
+            if (String(current[i]) === String(value))
+                removed = true;
+            else
+                out.push(current[i]);
+        }
+        if (!removed)
+            out.push(value);
+        return out;
+    }
+
     // The controller is the single source of truth, so every control is pushed
     // back into agreement with it after any query or scope change — including
     // the ones the user did not touch, and the ones a details-page drill-down
-    // reset behind our back.
+    // or a music tab switch reset behind our back.
     function syncFromController(): void {
-        sortSelect.currentIndex = bar.sortIndexFor(LibraryCtl.sortBy);
-        watchedSelect.currentIndex = bar.watchedIndexFor(LibraryCtl.watchedFilter);
+        sortSelect.currentIndex = bar.sortIndexFor(bar.activeSort);
+        watchedSelect.currentIndex = bar.watchedIndexFor(bar.watchedValue);
         alphaStrip.syncCursor();
     }
 
-    implicitHeight: controls.height + Theme.spacingValue + alphaStrip.height
-                    + Theme.spacingTight + 1
+    implicitHeight: controls.height + (bar.showAlphabet
+                                       ? Theme.spacingValue + alphaStrip.height
+                                         + Theme.spacingTight + 1
+                                       : Theme.spacingTight + 1)
 
     Component.onCompleted: bar.syncFromController()
+    onControllerChanged: bar.syncFromController()
 
     Connections {
-        target: LibraryCtl
+        target: bar.controller
+        // MusicController raises tabChanged where LibraryController raises
+        // scopeChanged, and neither has the other's signal.
+        ignoreUnknownSignals: true
         function onQueryChanged() { bar.syncFromController(); }
         function onScopeChanged() { bar.syncFromController(); }
+        function onTabChanged() { bar.syncFromController(); }
     }
 
     // ── Row 1: what order, and what subset ─────────────────────────────────
@@ -170,24 +294,27 @@ FocusScope {
                 model: bar.sortModel
                 placeholder: qsTr("Sort")
                 // No currentIndex binding by design: syncFromController() pushes
-                // it from LibraryCtl, so a sort a details drill-down reset moves
-                // this control too. StrmSelect never writes it, so this push is
-                // the only thing that does — asking the controller below is how
-                // a pick gets back here.
+                // it from the controller, so a sort a details drill-down or a
+                // tab switch reset moves this control too. StrmSelect never
+                // writes it, so this push is the only thing that does — asking
+                // the controller below is how a pick gets back here.
 
                 KeyNavigation.right: directionButton
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
+                    if (!bar.hasController)
+                        return;
                     const key = sortSelect.valueAt(index);
                     if (key === undefined)
                         return;
                     // Keep the direction when the field is unchanged (the menu
                     // re-emits on every pick), otherwise seed the sensible one.
-                    const descending = key === LibraryCtl.sortBy
-                                     ? LibraryCtl.sortDescending
+                    const descending = key === bar.activeSort
+                                     ? bar.activeDescending
                                      : bar.defaultDescendingFor(key);
-                    LibraryCtl.setSort(key, descending);
+                    bar.controller.setSort(key, descending);
                 }
             }
 
@@ -199,16 +326,23 @@ FocusScope {
 
                 anchors.verticalCenter: parent.verticalCenter
                 // Random has no direction to reverse.
-                enabled: LibraryCtl.sortBy !== "Random"
-                iconName: LibraryCtl.sortDescending ? "chevron-down" : "chevron-up"
+                enabled: bar.hasController && bar.activeSort !== "Random"
+                iconName: bar.activeDescending ? "chevron-down" : "chevron-up"
                 text: bar.compact ? ""
-                    : LibraryCtl.sortDescending ? qsTr("Descending") : qsTr("Ascending")
+                    : bar.activeDescending ? qsTr("Descending") : qsTr("Ascending")
 
                 KeyNavigation.left: sortSelect
-                KeyNavigation.right: bar.compact ? watchedSelect : unwatchedChip
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.right: bar.hasWatchedFilter
+                                     ? (bar.compact ? watchedSelect : unwatchedChip)
+                                     : bar.hasFavoritesToggle ? favoritesToggle
+                                     : bar.firstExtraOrClear
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
-                onClicked: LibraryCtl.setSort(LibraryCtl.sortBy, !LibraryCtl.sortDescending)
+                onClicked: {
+                    if (bar.hasController)
+                        bar.controller.setSort(bar.activeSort, !bar.activeDescending);
+                }
                 onHoveredChanged: {
                     if (directionButton.hovered)
                         directionTip.requestShow();
@@ -219,8 +353,8 @@ FocusScope {
                 StrmTooltip {
                     id: directionTip
                     target: directionButton
-                    text: LibraryCtl.sortDescending ? qsTr("Descending — click for ascending")
-                                                    : qsTr("Ascending — click for descending")
+                    text: bar.activeDescending ? qsTr("Descending — click for ascending")
+                                               : qsTr("Ascending — click for descending")
                 }
             }
 
@@ -239,48 +373,53 @@ FocusScope {
                 id: unwatchedChip
 
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !bar.compact
+                visible: bar.hasWatchedFilter && !bar.compact
                 text: qsTr("Unwatched")
                 iconName: "eye-off"
-                checked: LibraryCtl.watchedFilter === "unplayed"
+                checked: bar.watchedValue === "unplayed"
 
                 KeyNavigation.left: directionButton
                 KeyNavigation.right: watchedChip
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
-                onToggled: LibraryCtl.setWatchedFilter(unwatchedChip.checked ? "all" : "unplayed")
+                onToggled: bar.controller.setWatchedFilter(unwatchedChip.checked ? "all"
+                                                                                 : "unplayed")
             }
 
             StrmChip {
                 id: watchedChip
 
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !bar.compact
+                visible: bar.hasWatchedFilter && !bar.compact
                 text: qsTr("Watched")
                 iconName: "eye"
-                checked: LibraryCtl.watchedFilter === "played"
+                checked: bar.watchedValue === "played"
 
                 KeyNavigation.left: unwatchedChip
                 KeyNavigation.right: favoriteChip
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
-                onToggled: LibraryCtl.setWatchedFilter(watchedChip.checked ? "all" : "played")
+                onToggled: bar.controller.setWatchedFilter(watchedChip.checked ? "all" : "played")
             }
 
             StrmChip {
                 id: favoriteChip
 
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !bar.compact
+                visible: bar.hasWatchedFilter && !bar.compact
                 text: qsTr("Favorites")
                 iconName: "heart"
-                checked: LibraryCtl.watchedFilter === "favorites"
+                checked: bar.watchedValue === "favorites"
 
                 KeyNavigation.left: watchedChip
-                KeyNavigation.right: clearButton.visible ? clearButton : null
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.right: bar.firstExtraOrClear
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
-                onToggled: LibraryCtl.setWatchedFilter(favoriteChip.checked ? "all" : "favorites")
+                onToggled: bar.controller.setWatchedFilter(favoriteChip.checked ? "all"
+                                                                                : "favorites")
             }
 
             // The compact stand-in for the three chips: same four states, one
@@ -289,7 +428,7 @@ FocusScope {
                 id: watchedSelect
 
                 anchors.verticalCenter: parent.verticalCenter
-                visible: bar.compact
+                visible: bar.hasWatchedFilter && bar.compact
                 model: bar.watchedModel
                 placeholder: qsTr("Show")
                 // Pushed by syncFromController(), like the sort select above,
@@ -297,13 +436,102 @@ FocusScope {
                 // stands in for at wider widths.
 
                 KeyNavigation.left: directionButton
-                KeyNavigation.right: clearButton.visible ? clearButton : null
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.right: bar.firstExtraOrClear
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
                     const value = watchedSelect.valueAt(index);
                     if (value !== undefined)
-                        LibraryCtl.setWatchedFilter(String(value));
+                        bar.controller.setWatchedFilter(String(value));
+                }
+            }
+
+            // Music's whole answer to "what subset". A record is favourited or
+            // it is not; there is no useful "unplayed songs" view to put beside
+            // it, so this is one chip rather than the row of three above.
+            StrmChip {
+                id: favoritesToggle
+
+                anchors.verticalCenter: parent.verticalCenter
+                visible: bar.hasFavoritesToggle
+                text: bar.compact ? "" : qsTr("Favourites")
+                iconName: bar.favoritesOn ? "heart-filled" : "heart"
+                checked: bar.favoritesOn
+
+                KeyNavigation.left: directionButton
+                KeyNavigation.right: bar.firstExtraOrClear
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+
+                onToggled: bar.controller.setFavoritesOnly(!favoritesToggle.checked)
+            }
+
+            // ── Page-supplied axes ─────────────────────────────────────────
+            // One multi-select per descriptor, in the order the page gave them.
+            // The bar renders and reports; it never decides what a genre id
+            // means, which is why the toggled set goes back out as a signal
+            // rather than into a call this file chooses.
+            Repeater {
+                id: extraRepeater
+
+                // The COUNT, not the array. `extraFilters` is a JS array the
+                // page rebuilds every time its controller's selection changes —
+                // which is every pick — and a Repeater whose model is that array
+                // destroys and recreates its delegates each time. That would
+                // tear down the very menu the user is picking from, undoing the
+                // whole point of a multi-select that stays open. Modelling the
+                // length keeps one delegate alive and lets its own bindings
+                // carry the new selection in.
+                model: bar.extraFilters ? bar.extraFilters.length : 0
+
+                delegate: StrmSelect {
+                    id: extraSelect
+
+                    required property int index
+
+                    readonly property var descriptor: bar.extraFilters[extraSelect.index]
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    multiSelect: true
+                    model: {
+                        const out = [];
+                        const source = extraSelect.descriptor
+                                       ? extraSelect.descriptor.options : null;
+                        if (!source)
+                            return out;
+                        for (let i = 0; i < source.length; ++i)
+                            out.push({ text: source[i].label, value: source[i].key });
+                        return out;
+                    }
+                    selectedValues: (extraSelect.descriptor && extraSelect.descriptor.selected)
+                                    ? extraSelect.descriptor.selected : []
+                    placeholder: (extraSelect.descriptor
+                                  && extraSelect.descriptor.label !== undefined)
+                                 ? extraSelect.descriptor.label : qsTr("Filter")
+                    // Nothing to pick yet (the genre walk is still in flight, or
+                    // this library has none): shown, so the row does not move
+                    // under the pointer when it arrives, but not offerable.
+                    enabled: extraSelect.model.length > 0
+
+                    KeyNavigation.left: extraSelect.index > 0
+                                        ? extraRepeater.itemAt(extraSelect.index - 1)
+                                        : bar.lastFixedControl
+                    KeyNavigation.right: extraSelect.index + 1 < extraRepeater.count
+                                         ? extraRepeater.itemAt(extraSelect.index + 1)
+                                         : (clearButton.visible ? clearButton : null)
+                    KeyNavigation.up: bar.upTarget
+                    KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget
+                                                                     : alphaStrip
+
+                    onActivated: index => {
+                        const value = extraSelect.valueAt(index);
+                        if (value === undefined || !extraSelect.descriptor)
+                            return;
+                        bar.extraFilterActivated(String(extraSelect.descriptor.key),
+                                                 bar.toggledSelection(extraSelect.descriptor,
+                                                                      value));
+                    }
                 }
             }
 
@@ -313,15 +541,21 @@ FocusScope {
                 id: clearButton
 
                 anchors.verticalCenter: parent.verticalCenter
-                visible: LibraryCtl.filtered
+                visible: bar.anyFilterOn
                 variant: "ghost"
                 iconName: "close"
                 text: bar.compact ? "" : qsTr("Clear filters")
 
-                KeyNavigation.left: bar.compact ? watchedSelect : favoriteChip
-                KeyNavigation.down: alphaStrip
+                KeyNavigation.left: extraRepeater.count > 0
+                                    ? extraRepeater.itemAt(extraRepeater.count - 1)
+                                    : bar.lastFixedControl
+                KeyNavigation.up: bar.upTarget
+                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
-                onClicked: LibraryCtl.clearFilters()
+                onClicked: {
+                    if (bar.hasController)
+                        bar.controller.clearFilters();
+                }
                 onHoveredChanged: {
                     if (clearButton.hovered)
                         clearTip.requestShow();
@@ -342,13 +576,16 @@ FocusScope {
     // Emby matches NameStartsWith against the item's SORT name, not its title,
     // so "A Quiet Place" is filed under Q. Labelling this "first letter" would
     // be a lie the first time somebody looked for it under A, hence the hint.
+    //
+    // It is if anything MORE right for music: "The Beatles" files under B, and
+    // a user who does not know that will look under T and find nothing.
     Item {
         id: alphaHint
 
         anchors.left: parent.left
         anchors.top: controls.bottom
         anchors.topMargin: Theme.spacingValue
-        visible: !bar.compact
+        visible: bar.showAlphabet && !bar.compact
         width: alphaHint.visible ? hintRow.implicitWidth : 0
         height: alphaStrip.height
 
@@ -402,7 +639,9 @@ FocusScope {
         anchors.topMargin: Theme.spacingValue
         // Fixed: the scrollbar lives in the padding below the cells so that a
         // library narrow enough to need one is not a library whose grid moved.
-        height: alphaStrip.cellHeight + Theme.spacingTight
+        height: bar.showAlphabet ? alphaStrip.cellHeight + Theme.spacingTight : 0
+        visible: bar.showAlphabet
+        enabled: bar.showAlphabet
 
         // Keyboard cursor. A preview — it never re-runs the query on its own.
         property int currentIndex: 0
@@ -417,10 +656,10 @@ FocusScope {
                                                   Math.min(Theme.scale(34),
                                                            Math.floor(flick.width / bar.letters.length)))
 
-        activeFocusOnTab: true
+        activeFocusOnTab: bar.showAlphabet
 
         function syncCursor(): void {
-            const active = LibraryCtl.nameStartsWith;
+            const active = bar.activeLetter;
             if (active.length === 0)
                 return;
             const index = bar.letters.indexOf(active);
@@ -431,9 +670,9 @@ FocusScope {
         // Tapping the letter that is already on clears it — the controller
         // implements that toggle, so this stays a single call either way.
         function applyLetter(index: int): void {
-            if (index < 0 || index >= bar.letters.length)
+            if (index < 0 || index >= bar.letters.length || !bar.hasController)
                 return;
-            LibraryCtl.setNameStartsWith(bar.letters[index]);
+            bar.controller.setNameStartsWith(bar.letters[index]);
         }
 
         function moveCursor(index: int): void {
@@ -523,7 +762,7 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: alphaStrip.cellHeight
+            height: bar.showAlphabet ? alphaStrip.cellHeight : 0
             contentWidth: alphaStrip.cellWidth * bar.letters.length
             contentHeight: flick.height
             flickableDirection: Flickable.HorizontalFlick
@@ -539,7 +778,7 @@ FocusScope {
                 spacing: 0
 
                 Repeater {
-                    model: bar.letters
+                    model: bar.showAlphabet ? bar.letters : []
 
                     delegate: Item {
                         id: cell
@@ -547,7 +786,7 @@ FocusScope {
                         required property string modelData
                         required property int index
 
-                        readonly property bool active: LibraryCtl.nameStartsWith === cell.modelData
+                        readonly property bool active: bar.activeLetter === cell.modelData
                         readonly property bool hovered: cellHover.hovered
                         readonly property bool cursor: alphaStrip.currentIndex === cell.index
 
@@ -632,7 +871,7 @@ FocusScope {
     Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: alphaStrip.bottom
+        anchors.top: bar.showAlphabet ? alphaStrip.bottom : controls.bottom
         anchors.topMargin: Theme.spacingTight
         height: 1
         color: Theme.hairline

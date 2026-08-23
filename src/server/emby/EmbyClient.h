@@ -99,11 +99,34 @@ public:
     // so callers must use the returned list's own size.
     // GET /Artists and /Artists/AlbumArtists. Different endpoints, not a filter
     // on one: measured on the target server they return 3,789 and 2,394.
-    QFuture<Result<ItemsPage>> musicArtists(const QString &parentId, int startIndex, int limit);
-    QFuture<Result<ItemsPage>> albumArtists(const QString &parentId, int startIndex, int limit);
+    //
+    // They take an ItemsQuery rather than a bare parent/page because they honour
+    // the same narrowing axes /Users/{uid}/Items does — measured live on 4.9.5.0:
+    // SortBy, SortOrder, NameStartsWith and GenreIds all changed the answer
+    // (NameStartsWith=T cut 2,394 album artists to 75; one genre id cut it to 2).
+    // Everything else on the query is simply not sent.
+    QFuture<Result<ItemsPage>> musicArtists(const ItemsQuery &query);
+    QFuture<Result<ItemsPage>> albumArtists(const ItemsQuery &query);
 
     QFuture<Result<QList<MediaItem>>> persons(const QString &searchTerm, int limit = 12);
     QFuture<Result<QList<MediaItem>>> genres(const QString &searchTerm, int limit = 12);
+
+    // GET /MusicGenres — the genres that actually occur in a music library.
+    //
+    // Not genres() with a different path: that one is the search typeahead and
+    // takes a SearchTerm with no parent and no paging, so it can suggest a
+    // genre but cannot enumerate one library's. This takes ParentId and pages,
+    // which is what a filter control needs.
+    //
+    // Measured on the live 4.9.5.0 server: ParentId IS honoured here (the music
+    // library answered 289 genres; the film, TV and collection libraries and a
+    // bogus id all answered 0), and — unlike /Genres — TotalRecordCount is
+    // truthful. Callers still page on the returned array's own size, because a
+    // StartIndex past the end answers TotalRecordCount = 0 with an empty array,
+    // and because the /Genres trap (ARCHITECTURE.md §2) is one server upgrade
+    // away from applying here too.
+    QFuture<Result<ItemsPage>> musicGenres(const QString &parentId, int startIndex = 0,
+                                           int limit = 200);
 
     // GET /Items/{id}/Similar — "More like this".
     QFuture<Result<QList<MediaItem>>> similar(const QString &itemId, int limit = 12);

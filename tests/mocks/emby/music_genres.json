@@ -1,0 +1,67 @@
+{
+    "Items": [
+        {
+            "BackdropImageTags": [],
+            "Id": "1937444",
+            "ImageTags": {
+                "Primary": "d2ffa659c4998fc6d4d14ff0aa03ab95"
+            },
+            "Name": "Acid",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Type": "MusicGenre",
+            "UserData": {
+                "IsFavorite": false,
+                "PlayCount": 0,
+                "PlaybackPositionTicks": 0,
+                "Played": false
+            }
+        },
+        {
+            "BackdropImageTags": [],
+            "Id": "1933045",
+            "ImageTags": {
+                "Primary": "fba01f1fa6655739bf491dc42db9c96a"
+            },
+            "Name": "Acoustic",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Type": "MusicGenre",
+            "UserData": {
+                "IsFavorite": false,
+                "PlayCount": 0,
+                "PlaybackPositionTicks": 0,
+                "Played": false
+            }
+        },
+        {
+            "BackdropImageTags": [],
+            "Id": "1938015",
+            "ImageTags": {
+                "Primary": "58067803c536b2a25d2735d1b83b009c"
+            },
+            "Name": "African",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Type": "MusicGenre",
+            "UserData": {
+                "IsFavorite": false,
+                "PlayCount": 0,
+                "PlaybackPositionTicks": 0,
+                "Played": false
+            }
+        },
+        {
+            "BackdropImageTags": [],
+            "Id": "1939992",
+            "ImageTags": {},
+            "Name": "Afro-pop",
+            "ServerId": "6c17e0e282e84f7c92e8358ebf054111",
+            "Type": "MusicGenre",
+            "UserData": {
+                "IsFavorite": false,
+                "PlayCount": 0,
+                "PlaybackPositionTicks": 0,
+                "Played": false
+            }
+        }
+    ],
+    "TotalRecordCount": 289
+}

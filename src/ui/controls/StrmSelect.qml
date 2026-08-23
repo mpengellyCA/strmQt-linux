@@ -33,7 +33,29 @@ Item {
     property int currentIndex: -1
     property string placeholder: qsTr("Select…")
 
+    // ── Multi-select (ARCHITECTURE.md) ─────────────────────────────────────
+    // A music library has 289 genres (measured), which is a set no row of chips
+    // can render and no single-pick select can express. In this mode the label
+    // names the selection rather than one row, every matching row is ticked,
+    // and the menu stays open so picking three genres is one trip.
+    //
+    // `selectedValues` is controlled exactly as `currentIndex` is: the select
+    // renders what it is handed and never writes it. `activated(index)` still
+    // reports the row that was hit — the owner decides what toggling it means,
+    // which is what keeps the set of ids owned by the controller.
+    property bool multiSelect: false
+    property var selectedValues: []
+
     signal activated(int index)
+
+    function isSelected(i): bool {
+        if (!select.multiSelect)
+            return i === select.currentIndex
+        const value = select.valueAt(i)
+        if (value === undefined || !select.selectedValues)
+            return false
+        return Array.prototype.indexOf.call(select.selectedValues, value) >= 0
+    }
 
     readonly property bool opened: menu.opened
     readonly property bool hovered: hover.hovered
@@ -56,6 +78,25 @@ Item {
 
     readonly property string currentText: textAt(currentIndex)
     readonly property var currentValue: valueAt(currentIndex)
+
+    readonly property int selectedCount: (select.multiSelect && select.selectedValues)
+                                         ? select.selectedValues.length : 0
+
+    // What the closed control says. One pick names itself — a filter reading
+    // "Doom Metal" is the whole point of it — and beyond that a count, because
+    // three genre names do not fit and a truncated list reads as a bug.
+    readonly property string _multiLabel: {
+        if (select.selectedCount === 0)
+            return select.placeholder
+        if (select.selectedCount === 1) {
+            const source = select.model || []
+            for (let i = 0; i < source.length; ++i) {
+                if (select.isSelected(i))
+                    return select.textAt(i)
+            }
+        }
+        return qsTr("%1 selected").arg(select.selectedCount)
+    }
 
     implicitHeight: Theme.controlHeight
     implicitWidth: Math.max(Theme.scale(160),
@@ -117,8 +158,11 @@ Item {
         anchors.right: chevron.left
         anchors.rightMargin: Theme.spacingTight
         anchors.verticalCenter: parent.verticalCenter
-        text: select.currentIndex >= 0 ? select.currentText : select.placeholder
-        color: select.currentIndex >= 0 ? Theme.textPrimaryColor : Theme.textTertiary
+        text: select.multiSelect ? select._multiLabel
+            : select.currentIndex >= 0 ? select.currentText
+            : select.placeholder
+        color: (select.multiSelect ? select.selectedCount > 0 : select.currentIndex >= 0)
+               ? Theme.textPrimaryColor : Theme.textTertiary
         font.family: Theme.fontBody
         font.pixelSize: Theme.fontBodySize
         elide: Text.ElideRight
@@ -151,11 +195,13 @@ Item {
     StrmMenu {
         id: menu
         parent: select
+        // Toggles stay open, commands close. See StrmMenu.closeOnTrigger.
+        closeOnTrigger: !select.multiSelect
         actions: {
             const out = []
             const source = select.model || []
             for (let i = 0; i < source.length; ++i)
-                out.push({ text: select.textAt(i), checked: i === select.currentIndex })
+                out.push({ text: select.textAt(i), checked: select.isSelected(i) })
             return out
         }
         // Asks, and does not decide: the owner writes the value back and the

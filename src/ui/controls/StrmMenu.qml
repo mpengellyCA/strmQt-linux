@@ -23,6 +23,11 @@ Popup {
 
     property var actions: []
     property int currentIndex: -1
+    // Off for a menu of TOGGLES rather than of commands: a multi-select genre
+    // filter that closed on every tick would make picking three genres three
+    // trips through the same menu. Esc, a click outside, or the control that
+    // opened it still close it, so there is no way to get stuck in one.
+    property bool closeOnTrigger: true
 
     signal triggered(int index)
 
@@ -85,7 +90,8 @@ Popup {
     function _activate(i) {
         if (!menu._isSelectable(i))
             return
-        menu.close()
+        if (menu.closeOnTrigger)
+            menu.close()
         menu.triggered(i)
     }
 

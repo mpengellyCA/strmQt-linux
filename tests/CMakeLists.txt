@@ -40,6 +40,12 @@ strmqt_add_test(tst_library_query
 )
 target_include_directories(tst_library_query PRIVATE mocks)
 
+strmqt_add_test(tst_music_query
+    integration/tst_music_query.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+)
+target_include_directories(tst_music_query PRIVATE mocks)
+
 strmqt_add_test(tst_content_controllers
     integration/tst_content_controllers.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp

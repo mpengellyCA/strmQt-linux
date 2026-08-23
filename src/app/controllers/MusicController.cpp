@@ -5,10 +5,30 @@
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
 
+#include <QVariantMap>
+
 namespace strmqt {
 
 namespace {
 constexpr int kPageSize = 100;
+// /MusicGenres pages on the ARRAY's own size, not TotalRecordCount: the sibling
+// /Genres reports 0 while returning rows (ARCHITECTURE.md §2), and although
+// /MusicGenres was measured to report the truth on 4.9.5.0 (289, matching the
+// rows), a StartIndex past the end still answers 0 with an empty array. 200 at a
+// time covers the measured library in two round trips.
+constexpr int kGenrePageSize = 200;
+// A hard stop on the genre walk. 289 genres is the measured library; a server
+// that answers a full page forever must not spin this loop.
+constexpr int kGenrePageLimit = 25;
+
+QVariantMap sortOption(const QString &key, const QString &label)
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("key"), key);
+    map.insert(QStringLiteral("label"), label);
+    return map;
+}
+
 // An album's whole track list in one request. The longest sets on the target
 // library are box sets in the low hundreds, so paging tracks would add a
 // loading seam to something that is read as one table.
@@ -18,8 +38,8 @@ constexpr int kTrackLimit = 500;
 MusicController::MusicController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_albums(new MediaItemModel(this)),
       m_artists(new MediaItemModel(this)), m_tracks(new MediaItemModel(this)),
-      m_artistAlbums(new MediaItemModel(this)), m_artistTracks(new MediaItemModel(this)),
-      m_playScratch(new MediaItemModel(this))
+      m_songs(new MediaItemModel(this)), m_artistAlbums(new MediaItemModel(this)),
+      m_artistTracks(new MediaItemModel(this)), m_playScratch(new MediaItemModel(this))
 {
 }
 
@@ -36,6 +56,247 @@ bool MusicController::canLoadMoreAlbums() const
 bool MusicController::canLoadMoreArtists() const
 {
     return m_artists->rowCount() < m_artists->totalRecordCount();
+}
+
+bool MusicController::canLoadMoreSongs() const
+{
+    return m_songs->rowCount() < m_songs->totalRecordCount();
+}
+
+// ── The query surface (ARCHITECTURE.md) ──────────────────────────────────────
+
+QString MusicController::sortBy() const
+{
+    if (m_tab == QLatin1String("artists"))
+        return m_artistSortBy;
+    if (m_tab == QLatin1String("songs"))
+        return m_songSortBy;
+    return m_albumSortBy;
+}
+
+bool MusicController::sortDescending() const
+{
+    if (m_tab == QLatin1String("artists"))
+        return m_artistSortDescending;
+    if (m_tab == QLatin1String("songs"))
+        return m_songSortDescending;
+    return m_albumSortDescending;
+}
+
+QVariantList MusicController::availableSorts() const
+{
+    // Every key below was run against the live 4.9.5.0 server and answered with
+    // a differently-ordered first row; an unaccepted sort key does not fail on
+    // this server, it silently returns the default order and reads as a sort
+    // that "did nothing".
+    if (m_tab == QLatin1String("artists")) {
+        // /Artists and /Artists/AlbumArtists take SortBy, SortOrder,
+        // NameStartsWith and GenreIds — measured. There is no release year or
+        // date-added for a person, so the list is genuinely this short.
+        return {sortOption(QStringLiteral("SortName"), tr("Sort name")),
+                sortOption(QStringLiteral("Random"), tr("Random")),
+                sortOption(QStringLiteral("PlayCount"), tr("Most played"))};
+    }
+    if (m_tab == QLatin1String("songs")) {
+        return {
+            sortOption(QStringLiteral("SortName"), tr("Sort name")),
+            sortOption(QStringLiteral("Album,SortName"), tr("Album")),
+            sortOption(QStringLiteral("AlbumArtist,Album,SortName"), tr("Artist")),
+            // Disc then track, and only here: this is the one list where the
+            // user asked for track order explicitly, so the null-disc hazard
+            // ItemActions documents is a chosen ordering rather than a silent
+            // one imposed on a "play all".
+            sortOption(QStringLiteral("ParentIndexNumber,IndexNumber,SortName"),
+                       tr("Track number")),
+            sortOption(QStringLiteral("DateCreated"), tr("Date added")),
+            sortOption(QStringLiteral("Runtime"), tr("Runtime")),
+            sortOption(QStringLiteral("PlayCount"), tr("Play count")),
+            sortOption(QStringLiteral("Random"), tr("Random")),
+        };
+    }
+    return {
+        sortOption(QStringLiteral("SortName"), tr("Sort name")),
+        sortOption(QStringLiteral("ProductionYear"), tr("Release year")),
+        sortOption(QStringLiteral("DateCreated"), tr("Date added")),
+        sortOption(QStringLiteral("Random"), tr("Random")),
+        sortOption(QStringLiteral("CommunityRating"), tr("Community rating")),
+        sortOption(QStringLiteral("PlayCount"), tr("Most played")),
+    };
+}
+
+bool MusicController::filtered() const
+{
+    return !m_nameStartsWith.isEmpty() || !m_genreIds.isEmpty() || !m_yearFilters.isEmpty()
+           || m_favoritesOnly;
+}
+
+void MusicController::setTab(const QString &tab)
+{
+    const QString wanted = (tab == QLatin1String("artists") || tab == QLatin1String("songs"))
+                               ? tab
+                               : QStringLiteral("albums");
+    if (m_tab == wanted)
+        return;
+    m_tab = wanted;
+    emit tabChanged();
+    // The sort belongs to the tab, so moving between tabs moves the value every
+    // sort control on screen is rendering.
+    emit queryChanged();
+    ensureCurrentTab();
+}
+
+void MusicController::setSort(const QString &key, bool descending)
+{
+    if (key.isEmpty() || (sortBy() == key && sortDescending() == descending))
+        return;
+    if (m_tab == QLatin1String("artists")) {
+        m_artistSortBy = key;
+        m_artistSortDescending = descending;
+    } else if (m_tab == QLatin1String("songs")) {
+        m_songSortBy = key;
+        m_songSortDescending = descending;
+    } else {
+        m_albumSortBy = key;
+        m_albumSortDescending = descending;
+    }
+    // A sort is per tab, so it invalidates only the tab it belongs to — unlike
+    // every filter below, which invalidates all three.
+    emit queryChanged();
+    if (!m_started)
+        return;
+    switch (currentTabIndex()) {
+    case 1:
+        fetchArtists(0);
+        break;
+    case 2:
+        fetchSongs(0);
+        break;
+    default:
+        fetchAlbums(0);
+        break;
+    }
+}
+
+void MusicController::setNameStartsWith(const QString &letter)
+{
+    // The bar toggles: tapping the active letter clears it rather than
+    // re-running the identical query. Same contract as LibraryController's.
+    const QString wanted = (letter == m_nameStartsWith) ? QString() : letter;
+    if (m_nameStartsWith == wanted)
+        return;
+    m_nameStartsWith = wanted;
+    applyQueryChange();
+}
+
+void MusicController::setGenreIds(const QStringList &genreIds)
+{
+    QStringList wanted = genreIds;
+    wanted.removeAll(QString());
+    if (m_genreIds == wanted)
+        return;
+    m_genreIds = wanted;
+    applyQueryChange();
+}
+
+void MusicController::setYearFilters(const QStringList &years)
+{
+    QStringList wanted = years;
+    wanted.removeAll(QString());
+    if (m_yearFilters == wanted)
+        return;
+    m_yearFilters = wanted;
+    applyQueryChange();
+}
+
+void MusicController::setFavoritesOnly(bool favoritesOnly)
+{
+    if (m_favoritesOnly == favoritesOnly)
+        return;
+    m_favoritesOnly = favoritesOnly;
+    applyQueryChange();
+}
+
+void MusicController::clearFilters()
+{
+    if (!filtered())
+        return;
+    m_nameStartsWith.clear();
+    m_genreIds.clear();
+    m_yearFilters.clear();
+    m_favoritesOnly = false;
+    applyQueryChange();
+}
+
+void MusicController::applyFilters(ItemsQuery &query) const
+{
+    query.nameStartsWith = m_nameStartsWith;
+    query.genreIds = m_genreIds;
+    query.yearFilters = m_yearFilters;
+    if (m_favoritesOnly)
+        query.filters.append(QStringLiteral("IsFavorite"));
+}
+
+int MusicController::currentTabIndex() const
+{
+    if (m_tab == QLatin1String("artists"))
+        return 1;
+    if (m_tab == QLatin1String("songs"))
+        return 2;
+    return 0;
+}
+
+void MusicController::applyQueryChange()
+{
+    emit queryChanged();
+    if (!m_started)
+        return; // nothing has been asked for yet; the value is a preference so far
+
+    // Clearing a model is not enough on its own — a page already in flight for
+    // the old filter would land in the new one — so every generation moves.
+    ++m_albumGeneration;
+    ++m_artistGeneration;
+    ++m_songGeneration;
+    m_albums->clear();
+    m_artists->clear();
+    m_songs->clear();
+    emit albumsChanged();
+    emit artistsChanged();
+    emit songsChanged();
+    // Only the visible tab refetches. The other two are empty now, so the page's
+    // own "load this tab if it is empty" path fills them when they are next
+    // looked at, which is one request instead of three for a filter the user can
+    // see the results of in one place.
+    switch (currentTabIndex()) {
+    case 1:
+        fetchArtists(0);
+        break;
+    case 2:
+        fetchSongs(0);
+        break;
+    default:
+        fetchAlbums(0);
+        break;
+    }
+}
+
+void MusicController::ensureCurrentTab()
+{
+    if (!m_started)
+        return;
+    switch (currentTabIndex()) {
+    case 1:
+        if (m_artists->rowCount() == 0)
+            fetchArtists(0);
+        break;
+    case 2:
+        if (m_songs->rowCount() == 0)
+            fetchSongs(0);
+        break;
+    default:
+        if (m_albums->rowCount() == 0)
+            fetchAlbums(0);
+        break;
+    }
 }
 
 void MusicController::setArtistMode(const QString &mode)
@@ -60,8 +321,19 @@ void MusicController::setLibrary(const QString &libraryId)
     // grid shows one library's albums under another library's name.
     ++m_albumGeneration;
     ++m_artistGeneration;
+    ++m_songGeneration;
+    ++m_genreGeneration;
     m_albums->clear();
     m_artists->clear();
+    m_songs->clear();
+    emit songsChanged();
+    // The genre list belongs to the library, not to the session: /MusicGenres
+    // is scoped by ParentId (measured), so another library's 289 genres are the
+    // wrong 289.
+    if (!m_genreOptions.isEmpty()) {
+        m_genreOptions.clear();
+        emit genresChanged();
+    }
     // Those dropped replies were the ones that would have cleared `loading`,
     // and nothing has been requested for the new scope yet — so clear it here
     // or the grid shimmers until some unrelated fetch happens to finish.
@@ -70,6 +342,7 @@ void MusicController::setLibrary(const QString &libraryId)
 
 void MusicController::loadAlbums()
 {
+    m_started = true;
     fetchAlbums(0);
 }
 
@@ -89,12 +362,14 @@ void MusicController::fetchAlbums(int startIndex)
     query.parentId = m_libraryId;
     query.includeItemTypes = {QStringLiteral("MusicAlbum")};
     query.recursive = true;
-    query.sortBy = QStringLiteral("SortName");
+    query.sortBy = m_albumSortBy;
+    query.sortDescending = m_albumSortDescending;
     query.startIndex = startIndex;
     query.limit = kPageSize;
     // ChildCount is the track count an album card prints; without asking, every
     // album claims zero tracks.
     query.fields = {QStringLiteral("ChildCount"), QStringLiteral("AlbumArtist")};
+    applyFilters(query);
 
     m_client->items(query).then(
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
@@ -116,6 +391,7 @@ void MusicController::fetchAlbums(int startIndex)
 
 void MusicController::loadArtists()
 {
+    m_started = true;
     fetchArtists(0);
 }
 
@@ -131,11 +407,23 @@ void MusicController::fetchArtists(int startIndex)
     const int generation = ++m_artistGeneration;
     setLoading(true);
 
+    ItemsQuery query;
+    query.parentId = m_libraryId;
+    query.sortBy = m_artistSortBy;
+    query.sortDescending = m_artistSortDescending;
+    query.startIndex = startIndex;
+    query.limit = kPageSize;
+    applyFilters(query);
+    // Years is not among the axes the artist endpoints honour (measured: it
+    // returns nothing rather than everything), and a release year is not a
+    // property of a person anyway — so a year filter narrows albums and songs
+    // and leaves the artist list alone rather than silently emptying it.
+    query.yearFilters.clear();
+
     // /Artists and /Artists/AlbumArtists are different endpoints, not a filter
     // on one: on the target server they return 3,789 and 2,394 respectively.
     const bool albumArtists = m_artistMode == QLatin1String("albumArtists");
-    auto future = albumArtists ? m_client->albumArtists(m_libraryId, startIndex, kPageSize)
-                               : m_client->musicArtists(m_libraryId, startIndex, kPageSize);
+    auto future = albumArtists ? m_client->albumArtists(query) : m_client->musicArtists(query);
     future.then(this, [this, generation, startIndex](const Result<ItemsPage> &result) {
         if (generation != m_artistGeneration)
             return;
@@ -151,6 +439,108 @@ void MusicController::fetchArtists(int startIndex)
             m_artists->appendItems(result.value.items, result.value.totalRecordCount);
         emit artistsChanged();
     });
+}
+
+// ── Songs (the third tab) ────────────────────────────────────────────────────
+// Its own model and its own generation counter, never `tracks`: that model is
+// the open album's, and a Songs tab sharing it would refill the album page out
+// from under itself the moment both were live.
+
+void MusicController::loadSongs()
+{
+    m_started = true;
+    fetchSongs(0);
+}
+
+void MusicController::loadMoreSongs()
+{
+    if (!canLoadMoreSongs() || m_loading)
+        return;
+    fetchSongs(m_songs->rowCount());
+}
+
+void MusicController::fetchSongs(int startIndex)
+{
+    const int generation = ++m_songGeneration;
+    setLoading(true);
+
+    ItemsQuery query;
+    query.parentId = m_libraryId;
+    query.includeItemTypes = {QStringLiteral("Audio")};
+    // 56,283 tracks on the target library, so this pages like the grids do and
+    // never asks for the lot.
+    query.recursive = true;
+    query.sortBy = m_songSortBy;
+    query.sortDescending = m_songSortDescending;
+    query.startIndex = startIndex;
+    query.limit = kPageSize;
+    // MediaSources so a row can be played without a second round trip, Genres
+    // because a genre-filtered list should be able to say why a row is in it,
+    // and ParentIndexNumber because TrackTable's disc pass reads it.
+    query.fields = {QStringLiteral("MediaSources"), QStringLiteral("Genres"),
+                    QStringLiteral("ParentIndexNumber")};
+    applyFilters(query);
+
+    m_client->items(query).then(
+        this, [this, generation, startIndex](const Result<ItemsPage> &result) {
+            if (generation != m_songGeneration)
+                return; // a newer filter, sort or library superseded this reply
+            setLoading(false);
+            if (!result.ok()) {
+                setError(result.error);
+                return;
+            }
+            setError(QString());
+            if (startIndex == 0)
+                m_songs->setItems(result.value.items, result.value.totalRecordCount);
+            else
+                m_songs->appendItems(result.value.items, result.value.totalRecordCount);
+            emit songsChanged();
+        });
+}
+
+// ── Genres ───────────────────────────────────────────────────────────────────
+
+void MusicController::loadGenres()
+{
+    if (!m_genreOptions.isEmpty())
+        return; // already have this library's list
+    fetchGenrePage(0, ++m_genreGeneration);
+}
+
+void MusicController::fetchGenrePage(int startIndex, int generation)
+{
+    m_client->musicGenres(m_libraryId, startIndex, kGenrePageSize)
+        .then(this, [this, startIndex, generation](const Result<ItemsPage> &result) {
+            if (generation != m_genreGeneration)
+                return; // the library moved under this walk
+            if (!result.ok()) {
+                // Deliberately not setError(): errorMessage is the state of the
+                // LISTS, and MusicPage draws it as "Couldn't load this music
+                // library" over the grid. A genre list that did not arrive
+                // leaves the filter control empty and everything else working,
+                // which is a smaller failure than claiming the library is
+                // broken.
+                qCWarning(logApp) << "music: genres failed:" << result.error;
+                return;
+            }
+            for (const MediaItem &genre : result.value.items) {
+                if (genre.id.isEmpty() || genre.name.isEmpty())
+                    continue;
+                QVariantMap option;
+                option.insert(QStringLiteral("key"), genre.id);
+                option.insert(QStringLiteral("label"), genre.name);
+                m_genreOptions.append(option);
+            }
+            emit genresChanged();
+            // Page on the ARRAY's own size (ARCHITECTURE.md §2): a short page is
+            // the end of the list, and TotalRecordCount is not to be trusted
+            // across this family of endpoints.
+            const int received = static_cast<int>(result.value.items.size());
+            const int nextIndex = startIndex + received;
+            if (received == kGenrePageSize && nextIndex < kGenrePageSize * kGenrePageLimit)
+                fetchGenrePage(nextIndex, generation);
+        });
 }
 
 void MusicController::openAlbum(const QString &albumId, const QString &name)

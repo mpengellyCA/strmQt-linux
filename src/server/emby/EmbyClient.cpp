@@ -428,38 +428,49 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::similar(const QString &itemId, int
 }
 
 namespace {
-QUrlQuery artistParams(const QString &userId, const QString &parentId, int startIndex, int limit)
+// The subset of ItemsQuery the artist endpoints were measured to honour. Sending
+// the rest would not fail — this server ignores what it does not know — which is
+// exactly why the set is stated here rather than assumed.
+QUrlQuery artistParams(const QString &userId, const ItemsQuery &query)
 {
     QUrlQuery params;
     params.addQueryItem(QStringLiteral("UserId"), userId);
-    if (!parentId.isEmpty())
-        params.addQueryItem(QStringLiteral("ParentId"), parentId);
-    params.addQueryItem(QStringLiteral("StartIndex"), QString::number(startIndex));
-    params.addQueryItem(QStringLiteral("Limit"), QString::number(limit));
-    params.addQueryItem(QStringLiteral("SortBy"), QStringLiteral("SortName"));
+    if (!query.parentId.isEmpty())
+        params.addQueryItem(QStringLiteral("ParentId"), query.parentId);
+    params.addQueryItem(QStringLiteral("StartIndex"), QString::number(query.startIndex));
+    params.addQueryItem(QStringLiteral("Limit"), QString::number(query.limit));
+    params.addQueryItem(QStringLiteral("SortBy"), query.sortBy.isEmpty()
+                                                      ? QStringLiteral("SortName")
+                                                      : query.sortBy);
+    params.addQueryItem(QStringLiteral("SortOrder"), query.sortDescending
+                                                         ? QStringLiteral("Descending")
+                                                         : QStringLiteral("Ascending"));
+    if (!query.nameStartsWith.isEmpty())
+        params.addQueryItem(QStringLiteral("NameStartsWith"), query.nameStartsWith);
+    if (!query.genreIds.isEmpty())
+        params.addQueryItem(QStringLiteral("GenreIds"), query.genreIds.join(QLatin1Char(',')));
+    if (!query.filters.isEmpty())
+        params.addQueryItem(QStringLiteral("Filters"), query.filters.join(QLatin1Char(',')));
     return params;
 }
 } // namespace
 
-QFuture<Result<ItemsPage>> EmbyClient::musicArtists(const QString &parentId, int startIndex,
-                                                    int limit)
+QFuture<Result<ItemsPage>> EmbyClient::musicArtists(const ItemsQuery &query)
 {
     if (!hasSession())
         return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
-    QNetworkReply *reply =
-        startGet(QStringLiteral("/Artists"), artistParams(m_userId, parentId, startIndex, limit));
+    QNetworkReply *reply = startGet(QStringLiteral("/Artists"), artistParams(m_userId, query));
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
         return Result<ItemsPage>::success(parseItemsPage(doc.object()));
     });
 }
 
-QFuture<Result<ItemsPage>> EmbyClient::albumArtists(const QString &parentId, int startIndex,
-                                                    int limit)
+QFuture<Result<ItemsPage>> EmbyClient::albumArtists(const ItemsQuery &query)
 {
     if (!hasSession())
         return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
-    QNetworkReply *reply = startGet(QStringLiteral("/Artists/AlbumArtists"),
-                                    artistParams(m_userId, parentId, startIndex, limit));
+    QNetworkReply *reply =
+        startGet(QStringLiteral("/Artists/AlbumArtists"), artistParams(m_userId, query));
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
         return Result<ItemsPage>::success(parseItemsPage(doc.object()));
     });
@@ -494,6 +505,29 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::genres(const QString &searchTerm, 
     return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
         return Result<QList<MediaItem>>::success(
             parseItemArray(doc.object().value(QLatin1String("Items")).toArray()));
+    });
+}
+
+QFuture<Result<ItemsPage>> EmbyClient::musicGenres(const QString &parentId, int startIndex,
+                                                   int limit)
+{
+    if (!hasSession())
+        return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
+    QUrlQuery params;
+    params.addQueryItem(QStringLiteral("UserId"), m_userId);
+    // Honoured, and worth stating because the sibling endpoints are not:
+    // measured on 4.9.5.0, ParentId=<music library> answered 289 genres while
+    // the film library, the TV library, the collections library and a made-up
+    // id each answered 0. Omitted when empty, which means "every library" — and
+    // that is the same 289 here, because only a music library has music genres.
+    if (!parentId.isEmpty())
+        params.addQueryItem(QStringLiteral("ParentId"), parentId);
+    params.addQueryItem(QStringLiteral("StartIndex"), QString::number(startIndex));
+    params.addQueryItem(QStringLiteral("Limit"), QString::number(limit));
+    params.addQueryItem(QStringLiteral("SortBy"), QStringLiteral("SortName"));
+    QNetworkReply *reply = startGet(QStringLiteral("/MusicGenres"), params);
+    return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
+        return Result<ItemsPage>::success(parseItemsPage(doc.object()));
     });
 }
 
