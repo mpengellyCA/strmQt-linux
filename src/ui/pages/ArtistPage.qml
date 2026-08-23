@@ -213,6 +213,18 @@ FocusScope {
     // have, and it costs one already-cached image. Gated on Prefs so the
     // backdrop switch means the same thing on every page, and on `visible` so
     // an off wash stops the offscreen render rather than drawing it at zero.
+    // The artist's colour under the blurred art below: one sampled, clamped
+    // accent (MUSIC.md §4, Rule 2) rather than a second copy of the picture.
+    // Lower in z so the photograph reads over it, not through it.
+    CoverWash {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: Math.round(page.height * 0.42)
+        z: -2
+        source: page.artUrl
+    }
+
     Item {
         id: wash
 

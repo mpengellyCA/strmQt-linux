@@ -12,4 +12,5 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/shell/FilterBar.qml
     ui/shell/UpdateBanner.qml
     ui/shell/MiniPlayer.qml
+    ui/shell/SleeveFlight.qml
 )

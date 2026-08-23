@@ -67,6 +67,11 @@ qt_add_executable(strmqt
     app/main.cpp
     app/Application.h app/Application.cpp
     app/EmbyImageProvider.h app/EmbyImageProvider.cpp
+    # QtGui (QImage/QColor), so deliberately NOT in strmqt_app, which stays
+    # QtCore-only. tests/CMakeLists.txt compiles CoverTint.cpp into its own
+    # target for the same reason.
+    app/CoverTint.h app/CoverTint.cpp
+    app/CoverTintService.h app/CoverTintService.cpp
     playback/mpv/MpvPlayer.h playback/mpv/MpvPlayer.cpp
     playback/mpv/MpvVideoItem.h playback/mpv/MpvVideoItem.cpp
 )
@@ -118,6 +123,7 @@ qt_add_qml_module(strmqt
         ui/Main.qml
         ui/Theme.qml
         ui/MediaKinds.qml
+        ui/components/CoverWash.qml
         ui/components/MpvVideoPlane.qml
         ui/pages/LoginPage.qml
         ui/pages/HomePage.qml

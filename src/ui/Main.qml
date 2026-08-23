@@ -188,8 +188,61 @@ ApplicationWindow {
     function minimizePlayer(): void {
         if (!root.playerOnTop)
             return;
+        // The sleeve shrinks back into the bar (MUSIC.md §4). Both endpoints are
+        // known right now — the hero is on screen and the bar's docked place is
+        // computed rather than read — so this is one call, unlike the expand
+        // below, which has to wait for a page that does not exist yet.
+        root.startSleeveFlight(stack.currentItem.sleeveRect(root),
+                               stack.currentItem.sleeveRadius,
+                               miniPlayer.dockedArtRect(root), miniPlayer.artRadius);
         stack.pop();
         Qt.callLater(root.restoreFocusToPage);
+    }
+
+    // ── The shared sleeve (MUSIC.md §4, "The signature") ────────────────────
+    // The cover is one object that grows out of the bar and shrinks back, so it
+    // lives HERE, above the StackView, where pushing and popping the player
+    // page cannot destroy it.
+    //
+    // Both endpoints hide their own copy by BINDING to sleeveFlight.active, not
+    // by being told to. There is no un-hide to miss, so an interrupted flight —
+    // the opposite gesture, a track change, the player closing mid-air — cannot
+    // strand an invisible cover anywhere.
+    function startSleeveFlight(fromRect, fromRadius, toRect, toRadius): void {
+        heroWatch.stop();
+        if (!PlayerCtl.isAudio || !miniPlayer.active || toRect.width <= 0) {
+            sleeveFlight.cancel();
+            return;
+        }
+        // Interrupting a flight already in the air — expand, then immediately
+        // minimise — turns the square around from wherever it has got to
+        // instead of snapping it back to an endpoint it has already left.
+        if (!sleeveFlight.active) {
+            if (fromRect.width <= 0)
+                return;
+            sleeveFlight.place(fromRect, fromRadius);
+        }
+        sleeveFlight.flyTo(toRect, toRadius);
+    }
+
+    // Expand is the asymmetric half: the destination is inside a page that is
+    // built by the push below, so the square lifts off the bar first and waits,
+    // and `heroWatch` hands it its destination on the first frame the hero has
+    // a geometry. If that never comes — a film, a page that failed to build —
+    // the sleeve's own watchdog puts everything back.
+    function liftSleeve(): void {
+        heroWatch.stop();
+        if (!PlayerCtl.isAudio || !miniPlayer.active) {
+            sleeveFlight.cancel();
+            return;
+        }
+        if (!sleeveFlight.active) {
+            const from = miniPlayer.dockedArtRect(root);
+            if (from.width <= 0)
+                return;
+            sleeveFlight.place(from, miniPlayer.artRadius);
+        }
+        heroWatch.restart();
     }
 
     function goBack(): void {
@@ -561,6 +614,50 @@ ApplicationWindow {
         }
     }
 
+    // Above every piece of chrome: the sleeve travels over the rail and the bar,
+    // not behind them. It declares no input handling, so nothing it passes over
+    // becomes unclickable.
+    SleeveFlight {
+        id: sleeveFlight
+
+        anchors.fill: parent
+        z: 30
+        // The same square both endpoints draw, so a track change mid-flight
+        // swaps the picture and the flight carries on.
+        source: miniPlayer.artUrl
+    }
+
+    // Waits for the full-screen hero to have a geometry, then hands the sleeve
+    // its destination. Bounded: a handful of frames, after which the flight's
+    // own watchdog puts both copies back rather than leaving one in the air.
+    Timer {
+        id: heroWatch
+
+        property int attempts: 0
+
+        interval: 16
+        repeat: true
+        onRunningChanged: {
+            if (heroWatch.running)
+                heroWatch.attempts = 0;
+        }
+        onTriggered: {
+            ++heroWatch.attempts;
+            const page = stack.currentItem;
+            if (page === null || page.objectName !== "playerPage"
+                || heroWatch.attempts > 12) {
+                heroWatch.stop();
+                sleeveFlight.cancel();
+                return;
+            }
+            const target = page.sleeveRect(root);
+            if (target.width <= 0)
+                return;
+            heroWatch.stop();
+            sleeveFlight.flyTo(target, page.sleeveRadius);
+        }
+    }
+
     // ── Chrome ─────────────────────────────────────────────────────────────
     // The rail expands over the page rather than displacing it, so only its
     // collapsed width is reserved above.
@@ -596,10 +693,12 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         z: 18
         playerOnTop: root.playerOnTop
+        sleeveInFlight: sleeveFlight.active
 
         onExpandRequested: {
             if (!root.playerOnTop) {
                 root.rememberFocus();
+                root.liftSleeve();
                 stack.push(playerComponent);
             }
         }
@@ -712,6 +811,7 @@ ApplicationWindow {
     Component {
         id: playerComponent
         PlayerPage {
+            sleeveInFlight: sleeveFlight.active
             onMinimizeRequested: root.minimizePlayer()
         }
     }
@@ -924,6 +1024,11 @@ ApplicationWindow {
             }
         }
         function onStopped() {
+            // Nothing is playing, so there is no sleeve to land: whatever was in
+            // the air stops here rather than flying at a hero that is about to
+            // be popped out from under it.
+            heroWatch.stop();
+            sleeveFlight.cancel();
             if (stack.currentItem && stack.currentItem.objectName === "playerPage") {
                 stack.pop();
                 Qt.callLater(root.restoreFocusToPage);

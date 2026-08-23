@@ -34,6 +34,22 @@ FocusScope {
     // Leave the player but keep playing (ARCHITECTURE.md).
     signal minimizeRequested
 
+    // The shared sleeve is in the air (MUSIC.md §4). Passed through to the
+    // now-playing panel, which owns the square this hides.
+    property bool sleeveInFlight: false
+
+    // The transition's large endpoint, in `target`'s coordinates; an empty rect
+    // for a film, or before the panel has laid out. Main.qml polls this after
+    // pushing the page, because on expand the page does not exist yet at the
+    // moment the user asks for it.
+    function sleeveRect(target: Item): rect {
+        if (!page.audioMode)
+            return Qt.rect(0, 0, 0, 0);
+        return nowPlaying.heroArtRect(target);
+    }
+
+    readonly property real sleeveRadius: nowPlaying.heroArtRadius
+
     objectName: "playerPage" // Main.qml tests this to hide the chrome and to pop on stopped()
 
     focus: true
@@ -186,6 +202,7 @@ FocusScope {
         anchors.fill: parent
         visible: page.audioMode
         enabled: page.audioMode
+        sleeveInFlight: page.sleeveInFlight
     }
 
     // ── Loading / buffering ─────────────────────────────────────────────────

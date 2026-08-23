@@ -206,6 +206,48 @@ MediaItem PlayQueue::current() const
     return m_entries.at(m_currentIndex).item;
 }
 
+QString PlayQueue::contextLabel() const
+{
+    if (m_entries.isEmpty())
+        return {};
+
+    QString album;
+    QString artist;
+    bool first = true;
+    for (const Entry &entry : m_entries) {
+        // Music only. A run of episodes has a provenance too, but "up next in
+        // context" is a music surface and a series queue is not what it labels.
+        if (entry.item.type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) != 0)
+            return {};
+
+        // The album artist is the credit a record is filed under; the first
+        // performer is the fallback, and it is what a compilation has instead.
+        const QString entryArtist = entry.item.albumArtist.isEmpty()
+                                        ? entry.item.artists.value(0)
+                                        : entry.item.albumArtist;
+        if (first) {
+            album = entry.item.album;
+            artist = entryArtist;
+            first = false;
+            continue;
+        }
+        if (entry.item.album != album)
+            album.clear();
+        if (entryArtist != artist)
+            artist.clear();
+        if (album.isEmpty() && artist.isEmpty())
+            return {};
+    }
+
+    // One record beats one artist: "from Lift Yr Skinny Fists" says more than
+    // "from Godspeed You! Black Emperor" when both are true.
+    if (!album.isEmpty())
+        return tr("from %1").arg(album);
+    if (!artist.isEmpty())
+        return tr("from %1").arg(artist);
+    return {};
+}
+
 // ── Contents ──────────────────────────────────────────────────────────────────
 
 void PlayQueue::setItems(QList<MediaItem> items, int startIndex)

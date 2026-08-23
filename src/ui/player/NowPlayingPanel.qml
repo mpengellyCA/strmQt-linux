@@ -6,6 +6,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 import StrmQt
 
 // NowPlayingPanel — the player's audio presentation (ARCHITECTURE.md).
@@ -42,6 +43,24 @@ import StrmQt
 // every rail and grid in the app already does it.
 FocusScope {
     id: panel
+
+    // ── In ──────────────────────────────────────────────────────────────────
+    // The shared sleeve is in the air (MUSIC.md §4, "one continuous sleeve").
+    // The hero hides ITS copy for the duration; the property is bound by the
+    // owner and never set, so nothing can forget to undo it.
+    property bool sleeveInFlight: false
+
+    // The transition's large endpoint: where the sleeve lands, in `target`'s
+    // coordinates. An empty rect while the pane has not laid out yet, which is
+    // exactly the "not ready" answer the flight polls for.
+    function heroArtRect(target: Item): rect {
+        if (artFrame.width <= 0 || artFrame.height <= 0)
+            return Qt.rect(0, 0, 0, 0);
+        const corner = artFrame.mapToItem(target, 0, 0);
+        return Qt.rect(corner.x, corner.y, artFrame.width, artFrame.height);
+    }
+
+    readonly property real heroArtRadius: artFrame.radius
 
     // ── Now-playing data ────────────────────────────────────────────────────
     // The queue is the only place the current item's metadata lives: the
@@ -97,6 +116,92 @@ FocusScope {
         const item = panel.nowItem;
         return (item.album !== undefined) ? String(item.album) : "";
     }
+
+    // ── Technical readout (MUSIC.md §4) ─────────────────────────────────────
+    // "FLAC 24/96 · 2,304 kbps · Direct play", small and mono under the sleeve.
+    // The detail that tells an audiophile the app respects them, and nearly
+    // free: PlayerCtl already publishes the stream method and the chosen
+    // source's streams, and this composes them the same way the OSD's tech
+    // chips already do rather than inventing a second reading of the same data.
+    //
+    // The FIRST audio stream, not a selected one: a track has exactly one, and
+    // where a file somehow has more the engine is playing the default, which is
+    // the one the server lists first.
+    readonly property var audioStream: {
+        const list = PlayerCtl.audioStreams;
+        if (list === undefined || list === null || list.length === 0)
+            return null;
+        return list[0];
+    }
+
+    readonly property string streamMethodLabel: {
+        const method = PlayerCtl.streamMethod;
+        if (method === undefined || String(method).length === 0)
+            return "";
+        if (method === "DirectPlay")
+            return qsTr("Direct play");
+        if (method === "DirectStream")
+            return qsTr("Direct stream");
+        return qsTr("Transcoding");
+    }
+
+    readonly property string technicalText: {
+        const parts = [];
+        const stream = panel.audioStream;
+        const source = PlayerCtl.currentSource;
+
+        // Codec, then bit depth over sample rate the way a mastering engineer
+        // writes it: 24/96, not "24 bit, 96000 Hz".
+        let format = "";
+        if (stream !== null && stream.codec !== undefined && String(stream.codec).length > 0)
+            format = String(stream.codec).toUpperCase();
+        else if (source && source.container !== undefined && String(source.container).length > 0)
+            format = String(source.container).toUpperCase();
+        if (stream !== null) {
+            const depth = Number(stream.bitDepth);
+            const rate = Number(stream.sampleRate);
+            if (rate > 0) {
+                const khz = rate / 1000;
+                const rateText = khz === Math.round(khz) ? String(Math.round(khz))
+                                                         : khz.toFixed(1);
+                format += (format.length > 0 ? " " : "")
+                        + (depth > 0 ? depth + "/" + rateText : rateText + " kHz");
+            }
+        }
+        if (format.length > 0)
+            parts.push(format);
+
+        // The stream's own rate when the server measured one, the whole
+        // source's otherwise — for a music file the two are the same number.
+        let bits = 0;
+        if (stream !== null && Number(stream.bitRate) > 0)
+            bits = Number(stream.bitRate);
+        else if (source && Number(source.bitrate) > 0)
+            bits = Number(source.bitrate);
+        if (bits > 0) {
+            parts.push(qsTr("%1 kbps").arg(
+                Math.round(bits / 1000).toLocaleString(Qt.locale(), "f", 0)));
+        }
+
+        if (panel.streamMethodLabel.length > 0)
+            parts.push(panel.streamMethodLabel);
+
+        // Channel layout only when it is worth saying — every record is stereo.
+        if (stream !== null && stream.channelLayout !== undefined
+            && String(stream.channelLayout).length > 0
+            && String(stream.channelLayout) !== "stereo")
+            parts.push(String(stream.channelLayout));
+
+        return parts.join("  ·  ");
+    }
+
+    // ── Up next, in context (MUSIC.md §4) ───────────────────────────────────
+    // Where this queue came from. Derived by PlayQueue from what the queue
+    // actually holds rather than remembered from the verb that built it: a
+    // label carried from a click can outlive the queue it described, and this
+    // one cannot be wrong about a queue it is reading.
+    readonly property string queueContext: panel.queueModel !== null
+                                           ? String(panel.queueModel.contextLabel) : ""
 
     readonly property real positionMs: Number(PlayerCtl.positionMs)
     readonly property real durationMs: Number(PlayerCtl.durationMs)
@@ -205,6 +310,15 @@ FocusScope {
             GradientStop { position: 0.55; color: Theme.scrimColor }
             GradientStop { position: 1.0; color: Theme.ground }
         }
+    }
+
+    // Rule 2, the sleeve lights the room (MUSIC.md §4). Over the scrim rather
+    // than under it: the scrim's job is to make the artwork behind it recede,
+    // and a wash placed underneath would be the first thing it flattened. The
+    // colour is sampled and CLAMPED in C++ — nothing here may brighten it.
+    CoverWash {
+        anchors.fill: parent
+        source: panel.artUrl
     }
 
     // ── Panes ───────────────────────────────────────────────────────────────
@@ -527,18 +641,78 @@ FocusScope {
                 anchors.bottom: heroControls.top
                 anchors.bottomMargin: Theme.spacingLoose
 
+                // The readout's strip, taken out of the square's budget rather
+                // than laid over it: the sleeve is allowed every pixel that is
+                // left, and this is what "left" means once the underside has
+                // its line. Read off the Text's own implicit height, which does
+                // not depend on the square, so there is no circle here.
+                readonly property int readoutHeight: technical.text.length > 0
+                    ? technical.implicitHeight + Theme.spacingTight : 0
+
+                // The sleeve sits ON the surface, not in it (MUSIC.md §4).
+                //
+                // The shadow is cast by a plain rounded rectangle BEHIND the
+                // frame, never by the frame itself, and both other ways of
+                // writing it were tried against a real cover first:
+                //
+                //   · MultiEffect { source: artFrame } maps its auto-padded
+                //     texture back into the frame's own rect, so the cover
+                //     lands inset inside a black border;
+                //   · layer.effect replaces the frame's rendering entirely, so
+                //     an effect that does not run — a software or null RHI
+                //     backend, say — takes the cover with it.
+                //
+                // A separate caster can do neither. It is fully covered by the
+                // opaque frame, so what reaches the eye is only its shadow.
+                Item {
+                    id: sleeveShadow
+
+                    x: artFrame.x
+                    y: artFrame.y
+                    width: artFrame.width
+                    height: artFrame.height
+                    visible: artFrame.opacity > 0
+
+                    Rectangle {
+                        id: shadowCaster
+
+                        anchors.fill: parent
+                        radius: artFrame.radius
+                        color: Theme.shadowColor
+                        // Drawn as well as sampled, for the reason StrmPanel
+                        // states: a hidden source renders nothing into its
+                        // layer on some paint paths.
+                        layer.enabled: true
+                    }
+
+                    MultiEffect {
+                        anchors.fill: parent
+                        source: shadowCaster
+                        autoPaddingEnabled: true
+                        shadowEnabled: true
+                        shadowColor: Theme.shadowColor
+                        shadowBlur: Theme.elevation4.blur
+                        shadowVerticalOffset: Theme.elevation4.y
+                        shadowOpacity: Theme.elevation4.opacity
+                    }
+                }
+
                 Rectangle {
                     id: artFrame
 
-                    anchors.centerIn: parent
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: Math.round((artArea.height - artArea.readoutHeight - artFrame.height) / 2)
                     width: Math.max(Theme.scale(72),
-                                    Math.min(artArea.width, artArea.height))
+                                    Math.min(artArea.width,
+                                             artArea.height - artArea.readoutHeight))
                     height: artFrame.width
                     radius: Theme.radiusPanel
                     color: Theme.surfaceColor
                     border.width: 1
                     border.color: Theme.hairline
                     clip: true
+                    // The square is in the air; its place is held, not drawn.
+                    opacity: panel.sleeveInFlight ? 0 : 1
 
                     Image {
                         anchors.fill: parent
@@ -567,6 +741,24 @@ FocusScope {
                         color: Theme.textTertiary
                     }
                 }
+
+                // Rule 3: numerals are mono (MUSIC.md §4). Under the sleeve,
+                // never wider than it, and quiet enough that it reads as a
+                // caption on the record rather than a status line.
+                Text {
+                    id: technical
+
+                    anchors.top: artFrame.bottom
+                    anchors.topMargin: Theme.spacingTight
+                    anchors.horizontalCenter: artFrame.horizontalCenter
+                    width: artFrame.width
+                    text: panel.technicalText
+                    color: Theme.textTertiary
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontCaption
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
             }
         }
 
@@ -587,11 +779,13 @@ FocusScope {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: Theme.controlHeight
+                height: Theme.controlHeight + (context.visible ? context.implicitHeight : 0)
 
                 Text {
+                    id: upNextLabel
+
                     anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
+                    y: Math.round((Theme.controlHeight - upNextLabel.implicitHeight) / 2)
                     text: qsTr("Up next")
                     color: Theme.textPrimaryColor
                     font.family: Theme.fontDisplay
@@ -601,12 +795,29 @@ FocusScope {
 
                 Text {
                     anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenter: upNextLabel.verticalCenter
                     visible: queueList.count > 0
                     text: qsTr("%n track(s)", "", queueList.count)
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontCaption
+                }
+
+                // Where this queue came from. A queue with no single answer —
+                // a hand-built one, a shuffle across the whole library — says
+                // nothing rather than guessing.
+                Text {
+                    id: context
+
+                    anchors.top: upNextLabel.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    visible: panel.queueContext.length > 0
+                    text: panel.queueContext
+                    color: Theme.textSecondaryColor
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideRight
                 }
             }
 

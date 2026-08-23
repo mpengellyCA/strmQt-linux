@@ -73,6 +73,12 @@ target_include_directories(tst_player_tracks PRIVATE mocks)
 
 strmqt_add_test(tst_play_queue unit/tst_play_queue.cpp)
 
+# The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
+# is deliberately QtCore-only; the unit is compiled straight into the test. It is
+# pure — an image in, a colour out — so there is nothing else to link.
+strmqt_add_test(tst_cover_tint unit/tst_cover_tint.cpp ${CMAKE_SOURCE_DIR}/src/app/CoverTint.cpp)
+target_link_libraries(tst_cover_tint PRIVATE Qt6::Gui)
+
 # MprisPlayer assembles Metadata without a registered D-Bus connection, so the
 # map and its value types are testable on a machine with no session bus.
 strmqt_add_test(tst_mpris_metadata unit/tst_mpris_metadata.cpp)

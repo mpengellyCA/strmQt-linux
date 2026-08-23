@@ -233,6 +233,19 @@ FocusScope {
         function onAlbumChanged() { page.trackFetchTimedOut = false }
     }
 
+    // ── Atmosphere (MUSIC.md §4, Rule 2) ───────────────────────────────────
+    // The record's own colour behind its header, sampled from the sleeve on
+    // screen and clamped in C++ before it reaches here. Gated on Prefs inside
+    // CoverWash, the same switch every other decorative background obeys.
+    CoverWash {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: Math.round(page.height * 0.42)
+        z: -1
+        source: page.coverUrl
+    }
+
     // ── Hero ───────────────────────────────────────────────────────────────
     Item {
         id: hero

@@ -116,7 +116,7 @@ void EmbyImageFetcher::fetch(EmbyImageResponse *response, const QString &id,
     // finished() is delivered on this thread, so handling it queued on the
     // response's QQuickPixmapReader thread would be use-after-free. The engine
     // keeps `response` alive until it emits finished(), which is thread-safe.
-    connect(reply, &QNetworkReply::finished, this, [reply, response] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, response, id] {
         if (reply->error() != QNetworkReply::NoError) {
             response->complete({}, reply->errorString());
             return;
@@ -126,6 +126,9 @@ void EmbyImageFetcher::fetch(EmbyImageResponse *response, const QString &id,
             response->complete({}, QStringLiteral("undecodable image"));
             return;
         }
+        // Before the move: QImage is implicitly shared, so the listener gets a
+        // reference to the same pixels rather than a copy of them.
+        emit imageDecoded(id, image);
         response->complete(std::move(image), {});
     });
 }

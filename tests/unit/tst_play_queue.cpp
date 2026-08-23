@@ -21,6 +21,17 @@ MediaItem episode(int number)
     return item;
 }
 
+MediaItem track(const QString &name, const QString &album, const QString &albumArtist)
+{
+    MediaItem item;
+    item.id = name;
+    item.name = name;
+    item.type = QStringLiteral("Audio");
+    item.album = album;
+    item.albumArtist = albumArtist;
+    return item;
+}
+
 QList<MediaItem> episodes(int count)
 {
     QList<MediaItem> items;
@@ -59,6 +70,7 @@ private slots:
     void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
     void playCountSurvivesTheRoundTrip();
+    void contextLabelNamesTheRecordTheQueueCameFrom();
 };
 
 // The whole point of the queue being a model is that the queue panel can use the
@@ -524,6 +536,52 @@ void PlayQueueTest::playCountSurvivesTheRoundTrip()
     QVariantMap bare;
     bare.insert(QStringLiteral("itemId"), QStringLiteral("t2"));
     QCOMPARE(PlayQueue::itemFromVariant(bare).playCount, 0);
+}
+
+// "Up next, in context" (MUSIC.md §4): the pane says where a queue came from,
+// and the answer is read off the queue rather than remembered from the verb
+// that built it — so it cannot go stale when the queue is edited underneath it.
+void PlayQueueTest::contextLabelNamesTheRecordTheQueueCameFrom()
+{
+    PlayQueue queue;
+    QCOMPARE(queue.contextLabel(), QString());
+
+    queue.setItems({track(QStringLiteral("Storm"), QStringLiteral("Lift Yr Skinny Fists"),
+                          QStringLiteral("Godspeed You! Black Emperor")),
+                    track(QStringLiteral("Static"), QStringLiteral("Lift Yr Skinny Fists"),
+                          QStringLiteral("Godspeed You! Black Emperor"))});
+    QCOMPARE(queue.contextLabel(), QStringLiteral("from Lift Yr Skinny Fists"));
+
+    // One artist, several records — an artist queue names the artist.
+    queue.setItems({track(QStringLiteral("Storm"), QStringLiteral("Lift Yr Skinny Fists"),
+                          QStringLiteral("Godspeed You! Black Emperor")),
+                    track(QStringLiteral("Dead Flag"), QStringLiteral("F#A#oo"),
+                          QStringLiteral("Godspeed You! Black Emperor"))});
+    QCOMPARE(queue.contextLabel(),
+             QStringLiteral("from Godspeed You! Black Emperor"));
+
+    // No single answer: say nothing rather than guess.
+    queue.setItems({track(QStringLiteral("Storm"), QStringLiteral("Lift Yr Skinny Fists"),
+                          QStringLiteral("Godspeed You! Black Emperor")),
+                    track(QStringLiteral("Teardrop"), QStringLiteral("Mezzanine"),
+                          QStringLiteral("Massive Attack"))});
+    QCOMPARE(queue.contextLabel(), QString());
+
+    // Adding a track from somewhere else takes the label away, which is the
+    // whole reason it is derived: a remembered one would still say "from Lift
+    // Yr Skinny Fists" over a queue that is no longer that record.
+    queue.setItems({track(QStringLiteral("Storm"), QStringLiteral("Lift Yr Skinny Fists"),
+                          QStringLiteral("Godspeed You! Black Emperor"))});
+    QCOMPARE(queue.contextLabel(), QStringLiteral("from Lift Yr Skinny Fists"));
+    queue.addToQueue(QVariantMap{{QStringLiteral("itemId"), QStringLiteral("x")},
+                                 {QStringLiteral("type"), QStringLiteral("Audio")},
+                                 {QStringLiteral("album"), QStringLiteral("Mezzanine")},
+                                 {QStringLiteral("albumArtist"), QStringLiteral("Massive Attack")}});
+    QCOMPARE(queue.contextLabel(), QString());
+
+    // Not music: the label is a music surface and does not describe a season.
+    queue.setItems(episodes(3));
+    QCOMPARE(queue.contextLabel(), QString());
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

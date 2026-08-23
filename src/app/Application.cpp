@@ -1,5 +1,6 @@
 #include "Application.h"
 
+#include "CoverTintService.h"
 #include "EmbyImageProvider.h"
 #include "ItemActions.h"
 #include "controllers/DetailsController.h"
@@ -56,6 +57,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_home = new HomeController(m_client, this);
     m_library = new LibraryController(m_client, this);
     m_imageFetcher = new EmbyImageFetcher(m_client, this);
+    // Samples the covers the fetcher above decodes; no fetching of its own.
+    m_coverTint = new CoverTintService(m_imageFetcher, this);
     m_search = new SearchController(m_client, this);
     m_series = new SeriesController(m_client, this);
     m_details = new DetailsController(m_client, this);

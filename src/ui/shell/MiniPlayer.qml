@@ -73,6 +73,11 @@ FocusScope {
 
     // ── In ──────────────────────────────────────────────────────────────────
     property bool playerOnTop: false
+    // The shared sleeve is in the air (MUSIC.md §4, "one continuous sleeve").
+    // The bar hides ITS copy for the duration so there is only one square on
+    // screen. Bound by the owner, never set: a binding cannot forget to undo
+    // itself, and a cover stuck invisible is worse than no animation.
+    property bool sleeveInFlight: false
 
     // ── Out ─────────────────────────────────────────────────────────────────
     signal expandRequested
@@ -390,6 +395,21 @@ FocusScope {
         mini.peekFocusEscrow = mini.Window.activeFocusItem;
     }
 
+    // The transition's small endpoint (MUSIC.md §4). Where the square sits when
+    // the bar is fully docked, in `target`'s coordinates.
+    //
+    // Docked, not current: by the time the full-screen view asks for this the
+    // bar is already sliding out from under the player page, and the sleeve has
+    // to leave from — and return to — the place the eye last saw it rather than
+    // wherever the strip has slid to since. `bar.y` is the slide, so taking it
+    // back off is the whole correction.
+    function dockedArtRect(target: Item): rect {
+        const corner = artFrame.mapToItem(target, 0, 0);
+        return Qt.rect(corner.x, corner.y - bar.y, artFrame.width, artFrame.height);
+    }
+
+    readonly property real artRadius: artFrame.radius
+
     // The owner's way in. Nothing in this file calls it by itself.
     function focusTransport(): void {
         if (mini.shown)
@@ -600,6 +620,9 @@ FocusScope {
                     radius: mini.isAudio ? 0 : Theme.radiusChip
                     clip: true
                     color: Theme.surfaceRaisedColor
+                    // Its geometry stays — the labels anchor to its right edge —
+                    // but the square itself is in the air.
+                    opacity: mini.sleeveInFlight ? 0 : 1
 
                     Image {
                         anchors.fill: parent

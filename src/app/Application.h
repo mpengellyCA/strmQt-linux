@@ -23,6 +23,7 @@ class MusicController;
 class PlaylistController;
 class RemoteControlService;
 class EmbyImageFetcher;
+class CoverTintService;
 class PlayerBackend;
 class PowerInhibit;
 class MprisPlayer;
@@ -49,6 +50,7 @@ public:
     SeriesController *series() const { return m_series; }
     DetailsController *details() const { return m_details; }
     EmbyImageFetcher *imageFetcher() const { return m_imageFetcher; }
+    CoverTintService *coverTint() const { return m_coverTint; }
     ItemActions *actions() const { return m_actions; }
     InputMap *input() const { return m_input; }
     RemoteControlService *remote() const { return m_remote; }
@@ -74,6 +76,7 @@ private:
     SeriesController *m_series = nullptr;
     DetailsController *m_details = nullptr;
     EmbyImageFetcher *m_imageFetcher = nullptr;
+    CoverTintService *m_coverTint = nullptr;
     ItemActions *m_actions = nullptr;
     InputMap *m_input = nullptr;
 #ifdef STRMQT_HAVE_SDL3

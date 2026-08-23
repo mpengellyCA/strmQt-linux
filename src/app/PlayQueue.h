@@ -32,6 +32,9 @@ class PlayQueue : public QAbstractListModel
     Q_PROPERTY(bool hasPrevious READ hasPrevious NOTIFY currentChanged)
     Q_PROPERTY(bool shuffled READ shuffled WRITE setShuffled NOTIFY shuffledChanged)
     Q_PROPERTY(RepeatMode repeatMode READ repeatMode WRITE setRepeatMode NOTIFY repeatModeChanged)
+    // Where this queue came from, for the now-playing pane's "up next in
+    // context" (MUSIC.md §4): "from Lift Yr Skinny Fists".
+    Q_PROPERTY(QString contextLabel READ contextLabel NOTIFY queueChanged)
 
 public:
     enum RepeatMode
@@ -60,6 +63,14 @@ public:
     // so a queue always starts unshuffled (callers that want a shuffled queue
     // call setShuffled(true) afterwards and can still get the order back).
     void setItems(QList<MediaItem> items, int startIndex = 0);
+
+    // Derived from what the queue HOLDS, not remembered from the verb that
+    // filled it. A label carried in from a click can outlive the queue it
+    // described — play an album, then queue three more things onto it, and the
+    // remembered label is a lie — whereas this cannot be wrong about a queue it
+    // is reading. Empty when there is no single answer: a hand-assembled queue,
+    // a shuffle across a whole library, or anything that is not music.
+    QString contextLabel() const;
 
     int currentIndex() const { return m_currentIndex; }
     // {} when the queue is empty.

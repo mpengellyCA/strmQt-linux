@@ -70,6 +70,14 @@ signals:
     // the artwork rather than publishing a URI that resolves to nothing.
     void fileExported(const QString &id, const QUrl &fileUrl);
 
+    // Every cover the interface draws, at the moment it decodes. CoverTintService
+    // samples these for the wash (MUSIC.md §4, Rule 2) rather than downloading
+    // the sleeve a third time: the hero, the docked bar and the album header are
+    // already drawing the exact image whose colour they want, and exportToFile()
+    // above is a genuine second fetch precisely because it could not share one.
+    // `id` is the same "{itemId}/{imageType}/{tag}" fetch() takes.
+    void imageDecoded(const QString &id, const QImage &image);
+
 private:
     QNetworkRequest imageRequest(const QUrl &url) const;
 

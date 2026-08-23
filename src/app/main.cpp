@@ -2,6 +2,7 @@
 #include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/RemoteControlService.h"
+#include "CoverTintService.h"
 #include "EmbyImageProvider.h"
 #include "ItemActions.h"
 #include "controllers/DetailsController.h"
@@ -46,6 +47,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("RemoteCtl"), app.remote());
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistCtl"), app.playlists());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicCtl"), app.music());
+    // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
+    // CoverWash.qml reads the tints themselves.
+    engine.rootContext()->setContextProperty(QStringLiteral("CoverTint"), app.coverTint());
     // Self-test mode (STRMQT_SELFTEST=1): Main.qml constructs every page
     // component and exits non-zero if any fails.
     //

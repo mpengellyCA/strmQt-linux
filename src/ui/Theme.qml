@@ -87,6 +87,23 @@ QtObject {
     readonly property color warningColor: "#E0A33E"    // transcoding, degraded
     readonly property color negative: "#E05C5C"        // errors, record
 
+    // ── Cover wash ─────────────────────────────────────────────────────────
+    // Music's one sampled colour (MUSIC.md §4, Rule 2) is DATA, not a token:
+    // it comes off the sleeve through CoverTint and is clamped in C++ before
+    // any of it reaches QML. What is a token is the ceiling it may be drawn at.
+    //
+    // Re-exported from C++ rather than written down here, because that 0.22 is
+    // one of the four numbers the clamp is made of — the other three being the
+    // saturation cap and the two lightness bounds — and all four are proven
+    // together in tests/unit/tst_cover_tint.cpp. A token that had drifted from
+    // the tested value would be a legibility guarantee nothing checks.
+    //
+    // Same guard as the accent above: under qmllint and the bare `qml` runtime
+    // there is no CoverTint context property, and "no wash at all" is the safe
+    // answer there rather than a second copy of the number.
+    readonly property real washOpacity: typeof CoverTint !== "undefined"
+                                        ? CoverTint.maxWashOpacity : 0.0
+
     readonly property color scrimColor: Qt.rgba(0.047, 0.043, 0.039, 0.86)
     readonly property color veil: Qt.rgba(0.047, 0.043, 0.039, 0.45)
     readonly property color hoverTint: Qt.rgba(0.96, 0.945, 0.918, 0.10)
@@ -129,6 +146,13 @@ QtObject {
     // ── Elevation ──────────────────────────────────────────────────────────
     // Shadow parameters for QtQuick.Effects MultiEffect. Surface + shadow are a
     // pair; components must not invent a "slightly lighter" colour instead.
+    //
+    // The ink a shadow is cast in. Named here because a shadow is part of the
+    // elevation pair above and this phase adds no literal colour to a QML file;
+    // the controls that predate the token still spell it inline, and migrating
+    // them is not this change's business.
+    readonly property color shadowColor: "#000000"
+
     readonly property var elevation1: ({ blur: 0.18, y: 1, opacity: 0.50 })
     readonly property var elevation2: ({ blur: 0.42, y: 8, opacity: 0.62 })
     readonly property var elevation3: ({ blur: 0.62, y: 14, opacity: 0.70 })
