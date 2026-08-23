@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and test
+    # Arch, because Qt 6.11 and mpv 0.41 are what this targets and Ubuntu's
+    # runners ship neither. The container gives the same toolchain the project
+    # is developed against.
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake ninja pkgconf gcc \
+            qt6-base qt6-declarative qt6-websockets qt6-tools \
+            mpv vlc sdl3 \
+            xorg-server-xvfb
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset release -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        run: ctest --test-dir build/release --output-on-failure
+
+      # qmllint exits 0 even on warnings, so the exit code is NOT the gate.
+      # Only the categories below mean a QML type will fail to resolve at
+      # runtime — which is how a broken page can ship from a clean build.
+      - name: QML lint (type errors only)
+        run: |
+          cmake --build build/release --target strmqt_qmllint 2>&1 | tee lint.log
+          if grep -E 'is not a type|was not found|unavailable|incompatible-type' lint.log; then
+            echo "::error::qmllint found unresolvable QML types"
+            exit 1
+          fi
+
+      # A plain offscreen run only ever constructs StackView's initialItem, so
+      # it proves nothing about pages reached by a push. This constructs every
+      # page and exits non-zero if any fails.
+      - name: Page-construction self-test
+        env:
+          STRMQT_SELFTEST: "1"
+          QT_QPA_PLATFORM: offscreen
+          QT_ASSUME_STDERR_HAS_CONSOLE: "1"
+        run: ./build/release/strmqt
+
+      - name: Install layer is sane
+        run: |
+          DESTDIR=/tmp/stage cmake --install build/release
+          find /tmp/stage -type f | sort
+          # The QML module is compiled into the executable; shipping loose QML
+          # or a static library would mean the install rules drifted.
+          if find /tmp/stage \( -name '*.qml' -o -name qmldir -o -name '*.a' \) | grep -q .; then
+            echo "::error::unexpected files in the install tree"
+            exit 1
+          fi
