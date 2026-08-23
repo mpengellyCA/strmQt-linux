@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QImage>
+#include <QNetworkRequest>
 #include <QQuickAsyncImageProvider>
 #include <QQuickImageResponse>
+#include <QUrl>
 
 class QNetworkAccessManager;
 
@@ -40,7 +42,32 @@ public:
     Q_INVOKABLE void fetch(strmqt::EmbyImageResponse *response, const QString &id,
                            const QSize &requestedSize);
 
+    // Writes one image to a file another *process* can open, and reports its
+    // URL through fileExported().
+    //
+    // The disk cache below already holds these bytes, but QNetworkDiskCache's
+    // filenames are an implementation detail — hashed, versioned, and with no
+    // supported way to ask for one — so they cannot be handed out as a file://
+    // URL. MPRIS's mpris:artUrl is exactly that: Plasma's applet, the lock
+    // screen and the notification daemon open the path themselves. Hence a
+    // deliberate second copy, which still costs no extra download because this
+    // request goes through the same cache.
+    //
+    // `id` is the same "{itemId}/{imageType}/{tag}" the provider takes. Files
+    // land in <CacheLocation>/<subdir>/, one per image tag: reusing a single
+    // filename would be smaller, but clients cache thumbnails by URL, so the
+    // panel would keep drawing the previous track's sleeve. The directory is
+    // pruned instead, oldest first.
+    void exportToFile(const QString &id, const QString &subdir);
+
+signals:
+    // Empty url when the image could not be fetched or decoded — callers omit
+    // the artwork rather than publishing a URI that resolves to nothing.
+    void fileExported(const QString &id, const QUrl &fileUrl);
+
 private:
+    QNetworkRequest imageRequest(const QUrl &url) const;
+
     emby::EmbyClient *m_client;
     QNetworkAccessManager *m_nam;
 };

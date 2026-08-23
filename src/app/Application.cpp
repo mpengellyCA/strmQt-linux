@@ -186,20 +186,90 @@ void Application::wirePlaybackIntegrations()
     };
     connect(m_player, &PlayerController::activeChanged, this, syncState);
     connect(m_player, &PlayerController::pausedChanged, this, syncState);
+    // Title and duration land on separate signals and the queue entry carries
+    // everything else, so all three funnel into one rebuild; MprisPlayer drops
+    // the repeats rather than putting them on the bus.
     connect(m_player, &PlayerController::titleChanged, this,
-            [this] { m_mpris->setNowPlaying(m_player->title(), {}, m_player->durationMs()); });
+            &Application::pushNowPlayingToMpris);
     connect(m_player, &PlayerController::durationChanged, this,
-            [this] { m_mpris->setNowPlaying(m_player->title(), {}, m_player->durationMs()); });
+            &Application::pushNowPlayingToMpris);
+    connect(m_player->queue(), &PlayQueue::currentChanged, this,
+            &Application::pushNowPlayingToMpris);
     connect(m_player, &PlayerController::positionChanged, this,
             [this] { m_mpris->setPositionMs(m_player->positionMs()); });
+    // CanGoNext / CanGoPrevious have to be re-announced, not just answered: an
+    // applet reads the property when the player appears and never again.
+    connect(m_player, &PlayerController::queueStateChanged, this, [this] {
+        m_mpris->setQueueState(m_player->hasNext(), m_player->hasPrevious());
+    });
+    m_mpris->setQueueState(m_player->hasNext(), m_player->hasPrevious());
+    // The sleeve arrives long after the rest of the track. Anything but the
+    // export we are currently waiting on belongs to a superseded item.
+    connect(m_imageFetcher, &EmbyImageFetcher::fileExported, this,
+            [this](const QString &id, const QUrl &fileUrl) {
+                if (id != m_mprisArtId || fileUrl.isEmpty())
+                    return;
+                m_mprisArtUrl = fileUrl;
+                m_mpris->setArtUrl(fileUrl);
+            });
 
     // MPRIS remote commands (KDE Connect phone, Plasma applet) → controller.
     connect(m_mpris, &MprisPlayer::playPauseRequested, m_player, &PlayerController::togglePause);
     connect(m_mpris, &MprisPlayer::playRequested, m_player, &PlayerController::togglePause);
     connect(m_mpris, &MprisPlayer::pauseRequested, m_player, &PlayerController::togglePause);
     connect(m_mpris, &MprisPlayer::stopRequested, m_player, &PlayerController::stop);
+    connect(m_mpris, &MprisPlayer::nextRequested, m_player, &PlayerController::playNext);
+    connect(m_mpris, &MprisPlayer::previousRequested, m_player, &PlayerController::playPrevious);
     connect(m_mpris, &MprisPlayer::seekRequested, m_player, &PlayerController::seekRelative);
     connect(m_mpris, &MprisPlayer::setPositionRequested, m_player, &PlayerController::seekTo);
+}
+
+void Application::pushNowPlayingToMpris()
+{
+    // The controller knows the title and the runtime; everything a media applet
+    // draws besides those — the sleeve, the album, the performers, the track
+    // number — only exists on the queue entry, which is why this reads both.
+    const MediaItem item = m_player->queue()->current();
+
+    MprisPlayer::TrackInfo track;
+    track.itemId = item.id;
+    track.title = m_player->title().isEmpty() ? item.name : m_player->title();
+    track.durationMs = m_player->durationMs();
+    track.album = item.album;
+    if (!item.artists.isEmpty())
+        track.artists = item.artists;
+    else if (!item.albumArtist.isEmpty())
+        track.artists = {item.albumArtist};
+    if (!item.albumArtist.isEmpty())
+        track.albumArtists = {item.albumArtist};
+    track.trackNumber = item.indexNumber;
+    // playCount is 0 both for "never played" and for a queue entry that never
+    // carried UserData, so only a positive count is a fact worth publishing.
+    if (item.playCount > 0)
+        track.useCount = item.playCount;
+    // xesam:userRating is the *user's* rating, so communityRating is the wrong
+    // number for it. The only per-user verdict this client carries is the
+    // favourite flag; anything else stays unrated, because publishing 0.0 reads
+    // as "rated zero stars" rather than "not rated".
+    if (item.favorite)
+        track.userRating = 1.0;
+
+    // coverSource() is the square: for a track it resolves to the ALBUM's cover
+    // rather than whatever the ripper embedded in the file.
+    const MediaItem::ImageRef cover = item.coverSource();
+    const QString artId =
+        cover.isValid()
+            ? cover.itemId + QLatin1Char('/') + cover.imageType + QLatin1Char('/') + cover.tag
+            : QString();
+    if (artId != m_mprisArtId) {
+        m_mprisArtId = artId;
+        m_mprisArtUrl.clear();
+        if (!artId.isEmpty())
+            m_imageFetcher->exportToFile(artId, QStringLiteral("mpris"));
+    }
+    track.artUrl = m_mprisArtUrl;
+
+    m_mpris->setNowPlaying(track);
 }
 
 Application::~Application() = default;

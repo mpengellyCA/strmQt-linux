@@ -67,6 +67,10 @@ target_include_directories(tst_player_tracks PRIVATE mocks)
 
 strmqt_add_test(tst_play_queue unit/tst_play_queue.cpp)
 
+# MprisPlayer assembles Metadata without a registered D-Bus connection, so the
+# map and its value types are testable on a machine with no session bus.
+strmqt_add_test(tst_mpris_metadata unit/tst_mpris_metadata.cpp)
+
 strmqt_add_test(tst_queue_playback
     integration/tst_queue_playback.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp

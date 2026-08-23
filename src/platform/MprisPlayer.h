@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
+#include <QUrl>
 #include <QVariantMap>
 
 namespace strmqt {
@@ -17,13 +19,44 @@ class MprisPlayer : public QObject
     Q_OBJECT
 
 public:
+    // Everything MPRIS is willing to say about the item under the playhead.
+    //
+    // A field left at its default means UNKNOWN and is left OUT of Metadata
+    // rather than published empty. That distinction is not pedantry: a client
+    // renders an empty xesam:album as a visible blank line and a 0.0
+    // xesam:userRating as "rated zero stars", so absent is strictly better than
+    // empty for every key here.
+    struct TrackInfo
+    {
+        QString itemId; // namespaces mpris:trackid; not published on its own
+        QString title;
+        QStringList artists;
+        QString album;
+        QStringList albumArtists;
+        QUrl artUrl; // must be a URI a *foreign process* can open (file://)
+        qint64 durationMs = 0;
+        int trackNumber = -1;     // < 1 is unknown; there is no track zero
+        int useCount = -1;        // < 0 is unknown
+        double userRating = -1.0; // [0.0, 1.0]; < 0 is unrated
+
+        bool operator==(const TrackInfo &) const = default;
+    };
+
     explicit MprisPlayer(QObject *parent = nullptr);
     ~MprisPlayer() override;
 
     bool registerOnBus(); // false when D-Bus is unavailable (degrade silently)
 
     void setPlaybackActive(bool active, bool paused);
-    void setNowPlaying(const QString &title, const QString &artist, qint64 durationMs);
+    void setNowPlaying(const TrackInfo &track);
+    // Artwork is fetched asynchronously and lands after the rest of the track,
+    // so it gets its own setter instead of forcing the caller to hold a whole
+    // TrackInfo just to fill one field in later.
+    void setArtUrl(const QUrl &artUrl);
+    // CanGoNext / CanGoPrevious. Hardcoding these to false made Plasma's applet
+    // draw both transport buttons dead; not re-announcing them on change is the
+    // same bug one step later, because an applet reads the property once.
+    void setQueueState(bool hasNext, bool hasPrevious);
     void setPositionMs(qint64 positionMs);
     void notifySeeked(qint64 positionMs);
 
@@ -31,24 +64,29 @@ public:
     QString playbackStatus() const;
     QVariantMap metadata() const;
     qlonglong positionUs() const { return m_positionMs * 1000; }
+    bool canGoNext() const { return m_hasNext; }
+    bool canGoPrevious() const { return m_hasPrevious; }
 
 signals:
     void playPauseRequested();
     void playRequested();
     void pauseRequested();
     void stopRequested();
+    void nextRequested();
+    void previousRequested();
     void seekRequested(qint64 deltaMs);
     void setPositionRequested(qint64 positionMs);
 
 private:
     void emitPropertiesChanged(const QVariantMap &changed);
+    void emitMetadataChanged();
 
     bool m_registered = false;
     bool m_active = false;
     bool m_paused = false;
-    QString m_title;
-    QString m_artist;
-    qint64 m_durationMs = 0;
+    bool m_hasNext = false;
+    bool m_hasPrevious = false;
+    TrackInfo m_track;
     qint64 m_positionMs = 0;
 };
 

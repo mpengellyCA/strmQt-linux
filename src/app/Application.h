@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QGuiApplication>
+#include <QString>
+#include <QUrl>
 
 namespace strmqt {
 
@@ -56,6 +58,9 @@ public:
 
 private:
     void wirePlaybackIntegrations();
+    // Rebuilds the MPRIS track from the queue entry under the playhead and, when
+    // the sleeve changed, kicks off the async export that gives it a file:// URI.
+    void pushNowPlayingToMpris();
 
     Settings *m_settings = nullptr;
     SecretsStore *m_secrets = nullptr;
@@ -80,6 +85,12 @@ private:
     MusicController *m_music = nullptr;
     PowerInhibit *m_powerInhibit = nullptr;
     MprisPlayer *m_mpris = nullptr;
+    // Image id ("{itemId}/{imageType}/{tag}") of the sleeve MPRIS is showing or
+    // waiting on. Doubles as the generation guard for the export: a reply whose
+    // id is no longer this one belongs to a track that has already been
+    // replaced, and publishing it would put the wrong cover on the lock screen.
+    QString m_mprisArtId;
+    QUrl m_mprisArtUrl;
 };
 
 } // namespace strmqt

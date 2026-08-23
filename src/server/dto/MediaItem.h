@@ -64,6 +64,11 @@ struct MediaItem
 
     // Per-user state (Emby UserData).
     int unplayedItemCount = 0; // series/season rollup
+    // Times this user has finished the item. 0 means either "never" or "the
+    // request did not ask for UserData" — the two are indistinguishable here,
+    // so consumers that must not guess (MPRIS xesam:useCount) publish it only
+    // when it is positive.
+    int playCount = 0;
     qint64 playbackPositionTicks = 0;
     double playedPercentage = 0.0;
     bool played = false;

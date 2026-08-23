@@ -8,12 +8,33 @@
 #include <QDBusMessage>
 #include <QDBusObjectPath>
 
+#include <algorithm>
+
 namespace strmqt {
 
 namespace {
 const auto kServiceName = QStringLiteral("org.mpris.MediaPlayer2.strmqt");
 const auto kObjectPath = QStringLiteral("/org/mpris/MediaPlayer2");
 const auto kPlayerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player");
+const auto kTrackPathPrefix = QStringLiteral("/ca/mikesdev/strmqt/track/");
+
+// mpris:trackid is what a client keys its per-track state on — the thumbnail it
+// caches, the "track changed" notification it raises. A constant path makes an
+// album look like one very long track, so the item id goes in it. Only
+// [A-Za-z0-9_] is legal in a D-Bus path element, and an invalid path would take
+// the whole Metadata property down with it, so everything else is folded to '_'.
+QDBusObjectPath trackPath(const QString &itemId)
+{
+    QString element;
+    element.reserve(itemId.size());
+    for (const QChar c : itemId) {
+        const bool safe = c.unicode() < 128 && (c.isLetterOrNumber() || c == QLatin1Char('_'));
+        element.append(safe ? c : QLatin1Char('_'));
+    }
+    if (element.isEmpty())
+        element = QStringLiteral("current");
+    return QDBusObjectPath(kTrackPathPrefix + element);
+}
 } // namespace
 
 // org.mpris.MediaPlayer2 (root)
@@ -77,8 +98,8 @@ public:
     qlonglong position() const { return m_player->positionUs(); }
     double minimumRate() const { return 1.0; }
     double maximumRate() const { return 1.0; }
-    bool canGoNext() const { return false; }
-    bool canGoPrevious() const { return false; }
+    bool canGoNext() const { return m_player->canGoNext(); }
+    bool canGoPrevious() const { return m_player->canGoPrevious(); }
     bool canPlay() const { return true; }
     bool canPause() const { return true; }
     bool canSeek() const { return true; }
@@ -92,8 +113,8 @@ public slots:
     void Play() { emit m_player->playRequested(); }
     void Pause() { emit m_player->pauseRequested(); }
     void Stop() { emit m_player->stopRequested(); }
-    void Next() {}
-    void Previous() {}
+    void Next() { emit m_player->nextRequested(); }
+    void Previous() { emit m_player->previousRequested(); }
     void Seek(qlonglong offsetUs) { emit m_player->seekRequested(offsetUs / 1000); }
     void SetPosition(const QDBusObjectPath &, qlonglong positionUs)
     {
@@ -157,14 +178,30 @@ QVariantMap MprisPlayer::metadata() const
     QVariantMap map;
     if (!m_active)
         return map;
-    map.insert(QStringLiteral("mpris:trackid"),
-               QVariant::fromValue(QDBusObjectPath(QStringLiteral("/ca/mikesdev/strmqt/track"))));
-    if (m_durationMs > 0)
-        map.insert(QStringLiteral("mpris:length"), qlonglong(m_durationMs) * 1000);
-    if (!m_title.isEmpty())
-        map.insert(QStringLiteral("xesam:title"), m_title);
-    if (!m_artist.isEmpty())
-        map.insert(QStringLiteral("xesam:artist"), QStringList{m_artist});
+    // The D-Bus signature of each value is load-bearing, not incidental: xesam
+    // declares artist and albumArtist as string ARRAYS, trackNumber and useCount
+    // as int32 and userRating as a double. A client that reads them by signature
+    // silently drops anything typed differently, which is indistinguishable from
+    // not publishing the key at all.
+    map.insert(QStringLiteral("mpris:trackid"), QVariant::fromValue(trackPath(m_track.itemId)));
+    if (m_track.durationMs > 0)
+        map.insert(QStringLiteral("mpris:length"), qlonglong(m_track.durationMs) * 1000);
+    if (!m_track.artUrl.isEmpty())
+        map.insert(QStringLiteral("mpris:artUrl"), m_track.artUrl.toString());
+    if (!m_track.title.isEmpty())
+        map.insert(QStringLiteral("xesam:title"), m_track.title);
+    if (!m_track.artists.isEmpty())
+        map.insert(QStringLiteral("xesam:artist"), m_track.artists);
+    if (!m_track.album.isEmpty())
+        map.insert(QStringLiteral("xesam:album"), m_track.album);
+    if (!m_track.albumArtists.isEmpty())
+        map.insert(QStringLiteral("xesam:albumArtist"), m_track.albumArtists);
+    if (m_track.trackNumber > 0)
+        map.insert(QStringLiteral("xesam:trackNumber"), m_track.trackNumber);
+    if (m_track.useCount >= 0)
+        map.insert(QStringLiteral("xesam:useCount"), m_track.useCount);
+    if (m_track.userRating >= 0.0)
+        map.insert(QStringLiteral("xesam:userRating"), std::clamp(m_track.userRating, 0.0, 1.0));
     return map;
 }
 
@@ -182,13 +219,35 @@ void MprisPlayer::setPlaybackActive(bool active, bool paused)
     emitPropertiesChanged(changed);
 }
 
-void MprisPlayer::setNowPlaying(const QString &title, const QString &artist, qint64 durationMs)
+void MprisPlayer::setNowPlaying(const TrackInfo &track)
 {
-    m_title = title;
-    m_artist = artist;
-    m_durationMs = durationMs;
+    // Title and duration arrive from separate controller signals, so this is
+    // called several times per track with the same content. Comparing first
+    // keeps that off the bus — a PropertiesChanged storm makes some clients
+    // re-download the artwork on every emission.
+    if (m_track == track)
+        return;
+    m_track = track;
+    emitMetadataChanged();
+}
+
+void MprisPlayer::setArtUrl(const QUrl &artUrl)
+{
+    if (m_track.artUrl == artUrl)
+        return;
+    m_track.artUrl = artUrl;
+    emitMetadataChanged();
+}
+
+void MprisPlayer::setQueueState(bool hasNext, bool hasPrevious)
+{
+    if (m_hasNext == hasNext && m_hasPrevious == hasPrevious)
+        return;
+    m_hasNext = hasNext;
+    m_hasPrevious = hasPrevious;
     QVariantMap changed;
-    changed.insert(QStringLiteral("Metadata"), metadata());
+    changed.insert(QStringLiteral("CanGoNext"), hasNext);
+    changed.insert(QStringLiteral("CanGoPrevious"), hasPrevious);
     emitPropertiesChanged(changed);
 }
 
@@ -207,6 +266,13 @@ void MprisPlayer::notifySeeked(qint64 positionMs)
         QDBusMessage::createSignal(kObjectPath, kPlayerInterface, QStringLiteral("Seeked"));
     signal << qlonglong(positionMs) * 1000;
     QDBusConnection::sessionBus().send(signal);
+}
+
+void MprisPlayer::emitMetadataChanged()
+{
+    QVariantMap changed;
+    changed.insert(QStringLiteral("Metadata"), metadata());
+    emitPropertiesChanged(changed);
 }
 
 void MprisPlayer::emitPropertiesChanged(const QVariantMap &changed)

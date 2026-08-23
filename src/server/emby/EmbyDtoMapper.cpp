@@ -96,6 +96,7 @@ MediaItem parseMediaItem(const QJsonObject &json)
     item.playedPercentage = userData.value(QLatin1String("PlayedPercentage")).toDouble(0.0);
     item.played = userData.value(QLatin1String("Played")).toBool(false);
     item.unplayedItemCount = userData.value(QLatin1String("UnplayedItemCount")).toInt(0);
+    item.playCount = userData.value(QLatin1String("PlayCount")).toInt(0);
     item.favorite = userData.value(QLatin1String("IsFavorite")).toBool(false);
 
     item.premiereDate = json.value(QLatin1String("PremiereDate")).toString();
