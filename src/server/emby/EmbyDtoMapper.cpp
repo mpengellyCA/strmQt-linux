@@ -151,6 +151,14 @@ MediaItem parseMediaItem(const QJsonObject &json)
         json.value(QLatin1String("ParentBackdropImageTags")).toArray().first().toString();
     item.parentBackdropItemId =
         json.value(QLatin1String("ParentBackdropItemId")).toVariant().toString();
+
+    // 1:1 sources for square art. AlbumPrimaryImageTag is the tag of the
+    // ALBUM's cover and has to be fetched from AlbumId, not from this track;
+    // ParentPrimaryImageItemId names its own item for the same reason.
+    item.albumPrimaryImageTag = json.value(QLatin1String("AlbumPrimaryImageTag")).toString();
+    item.parentPrimaryImageItemId =
+        json.value(QLatin1String("ParentPrimaryImageItemId")).toVariant().toString();
+    item.parentPrimaryImageTag = json.value(QLatin1String("ParentPrimaryImageTag")).toString();
     return item;
 }
 

@@ -84,6 +84,17 @@ struct MediaItem
     QString parentBackdropImageTag;
     QString parentBackdropItemId;
 
+    // 1:1 sources. A track's own Primary is whatever the ripper embedded in the
+    // file — often a 300 px scan, sometimes a different pressing, sometimes the
+    // back cover — while the album carries the one curated cover the whole
+    // record should show. So for audio the album wins and the file's own art is
+    // the last resort, which is the reverse of every other item kind. The tag
+    // under AlbumPrimaryImageTag belongs to AlbumId, not to this item.
+    // See MediaItem::coverSource().
+    QString albumPrimaryImageTag;
+    QString parentPrimaryImageItemId;
+    QString parentPrimaryImageTag;
+
     qint64 runtimeMs() const { return runtimeTicks / kTicksPerMs; }
     qint64 positionMs() const { return playbackPositionTicks / kTicksPerMs; }
     bool isResumable() const { return playbackPositionTicks > 0 && !played; }
@@ -119,6 +130,42 @@ struct MediaItem
             return {parentBackdropItemId, QStringLiteral("Backdrop"), parentBackdropImageTag};
         if (!episode && !primaryImageTag.isEmpty())
             return {id, QStringLiteral("Primary"), primaryImageTag};
+        return {};
+    }
+
+    // Best available 1:1 image — the sleeve. Same triple, same "empty tag means
+    // draw the placeholder, not a hole" contract as thumbSource().
+    //
+    // Precedence is type-dependent because the inversion audio needs is wrong
+    // everywhere else: a movie's own poster is the only poster it has, while a
+    // track's own Primary is the least trustworthy square it carries.
+    ImageRef coverSource() const
+    {
+        const ImageRef own =
+            primaryImageTag.isEmpty()
+                ? ImageRef{}
+                : ImageRef{id, QStringLiteral("Primary"), primaryImageTag};
+        const ImageRef parent =
+            (parentPrimaryImageTag.isEmpty() || parentPrimaryImageItemId.isEmpty())
+                ? ImageRef{}
+                : ImageRef{parentPrimaryImageItemId, QStringLiteral("Primary"),
+                           parentPrimaryImageTag};
+
+        if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
+            || type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0) {
+            if (!albumPrimaryImageTag.isEmpty() && !albumId.isEmpty())
+                return {albumId, QStringLiteral("Primary"), albumPrimaryImageTag};
+            if (parent.isValid())
+                return parent;
+            return own;
+        }
+        if (own.isValid())
+            return own;
+        // An album with no cover of its own falls back to the artist's image:
+        // a filled grid cell beats a hole, and the artist is the only other
+        // square the server offers for it.
+        if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0)
+            return parent;
         return {};
     }
 };

@@ -114,8 +114,13 @@ QVariant MediaItemModel::data(const QModelIndex &index, int role) const
         return item.favorite;
     case ResumableRole:
         return item.isResumable();
-    case PosterUrlRole:
-        return embyImageSource(item.id, QStringLiteral("Primary"), item.primaryImageTag);
+    case PosterUrlRole: {
+        // Every square in the app comes through here — grid card, mini player,
+        // now-playing hero, queue row — so routing it through coverSource() is
+        // what makes a track show its album's cover rather than a hole.
+        const MediaItem::ImageRef ref = item.coverSource();
+        return ref.isValid() ? embyImageSource(ref.itemId, ref.imageType, ref.tag) : QString();
+    }
     case BackdropUrlRole:
         return embyImageSource(item.id, QStringLiteral("Backdrop"),
                                item.backdropImageTags.value(0));

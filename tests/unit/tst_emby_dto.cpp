@@ -32,6 +32,7 @@ private slots:
     void sparseItemUsesDefaults();
     void emptyJsonDoesNotCrash();
     void wideArtPicksPerItemKind();
+    void squareArtPrefersTheAlbumCover();
 };
 
 // Which 16:9 source exists depends entirely on the item kind, so a wide card
@@ -97,6 +98,90 @@ void EmbyDtoTest::wideArtPicksPerItemKind()
         "Id": "6", "Name": "Bare", "Type": "Episode"
     })json").object());
     QVERIFY(!bareEpisode.thumbSource().isValid());
+}
+
+// The square is the unit for music, and for a TRACK the trustworthy square is
+// the album's, not the one the ripper embedded in the file. This inversion is
+// audio-only: everywhere else an item's own Primary is the only poster it has.
+void EmbyDtoTest::squareArtPrefersTheAlbumCover()
+{
+    // A CD rip carries no embedded art at all. Before this chain existed the
+    // queue, the mini player and the album's own track rows all drew holes.
+    const MediaItem bareTrack = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90210", "Name": "Threnody", "Type": "Audio",
+        "AlbumId": "88001", "Album": "Lift Yr Skinny Fists",
+        "AlbumPrimaryImageTag": "album-cover-tag"
+    })json").object());
+    MediaItem::ImageRef ref = bareTrack.coverSource();
+    QVERIFY(ref.isValid());
+    // The album's tag against the ALBUM's id: fetching it from the track's id
+    // is a URL for an image that does not exist.
+    QCOMPARE(ref.itemId, QStringLiteral("88001"));
+    QCOMPARE(ref.imageType, QStringLiteral("Primary"));
+    QCOMPARE(ref.tag, QStringLiteral("album-cover-tag"));
+
+    // A track that DOES have embedded art still yields to the album: per-file
+    // art is frequently a low-res scan or a different pressing, and one record
+    // whose tracks came from several sources is what made a queue look like a
+    // ransom note.
+    const MediaItem taggedTrack = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90211", "Name": "Storm", "Type": "Audio",
+        "ImageTags": { "Primary": "embedded-tag" },
+        "AlbumId": "88001", "AlbumPrimaryImageTag": "album-cover-tag"
+    })json").object());
+    QCOMPARE(taggedTrack.coverSource().tag, QStringLiteral("album-cover-tag"));
+
+    // No album cover: the parent, then the file's own art. Last resort, but a
+    // resort — a single loose track has nothing else.
+    const MediaItem orphan = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90212", "Name": "Loose", "Type": "Audio",
+        "ImageTags": { "Primary": "embedded-tag" }
+    })json").object());
+    ref = orphan.coverSource();
+    QCOMPARE(ref.itemId, QStringLiteral("90212"));
+    QCOMPARE(ref.tag, QStringLiteral("embedded-tag"));
+
+    const MediaItem viaParent = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90213", "Name": "Inherited", "Type": "Audio",
+        "ParentPrimaryImageItemId": 88002, "ParentPrimaryImageTag": "parent-tag"
+    })json").object());
+    ref = viaParent.coverSource();
+    QCOMPARE(ref.itemId, QStringLiteral("88002"));
+    QCOMPARE(ref.tag, QStringLiteral("parent-tag"));
+
+    // An AlbumId with no tag beside it is not an image: fetching it would 404.
+    const MediaItem noArt = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "90214", "Name": "Nothing", "Type": "Audio", "AlbumId": "88001"
+    })json").object());
+    QVERIFY(!noArt.coverSource().isValid());
+
+    // An ALBUM uses its own cover first, and only then the artist's photo.
+    const MediaItem album = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "88001", "Name": "Lift Yr Skinny Fists", "Type": "MusicAlbum",
+        "ImageTags": { "Primary": "album-cover-tag" },
+        "ParentPrimaryImageItemId": 77001, "ParentPrimaryImageTag": "artist-tag"
+    })json").object());
+    QCOMPARE(album.coverSource().tag, QStringLiteral("album-cover-tag"));
+    const MediaItem coverless = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "88002", "Name": "Coverless", "Type": "MusicAlbum",
+        "ParentPrimaryImageItemId": 77001, "ParentPrimaryImageTag": "artist-tag"
+    })json").object());
+    QCOMPARE(coverless.coverSource().itemId, QStringLiteral("77001"));
+
+    // Video is untouched. A movie's own Primary is the only poster it has, and
+    // a movie inside a box-set folder must not start wearing the folder's art.
+    const MediaItem movie = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "5", "Name": "Some Film", "Type": "Movie",
+        "ImageTags": { "Primary": "poster-tag" },
+        "ParentPrimaryImageItemId": 4, "ParentPrimaryImageTag": "collection-tag"
+    })json").object());
+    QCOMPARE(movie.coverSource().itemId, QStringLiteral("5"));
+    QCOMPARE(movie.coverSource().tag, QStringLiteral("poster-tag"));
+    const MediaItem posterless = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "7", "Name": "Posterless", "Type": "Movie",
+        "ParentPrimaryImageItemId": 4, "ParentPrimaryImageTag": "collection-tag"
+    })json").object());
+    QVERIFY(!posterless.coverSource().isValid());
 }
 
 void EmbyDtoTest::authResult()

@@ -12,15 +12,22 @@ namespace {
 
 const auto kItemIdKey = QStringLiteral("itemId");
 
-// image://emby/<id>/<type>/<tag> → <tag>. The model turns a tag into a URL; a
-// map handed back from QML carries only the URL, so round-trip it rather than
-// losing every poster the moment an item passes through the queue.
-QString tagFromImageSource(const QString &source)
+// image://emby/<id>/<type>/<tag> → the triple. The model turns an item into a
+// URL; a map handed back from QML carries only the URL, so take it apart again
+// rather than losing every poster the moment an item passes through the queue.
+//
+// The id matters as much as the tag: MediaItem::coverSource() points a track's
+// square at its ALBUM, so a poster URL routinely names an item that is not this
+// one, and keeping only the tag would rebuild the album's tag against the
+// track's id — a URL for an image that does not exist.
+MediaItem::ImageRef refFromImageSource(const QString &source)
 {
     if (source.isEmpty())
         return {};
-    const qsizetype slash = source.lastIndexOf(QLatin1Char('/'));
-    return slash < 0 ? QString() : source.mid(slash + 1);
+    const QStringList parts = source.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (parts.size() < 3)
+        return {};
+    return {parts.at(parts.size() - 3), parts.at(parts.size() - 2), parts.last()};
 }
 
 int intOf(const QVariantMap &map, const QString &key, int fallback = -1)
@@ -65,8 +72,31 @@ MediaItem PlayQueue::itemFromVariant(const QVariant &value)
     item.playbackPositionTicks = map.value(QStringLiteral("positionMs")).toLongLong() * kTicksPerMs;
     item.played = map.value(QStringLiteral("played")).toBool();
     item.favorite = map.value(QStringLiteral("favorite")).toBool();
-    item.primaryImageTag = tagFromImageSource(map.value(QStringLiteral("posterUrl")).toString());
-    const QString backdrop = tagFromImageSource(map.value(QStringLiteral("backdropUrl")).toString());
+    // Music identity travels with the entry. Without it a queued track knows
+    // only its own name, which is why the bar had to reconstruct context by
+    // splitting a display string, and why the poster below cannot tell an
+    // album's cover from an artist's photo by id alone.
+    item.album = map.value(QStringLiteral("album")).toString();
+    item.albumId = map.value(QStringLiteral("albumId")).toString();
+    item.albumArtist = map.value(QStringLiteral("albumArtist")).toString();
+    item.artists = map.value(QStringLiteral("artists")).toStringList();
+    item.artistIds = map.value(QStringLiteral("artistIds")).toStringList();
+
+    // A poster URL that names another item is restored under whichever field
+    // put it there, so coverSource() rebuilds the identical URL and an entry can
+    // make the round trip any number of times without drifting.
+    const MediaItem::ImageRef poster =
+        refFromImageSource(map.value(QStringLiteral("posterUrl")).toString());
+    if (poster.itemId == item.id) {
+        item.primaryImageTag = poster.tag;
+    } else if (poster.isValid() && poster.itemId == item.albumId) {
+        item.albumPrimaryImageTag = poster.tag;
+    } else if (poster.isValid()) {
+        item.parentPrimaryImageItemId = poster.itemId;
+        item.parentPrimaryImageTag = poster.tag;
+    }
+    const QString backdrop =
+        refFromImageSource(map.value(QStringLiteral("backdropUrl")).toString()).tag;
     if (!backdrop.isEmpty())
         item.backdropImageTags = {backdrop};
     return item;

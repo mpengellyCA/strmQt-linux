@@ -457,6 +457,38 @@ void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
     // A bare id is a legal item, and anything else is simply not one.
     QCOMPARE(PlayQueue::itemFromVariant(QStringLiteral("ep9")).id, QStringLiteral("ep9"));
     QVERIFY(PlayQueue::itemFromVariant(QVariant()).id.isEmpty());
+
+    // A TRACK's poster names its album, not itself, so the id has to survive
+    // the trip as well as the tag: keeping only the tag would rebuild the
+    // album's tag against the track's id and every queued track would go blank
+    // the moment it passed through QML.
+    MediaItem track;
+    track.id = QStringLiteral("90210");
+    track.name = QStringLiteral("Threnody");
+    track.type = QStringLiteral("Audio");
+    track.album = QStringLiteral("Lift Yr Skinny Fists");
+    track.albumId = QStringLiteral("88001");
+    track.artists = {QStringLiteral("Godspeed You! Black Emperor")};
+    track.albumPrimaryImageTag = QStringLiteral("album-cover-tag");
+
+    MediaItemModel music;
+    music.setItems({track});
+    const QVariantMap map = music.get(0);
+    const MediaItem restoredTrack = PlayQueue::itemFromVariant(map);
+    QCOMPARE(restoredTrack.coverSource().itemId, QStringLiteral("88001"));
+    QCOMPARE(restoredTrack.coverSource().tag, QStringLiteral("album-cover-tag"));
+    // And it is restored as the ALBUM's cover, not as some anonymous parent
+    // image: the entry still knows which record it came from.
+    QCOMPARE(restoredTrack.albumPrimaryImageTag, QStringLiteral("album-cover-tag"));
+    QCOMPARE(restoredTrack.album, QStringLiteral("Lift Yr Skinny Fists"));
+    QCOMPARE(restoredTrack.artists, QStringList{QStringLiteral("Godspeed You! Black Emperor")});
+
+    // The whole point: the URL out is the URL back in, so a track can make the
+    // round trip any number of times without drifting.
+    MediaItemModel again;
+    again.setItems({restoredTrack});
+    QCOMPARE(again.get(0).value(QStringLiteral("posterUrl")).toString(),
+             map.value(QStringLiteral("posterUrl")).toString());
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)
