@@ -406,6 +406,60 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("-")},
          QString()},
+
+        // ── The docked bar, from the keyboard and from a pad ──────────────
+        // MiniPlayer::focusTransport() has existed since the bar did and
+        // nothing called it: the strip could be reached by Tab or by clicking
+        // it, which is to say a gamepad could not reach it at all. Browse
+        // context, not player: the bar exists precisely while the player page
+        // is NOT on top.
+        //
+        // "N" for now-playing. R3 because every other button on the pad is
+        // already spoken for in browse context, and clicking the right stick is
+        // the one gesture nothing else in this app uses.
+        {QStringLiteral("player.focusBar"),
+         QObject::tr("Jump to the now-playing bar"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextBrowse),
+         {QStringLiteral("N")},
+         QObject::tr("R3 (Right Stick click)")},
+
+        // ── Music (MUSIC.md §7) ───────────────────────────────────────────
+        // Its own context, because each of these three keys is already bound in
+        // browse or in player and only a non-overlapping context lets music
+        // have them. See InputMap::kContextMusic.
+        //
+        // A coexistence note that is not obvious: TrackTable claims single
+        // printable characters through Keys.onShortcutOverride while it has
+        // focus and type-to-jump is on, so "S" and "L" typed into a track table
+        // jump to a song rather than firing these. That is correct — the user
+        // is typing — and it is why the pages arm these on the page rather than
+        // on the table. Space is exempt at the table too until a word is
+        // already being typed, so play/pause works from a track list.
+        {QStringLiteral("music.playPause"),
+         QObject::tr("Play / pause while browsing"),
+         QStringLiteral("Music"),
+         QString::fromLatin1(InputMap::kContextMusic),
+         {QStringLiteral("Space")},
+         QString()},
+        {QStringLiteral("music.shuffleAll"),
+         QObject::tr("Shuffle this music library"),
+         QStringLiteral("Music"),
+         QString::fromLatin1(InputMap::kContextMusic),
+         {QStringLiteral("S")},
+         QString()},
+        {QStringLiteral("music.favorite"),
+         QObject::tr("Favourite what is selected"),
+         QStringLiteral("Music"),
+         QString::fromLatin1(InputMap::kContextMusic),
+         {QStringLiteral("L")},
+         QString()},
+        {QStringLiteral("music.instantMix"),
+         QObject::tr("Instant mix from here"),
+         QStringLiteral("Music"),
+         QString::fromLatin1(InputMap::kContextMusic),
+         {QStringLiteral("R")},
+         QString()},
     };
     return defs;
 }

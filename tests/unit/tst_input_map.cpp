@@ -21,6 +21,8 @@ private slots:
     void conflictedStoredBindingIsDroppedFromTheStore();
     void freedDefaultLetsTheSecondHalfOfASwapSurviveAReload();
     void contextsKeepBrowseAndPlayerApart();
+    void musicIsAThirdContext();
+    void theDockedBarIsReachable();
     void resetRestoresTheDefault();
     void resetAllClearsEveryOverride();
     void sequencesAreNormalised();
@@ -304,6 +306,59 @@ void InputMapTest::contextsKeepBrowseAndPlayerApart()
     QVERIFY(!m_map->setBinding(QStringLiteral("app.settings"), QStringLiteral("K")));
     QVERIFY(m_map->setBinding(QStringLiteral("player.cycleAudio"), QStringLiteral("T")));
     QCOMPARE(m_map->binding(QStringLiteral("player.cycleAudio")), QStringLiteral("T"));
+}
+
+// MUSIC.md §7. The three music keys are each already bound somewhere else, and
+// the whole reason music got a context of its own is that none of those places
+// can be live at the same time as a music page.
+void InputMapTest::musicIsAThirdContext()
+{
+    const QString music = QStringLiteral("music");
+    QCOMPARE(m_map->context(QStringLiteral("music.playPause")), music);
+    QCOMPARE(m_map->context(QStringLiteral("music.shuffleAll")), music);
+    QCOMPARE(m_map->context(QStringLiteral("music.favorite")), music);
+    QCOMPARE(m_map->context(QStringLiteral("music.instantMix")), music);
+
+    // Each of the three collides in EXACTLY the place it is supposed to, and
+    // resolves to the music action when asked in music context. This is the
+    // assertion that fails if music is ever given the browse or player context
+    // by mistake — defaultsHaveNoConflicts() would then fail too, but this one
+    // says why.
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("Space"), music),
+             QStringLiteral("music.playPause"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("Space"), QStringLiteral("browse")),
+             QStringLiteral("nav.select"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("S"), music),
+             QStringLiteral("music.shuffleAll"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("S"), QStringLiteral("player")),
+             QStringLiteral("player.stop"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("L"), music),
+             QStringLiteral("music.favorite"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("L"), QStringLiteral("player")),
+             QStringLiteral("player.markLoop"));
+
+    // And they are in the remap UI and the shortcut sheet, which is what
+    // "visible in the app's shortcut surface" means: both walk categories().
+    QVERIFY(m_map->categories().contains(QStringLiteral("Music")));
+    QCOMPARE(m_map->actionsForCategory(QStringLiteral("Music")).size(), 4);
+}
+
+// MiniPlayer::focusTransport() had no caller and the pad had no way in.
+void InputMapTest::theDockedBarIsReachable()
+{
+    const QString id = QStringLiteral("player.focusBar");
+    QVERIFY(m_map->hasAction(id));
+    QCOMPARE(m_map->binding(id), QStringLiteral("N"));
+    // Browse, not player: the bar exists precisely while the player page is not
+    // on top, so a player-context binding would be live only where the bar is
+    // gone.
+    QCOMPARE(m_map->context(id), QStringLiteral("browse"));
+    // The invariant planSection37IsFullyCovered() states generally, asserted on
+    // the row that is new: a gamepad hint is a lie unless the action resolves to
+    // exactly one key for GamepadManager to synthesize.
+    QVERIFY(!m_map->gamepadBinding(id).isEmpty());
+    QCOMPARE(m_map->keyFor(id), int(Qt::Key_N));
+    QCOMPARE(m_map->modifiersFor(id), 0);
 }
 
 void InputMapTest::resetRestoresTheDefault()

@@ -68,6 +68,10 @@ Item {
 
     property bool playing: false
     property bool current: false
+    // In the table's multi-select set. Drawn as a fill rather than as a ring:
+    // the ring is focus and only focus (ARCHITECTURE.md §4), and a row can be
+    // selected, focused, hovered and playing all at once.
+    property bool selected: false
     // Watched state, drawn on the cover. Meaningless for a track and false
     // there; a playlist holds episodes and films too, and it is kept off the
     // label so a long title never pushes it out of sight.
@@ -103,7 +107,10 @@ Item {
 
     default property alias verbs: extraVerbs.data
 
-    signal activated()
+    // `modifiers` is Qt::KeyboardModifiers as they were when the row was
+    // clicked, so the TABLE can decide what Ctrl+Click and Shift+Click mean —
+    // one place, not one per page. A keyboard activation passes Qt.NoModifier.
+    signal activated(int modifiers)
     signal favoriteToggled()
     signal menuRequested(real sceneX, real sceneY)
 
@@ -158,6 +165,18 @@ Item {
             }
         }
 
+        // Selection is a LAYER over whatever the row's own state painted, not a
+        // fourth branch of the chain above. Selected-and-focused is the case
+        // that decides it: a branch would have to pick one of the two, and then
+        // the focused row would be the one row in a selection that did not look
+        // selected.
+        Rectangle {
+            anchors.fill: parent
+            radius: surface.radius
+            visible: row.selected
+            color: Theme.selectionTint
+        }
+
         // Hover follows the cursor and never touches the keyboard's place.
         // Clicking is what moves focus, and the call site does that.
         HoverHandler {
@@ -166,9 +185,17 @@ Item {
         }
 
         TapHandler {
+            id: rowTap
+
             acceptedButtons: Qt.LeftButton
             gesturePolicy: TapHandler.ReleaseWithinBounds
-            onTapped: row.activated()
+            // `rowTap.point`, NOT the `eventPoint` the signal carries: the
+            // signal's argument is a QEventPoint, which has no modifier state
+            // at all, while the handler's own `point` is a handlerPoint and
+            // does. That is the only route from a pointer handler to
+            // Ctrl+Click, and it is a live probe rather than a reading — see
+            // tests/unit/tst_tap_modifiers.cpp, which fails without it.
+            onTapped: row.activated(rowTap.point.modifiers)
         }
 
         TapHandler {
@@ -215,7 +242,7 @@ Item {
                 anchors.rightMargin: Theme.spacingTight
                 horizontalAlignment: Text.AlignRight
                 verticalAlignment: Text.AlignVCenter
-                visible: !(row.hoverPlayGlyph && row.hovered)
+                visible: !row.selected && !(row.hoverPlayGlyph && row.hovered)
                 text: row.number > 0 ? String(row.number) : row.numberPlaceholder
                 color: row.playing ? Theme.accentColor : Theme.textTertiary
                 font.family: Theme.fontMono
@@ -226,10 +253,24 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: Theme.spacingTight
                 anchors.verticalCenter: parent.verticalCenter
-                visible: row.hoverPlayGlyph && row.hovered
+                visible: !row.selected && row.hoverPlayGlyph && row.hovered
                 name: "play"
                 size: Theme.scale(16)
                 color: Theme.textPrimaryColor
+            }
+
+            // A tint alone is not an answer to "is this row in the set" on a
+            // sleeve-lit page where every surface is already warm. The tick
+            // takes the number's own column, so nothing reflows when a
+            // selection is made and the tick lands where the eye already is.
+            StrmIcon {
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.spacingTight
+                anchors.verticalCenter: parent.verticalCenter
+                visible: row.selected
+                name: "check"
+                size: Theme.scale(16)
+                color: Theme.accentColor
             }
         }
 

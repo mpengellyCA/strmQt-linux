@@ -159,6 +159,12 @@ QString GamepadManager::actionForButton(int sdlButton) const
         return player ? QStringLiteral("player.stop") : QStringLiteral("nav.back");
     case SDL_GAMEPAD_BUTTON_GUIDE:
         return player ? QString() : QStringLiteral("app.shortcuts");
+    // The docked bar is unreachable from a pad otherwise: it takes focus by a
+    // click or by Tab, and a pad has neither. Browse only — in the player there
+    // is no bar, and the right stick is where a volume verb would land if
+    // PlayerController ever grows one.
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
+        return player ? QString() : QStringLiteral("player.focusBar");
     default:
         return QString();
     }

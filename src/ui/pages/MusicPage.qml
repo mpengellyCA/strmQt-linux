@@ -227,6 +227,46 @@ FocusScope {
         Actions.playAllFrom(items, index)
     }
 
+    // ── Favourites (the overlay AlbumPage documents) ───────────────────────
+    // MusicController's models are NOT registered with ItemActions, so the
+    // optimistic patch a toggle applies never reaches these rows and the model
+    // role goes stale the moment it is written. Role for the baseline — what the
+    // server actually said — and this map for what has changed since.
+    //
+    // It matters more here than it did before this phase: the batch heart and
+    // the "L" key can move forty rows at once, and forty hearts that did not
+    // change read as a verb that did nothing.
+    //
+    // REPLACED rather than mutated, because a mutated object notifies nothing.
+    property var favoriteOverrides: ({})
+
+    function favoriteOf(itemId, fallback) {
+        if (itemId.length > 0 && page.favoriteOverrides[itemId] !== undefined)
+            return page.favoriteOverrides[itemId] === true
+        return fallback === true
+    }
+
+    Connections {
+        target: Actions
+        function onFavoriteChanged(itemId, favorite) {
+            const next = Object.assign({}, page.favoriteOverrides)
+            next[itemId] = favorite
+            page.favoriteOverrides = next
+        }
+    }
+
+    // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
+    // The picker takes a list of ids and always did, so this is the same call
+    // the row's own "Add to playlist" makes with one id in it. The subject is
+    // the library, because a selection spanning forty records has no other
+    // honest name to offer the "create from these" row.
+    function fileSongSelection() {
+        const ids = songsTable.selectedIds()
+        if (ids.length === 0)
+            return
+        playlistPicker.show(page.libraryName.length > 0 ? page.libraryName : qsTr("Music"), ids)
+    }
+
     // ── What is playing right now ──────────────────────────────────────────
     // Reading queue.currentIndex is what makes this re-evaluate: it is a
     // notifying property and currentItem() is a plain lookup that would never
@@ -288,6 +328,80 @@ FocusScope {
         if (page.idOf(item).length === 0)
             return
         Actions.openDetails(item)
+    }
+
+    // ── The music input context (MUSIC.md §7) ──────────────────────────────
+    // Space, S, L and R mean something here that they mean nowhere else, which
+    // is why `InputMap` grew a third context rather than these being global.
+    // They live on the page and not in Main.qml because two of them need the
+    // row under the cursor, which only this page can see.
+    //
+    // `active: page.visible` is load-bearing: a Shortcut is window-scoped and a
+    // StackView keeps a covered page alive, so without it walking into an album
+    // would leave this page's S still shuffling the library.
+    //
+    // Coexistence with type-to-jump: TrackTable claims single printable
+    // characters while it has focus and typeToJump is on, so on the Songs tab
+    // "s" and "l" jump to a song instead of firing these — which is right, the
+    // user is typing. Space is exempt at the table until a word is already
+    // being typed, so play/pause works from the track list too.
+    // What the keyboard is standing on, whichever view is showing.
+    function focusedItem() {
+        if (page.songsTab)
+            return page.songAt(songsTable.currentIndex)
+        if (page.artistsTab)
+            return page.artistAt(artistsGrid.currentIndex)
+        if (page.playlistsTab)
+            return page.playlistAt(playlistsGrid.currentIndex)
+        return page.albumAt(albumsGrid.currentIndex)
+    }
+
+    MappedShortcut {
+        actionId: "music.playPause"
+        fallback: ["Space"]
+        // Only while something is loaded: with no queue, Space is Select and
+        // the grid's own key handling has to keep it.
+        active: page.visible && PlayerCtl.active
+        onActivated: PlayerCtl.togglePause()
+    }
+
+    MappedShortcut {
+        actionId: "music.shuffleAll"
+        fallback: ["S"]
+        active: page.visible && page.scopeId.length > 0
+        // The same call the header button makes, for the same reason it makes
+        // it: shuffle exists once and takes a parent and a kind.
+        onActivated: Actions.shuffle(page.scopeId, "music")
+    }
+
+    MappedShortcut {
+        actionId: "music.favorite"
+        fallback: ["L"]
+        active: page.visible
+        onActivated: {
+            // A selection wins over the cursor: if the user has picked rows,
+            // "favourite" is obviously about those rows.
+            if (page.songsTab && songsTable.selectionCount > 0) {
+                Actions.setFavoriteAll(songsTable.selectedIds(), true)
+                return
+            }
+            const item = page.focusedItem()
+            if (item)
+                Actions.toggleFavorite(item)
+        }
+    }
+
+    MappedShortcut {
+        actionId: "music.instantMix"
+        fallback: ["R"]
+        // Not on the Playlists tab: a playlist's order IS the playlist, and
+        // /Items/{playlistId}/InstantMix is a query nobody has measured.
+        active: page.visible && !page.playlistsTab
+        onActivated: {
+            const item = page.focusedItem()
+            if (item)
+                Actions.instantMix(item)
+        }
     }
 
     // ── Header ─────────────────────────────────────────────────────────────
@@ -520,12 +634,13 @@ FocusScope {
         onNearEnd: if (MusicCtl.canLoadMoreArtists) MusicCtl.loadMoreArtists()
 
         onItemActivated: index => page.requestArtist(page.artistAt(index))
-        // An artist is not a parent the server will hand tracks back for, and
-        // there is no ItemActions verb that queues by artist id (see the
-        // hand-back note in this wave's report), so ▸ opens the discography —
-        // where every playable thing an artist has actually lives — rather than
-        // firing a query that would come back empty.
-        onItemPlayRequested: index => page.requestArtist(page.artistAt(index))
+        // ▸ starts an instant mix (MUSIC.md §7). It used to open the artist
+        // page — the honest answer while no verb queued by artist, and a
+        // directory rather than something you could play. There is a verb now:
+        // /Items/{artistId}/InstantMix is one request, the server picks, and it
+        // was measured to answer audio of that artist's own world rather than
+        // the library at random. See EmbyClient::instantMix().
+        onItemPlayRequested: index => Actions.instantMix(page.artistAt(index))
         onItemFavoriteToggled: index => {
             const item = page.artistAt(index)
             if (item)
@@ -612,10 +727,33 @@ FocusScope {
     readonly property int songVerbsColumn: Theme.scale(72)
     readonly property int songArtistColumn: songsTable.showArtistColumn ? Theme.scale(220) : 0
 
+    // The batch verbs for the Songs tab's selection (MUSIC.md §7). Only ever
+    // shown with the Songs tab, because it is the only view here whose rows can
+    // be selected — a grid card is opened, not picked.
+    SelectionBar {
+        id: songSelection
+
+        anchors.top: filterBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+
+        count: page.songsTab ? songsTable.selectionCount : 0
+
+        onQueueRequested: Actions.addAllToQueue(songsTable.selectedItems())
+        onPlaylistRequested: page.fileSongSelection()
+        onFavoriteRequested: Actions.setFavoriteAll(songsTable.selectedIds(), true)
+        onClearRequested: {
+            songsTable.clearSelection()
+            songsTable.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
     TrackTable {
         id: songsTable
 
-        anchors.top: filterBar.bottom
+        anchors.top: songSelection.bottom
         anchors.topMargin: Theme.spacingTight
         anchors.bottom: parent.bottom
         anchors.left: parent.left
@@ -632,6 +770,10 @@ FocusScope {
         discGrouping: false
         artistRule: false
         alwaysShowArtist: true
+        // The tab the whole feature was asked for. A filter or a sort change
+        // refills MusicCtl.songs through setItems(), which is a model reset, so
+        // the selection goes with the rows it named — see TrackTable's header.
+        multiSelect: true
 
         KeyNavigation.up: filterBar.entryItem
 
@@ -673,16 +815,18 @@ FocusScope {
             showCover: true
 
             current: songsTable.currentIndex === songRow.index && songsTable.activeFocus
+            selected: songsTable.isSelected(songRow.index)
             playing: songRow.trackId.length > 0 && songRow.trackId === page.nowPlayingId
-            favorite: songRow.model.favorite === true
+            favorite: page.favoriteOf(songRow.trackId, songRow.model.favorite === true)
             showFavorite: true
             showMenu: true
             verbsRevealed: songRow.hovered || songRow.favorite
 
-            onActivated: {
-                songsTable.currentIndex = songRow.index
+            // Through activateAt(): Ctrl+Click and Shift+Click are the table's
+            // decision, not this delegate's.
+            onActivated: modifiers => {
                 songsTable.forceActiveFocus(Qt.MouseFocusReason)
-                page.playSongFrom(songRow.index)
+                songsTable.activateAt(songRow.index, modifiers)
             }
 
             onFavoriteToggled: {
@@ -731,6 +875,17 @@ FocusScope {
         onDismissed: {
             if (page.songsTab && songsTable.count > 0)
                 songsTable.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    // An album card's "Add to playlist" (MUSIC.md §3's carried-over gap). The
+    // grid only has an album ID, and a playlist holds tracks — so the round trip
+    // is the controller's and this is where it lands.
+    Connections {
+        target: MusicCtl
+
+        function onAlbumTracksCollected(subject, trackIds) {
+            playlistPicker.show(subject, trackIds)
         }
     }
 
@@ -789,8 +944,10 @@ FocusScope {
             if (kind === "album") {
                 push({ text: qsTr("Play"), iconName: "play" }, "play")
                 push({ text: qsTr("Shuffle"), iconName: "shuffle" }, "shuffle")
+                push({ text: qsTr("Instant mix"), iconName: "shuffle" }, "mix")
                 push({ separator: true }, "")
                 push({ text: qsTr("Open album"), iconName: "lib-music" }, "open")
+                push({ text: qsTr("Add to playlist"), iconName: "playlist" }, "playlist")
             } else if (kind === "playlist") {
                 // Open and favourite, and deliberately nothing else. Play and
                 // Shuffle would both have to guess how to expand a playlist id
@@ -803,6 +960,7 @@ FocusScope {
                 // the confirmation that page raises.)
                 push({ text: qsTr("Open playlist"), iconName: "playlist" }, "open")
             } else {
+                push({ text: qsTr("Instant mix"), iconName: "shuffle" }, "mix")
                 push({ text: qsTr("Open artist"), iconName: "user" }, "open")
             }
             push({ separator: true }, "")
@@ -833,6 +991,19 @@ FocusScope {
                 // Correct for an album exactly where playAll is not: SortBy is
                 // Random, so nothing depends on the server's ordering.
                 Actions.shuffle(id, "music")
+                break
+            case "mix":
+                // The same verb for an album and an artist: one endpoint serves
+                // both (EmbyClient::instantMix), so there is one row here and
+                // not two spellings of it.
+                Actions.instantMix(item)
+                break
+            case "playlist":
+                // An album id is not what a playlist holds — its TRACKS are —
+                // and expanding one is the server's business, so the controller
+                // fetches them and reports back through onAlbumTracksCollected.
+                MusicCtl.collectAlbumTracks(id, (item.name !== undefined)
+                                                ? String(item.name) : "")
                 break
             case "open":
                 if (musicMenu.mode === "album")

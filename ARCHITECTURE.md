@@ -104,6 +104,10 @@ codebase look the way they do.
 | A DirectPlay profile that omits a container causes a lossy transcode | Not an error — a silently worse stream. The audio container list covers what ffmpeg decodes, including DSD (`dsf`/`dff`), and there is an audio TranscodingProfile so an unsupported container has a defined fallback rather than an improvised one. |
 | There is no rename endpoint | Renaming is read-modify-write through `UpdateItem`: fetch the whole item, change `Name`, post it back, and drop `SortName`/`ForcedSortName` or it keeps filing under the old name. |
 | Emby files a person's birth date under `PremiereDate` and birthplace under `ProductionLocations` | A person is an ordinary item to Emby. That vocabulary is the server's, not a mistake to correct. |
+| **`/Items/{id}/InstantMix` serves a track, an album *and* an artist** | There is one instant-mix verb, not three. `/Artists/InstantMix` adds nothing: it wants an `Id`, not a name — `Name=angela` is an HTTP 500, "Unrecognized Guid format." — and answers the same shape. |
+| **InstantMix does not page, and its `TotalRecordCount` is the array's own size** | `StartIndex=5` answers a *fresh* randomised set, not the sixth row onward. One mix is one request; a second page would be a second station. |
+| A track seed comes back as InstantMix row 0 and does not count against `Limit` | `Limit=50` returns 51 rows. Right for "play this, then things like it", and no special case is needed. An album or artist seed is not itself audio and returns exactly `Limit`. |
+| **InstantMix rows are not distinct** | 500 asked for came back as 493 unique ids. `PlayQueue` keys entries rather than ids, so the repeats would survive to the queue panel; callers de-duplicate. |
 
 ---
 
@@ -224,6 +228,23 @@ The layout targets Xbox 360 / Xbox One, which is the PC standard and the layout
 SDL's own gamepad abstraction is modelled on. Mapping is context-dependent, so one
 pair of shoulders changes library while browsing and seeks during playback.
 
+**There are three contexts, not two.** Browse, player, and *music* — the music
+library, an album and an artist page. Two actions only conflict when their
+contexts overlap, and that is the whole reason music has one: Space, `S` and `L`
+are each already bound in browse or in player, and only a non-overlapping
+context lets a music page mean play/pause, shuffle-this-library and favourite by
+them. Music pages arm their own shortcuts on their own `visible`, so "the music
+context is live" is "a music page is the one on screen" and nothing tracks it
+centrally. A page-owned `Shortcut` must be gated that way: `Shortcut` is
+window-scoped and a `StackView` keeps covered pages alive.
+
+One coexistence rule follows from it. `TrackTable` claims single printable
+characters through `Keys.onShortcutOverride` while it holds focus and
+type-to-jump is on, so `s` typed into a track table jumps to a song rather than
+shuffling the library — which is right, the user is typing. Space is exempt at
+the table until a word is already being typed, so play/pause still works from a
+track list.
+
 **The stick is one control, not two axes.** Only the dominant axis acts, and it
 must lead by a margin; a true diagonal moves nothing, because the user has not said
 which way they mean. Vertical starts at a higher threshold than horizontal, since a
@@ -254,7 +275,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 24 suites
+ctest --preset dev                     # 28 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```

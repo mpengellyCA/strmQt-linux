@@ -198,6 +198,18 @@ FocusScope {
         Actions.playAllFrom(page.trackItems(), index)
     }
 
+    // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
+    // The selection's ids go to the SAME picker call the header button makes
+    // with page.trackIds(); the picker, PlaylistController and the client all
+    // took a list of ids from the day they were written, so none of them
+    // changed for this.
+    function fileSelection() {
+        const ids = trackList.selectedIds()
+        if (ids.length === 0)
+            return
+        playlistPicker.show(page.albumName, ids)
+    }
+
     // ── What is playing right now ──────────────────────────────────────────
     // Reading queue.currentIndex is what makes this re-evaluate: it is a
     // notifying property and currentItem() is a plain lookup that would never
@@ -231,6 +243,56 @@ FocusScope {
     Connections {
         target: MusicCtl
         function onAlbumChanged() { page.trackFetchTimedOut = false }
+    }
+
+    // ── The music input context (MUSIC.md §7) ──────────────────────────────
+    // The same four keys the music library binds, answered for a record.
+    // `active: page.visible` is what keeps them off a covered page: a Shortcut
+    // is window-scoped and a StackView keeps what it covers alive.
+    MappedShortcut {
+        actionId: "music.playPause"
+        fallback: ["Space"]
+        active: page.visible && PlayerCtl.active
+        onActivated: PlayerCtl.togglePause()
+    }
+
+    MappedShortcut {
+        actionId: "music.shuffleAll"
+        fallback: ["S"]
+        active: page.visible && page.albumId.length > 0
+        // THIS record, not the library: on an album page the scope the user
+        // means is the one they are looking at, and it is the same call the
+        // header's Shuffle button makes.
+        onActivated: Actions.shuffle(page.albumId, "music")
+    }
+
+    MappedShortcut {
+        actionId: "music.favorite"
+        fallback: ["L"]
+        active: page.visible
+        onActivated: {
+            if (trackList.selectionCount > 0) {
+                Actions.setFavoriteAll(trackList.selectedIds(), true)
+                return
+            }
+            const item = page.trackAt(trackList.currentIndex)
+            if (item)
+                Actions.toggleFavorite(item)
+        }
+    }
+
+    MappedShortcut {
+        actionId: "music.instantMix"
+        fallback: ["R"]
+        active: page.visible && page.hasTracks
+        onActivated: {
+            // The track under the cursor, not the album: a mix from one song is
+            // sharper than a mix from a whole record, and the seed comes back
+            // as the queue's first row (EmbyClient::instantMix).
+            const item = page.trackAt(trackList.currentIndex)
+            if (item)
+                Actions.instantMix(item)
+        }
     }
 
     // ── Atmosphere (MUSIC.md §4, Rule 2) ───────────────────────────────────
@@ -456,8 +518,9 @@ FocusScope {
                     //
                     // This is also "new playlist from this album": the picker's
                     // first row creates the name typed into it, out of exactly
-                    // these ids, as an audio playlist. Multi-TRACK selection is
-                    // Phase 8's — TrackTable has no selection model yet.
+                    // these ids, as an audio playlist. A multi-TRACK selection
+                    // raises the same picker with a shorter list of ids — see
+                    // page.fileSelection() and SelectionBar.
                     onClicked: playlistPicker.show(page.albumName, page.trackIds())
 
                     KeyNavigation.up: artistLink
@@ -572,6 +635,30 @@ FocusScope {
         }
     }
 
+    // ── What the selection can be done to (MUSIC.md §7) ────────────────────
+    // Between the headings and the rows, so the verbs are next to the thing
+    // they act on. Zero-height while nothing is picked, so the table does not
+    // move under the cursor the instant a selection is made.
+    SelectionBar {
+        id: selectionBar
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: tableHead.bottom
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+
+        count: trackList.selectionCount
+
+        onQueueRequested: Actions.addAllToQueue(trackList.selectedItems())
+        onPlaylistRequested: page.fileSelection()
+        onFavoriteRequested: Actions.setFavoriteAll(trackList.selectedIds(), true)
+        onClearRequested: {
+            trackList.clearSelection()
+            trackList.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
     // ── The tracks ─────────────────────────────────────────────────────────
     // The shared table (ARCHITECTURE.md): one tab stop, Up/Down and the page
     // keys owned internally, disc grouping and the artist-column rule decided
@@ -582,7 +669,7 @@ FocusScope {
 
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: tableHead.bottom
+        anchors.top: selectionBar.bottom
         anchors.bottom: parent.bottom
         anchors.leftMargin: Theme.pageMarginValue
         anchors.rightMargin: Theme.pageMarginValue
@@ -595,6 +682,7 @@ FocusScope {
 
         discGrouping: true
         artistRule: true
+        multiSelect: true
         // The album's own credit, when the item map carried one. Empty means
         // "ask the first track", which is what the table then does.
         albumArtist: page.mapAlbumArtist
@@ -631,6 +719,7 @@ FocusScope {
             discNumber: trackList.discFor(trackRow.index)
 
             current: trackList.currentIndex === trackRow.index && trackList.activeFocus
+            selected: trackList.isSelected(trackRow.index)
             playing: trackRow.trackId.length > 0 && trackRow.trackId === page.nowPlayingId
             favorite: page.favoriteOf(trackRow.trackId, trackRow.model.favorite === true)
             showFavorite: true
@@ -639,10 +728,12 @@ FocusScope {
             // verbs belong to the pointer.
             verbsRevealed: trackRow.hovered || trackRow.favorite
 
-            onActivated: {
-                trackList.currentIndex = trackRow.index
+            // Through activateAt(), not straight to playFrom(): that is the one
+            // place Ctrl+Click and Shift+Click are decided, and it moves the
+            // cursor itself.
+            onActivated: modifiers => {
                 trackList.forceActiveFocus(Qt.MouseFocusReason)
-                page.playFrom(trackRow.index)
+                trackList.activateAt(trackRow.index, modifiers)
             }
 
             onFavoriteToggled: {

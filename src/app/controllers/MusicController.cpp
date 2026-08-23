@@ -7,6 +7,8 @@
 
 #include <QVariantMap>
 
+#include <utility>
+
 namespace strmqt {
 
 namespace {
@@ -845,12 +847,10 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     });
 }
 
-void MusicController::playAlbum(const QString &albumId)
+void MusicController::expandAlbum(const QString &albumId, std::function<bool()> stillCurrent,
+                                  std::function<void(const QList<MediaItem> &)> onItems,
+                                  const QString &failure)
 {
-    if (albumId.isEmpty())
-        return;
-
-    const int generation = ++m_playGeneration;
     ItemsQuery query;
     query.parentId = albumId;
     // The same query openAlbum() issues, and for the same reason: NOT recursive
@@ -860,31 +860,72 @@ void MusicController::playAlbum(const QString &albumId)
     query.limit = kTrackLimit;
     query.fields = {QStringLiteral("MediaSources")};
 
-    m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
-        if (generation != m_playGeneration)
-            return;
-        // actionFailed(), never setError(): the error property is the state of
-        // the album and artist *lists*, and MusicPage draws it as a paging
-        // banner offering to retry loadMoreAlbums() — the wrong message, the
-        // wrong retry, and one nothing here would ever clear. A verb that
-        // happened once reports once, as a toast.
-        if (!result.ok()) {
-            emit actionFailed(tr("Could not play this album: %1").arg(result.error));
-            return;
-        }
-        if (!m_actions) {
-            qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
-            emit actionFailed(tr("Playback is not available."));
-            return;
-        }
-        m_playScratch->setItems(result.value.items, result.value.totalRecordCount);
-        QVariantList items;
-        items.reserve(m_playScratch->rowCount());
-        for (int row = 0; row < m_playScratch->rowCount(); ++row)
-            items.append(m_playScratch->get(row));
-        // playAllFrom() says its own piece when the list is empty.
-        m_actions->playAllFrom(items, 0);
-    });
+    m_client->items(query).then(
+        this, [this, stillCurrent = std::move(stillCurrent), onItems = std::move(onItems),
+               failure](const Result<ItemsPage> &result) {
+            if (!stillCurrent())
+                return;
+            // actionFailed(), never setError(): the error property is the state
+            // of the album and artist *lists*, and MusicPage draws it as a
+            // paging banner offering to retry loadMoreAlbums() — the wrong
+            // message, the wrong retry, and one nothing here would ever clear.
+            // A verb that happened once reports once, as a toast.
+            if (!result.ok()) {
+                emit actionFailed(failure.arg(result.error));
+                return;
+            }
+            onItems(result.value.items);
+        });
+}
+
+void MusicController::playAlbum(const QString &albumId)
+{
+    if (albumId.isEmpty())
+        return;
+
+    const int generation = ++m_playGeneration;
+    expandAlbum(
+        albumId, [this, generation] { return generation == m_playGeneration; },
+        [this](const QList<MediaItem> &items) {
+            if (!m_actions) {
+                qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
+                emit actionFailed(tr("Playback is not available."));
+                return;
+            }
+            m_playScratch->setItems(items, static_cast<int>(items.size()));
+            QVariantList maps;
+            maps.reserve(m_playScratch->rowCount());
+            for (int row = 0; row < m_playScratch->rowCount(); ++row)
+                maps.append(m_playScratch->get(row));
+            // playAllFrom() says its own piece when the list is empty.
+            m_actions->playAllFrom(maps, 0);
+        },
+        tr("Could not play this album: %1"));
+}
+
+void MusicController::collectAlbumTracks(const QString &albumId, const QString &subject)
+{
+    if (albumId.isEmpty())
+        return;
+
+    const int generation = ++m_collectGeneration;
+    expandAlbum(
+        albumId, [this, generation] { return generation == m_collectGeneration; },
+        [this, subject](const QList<MediaItem> &items) {
+            QStringList ids;
+            ids.reserve(items.size());
+            for (const MediaItem &item : items) {
+                if (!item.id.isEmpty())
+                    ids.append(item.id);
+            }
+            // A picker over nothing is a dead panel the user has to dismiss.
+            if (ids.isEmpty()) {
+                emit actionFailed(tr("This album has no tracks to add."));
+                return;
+            }
+            emit albumTracksCollected(subject, ids);
+        },
+        tr("Could not read this album's tracks: %1"));
 }
 
 void MusicController::openArtist(const QString &artistId, const QString &name)

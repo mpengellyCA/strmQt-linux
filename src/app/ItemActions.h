@@ -80,6 +80,26 @@ public:
     // Queue items the caller already has (an episode list, a search result set).
     Q_INVOKABLE void playAllFrom(const QVariantList &items, int startIndex = 0);
 
+    // ── Batch verbs (MUSIC.md §7) ─────────────────────────────────────────
+    // What a multi-selection in a track table can be done to. Both are the
+    // single-item verb applied over a set, in C++ rather than as a loop in QML
+    // — a page states intent and never iterates a verb (ARCHITECTURE.md rule 1).
+    //
+    // addAllToQueue() emits queueChanged() ONCE however many rows were picked:
+    // it is one gesture and it deserves one toast, not forty.
+    Q_INVOKABLE void addAllToQueue(const QVariantList &items);
+    // setFavorite() per id, so each keeps its own optimistic patch, its own
+    // rollback and its own per-item coalescing. Nothing is gained by batching
+    // the requests — Emby has no bulk favourite endpoint — and a good deal is
+    // lost, because one failure would have to roll back forty rows.
+    Q_INVOKABLE void setFavoriteAll(const QStringList &itemIds, bool favorite);
+
+    // ── Instant mix (MUSIC.md §7) ─────────────────────────────────────────
+    // Artist radio, and the same verb for a track and a record. Measured on
+    // Emby 4.9.5.0 — see EmbyClient::instantMix() for what the endpoint does
+    // and does not do.
+    Q_INVOKABLE void instantMix(const QVariant &item);
+
     Q_INVOKABLE void setPlayed(const QString &itemId, bool played);
     Q_INVOKABLE void togglePlayed(const QVariant &item);
     Q_INVOKABLE void setFavorite(const QString &itemId, bool favorite);

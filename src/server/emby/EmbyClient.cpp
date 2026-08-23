@@ -427,6 +427,26 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::similar(const QString &itemId, int
     });
 }
 
+QFuture<Result<ItemsPage>> EmbyClient::instantMix(const QString &itemId, int limit)
+{
+    if (!hasSession())
+        return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
+    if (itemId.isEmpty())
+        return failedFuture<ItemsPage>(QStringLiteral("no item to mix from"));
+    QUrlQuery params;
+    params.addQueryItem(QStringLiteral("UserId"), m_userId);
+    params.addQueryItem(QStringLiteral("Limit"), QString::number(limit));
+    // The same fields every other list fetch asks for: a mix goes straight into
+    // the play queue, and a queue entry that arrived without its album, its
+    // artists or its cover tag would draw a hole in the docked bar.
+    params.addQueryItem(QStringLiteral("Fields"), mergedFields({}, mediaDetailFields()));
+    // No StartIndex: the endpoint does not page (see the header).
+    QNetworkReply *reply = startGet(QStringLiteral("/Items/%1/InstantMix").arg(itemId), params);
+    return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
+        return Result<ItemsPage>::success(parseItemsPage(doc.object()));
+    });
+}
+
 namespace {
 // The subset of ItemsQuery the artist endpoints were measured to honour. Sending
 // the rest would not fail — this server ignores what it does not know — which is

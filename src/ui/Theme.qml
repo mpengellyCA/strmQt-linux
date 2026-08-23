@@ -108,6 +108,13 @@ QtObject {
     readonly property color veil: Qt.rgba(0.047, 0.043, 0.039, 0.45)
     readonly property color hoverTint: Qt.rgba(0.96, 0.945, 0.918, 0.10)
     readonly property color pressTint: Qt.rgba(0.96, 0.945, 0.918, 0.16)
+    // A row a multi-select has picked out of a table. The accent, and dim: the
+    // focus ring is drawn in the same colour at full strength, so a selection
+    // fill anywhere near it would compete with the one thing that is never
+    // allowed to be ambiguous (ARCHITECTURE.md §4). Selection is a *set*; focus
+    // is where the keyboard is, and both can be true on one row at once.
+    readonly property color selectionTint: Qt.rgba(theme.accentColor.r, theme.accentColor.g,
+                                                   theme.accentColor.b, 0.16)
 
     // ── Density ────────────────────────────────────────────────────────────
     // One design at two sizes: the desk and the couch get the same tokens

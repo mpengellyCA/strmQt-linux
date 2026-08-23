@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QVariantList>
 
+#include <functional>
+
 namespace strmqt {
 
 class ItemActions;
@@ -245,6 +247,22 @@ public:
     // the library has no disc number, and a null disc sorts ahead of disc 1.)
     Q_INVOKABLE void playAlbum(const QString &albumId);
 
+    // An album id expanded into the ids of its tracks, for "Add to playlist" on
+    // an album card (MUSIC.md §3's gap). A playlist holds playable items, not
+    // containers, and only the server can say which tracks an album has — so
+    // the grid's context menu asks for them and files them when they arrive.
+    //
+    // The SAME machinery playAlbum() uses, not a second copy of it: one
+    // private expandAlbum() runs the one query (an album's children, unsorted,
+    // in the server's disc-then-track order) and hands the result to whichever
+    // verb asked. They keep separate generation counters, because they are two
+    // verbs and a ▸ pressed while a picker request is in flight must not cancel
+    // it.
+    //
+    // `subject` is echoed back untouched: it is what the picker's create row
+    // offers to name a new playlist after, and only the caller knows it.
+    Q_INVOKABLE void collectAlbumTracks(const QString &albumId, const QString &subject);
+
     // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), so this
     // controller has to be able to reach them.
     void setActions(ItemActions *actions);
@@ -275,6 +293,9 @@ signals:
     // the way every other one-shot verb reports failure (ItemActions and
     // PlaylistController both name the signal this).
     void actionFailed(const QString &message);
+    // collectAlbumTracks() came back. Empty `trackIds` never reaches here — an
+    // album with no children is an actionFailed(), not a picker over nothing.
+    void albumTracksCollected(const QString &subject, const QStringList &trackIds);
 
 private:
     void fetchAlbums(int startIndex);
@@ -282,6 +303,13 @@ private:
     void fetchSongs(int startIndex);
     void fetchPlaylists(int startIndex);
     void fetchGenrePage(int startIndex, int generation);
+    // The one album-children query, shared by playAlbum() and
+    // collectAlbumTracks(). `stillCurrent` is the caller's own generation
+    // guard, asked when the reply lands; `onItems` receives the album's rows in
+    // the server's order; `failure` is the one-line toast a failed reply gets.
+    void expandAlbum(const QString &albumId, std::function<bool()> stillCurrent,
+                     std::function<void(const QList<MediaItem> &)> onItems,
+                     const QString &failure);
     void setLoading(bool loading);
     void setError(const QString &message);
     // Applies the shared filter axes (letter, genres, years, favourites) to a
@@ -364,6 +392,7 @@ private:
     int m_playlistGeneration = 0;
     int m_genreGeneration = 0;
     int m_playGeneration = 0;
+    int m_collectGeneration = 0;
 
     // ── What `loading` actually is ────────────────────────────────────────────
     // The generation of the request in flight for each list, or 0 for none —

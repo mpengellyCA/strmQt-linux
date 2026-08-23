@@ -52,6 +52,10 @@ private slots:
     void playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum();
     void playCarriesTheItemsTypeOntoTheSeededQueue();
     void artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwnId();
+    void instantMixQueuesTheServersStationAndDropsRepeats();
+    void instantMixSaysSoWhenTheServerHasNoStation();
+    void addAllToQueueIsOneGestureAndOneToast();
+    void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -392,6 +396,140 @@ void ItemActionsQueueTest::artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwn
     QVariantMap bare;
     bare.insert(QStringLiteral("itemId"), QStringLiteral("301003"));
     QVERIFY(m_actions->artistTarget(bare).isEmpty());
+}
+
+// ── Instant mix (MUSIC.md §7) ────────────────────────────────────────────────
+// The endpoint's measured shape is in EmbyClient::instantMix(): the seed comes
+// back as row 0, the rows are NOT distinct, and the count is the array's own
+// size rather than a total. This asserts what the verb does about the second of
+// those, because it is the one the user would hear.
+void ItemActionsQueueTest::instantMixQueuesTheServersStationAndDropsRepeats()
+{
+    // Measured against the live server: 500 rows asked for came back with 493
+    // distinct ids. Here, in miniature — the seed, two more, and the seed again.
+    m_mock->addRoute(
+        QStringLiteral("GET"), QStringLiteral("/Items/301001/InstantMix"), 200,
+        QByteArrayLiteral("{\"Items\":["
+                          "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\"},"
+                          "{\"Id\":\"301002\",\"Name\":\"Freddie\",\"Type\":\"Audio\"},"
+                          "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\"},"
+                          "{\"Id\":\"301003\",\"Name\":\"Blue\",\"Type\":\"Audio\"}],"
+                          "\"TotalRecordCount\":4}"));
+
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    m_actions->instantMix(QStringLiteral("301001"));
+    QTRY_COMPARE(queueSpy.count(), 1);
+
+    // Four rows in, three out, in the order the server sent them.
+    QCOMPARE(m_player->queue()->rowCount(), 3);
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+    QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301002"));
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301003"));
+    // The station starts at its first row — the seed, for a track — and is NOT
+    // flagged shuffled: there is no original order to give back.
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
+    QVERIFY(!m_player->queue()->shuffled());
+
+    const QString query =
+        m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Items/301001/InstantMix"))
+            .query;
+    // No StartIndex: the endpoint does not page — StartIndex=5 was measured to
+    // answer a fresh randomised set, not the sixth row onward.
+    QVERIFY2(!query.contains(QStringLiteral("StartIndex")), qPrintable(query));
+    QVERIFY2(query.contains(QStringLiteral("UserId=")), qPrintable(query));
+}
+
+void ItemActionsQueueTest::instantMixSaysSoWhenTheServerHasNoStation()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/InstantMix"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    m_actions->instantMix(QStringLiteral("301001"));
+
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(queueSpy.count(), 0);
+    QCOMPARE(m_player->queue()->rowCount(), 0);
+}
+
+// A batch verb is ONE gesture. Forty toasts is not forty pieces of feedback.
+void ItemActionsQueueTest::addAllToQueueIsOneGestureAndOneToast()
+{
+    QVariantList picked;
+    for (const QString &id : {QStringLiteral("301001"), QStringLiteral("301002"),
+                              QStringLiteral("301003")}) {
+        QVariantMap row;
+        row.insert(QStringLiteral("itemId"), id);
+        row.insert(QStringLiteral("name"), QStringLiteral("Track ") + id);
+        row.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+        picked.append(row);
+    }
+    // One row with nothing usable on it, which a selection can legitimately
+    // produce if a model row was dropped between the pick and the press.
+    picked.append(QVariantMap{});
+
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    m_actions->addAllToQueue(picked);
+
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 3);
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301003"));
+
+    // Nothing usable at all is a failure, not a silent no-op.
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    m_actions->addAllToQueue({QVariantMap{}});
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(queueSpy.count(), 1);
+}
+
+// The album grid's "Add to playlist" (MUSIC.md §3's carried-over gap): a
+// playlist holds an album's TRACKS, and only the server can expand the id.
+void ItemActionsQueueTest::collectAlbumTracksReportsIdsWithoutTouchingThePlayer()
+{
+    m_mock->addRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        QByteArrayLiteral("{\"Items\":["
+                          "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\"},"
+                          "{\"Id\":\"301002\",\"Name\":\"Freddie\",\"Type\":\"Audio\"}],"
+                          "\"TotalRecordCount\":2}"));
+
+    MusicController music(m_client, this);
+    music.setActions(m_actions);
+
+    QSignalSpy collected(&music, &MusicController::albumTracksCollected);
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    music.collectAlbumTracks(QStringLiteral("al-kob"), QStringLiteral("Kind of Blue"));
+
+    QTRY_COMPARE(collected.count(), 1);
+    QCOMPARE(collected.first().at(0).toString(), QStringLiteral("Kind of Blue"));
+    QCOMPARE(collected.first().at(1).toStringList(),
+             QStringList({QStringLiteral("301001"), QStringLiteral("301002")}));
+    // It is not a play verb: nothing was queued and the album page's own model
+    // did not move.
+    QCOMPARE(queueSpy.count(), 0);
+    QCOMPARE(m_player->queue()->rowCount(), 0);
+    QCOMPARE(music.tracks()->rowCount(), 0);
+
+    // The same query playAlbum() issues, because it is literally the same
+    // expansion: unsorted and non-recursive, so the server's disc-then-track
+    // order survives.
+    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
+    QVERIFY2(query.contains(QStringLiteral("ParentId=al-kob")), qPrintable(query));
+    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
+
+    // An album the server has nothing for reports, rather than raising a picker
+    // over an empty list.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    QSignalSpy failed(&music, &MusicController::actionFailed);
+    music.collectAlbumTracks(QStringLiteral("al-empty"), QStringLiteral("Nothing"));
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(collected.count(), 1);
 }
 
 QTEST_GUILESS_MAIN(ItemActionsQueueTest)

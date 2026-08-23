@@ -40,6 +40,18 @@ public:
     static constexpr auto kContextGlobal = "global";
     static constexpr auto kContextBrowse = "browse";
     static constexpr auto kContextPlayer = "player";
+    // A third context (MUSIC.md §7): the music library, an album and an artist
+    // page. It exists for the keys that mean something different while music is
+    // what is on screen — Space is play/pause for the docked bar rather than
+    // Select, "S" shuffles the library rather than stopping the player, "L"
+    // favourites the row under the cursor rather than marking a loop point.
+    //
+    // Non-overlapping with browse AND with player, which is the whole point:
+    // each of those three keys is already bound in one of the other two, and
+    // only a context of its own lets music have them without a conflict. The
+    // pages arm their shortcuts on their own `visible`, so "music context" is
+    // "a music page is the one on screen" and nothing has to track it centrally.
+    static constexpr auto kContextMusic = "music";
 
     struct ActionDef
     {

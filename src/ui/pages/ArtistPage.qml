@@ -19,19 +19,22 @@ import StrmQt
 //    with bindings into that map, so a caller that has only an id and a name
 //    (a deep link, a restored history entry) can still push this page.
 //
-// ── What is deliberately NOT here, and why ─────────────────────────────────
+//  * `MusicCtl.artistTracks` is the artist's most-played, filled by the SAME
+//    `openArtist()` call using **ArtistIds** — the opposite choice from the
+//    discography above, and the right one here: top tracks should include what
+//    someone guested on, which is exactly what a discography must exclude.
 //
-// **Top tracks, and Play / Shuffle for the whole artist.** All three need one
-// thing the contract does not have: an artist-scoped *Audio* query. `MusicCtl`
-// exposes no such list, and `Actions.playAll/shuffle` address a parent by
-// `ParentId`, which is an album's folder — an artist is not one. The three
-// buttons could be drawn today and every one of them would be a no-op, so they
-// are absent and the gap is reported instead. ARCHITECTURE.md already made this call
-// once for picture-in-picture: a dead button is worse than none.
+// ── The page had a stale claim in this comment, and it is worth recording ──
 //
-// What the page does have that plays: every album card's ▸ queues that album
-// (`Actions.playAll(albumId, "music")`, which is a real ParentId), so the page
-// is not a dead end for the pointer either.
+// Until this phase the note here said top tracks were impossible because the
+// contract had no artist-scoped Audio query. It had one all along:
+// `openArtist()` has issued the PlayCount-sorted `artistTracks` fetch since it
+// was written, and **nothing rendered it** — the request went out and the reply
+// was thrown away on every artist page open. The table below is what it was
+// always for. Play and Shuffle for the whole artist are still absent for the
+// original reason (`Actions.playAll/shuffle` address a ParentId and an artist
+// is not one), but "Instant mix" now covers the same ground better: it is one
+// request, the server picks, and it is what the artist grid's ▸ does too.
 //
 // ── Sharing one controller with two other pages ────────────────────────────
 //
@@ -94,6 +97,20 @@ FocusScope {
     readonly property int albumCount: page.scopeMine
                                       ? MusicCtl.artistAlbums.totalRecordCount : 0
     readonly property int albumsLoaded: page.scopeMine ? MusicCtl.artistAlbums.count : 0
+
+    // ── Top tracks ─────────────────────────────────────────────────────────
+    // Same scope guard as the grid: MusicCtl is app-wide, and a list of another
+    // artist's songs under this artist's name is worse than no list.
+    readonly property int topTracksLoaded: page.scopeMine ? MusicCtl.artistTracks.count : 0
+    readonly property bool hasTopTracks: page.topTracksLoaded > 0
+
+    // How many rows the section is TALL, not how many were fetched. The page
+    // has no scroll container — the discography grid is the thing that scrolls
+    // — so a 50-row table anchored between the hero and the grid would push the
+    // grid off the bottom of the window. Six rows is a section; the table
+    // itself is a ListView and owns the rest internally, so nothing is lost.
+    readonly property int topTracksRows: Math.min(6, page.topTracksLoaded)
+    readonly property int topTrackRowHeight: Theme.scale(38)
 
     // `MusicCtl.loading` is raised by the album and artist *list* fetches and
     // not by openArtist(), so "is the discography still coming" has to be
@@ -172,6 +189,76 @@ FocusScope {
         itemMenu.popupForItem(page.albumAt(index), sceneX, sceneY)
     }
 
+    // ── Favourites (the overlay AlbumPage documents) ───────────────────────
+    // MusicController's models are NOT registered with ItemActions, so the
+    // optimistic patch a toggle applies never reaches these rows and the model
+    // role goes stale the moment it is written. Role for the baseline — what the
+    // server actually said — and this map for what has changed since.
+    //
+    // It matters more here than it did before this phase: the batch heart and
+    // the "L" key can move forty rows at once, and forty hearts that did not
+    // change read as a verb that did nothing.
+    //
+    // REPLACED rather than mutated, because a mutated object notifies nothing.
+    property var favoriteOverrides: ({})
+
+    function favoriteOf(itemId, fallback) {
+        if (itemId.length > 0 && page.favoriteOverrides[itemId] !== undefined)
+            return page.favoriteOverrides[itemId] === true
+        return fallback === true
+    }
+
+    // ── Top-track verbs ────────────────────────────────────────────────────
+    function topTrackAt(index) {
+        const model = MusicCtl.artistTracks
+        if (!model || index < 0 || index >= model.count)
+            return null
+        return model.get(index)
+    }
+
+    // The loaded rows are the queue and the clicked row is where it starts —
+    // the same contract the album page's table has.
+    function playTopTrackFrom(index): void {
+        const model = MusicCtl.artistTracks
+        if (!model || index < 0 || index >= model.count)
+            return
+        const items = []
+        for (let i = 0; i < model.count; ++i)
+            items.push(model.get(i))
+        Actions.playAllFrom(items, index)
+    }
+
+    function fileTopSelection(): void {
+        const ids = topTracks.selectedIds()
+        if (ids.length === 0)
+            return
+        playlistPicker.show(page.displayName, ids)
+    }
+
+    function formatDuration(ms) {
+        if (!ms || ms <= 0)
+            return "–:––"
+        const totalSeconds = Math.round(Number(ms) / 1000)
+        const hours = Math.floor(totalSeconds / 3600)
+        const minutes = Math.floor((totalSeconds / 60) % 60)
+        const seconds = totalSeconds % 60
+        const pad = v => (v < 10 ? "0" : "") + v
+        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
+                         : minutes + ":" + pad(seconds)
+    }
+
+    // ── What is playing right now ──────────────────────────────────────────
+    // Reading queue.currentIndex is what makes this re-evaluate: it is a
+    // notifying property and currentItem() is a plain lookup that would never
+    // update on its own.
+    readonly property string nowPlayingId: {
+        const queue = PlayerCtl.queue
+        if (!queue || queue.currentIndex < 0)
+            return ""
+        const current = queue.currentItem()
+        return (current && current.itemId !== undefined) ? String(current.itemId) : ""
+    }
+
     Component.onCompleted: {
         page.syncFavorite()
         page.ensureScope()
@@ -188,6 +275,12 @@ FocusScope {
         function onFavoriteChanged(itemId, favorite) {
             if (itemId === page.artistId)
                 page.artistFavorite = favorite
+            // …and the top-tracks overlay, for the same reason: MusicCtl's
+            // models are not registered with ItemActions, so nothing else
+            // updates those rows.
+            const next = Object.assign({}, page.favoriteOverrides)
+            next[itemId] = favorite
+            page.favoriteOverrides = next
         }
     }
 
@@ -205,6 +298,41 @@ FocusScope {
         id: loadGuard
         interval: 6000
         onTriggered: page.discographyLoading = false
+    }
+
+    // ── The music input context (MUSIC.md §7) ──────────────────────────────
+    // Three of the four. `music.shuffleAll` is deliberately absent: an artist
+    // is not a ParentId the server will hand tracks back for, so there is
+    // nothing honest for S to shuffle here, and "Instant mix" (R) is the verb
+    // that does what a user pressing it would actually want. A key that quietly
+    // did nothing would be worse than one that is simply not bound on this page.
+    MappedShortcut {
+        actionId: "music.playPause"
+        fallback: ["Space"]
+        active: page.visible && PlayerCtl.active
+        onActivated: PlayerCtl.togglePause()
+    }
+
+    MappedShortcut {
+        actionId: "music.favorite"
+        fallback: ["L"]
+        active: page.visible && page.artistId.length > 0
+        onActivated: {
+            if (page.hasTopTracks && topTracks.selectionCount > 0) {
+                Actions.setFavoriteAll(topTracks.selectedIds(), true)
+                return
+            }
+            // The artist, not an album: this page is about them, and the
+            // hero button says the same thing.
+            page.toggleFavorite()
+        }
+    }
+
+    MappedShortcut {
+        actionId: "music.instantMix"
+        fallback: ["R"]
+        active: page.visible && page.artistId.length > 0
+        onActivated: Actions.instantMix(page.artistId)
     }
 
     // ── Atmosphere (ARCHITECTURE.md) ────────────────────────────────────────
@@ -438,19 +566,194 @@ FocusScope {
                        : ""
             }
 
-            // One hero control, and it is the one this page can honestly carry
-            // out on its own: favourite is an id and a boolean. Play and
-            // Shuffle for the artist are the reported gap — see the header.
-            StrmButton {
-                id: favButton
+            // Two hero controls, and both are things this page can honestly
+            // carry out: a favourite is an id and a boolean, and an instant mix
+            // is one request against the artist's own id.
+            Row {
+                spacing: Theme.spacingTight
 
-                text: page.artistFavorite ? qsTr("In favourites") : qsTr("Add to favourites")
-                iconName: page.artistFavorite ? "heart-filled" : "heart"
-                variant: page.artistFavorite ? "primary" : "secondary"
-                enabled: page.artistId.length > 0
+                StrmButton {
+                    id: mixButton
 
-                KeyNavigation.down: albumGrid
-                onClicked: page.toggleFavorite()
+                    // The artist as a station, and the same verb the artist
+                    // grid's ▸ fires (ARCHITECTURE.md rule 3). Measured:
+                    // /Items/{artistId}/InstantMix answers audio that is
+                    // genuinely of this artist's world — see
+                    // EmbyClient::instantMix().
+                    text: qsTr("Instant mix")
+                    iconName: "shuffle"
+                    variant: "primary"
+                    enabled: page.artistId.length > 0
+                    onClicked: Actions.instantMix(page.artistId)
+
+                    KeyNavigation.right: favButton
+                    KeyNavigation.down: page.hasTopTracks ? topTracks : albumGrid
+                }
+
+                StrmButton {
+                    id: favButton
+
+                    text: page.artistFavorite ? qsTr("In favourites")
+                                              : qsTr("Add to favourites")
+                    iconName: page.artistFavorite ? "heart-filled" : "heart"
+                    variant: page.artistFavorite ? "primary" : "secondary"
+                    enabled: page.artistId.length > 0
+
+                    KeyNavigation.left: mixButton
+                    KeyNavigation.down: page.hasTopTracks ? topTracks : albumGrid
+                    onClicked: page.toggleFavorite()
+                }
+            }
+        }
+    }
+
+    // ── Top tracks ─────────────────────────────────────────────────────────
+    // The list `openArtist()` has been fetching and discarding since it was
+    // written (see the header). PlayCount-sorted, so the heading says so — on a
+    // library nobody has played through StrmQt yet the order is arbitrary, and
+    // labelling it "most played" is honest about what it is rather than about
+    // what it looks like.
+    Item {
+        id: topHeading
+
+        anchors.top: hero.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: page.hasTopTracks ? Theme.railGap : 0
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+        height: page.hasTopTracks ? topLabel.implicitHeight : 0
+        visible: page.hasTopTracks
+
+        Text {
+            id: topLabel
+
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: qsTr("Top tracks").toUpperCase()
+            color: Theme.textTertiary
+            font.family: Theme.fontMono
+            font.pixelSize: Theme.fontCaption
+            font.letterSpacing: Theme.fontCaption * Theme.trackLabel
+        }
+
+        Text {
+            anchors.left: topLabel.right
+            anchors.leftMargin: Theme.spacingValue
+            anchors.baseline: topLabel.baseline
+            text: qsTr("most played")
+            color: Theme.textSecondaryColor
+            font.family: Theme.fontMono
+            font.pixelSize: Theme.fontCaption
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: -Theme.spacingTight
+            height: 1
+            color: Theme.hairline
+        }
+    }
+
+    SelectionBar {
+        id: topSelection
+
+        anchors.top: topHeading.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+
+        count: page.hasTopTracks ? topTracks.selectionCount : 0
+
+        onQueueRequested: Actions.addAllToQueue(topTracks.selectedItems())
+        onPlaylistRequested: page.fileTopSelection()
+        onFavoriteRequested: Actions.setFavoriteAll(topTracks.selectedIds(), true)
+        onClearRequested: {
+            topTracks.clearSelection()
+            topTracks.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    readonly property int topArtistColumn: topTracks.showArtistColumn ? Theme.scale(200) : 0
+
+    TrackTable {
+        id: topTracks
+
+        anchors.top: topSelection.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: page.hasTopTracks ? Theme.spacingValue : 0
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+        height: page.hasTopTracks ? page.topTracksRows * page.topTrackRowHeight : 0
+        visible: page.hasTopTracks
+        enabled: page.hasTopTracks
+
+        model: MusicCtl.artistTracks
+        rowHeight: page.topTrackRowHeight
+        // No discs — these tracks come from every record the artist appears on
+        // — and the artist column is unconditional for the same reason: a
+        // guest credit is the point of an ArtistIds list, and asking "does any
+        // row differ" would answer yes on almost every artist anyway.
+        discGrouping: false
+        artistRule: false
+        alwaysShowArtist: true
+        multiSelect: true
+
+        KeyNavigation.up: mixButton
+        KeyNavigation.down: albumGrid
+
+        onActivated: index => page.playTopTrackFrom(index)
+
+        delegate: TrackRow {
+            id: topRow
+
+            required property int index
+            required property var model
+
+            readonly property string trackId: topRow.model.itemId !== undefined
+                                              ? String(topRow.model.itemId) : ""
+
+            width: topTracks.width
+
+            rowHeight: page.topTrackRowHeight
+            artistColumn: page.topArtistColumn
+
+            title: topRow.model.name !== undefined ? String(topRow.model.name) : ""
+            // The album, on the second line: on a top-tracks list the record a
+            // song came off is what tells two versions of it apart.
+            secondary: topRow.model.album !== undefined && topRow.model.album !== null
+                       ? String(topRow.model.album) : ""
+            artist: topTracks.shownArtistFor(topRow.model)
+            durationText: page.formatDuration(topRow.model.runtimeMs)
+            // The ordinal, not the track number: this list is ordered by play
+            // count, and a column reading 11, 3, 7 down a chart says nothing.
+            number: topRow.index + 1
+
+            current: topTracks.currentIndex === topRow.index && topTracks.activeFocus
+            selected: topTracks.isSelected(topRow.index)
+            playing: topRow.trackId.length > 0 && topRow.trackId === page.nowPlayingId
+            favorite: page.favoriteOf(topRow.trackId, topRow.model.favorite === true)
+            showFavorite: true
+            showMenu: true
+            verbsRevealed: topRow.hovered || topRow.favorite
+
+            onActivated: modifiers => {
+                topTracks.forceActiveFocus(Qt.MouseFocusReason)
+                topTracks.activateAt(topRow.index, modifiers)
+            }
+
+            onFavoriteToggled: {
+                const item = page.topTrackAt(topRow.index)
+                if (item)
+                    Actions.toggleFavorite(item)
+            }
+
+            onMenuRequested: (sceneX, sceneY) => {
+                trackMenu.popupForItemNoDetails(page.topTrackAt(topRow.index), sceneX, sceneY)
             }
         }
     }
@@ -459,7 +762,7 @@ FocusScope {
     Item {
         id: albumHeading
 
-        anchors.top: hero.bottom
+        anchors.top: topTracks.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.topMargin: Theme.railGap
@@ -525,7 +828,7 @@ FocusScope {
         cardVariant: "square"
         emptyText: ""
 
-        KeyNavigation.up: favButton
+        KeyNavigation.up: page.hasTopTracks ? topTracks : favButton
 
         onItemActivated: index => page.openAlbum(index)
         onItemPlayRequested: index => page.playAlbum(index)
@@ -548,6 +851,60 @@ FocusScope {
         // navigate to where the user already is — the same call DetailsPage
         // makes about its own item.
         allowMusicNavigation: false
+    }
+
+    // The track menu the album page and the Songs tab already raise, minus
+    // "Details": for a track the album page IS the details page.
+    ItemMenu {
+        id: trackMenu
+
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => {
+            const id = (item && item.itemId !== undefined) ? String(item.itemId) : ""
+            const name = (item && item.name !== undefined) ? String(item.name) : ""
+            if (id.length > 0)
+                playlistPicker.show(name, [id])
+        }
+    }
+
+    PlaylistPicker {
+        id: playlistPicker
+
+        z: 800
+        // Everything filed from this page is a track, so a playlist made here
+        // is an audio one — which is what puts it in the music library's
+        // Playlists tab rather than in no library at all.
+        mediaType: "Audio"
+        onDismissed: {
+            if (page.hasTopTracks)
+                topTracks.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    // `pending` is what tells this page's toast apart from a playlist edited on
+    // some other surface: PlaylistCtl's results are global.
+    Connections {
+        target: PlaylistCtl
+
+        function onActionSucceeded(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            artistToasts.show(message, "success")
+        }
+        function onActionFailed(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            artistToasts.show(message, "error")
+        }
+    }
+
+    StrmToastHost {
+        id: artistToasts
+
+        anchors.fill: parent
+        z: 900
     }
 
     // ── Page states ────────────────────────────────────────────────────────

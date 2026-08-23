@@ -65,67 +65,12 @@ ApplicationWindow {
     readonly property bool canGoBack: stack.depth > 1 && !root.playerOnTop
     readonly property bool canGoForward: root.navForward.length > 0 && !root.playerOnTop
 
-    // True while a text input owns focus — letter shortcuts must not fire then.
-    readonly property bool editingText: activeFocusItem !== null
-                                        && activeFocusItem.cursorPosition !== undefined
-
     // ── Bindings come from InputMap, never from literals ───────────────────
-    // Input.actions is a notifying property, so reading it here is what makes
-    // every sequence below update live when a binding changes.
-    readonly property var keymap: {
-        const list = Input.actions;
-        const map = ({});
-        for (let i = 0; i < list.length; ++i)
-            map[list[i].actionId] = list[i].sequences;
-        return map;
-    }
-
-    function sequencesFor(actionId, fallback) {
-        const found = root.keymap[actionId];
-        return (found !== undefined && found.length > 0) ? found : fallback;
-    }
-
-    // A one-character sequence ("/", "F", "?") is something you can also type
-    // into a text field, so it has to be suppressed while one has focus. A
-    // chord or a function key never can be, and must keep working.
-    function typableSequences(actionId, fallback) {
-        return root.sequencesFor(actionId, fallback).filter(s => s.length === 1);
-    }
-
-    function chordSequences(actionId, fallback) {
-        return root.sequencesFor(actionId, fallback).filter(s => s.length !== 1);
-    }
-
-    // A shortcut defined by an InputMap action id rather than by a key string:
-    // the chord half always fires, the single-character half stands down while
-    // a text field has focus.
-    component MappedShortcut: Item {
-        id: mapped
-
-        property string actionId: ""
-        property var fallback: []
-        property bool active: true
-
-        signal activated
-
-        Shortcut {
-            sequences: root.chordSequences(mapped.actionId, mapped.fallback)
-            enabled: mapped.active
-            onActivated: {
-                Input.noteInput("keyboard");
-                mapped.activated();
-            }
-        }
-
-        Shortcut {
-            sequences: root.typableSequences(mapped.actionId, mapped.fallback)
-            enabled: mapped.active && !root.editingText
-            onActivated: {
-                Input.noteInput("keyboard");
-                mapped.activated();
-            }
-        }
-    }
+    // MappedShortcut moved to src/ui/controls/ when music grew an input context
+    // of its own (MUSIC.md §7): its keys belong to the pages that can carry them
+    // out — "favourite what is selected" needs the row under the cursor, which
+    // this file cannot see — and a second copy of the typable/chord split is
+    // exactly the drift the control library exists to prevent.
 
     // ── Navigation ─────────────────────────────────────────────────────────
     function rememberFocus(): void {
@@ -865,6 +810,21 @@ ApplicationWindow {
         active: Session.authenticated && !root.playerOnTop
                 && !shortcutSheet.opened && !resumePrompt.visible
         onActivated: commandPalette.toggle()
+    }
+
+    // The docked bar takes focus by a click or by Tab, which is to say a
+    // gamepad could not reach it at all: `MiniPlayer.focusTransport()` has
+    // existed since the bar did and nothing called it. This is its caller, and
+    // R3 on a pad resolves to the same action (GamepadManager, browse context).
+    //
+    // Armed on `miniPlayer.shown` rather than on PlayerCtl.active, because the
+    // bar hides itself while the player page is on top — there the transport is
+    // the page's own and the keyboard is already on it.
+    MappedShortcut {
+        actionId: "player.focusBar"
+        fallback: ["N"]
+        active: Session.authenticated && miniPlayer.shown && !root.overlayOpen
+        onActivated: miniPlayer.focusTransport()
     }
 
     // ── Destination cycling (gamepad shoulders, Ctrl+Tab) ───────────────────

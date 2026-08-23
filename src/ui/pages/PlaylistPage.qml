@@ -191,6 +191,45 @@ FocusScope {
         PlaylistCtl.removeEntries([entry]);
     }
 
+    // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
+    // A playlist row is addressed two different ways and both are needed here:
+    // the ITEM id is what a favourite is about, and the ENTRY id is what a
+    // removal is about — the same film in a list twice is two entries and one
+    // item, which is exactly why removeEntries() takes entry ids.
+    function selectedItemIds() {
+        const rows = memberList.selectedItems();
+        const out = [];
+        for (let i = 0; i < rows.length; ++i) {
+            if (rows[i] && rows[i].itemId !== undefined)
+                out.push(String(rows[i].itemId));
+        }
+        return out;
+    }
+
+    function selectedEntryIds() {
+        const rows = memberList.selectedItems();
+        const out = [];
+        for (let i = 0; i < rows.length; ++i) {
+            if (rows[i] && rows[i].playlistItemId !== undefined
+                    && String(rows[i].playlistItemId).length > 0)
+                out.push(String(rows[i].playlistItemId));
+        }
+        return out;
+    }
+
+    function removeSelection(): void {
+        const entries = page.selectedEntryIds();
+        if (entries.length === 0) {
+            toasts.show(qsTr("The server did not give these rows entry ids, so they cannot be removed."),
+                        "error");
+            return;
+        }
+        // The refetch that follows is a model reset, and TrackTable drops the
+        // selection on one — which is right: the rows those indices named are
+        // gone, and that is what was just asked for.
+        PlaylistCtl.removeEntries(entries);
+    }
+
     function moveRow(row, delta): void {
         const target = row + delta;
         if (row < 0 || row >= page.memberCount || target < 0 || target >= page.memberCount)
@@ -693,6 +732,34 @@ FocusScope {
             }
         }
 
+        // What a multi-selection of members can be done to (MUSIC.md §7).
+        // Zero-height while nothing is picked, so the table does not move under
+        // the cursor the instant a selection is made.
+        //
+        // No "Add to playlist": this page raises no picker, and filing a
+        // selection into a SECOND list is a different gesture from editing the
+        // one on screen. Remove takes its place, which is the verb this table
+        // has and the other three do not.
+        SelectionBar {
+            id: memberSelection
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: memberHeader.bottom
+
+            count: memberList.selectionCount
+            allowPlaylist: false
+            allowRemove: true
+
+            onQueueRequested: Actions.addAllToQueue(memberList.selectedItems())
+            onFavoriteRequested: Actions.setFavoriteAll(page.selectedItemIds(), true)
+            onRemoveRequested: page.removeSelection()
+            onClearRequested: {
+                memberList.clearSelection();
+                memberList.forceActiveFocus(Qt.OtherFocusReason);
+            }
+        }
+
         // The shared table (ARCHITECTURE.md): one tab stop, Up/Down and the
         // page keys owned internally, type-to-jump for a playlist long enough
         // that arrow keys are not navigation. No disc grouping and no artist
@@ -703,11 +770,17 @@ FocusScope {
 
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: memberHeader.bottom
+            anchors.top: memberSelection.bottom
             anchors.bottom: parent.bottom
             anchors.topMargin: Theme.spacingValue
             model: PlaylistCtl.items
             rowHeight: Theme.scale(64)
+            // MUSIC.md §7. A playlist's members are the one table where the
+            // batch verb the user most wants is REMOVE — and it is free:
+            // PlaylistController::removeEntries() has taken a list of entry ids
+            // since it was written, so the one-row Delete key was already the
+            // degenerate case of it.
+            multiSelect: true
             // The composed display string, which for an episode carries the
             // series and the number the bare name does not.
             jumpRole: "label"
@@ -749,7 +822,12 @@ FocusScope {
                     return;
                 }
                 if (event.key === Qt.Key_Delete && !event.isAutoRepeat) {
-                    page.removeRow(row);
+                    // A selection wins over the cursor: with rows picked,
+                    // Delete obviously means those rows.
+                    if (memberList.selectionCount > 0)
+                        page.removeSelection();
+                    else
+                        page.removeRow(row);
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
                     const item = memberList.currentItem;
@@ -823,16 +901,19 @@ FocusScope {
                 played: memberRow.model.played === true
 
                 current: memberRow.ListView.isCurrentItem && memberList.activeFocus
+                selected: memberList.isSelected(memberRow.index)
                 showMenu: true
                 // Both may be true at once, and the actions appear for either:
                 // the pointer needs them under the cursor, the keyboard needs
                 // them on the row it is standing on.
                 verbsRevealed: memberRow.hovered || memberRow.current
 
-                onActivated: {
-                    memberList.currentIndex = memberRow.index;
+                // Through activateAt(), not straight to playFrom(): that is the
+                // one place Ctrl+Click and Shift+Click are decided, and it moves
+                // the cursor itself.
+                onActivated: modifiers => {
                     memberList.forceActiveFocus(Qt.MouseFocusReason);
-                    page.playFrom(memberRow.index);
+                    memberList.activateAt(memberRow.index, modifiers);
                 }
 
                 onMenuRequested: (sceneX, sceneY) => page.showMemberMenu(memberRow.index,

@@ -73,6 +73,14 @@ target_include_directories(tst_player_tracks PRIVATE mocks)
 
 strmqt_add_test(tst_play_queue unit/tst_play_queue.cpp)
 
+# The one Qt semantic TrackRow's multi-select rests on, probed live: a pointer
+# handler's own `point` carries keyboard modifiers and the `tapped` signal's
+# QEventPoint does not. Needs QtQuick and a window, so it runs offscreen — there
+# is no display in CI and none reachable from an agent here either.
+strmqt_add_test(tst_tap_modifiers unit/tst_tap_modifiers.cpp)
+target_link_libraries(tst_tap_modifiers PRIVATE Qt6::Quick)
+set_tests_properties(tst_tap_modifiers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
 # is deliberately QtCore-only; the unit is compiled straight into the test. The
 # clamp is pure — an image in, a colour out — but the cache around it is driven

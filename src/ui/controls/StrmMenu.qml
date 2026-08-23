@@ -29,6 +29,25 @@ Popup {
     // opened it still close it, so there is no way to get stuck in one.
     property bool closeOnTrigger: true
 
+    // ── When the control that opens the menu IS the menu's parent ──────────
+    // On for StrmSelect and nothing else, and it fixes a bug the queue peek had
+    // in the same shape (MiniPlayer.qml): a press outside a
+    // CloseOnPressOutside popup closes it there and then — the exit transition
+    // is prepared synchronously, so `opened` is already false — while the
+    // control that opened it fires on RELEASE. The press shut the menu and the
+    // release of that same click reopened it, so a select could open its own
+    // dropdown but never close it; only Esc or a click elsewhere could.
+    //
+    // OutsideParent is the distinction QQuickComboBox draws for its own popup,
+    // for exactly this reason. It is only correct where the popup's parent is
+    // the opening control (or an item containing it) AND a press elsewhere on
+    // that parent is not expected to dismiss the menu. For StrmSelect both hold:
+    // `parent: select`, and the whole of that parent is the toggle. It is
+    // therefore opt-in rather than the default — every other consumer parents
+    // the menu to a page or a rail, where a press on the parent is a press
+    // somewhere else entirely and must close.
+    property bool toggledFromParent: false
+
     signal triggered(int index)
 
     // ── Focus escrow (ARCHITECTURE.md) ─────────────────────────────────────
@@ -205,7 +224,11 @@ Popup {
     modal: false
     dim: false
     focus: true
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnReleaseOutside
+    closePolicy: menu.toggledFromParent
+                 ? (Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                    | Popup.CloseOnReleaseOutsideParent)
+                 : (Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                    | Popup.CloseOnReleaseOutside)
 
     // aboutToShow, not onOpened: the popup takes focus when its enter
     // transition finishes, so by `opened` the item worth remembering is already

@@ -10,6 +10,7 @@
 
 #include <QMetaType>
 #include <QRandomGenerator>
+#include <QSet>
 
 #include <algorithm>
 #include <utility>
@@ -311,6 +312,93 @@ void ItemActions::playAllFrom(const QVariantList &items, int startIndex)
         return;
     m_player->playQueue(items, startIndex);
     emit queueChanged();
+}
+
+void ItemActions::addAllToQueue(const QVariantList &items)
+{
+    if (items.isEmpty()) {
+        emit actionFailed(tr("There is nothing to queue here."));
+        return;
+    }
+    if (!requireQueueTarget())
+        return;
+    int added = 0;
+    for (const QVariant &entry : items) {
+        const QVariantMap map = resolve(entry);
+        if (map.value(kItemIdKey).toString().isEmpty())
+            continue;
+        m_player->queue()->addToQueue(map);
+        ++added;
+    }
+    if (added == 0) {
+        qCWarning(logApp) << "ItemActions: addAllToQueue had nothing with an item id";
+        emit actionFailed(tr("There is nothing to queue here."));
+        return;
+    }
+    // Once, for the whole gesture. Forty toasts is not forty pieces of
+    // feedback, it is one piece of feedback and thirty-nine obstructions.
+    emit queueChanged();
+}
+
+void ItemActions::setFavoriteAll(const QStringList &itemIds, bool favorite)
+{
+    for (const QString &itemId : itemIds)
+        setFavorite(itemId, favorite);
+}
+
+void ItemActions::instantMix(const QVariant &item)
+{
+    // An id is the whole of what this verb needs, so a bare id is taken at face
+    // value rather than looked up. resolve() answers a QString by searching the
+    // registered models, and **MusicController's four models are not registered
+    // here** — so every album, artist and track a music page could name would
+    // resolve to an empty map and the mix would silently never happen. Found by
+    // the test below, which is what it is for.
+    const QString itemId = item.typeId() == QMetaType::QString
+                               ? item.toString()
+                               : resolve(item).value(kItemIdKey).toString();
+    if (itemId.isEmpty()) {
+        qCWarning(logApp) << "ItemActions: instantMix without an item id";
+        return;
+    }
+    if (!requireQueueTarget())
+        return;
+    if (!m_client) {
+        qCWarning(logApp) << "ItemActions: no server client; cannot mix" << itemId;
+        emit actionFailed(tr("Not connected to the server."));
+        return;
+    }
+
+    m_client->instantMix(itemId, kQueueFetchLimit)
+        .then(this, [this](const Result<ItemsPage> &result) {
+            if (!result.ok()) {
+                emit actionFailed(tr("Could not build an instant mix: %1").arg(result.error));
+                return;
+            }
+            // De-duplicate, in the order the server sent. Measured: 500 rows
+            // asked for came back with 493 distinct ids, and PlayQueue keys
+            // entries rather than ids, so the repeats would survive all the way
+            // to the queue panel and read as a bug.
+            QList<MediaItem> mix;
+            QSet<QString> seen;
+            mix.reserve(result.value.items.size());
+            for (const MediaItem &entry : result.value.items) {
+                if (entry.id.isEmpty() || seen.contains(entry.id))
+                    continue;
+                seen.insert(entry.id);
+                mix.append(entry);
+            }
+            if (mix.isEmpty()) {
+                emit actionFailed(tr("There is nothing to play here."));
+                return;
+            }
+            // NOT flagged shuffled. `shuffled` means "there is an original
+            // order to give back when the user turns shuffle off", and a mix
+            // has none: its order is the station. Flagging it would put a lit
+            // shuffle button over a queue that un-shuffles to itself.
+            m_player->playQueueItems(mix, 0, false);
+            emit queueChanged();
+        });
 }
 
 void ItemActions::fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart)

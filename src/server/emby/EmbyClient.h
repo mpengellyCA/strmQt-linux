@@ -146,6 +146,35 @@ public:
     // GET /Items/{id}/Similar — "More like this".
     QFuture<Result<QList<MediaItem>>> similar(const QString &itemId, int limit = 12);
 
+    // ── GET /Items/{id}/InstantMix — a radio station built from one item ──
+    // Measured on Emby 4.9.5.0 against the target library, and every line of
+    // this is a measurement rather than a reading of the API:
+    //
+    //  · **One endpoint serves all three seeds.** A track, an album and an
+    //    *artist* item id all answer 200 with `{Items, TotalRecordCount}` of
+    //    `Audio` rows, and the artist answer is genuinely artist-shaped — an
+    //    Xbox-era rock artist returned Led Zeppelin, Nirvana and Pink Floyd
+    //    while a Japanese vocalist returned Mizuki Nana and yanaginagi.
+    //  · **`/Artists/InstantMix` is not a second thing to call.** It takes an
+    //    `Id`, not a name: `Name=angela` answers **HTTP 500, "Unrecognized Guid
+    //    format."**, and so does omitting the id. Given the id it answers the
+    //    same shape as `/Items/{artistId}/InstantMix`, so there is one verb here
+    //    and not two (ARCHITECTURE.md rule 3).
+    //  · **A track seed comes back as item 0 and does not count against the
+    //    limit.** `Limit=50` on a track returned 51 rows, `Limit=500` returned
+    //    501; an artist or album seed is not itself audio and returns exactly
+    //    `Limit`. That is the right shape for "play this, then things like it"
+    //    and needs no special-casing.
+    //  · **It does not page, and TotalRecordCount is not a total.** The count
+    //    always equals the array's own size, and `StartIndex=5` answered a
+    //    fresh randomised set rather than the sixth row onward — the same trap
+    //    as SortBy=Random (ARCHITECTURE.md §2). One mix is one request.
+    //  · **The rows are not distinct.** 500 asked for came back as 493 unique
+    //    ids. Callers de-duplicate; `PlayQueue` would happily hold the repeat,
+    //    but hearing the same song twice in a radio station reads as a bug.
+    //  · The default limit, when none is sent, is 200.
+    QFuture<Result<ItemsPage>> instantMix(const QString &itemId, int limit = 200);
+
     // POST (or DELETE) /Users/{uid}/PlayedItems/{id} and .../FavoriteItems/{id}
     QFuture<Result<bool>> setPlayed(const QString &itemId, bool played);
     QFuture<Result<bool>> setFavorite(const QString &itemId, bool favorite);

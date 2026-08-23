@@ -106,6 +106,10 @@ Item {
 
     activeFocusOnTab: true
 
+    // A control could not close its own dropdown before `toggledFromParent`
+    // existed: the press closed the menu and the release of that same click
+    // reopened it. See StrmMenu.toggledFromParent for the whole diagnosis — it
+    // is the bug the queue peek had, in the same shape.
     function toggle() {
         if (menu.opened) {
             menu.close()
@@ -114,6 +118,15 @@ Item {
             menu.popupAt(p.x, p.y)
         }
     }
+
+    // Hiding a popup's PARENT does not close the popup — it renders in the
+    // window's overlay layer and simply keeps floating there, with only Esc to
+    // find it (measured on Qt 6.11 for the queue peek, and it is the same
+    // popup class here). A select disappears whenever the view around it
+    // changes: FilterBar's genre control is a Repeater delegate that goes away
+    // with the filter set, and the sort control's options change per tab.
+    onVisibleChanged: { if (!select.visible) menu.close() }
+    onEnabledChanged: { if (!select.enabled) menu.close() }
 
     HoverHandler {
         id: hover
@@ -195,6 +208,11 @@ Item {
     StrmMenu {
         id: menu
         parent: select
+        // The proviso StrmMenu.toggledFromParent states, met here: the popup's
+        // parent is the opening control itself, and the whole of that parent IS
+        // the toggle — there is no part of it a press should dismiss the menu
+        // from. A press anywhere off the control still closes it.
+        toggledFromParent: true
         // Toggles stay open, commands close. See StrmMenu.closeOnTrigger.
         closeOnTrigger: !select.multiSelect
         actions: {

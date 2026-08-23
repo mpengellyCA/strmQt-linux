@@ -38,14 +38,32 @@ import StrmQt
 // a specific key (`Keys.onDeletePressed`, `Keys.onUpPressed`) are separate
 // signals and can still be declared outside.
 //
-// ── Where multi-select goes ────────────────────────────────────────────────
-// Deferred until the batch verbs behind it exist (queue / add-to-playlist /
-// favourite over a set), because a selection UI with nothing to do is dead
-// code. The shape is here for it: `_moveCursor()` is the single funnel every
-// cursor movement passes through, so Shift+Up/Down extends from an anchor
-// there; `activateAt()` is the single activation path, so Ctrl+Click toggles
-// there; and a row's selected state would be a `selected` property on TrackRow
-// set from a `selectedRows` map on this component. Nothing else needs to move.
+// ── Multi-select ───────────────────────────────────────────────────────────
+// Off by default (`multiSelect`), because a table whose page offers no batch
+// verb would gain a selection nobody could do anything with. Where it is on it
+// went exactly where the shape said it would: `_moveCursor()` is the single
+// funnel every cursor movement passes through, so Shift+Up/Down extends from an
+// anchor there; `activateAt()` is the single activation path, so Ctrl+Click and
+// Shift+Click are decided there; and `selectedRows` drives `selected` on
+// TrackRow.
+//
+// **The set is keyed by ROW INDEX, and that is what makes clearing it a rule
+// rather than a judgement call.** An index means nothing once the rows behind
+// it change, so:
+//
+//  · a model RESET clears it. `MediaItemModel::setItems()` is the one signal
+//    that means "these are different rows" whatever the count says, and it is
+//    what every refill goes through — a sort change, a genre filter, a letter,
+//    opening a second album. So a filter change drops the selection, which is
+//    also the honest answer on its own terms: the rows the user picked are not
+//    on screen any more, and silently queueing them later would be a batch verb
+//    acting on something invisible.
+//  · a paged APPEND does not. loadMore() inserts rows after the ones already
+//    there, every existing index still names the row it named, and a selection
+//    made at row 4 must survive scrolling to row 400.
+//
+// Ctrl+Click TOGGLES and does not activate: a click that both added a row to
+// the set and started playing it would make building a selection impossible.
 ListView {
     id: table
 
@@ -100,6 +118,106 @@ ListView {
     // count, so a handler may call loadMore() unconditionally — contentY moves
     // on every scrolled pixel and an unthrottled signal is a request storm.
     property int prefetchThreshold: 0
+
+    // ── Selection ──────────────────────────────────────────────────────────
+    property bool multiSelect: false
+    // Row index → true. REPLACED rather than mutated on every change: a mutated
+    // object notifies nothing and every row on screen would keep its old state.
+    property var selectedRows: ({})
+    // Where a Shift range is measured from. Set by every plain move and every
+    // Ctrl+Click; never by an extending move, which is what makes Shift+Down
+    // three times select three rows instead of one.
+    property int selectionAnchor: -1
+    property int selectionCount: 0
+    // True only for the instant _moveCursor() spends inside an extending move,
+    // so onCurrentIndexChanged can tell "the user walked somewhere" from "a
+    // Shift range is being drawn".
+    property bool _extending: false
+
+    function isSelected(index): bool {
+        return table.selectedRows[index] === true
+    }
+
+    function clearSelection(): void {
+        if (table.selectionCount === 0 && table.selectionAnchor < 0)
+            return
+        table.selectedRows = ({})
+        table.selectionCount = 0
+        table.selectionAnchor = -1
+    }
+
+    function _applySelection(next): void {
+        let count = 0
+        for (const key in next) {
+            if (next[key] === true)
+                ++count
+        }
+        table.selectedRows = next
+        table.selectionCount = count
+    }
+
+    function toggleSelection(index): void {
+        if (!table.multiSelect || index < 0 || index >= table.count)
+            return
+        const next = Object.assign({}, table.selectedRows)
+        if (next[index] === true)
+            delete next[index]
+        else
+            next[index] = true
+        table._applySelection(next)
+        table.selectionAnchor = index
+    }
+
+    // Replaces the set with one contiguous run. A Shift range is a statement
+    // about where the anchor and the cursor are, not an addition to whatever
+    // was picked before it — the alternative accumulates runs the user cannot
+    // see the boundaries of.
+    function selectRange(from, to): void {
+        if (!table.multiSelect || table.count === 0)
+            return
+        const lo = Math.max(0, Math.min(from, to))
+        const hi = Math.min(table.count - 1, Math.max(from, to))
+        const next = ({})
+        for (let i = lo; i <= hi; ++i)
+            next[i] = true
+        table._applySelection(next)
+    }
+
+    function selectAll(): void {
+        if (!table.multiSelect || table.count === 0)
+            return
+        table.selectRange(0, table.count - 1)
+        table.selectionAnchor = 0
+    }
+
+    // The selected rows' item ids, in table order. The batch verbs' whole
+    // contract: PlaylistPicker.show(subject, ids) takes exactly this, which is
+    // why nothing about the picker or the playlist controller had to change.
+    function selectedIds(): var {
+        const out = []
+        for (let i = 0; i < table.count; ++i) {
+            if (!table.isSelected(i))
+                continue
+            const entry = table.rowAt(i)
+            if (entry && entry.itemId !== undefined && entry.itemId !== null)
+                out.push(String(entry.itemId))
+        }
+        return out
+    }
+
+    // The selected rows as item maps, for the verbs that want the whole record
+    // (queueing needs the title and the type, not just an id).
+    function selectedItems(): var {
+        const out = []
+        for (let i = 0; i < table.count; ++i) {
+            if (!table.isSelected(i))
+                continue
+            const entry = table.rowAt(i)
+            if (entry)
+                out.push(entry)
+        }
+        return out
+    }
 
     signal activated(int index)
     // Raised before this component's own key handling; accept the event to
@@ -223,21 +341,60 @@ ListView {
 
     // ── Cursor ─────────────────────────────────────────────────────────────
     // The single funnel. Every movement below goes through it, which is what
-    // makes a later Shift-extends-the-selection a change in one place.
-    function _moveCursor(index): void {
+    // made Shift-extends-the-selection a change in one place.
+    //
+    // `extend` is the Shift half: the cursor moves and the selection becomes
+    // the run between the anchor and where it landed.
+    //
+    // Re-planting the anchor on a PLAIN move is NOT done here, and that is the
+    // one thing in this component that could not be: plain Up/Down are
+    // ListView's own key handling and never reach this function, so an anchor
+    // moved only here would stay where the last Shift range began and the next
+    // Shift+Down would select back to it across everything the user had walked
+    // past in between. It is done in onCurrentIndexChanged instead, which every
+    // move goes through whoever made it — this one, ListView's arrows,
+    // type-to-jump, or a page assigning currentIndex directly.
+    function _moveCursor(index, extend): void {
         if (table.count === 0)
             return
-        table.currentIndex = Math.max(0, Math.min(table.count - 1, index))
+        const target = Math.max(0, Math.min(table.count - 1, index))
+        const extending = extend === true && table.multiSelect
+        if (extending && table.selectionAnchor < 0)
+            table.selectionAnchor = table.currentIndex
+        table._extending = extending
+        table.currentIndex = target
+        table._extending = false
+        if (extending)
+            table.selectRange(table.selectionAnchor, target)
     }
 
     function _pageStep(): int {
         return Math.max(1, Math.floor(table.height / Math.max(1, table.rowHeight)))
     }
 
-    // The single activation path.
-    function activateAt(index): void {
+    // The single activation path, and the one place Ctrl+Click and Shift+Click
+    // are decided. `modifiers` is Qt::KeyboardModifiers; omitted means none,
+    // which is what every keyboard activation passes.
+    function activateAt(index, modifiers): void {
         if (index < 0 || index >= table.count)
             return
+        const mods = (modifiers === undefined || modifiers === null) ? Qt.NoModifier : modifiers
+        if (table.multiSelect && (mods & Qt.ControlModifier)) {
+            // Toggle, and do NOT activate: a click that both added the row to
+            // the set and started playing it could never build a selection.
+            table.currentIndex = index
+            table.toggleSelection(index)
+            return
+        }
+        if (table.multiSelect && (mods & Qt.ShiftModifier)) {
+            table._moveCursor(index, true)
+            return
+        }
+        // A plain activation is also "I am done with that set". Leaving it
+        // standing would let the next batch verb act on rows the user believes
+        // they have moved on from.
+        table.clearSelection()
+        table._moveCursor(index)
         table.activated(index)
     }
 
@@ -311,6 +468,7 @@ ListView {
         // throttle still holds the previous model's count and the first page of
         // the new one never asks for a second.
         table._lastNearEndCount = -1
+        table.clearSelection()
         table.rebuildMeta()
     }
 
@@ -327,9 +485,20 @@ ListView {
     Connections {
         target: Qt.isQtObject(table.model) ? table.model : null
         ignoreUnknownSignals: true
-        function onModelReset() { table._lastNearEndCount = -1 }
+        function onModelReset() {
+            table._lastNearEndCount = -1
+            // …and the selection goes with it. See the header: the set is keyed
+            // by row index, and a reset is the one signal that means the rows
+            // behind those indices are different rows.
+            table.clearSelection()
+        }
     }
-    onCurrentIndexChanged: table._checkNearEnd()
+    onCurrentIndexChanged: {
+        table._checkNearEnd()
+        // Every plain move re-plants the anchor — see _moveCursor().
+        if (!table._extending)
+            table.selectionAnchor = table.currentIndex
+    }
     onContentYChanged: table._checkNearEnd()
 
     clip: true
@@ -363,11 +532,11 @@ ListView {
 
     Keys.onReturnPressed: event => {
         if (!event.isAutoRepeat)
-            table.activateAt(table.currentIndex)
+            table.activateAt(table.currentIndex, event.modifiers)
     }
     Keys.onEnterPressed: event => {
         if (!event.isAutoRepeat)
-            table.activateAt(table.currentIndex)
+            table.activateAt(table.currentIndex, event.modifiers)
     }
 
     Keys.onPressed: event => {
@@ -379,24 +548,54 @@ ListView {
         if (table.count === 0)
             return
 
+        // ── Selection keys ─────────────────────────────────────────────────
+        // Up/Down are ListView's own and are deliberately left to it — but only
+        // unmodified. Shift+Up/Down are claimed here, before the view sees
+        // them, so the move and the range it implies happen together in
+        // _moveCursor() rather than as a move the selection has to chase.
+        const extend = table.multiSelect && (event.modifiers & Qt.ShiftModifier) !== 0
+        if (extend && event.key === Qt.Key_Down) {
+            table._moveCursor(table.currentIndex + 1, true)
+            event.accepted = true
+            return
+        }
+        if (extend && event.key === Qt.Key_Up) {
+            table._moveCursor(table.currentIndex - 1, true)
+            event.accepted = true
+            return
+        }
+        if (table.multiSelect && event.key === Qt.Key_A
+                && (event.modifiers & Qt.ControlModifier)) {
+            table.selectAll()
+            event.accepted = true
+            return
+        }
+        // Only while there IS a selection: Esc is Back everywhere in this app
+        // and swallowing it on an empty set would trap the user in the table.
+        if (table.multiSelect && event.key === Qt.Key_Escape && table.selectionCount > 0) {
+            table.clearSelection()
+            event.accepted = true
+            return
+        }
+
         // A screen at a time, and the ends of a 300-track box set in one press.
         if (event.key === Qt.Key_PageDown) {
-            table._moveCursor(table.currentIndex + table._pageStep())
+            table._moveCursor(table.currentIndex + table._pageStep(), extend)
             event.accepted = true
             return
         }
         if (event.key === Qt.Key_PageUp) {
-            table._moveCursor(table.currentIndex - table._pageStep())
+            table._moveCursor(table.currentIndex - table._pageStep(), extend)
             event.accepted = true
             return
         }
         if (event.key === Qt.Key_Home) {
-            table._moveCursor(0)
+            table._moveCursor(0, extend)
             event.accepted = true
             return
         }
         if (event.key === Qt.Key_End) {
-            table._moveCursor(table.count - 1)
+            table._moveCursor(table.count - 1, extend)
             event.accepted = true
             return
         }
