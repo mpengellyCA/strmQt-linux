@@ -170,6 +170,23 @@ FocusScope {
         }
     ]
 
+    // MUSIC.md §6.3. Values match Settings::replayGainModes(); anything else on
+    // disk reads back as "off" rather than reaching the engine.
+    readonly property var replayGainOptions: [
+        {
+            "text": qsTr("Off"),
+            "value": "off"
+        },
+        {
+            "text": qsTr("Per track"),
+            "value": "track"
+        },
+        {
+            "text": qsTr("Per album"),
+            "value": "album"
+        }
+    ]
+
     readonly property var playbackModeOptions: [
         {
             "text": qsTr("Automatic"),
@@ -255,6 +272,7 @@ FocusScope {
     readonly property string currentAccent: page.prefsAvailable ? page.prefs.themeAccent : "projection"
     readonly property int storedBitrate: page.prefsAvailable ? page.prefs.maxBitrateKbps : 0
     readonly property string storedPlaybackMode: page.prefsAvailable ? page.prefs.playbackMode : "auto"
+    readonly property string storedReplayGain: page.prefsAvailable ? page.prefs.replayGainMode : "off"
 
     // Subtitle appearance is edited against a draft (ARCHITECTURE.md): dragging a
     // slider repaints the preview, and only letting go writes the preference.
@@ -694,6 +712,26 @@ FocusScope {
                             font.family: Theme.fontMono
                             font.pixelSize: Theme.fontSmall
                             horizontalAlignment: Text.AlignRight
+                        }
+                    }
+
+                    // ── Volume normalisation (MUSIC.md §6.3) ────────────────
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Volume normalisation")
+                        hint: page.prefsAvailable
+                              ? qsTr("Levels tracks using their ReplayGain tags, so a shuffled library stops jumping between records. Per album keeps a record's own quiet and loud tracks in proportion. Untagged files are unaffected.")
+                              : page.unavailableHint
+
+                        StrmSelect {
+                            enabled: page.prefsAvailable
+                            width: Theme.scale(220)
+                            model: page.replayGainOptions
+                            currentIndex: page.indexOfValue(page.replayGainOptions, page.storedReplayGain)
+                            onActivated: index => {
+                                if (page.prefsAvailable)
+                                    page.prefs.replayGainMode = page.replayGainOptions[index].value;
+                            }
                         }
                     }
 

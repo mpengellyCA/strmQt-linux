@@ -20,6 +20,7 @@ private slots:
     void densityDefaultsAndValidation();
     void themeAccentDefaultsAndValidation();
     void volumeClampsAndPersists();
+    void replayGainDefaultsOffAndValidates();
     void mutePersists();
     void inputMapViewSurvivesSettingsWrites();
 };
@@ -117,6 +118,51 @@ void SettingsPrefsTest::volumeClampsAndPersists()
     }
     Settings recovered(ini);
     QCOMPARE(recovered.volume(), 130);
+}
+
+// MUSIC.md §6.3. Off by default, because a gain nobody asked for is a surprise,
+// and the vocabulary is validated on the way *out* as well as in: the value is
+// handed straight to mpv's `replaygain`, which rejects anything else and then
+// silently keeps whatever gain the previous file left in the chain.
+void SettingsPrefsTest::replayGainDefaultsOffAndValidates()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("replaygain.ini"));
+
+    {
+        Settings settings(ini);
+        QCOMPARE(settings.replayGainMode(), QStringLiteral("off"));
+
+        QSignalSpy spy(&settings, &Settings::replayGainModeChanged);
+        settings.setReplayGainMode(QStringLiteral("album"));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(settings.replayGainMode(), QStringLiteral("album"));
+
+        // Idempotent, and outside the vocabulary is refused rather than stored.
+        settings.setReplayGainMode(QStringLiteral("album"));
+        settings.setReplayGainMode(QStringLiteral("loud"));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(settings.replayGainMode(), QStringLiteral("album"));
+
+        settings.setReplayGainMode(QStringLiteral("track"));
+        QCOMPARE(spy.count(), 2);
+    }
+
+    Settings reloaded(ini);
+    QCOMPARE(reloaded.replayGainMode(), QStringLiteral("track"));
+    QCOMPARE(Settings::replayGainModes(),
+             QStringList({QStringLiteral("off"), QStringLiteral("track"),
+                          QStringLiteral("album")}));
+
+    // A hand-edited INI must not put a value mpv will refuse into the chain.
+    {
+        QSettings raw(ini, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("playback/replayGain"), QStringLiteral("nonsense"));
+        raw.sync();
+    }
+    Settings recovered(ini);
+    QCOMPARE(recovered.replayGainMode(), QStringLiteral("off"));
 }
 
 void SettingsPrefsTest::mutePersists()

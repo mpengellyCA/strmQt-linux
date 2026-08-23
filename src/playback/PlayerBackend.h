@@ -132,6 +132,14 @@ public:
         Q_UNUSED(position);
     }
     virtual void setSubtitleDelayMs(int ms) { Q_UNUSED(ms); }
+
+    // Volume normalisation from ReplayGain tags (MUSIC.md §6.3).
+    //   mode  "off" | "track" | "album"
+    // This is a *tag* reader, not an analyser: a file without ReplayGain
+    // metadata plays at its own level whatever this says, which is why the
+    // control cannot promise loudness matching for an untagged library.
+    // Engines without the feature ignore it.
+    virtual void setReplayGain(const QString &mode) { Q_UNUSED(mode); }
     // Best-effort decode statistics. Keys the engine cannot answer are *absent*
     // rather than zero, so the panel can hide a row instead of printing a lie:
     //   width, height (int), codec (QString), videoBitrate (qint64, bits/s),

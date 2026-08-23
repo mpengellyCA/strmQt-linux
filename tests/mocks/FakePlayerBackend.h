@@ -84,6 +84,7 @@ public:
         m_subtitleDelayMs = ms;
         emit subtitleDelayChanged();
     }
+    void setReplayGain(const QString &mode) override { replayGainModes.append(mode); }
     QVariantMap videoStats() const override { return m_videoStats; }
     void screenshotToFile(const QString &path) override { screenshots.append(path); }
 
@@ -170,6 +171,7 @@ public:
     QList<int> audioTrackRequests;
     QList<int> subtitleTrackRequests;
     QStringList screenshots;
+    QStringList replayGainModes;
     int stopCalls = 0;
 
 private:

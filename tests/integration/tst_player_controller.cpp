@@ -54,6 +54,8 @@ private slots:
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
 
+    void replayGainReachesTheEngineOnLoadAndOnChange();
+
     void demotionStaysWithinSelectedSource();
     void preferredSourceHonouredAtStart();
     void setPreferredSourceSwitchesVersionMidSession();
@@ -427,6 +429,35 @@ void PlayerControllerTest::crashResumePersistsAndClears()
 }
 
 // ── Multi-version (MediaSource) behaviour ─────────────────────────────────────
+
+// MUSIC.md §6.3. Two things have to hold, and neither is free: the preference
+// has to reach a *running* engine (a normalisation you only hear on the next
+// track is a control that appears not to work), and it has to be re-asserted on
+// every load, because an engine is entitled to rebuild its audio chain per file.
+void PlayerControllerTest::replayGainReachesTheEngineOnLoadAndOnChange()
+{
+    // Constructed with the stored value already in hand, so the first file is
+    // normalised rather than the second.
+    QCOMPARE(m_backend->replayGainModes, QStringList{QStringLiteral("off")});
+
+    m_backend->replayGainModes.clear();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_backend->replayGainModes, QStringList{QStringLiteral("off")});
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    // Changed mid-playback: pushed at once, not deferred to the next item.
+    m_backend->replayGainModes.clear();
+    m_settings->setReplayGainMode(QStringLiteral("album"));
+    QCOMPARE(m_backend->replayGainModes, QStringList{QStringLiteral("album")});
+
+    // And every subsequent load carries it, including a ladder demotion — which
+    // reloads through the same path and must not drop back to the engine default.
+    m_backend->replayGainModes.clear();
+    m_backend->simulateError(QStringLiteral("network stream error"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_backend->replayGainModes, QStringList{QStringLiteral("album")});
+}
 
 void PlayerControllerTest::demotionStaysWithinSelectedSource()
 {

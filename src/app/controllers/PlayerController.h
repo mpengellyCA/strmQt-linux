@@ -143,6 +143,10 @@ public:
     // whenever Settings changes, so a tweak is visible on the frame in front of
     // the user rather than at the next play.
     Q_INVOKABLE void applySubtitleStyle();
+    // Same contract for volume normalisation (MUSIC.md §6.3): pushed on start
+    // and whenever the preference changes, because mpv resets the audio chain
+    // per file and a shuffled library must not step between levels.
+    Q_INVOKABLE void applyReplayGain();
     // Dev/test entry: play a URL directly, no server ticket or reporting.
     Q_INVOKABLE void playUrl(const QUrl &url, const QString &title);
     Q_INVOKABLE void togglePause();

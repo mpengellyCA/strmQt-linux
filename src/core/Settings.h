@@ -46,6 +46,12 @@ class Settings : public QObject
     // "auto" | "directPlay" | "transcode"
     Q_PROPERTY(QString playbackMode READ playbackMode WRITE setPlaybackMode NOTIFY
                    playbackModeChanged)
+    // ── Volume normalisation (MUSIC.md §6.3) ─────────────────────────────────
+    // ReplayGain tags, applied by the engine: "off" | "track" | "album".
+    // Off by default: a gain the user did not ask for is a surprise, and a
+    // library with no tags gains nothing from it.
+    Q_PROPERTY(QString replayGainMode READ replayGainMode WRITE setReplayGainMode NOTIFY
+                   replayGainModeChanged)
     // ── Backdrop (ARCHITECTURE.md) ──────────────────────────────────────
     Q_PROPERTY(bool backdropEnabled READ backdropEnabled WRITE setBackdropEnabled NOTIFY
                    backdropChanged)
@@ -103,6 +109,13 @@ public:
     void setMaxBitrateKbps(int kbps);
     QString playbackMode() const;
     void setPlaybackMode(const QString &mode);
+
+    // MUSIC.md §6.3. Anything else on disk reads back as "off" rather than
+    // being handed to the engine, which would reject it and leave the gain in
+    // whatever state the previous file left it.
+    QString replayGainMode() const;
+    void setReplayGainMode(const QString &mode);
+    static QStringList replayGainModes();
 
     bool backdropEnabled() const;
     void setBackdropEnabled(bool enabled);
@@ -201,6 +214,7 @@ signals:
     void autoPlayNextEpisodeChanged();
     void maxBitrateKbpsChanged();
     void playbackModeChanged();
+    void replayGainModeChanged();
     void subtitleStyleChanged();
     void backdropChanged();
     void usernameChanged();

@@ -139,6 +139,7 @@ public:
     void setSubtitleStyle(const QString &font, int scale, const QString &color, int background,
                           int position) override;
     void setSubtitleDelayMs(int ms) override;
+    void setReplayGain(const QString &mode) override;
     QVariantMap videoStats() const override;
     void screenshotToFile(const QString &path) override;
     bool supportsFrameStep() const override { return true; }

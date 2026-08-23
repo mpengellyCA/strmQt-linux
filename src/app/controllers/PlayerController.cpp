@@ -44,12 +44,17 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     if (m_settings) {
         connect(m_settings, &Settings::subtitleStyleChanged, this,
                 &PlayerController::applySubtitleStyle);
+        connect(m_settings, &Settings::replayGainModeChanged, this,
+                &PlayerController::applyReplayGain);
     }
     // Applied on every load too, because mpv resets these when a file changes.
     connect(this, &PlayerController::activeChanged, this, [this] {
         if (active())
             applySubtitleStyle();
     });
+    // Volume normalisation is re-asserted per load (startAttempt/playUrl) rather
+    // than per session, and once here so the very first file already carries it.
+    applyReplayGain();
 
     // The engine publishes its track list asynchronously after a load, so a
     // remembered choice can only be applied once that arrives.
@@ -408,6 +413,13 @@ void PlayerController::applySubtitleStyle()
                                 m_settings->subtitlePosition());
 }
 
+void PlayerController::applyReplayGain()
+{
+    if (!m_backend || !m_settings)
+        return;
+    m_backend->setReplayGain(m_settings->replayGainMode());
+}
+
 void PlayerController::setPreferredSource(int index)
 {
     m_preferredSourceIndex = index;
@@ -471,6 +483,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_lastPositionMs = 0;
     m_backend->load(url, 0);
     applyVolume();
+    applyReplayGain();
 }
 
 void PlayerController::startAttempt(qint64 startMs)
@@ -495,6 +508,7 @@ void PlayerController::startAttempt(qint64 startMs)
     m_backend->load(candidate.url, startMs);
     // Some engines reset their audio state per media; re-assert ours.
     applyVolume();
+    applyReplayGain();
 }
 
 void PlayerController::onBackendState(PlayerBackend::State state)

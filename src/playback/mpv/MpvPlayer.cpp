@@ -352,6 +352,24 @@ void MpvPlayer::setSubtitleDelayMs(int ms)
     mpv_set_property(m_mpv, "sub-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
+void MpvPlayer::setReplayGain(const QString &mode)
+{
+    if (!m_mpv)
+        return;
+    // mpv's vocabulary is no|track|album; ours spells the first one "off".
+    // Anything unrecognised is treated as off rather than passed through:
+    // mpv rejects an unknown choice and leaves the previous gain in place,
+    // which is the one outcome the user cannot see and cannot undo.
+    const char *value = "no";
+    if (mode == QLatin1String("track"))
+        value = "track";
+    else if (mode == QLatin1String("album"))
+        value = "album";
+    const int rc = mpv_set_property_string(m_mpv, "replaygain", value);
+    if (rc < 0)
+        qCWarning(logPlayback) << "mpv set replaygain failed:" << mpv_error_string(rc);
+}
+
 QVariantMap MpvPlayer::videoStats() const
 {
     QVariantMap stats;

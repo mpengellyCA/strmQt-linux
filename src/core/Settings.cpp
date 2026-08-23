@@ -17,6 +17,7 @@ const auto kDensityKey = QStringLiteral("appearance/density");
 const auto kThemeAccentKey = QStringLiteral("appearance/accent");
 const auto kVolumeKey = QStringLiteral("playback/volume");
 const auto kMutedKey = QStringLiteral("playback/muted");
+const auto kReplayGainKey = QStringLiteral("playback/replayGain");
 const auto kLiveEnabledKey = QStringLiteral("live/enabled");
 const auto kPollIntervalKey = QStringLiteral("live/pollIntervalSeconds");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
@@ -204,6 +205,27 @@ void Settings::setPlaybackMode(const QString &mode)
         return;
     m_store.setValue(QStringLiteral("playback/mode"), mode);
     emit playbackModeChanged();
+}
+
+QStringList Settings::replayGainModes()
+{
+    return {QStringLiteral("off"), QStringLiteral("track"), QStringLiteral("album")};
+}
+
+QString Settings::replayGainMode() const
+{
+    const QString stored = m_store.value(kReplayGainKey, QStringLiteral("off")).toString();
+    // Validated on the way out rather than on the way in, so a hand-edited INI
+    // cannot put a value the engine will refuse into the audio chain.
+    return replayGainModes().contains(stored) ? stored : QStringLiteral("off");
+}
+
+void Settings::setReplayGainMode(const QString &mode)
+{
+    if (!replayGainModes().contains(mode) || mode == replayGainMode())
+        return;
+    m_store.setValue(kReplayGainKey, mode);
+    emit replayGainModeChanged();
 }
 
 bool Settings::backdropEnabled() const
