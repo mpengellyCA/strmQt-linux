@@ -96,6 +96,9 @@ codebase look the way they do.
 | **`ContainsItemId` is silently ignored** | It returns *every* BoxSet rather than failing. `ListItemIds` is the only query that answers "which collections contain this item"; nothing on the item payload does. |
 | **`AdjacentTo` is silently ignored** | On `/Shows/{id}/Episodes` it returns the entire series. `StartItemId` returns the list from an episode onward, so "the next episode" is the second row — and it crosses season boundaries. |
 | `/Persons` and `/Genres` report `TotalRecordCount = 0` while returning rows | Anything paging on that count renders an empty list. Callers use the array's own size. |
+| **A playlist carries no media type anywhere on the wire** | Absent from the `/Items` list payload, absent from the item detail payload, and `Fields=MediaType` does not add it. Nothing on a playlist says whether it holds music or films. |
+| **`MediaTypes` discards `IncludeItemTypes`** | Asked together with `IncludeItemTypes=Playlist` it returns the whole library — 204,528 albums and tracks — and `Audio` and `Video` answer identically. It is not a filter that fails; it is a filter that deletes the constraint beside it. |
+| `ParentId` filters playlists by media type even though they live outside every library | A playlist created through `POST /Playlists` is stored under `data/userplaylists`, not in a library folder, yet the music library's id returns the audio ones and the movie library's the video ones. This is the only way to ask for "this library's playlists", and it is one request — the music library's Playlists tab needs no per-playlist probe. A playlist with **no members** belongs to no library at all, whatever `MediaType` it was created with. |
 | Image *enhancers* composite decorations into the bytes served | An episode still came back as a 640×438 PNG of a television set with the still inside its bezel, 375 KB, versus a 400×225 JPEG at 48 KB. `EnableImageEnhancers=false` on every image request. |
 | `PlaybackInfo` on a folder is an HTTP 500 | Series, BoxSet, MusicArtist and MusicAlbum all fail with `Unable to cast … to IHasMediaSources`. "Play" on a container plays its *contents*. |
 | A DirectPlay profile that omits a container causes a lossy transcode | Not an error — a silently worse stream. The audio container list covers what ffmpeg decodes, including DSD (`dsf`/`dff`), and there is an audio TranscodingProfile so an unsupported container has a defined fallback rather than an improvised one. |
@@ -196,6 +199,11 @@ exact item a page was left on, not to the page as a whole.
 
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Music ·
 Album · Artist · Search · Settings · Player.
+
+`MusicPage` is four readings of one library — Albums, Artists, Songs, Playlists
+— sharing one filter set and keeping a sort per tab. Its Playlists tab is the
+user's *audio* playlists; the nav rail's Playlists destination is still all of
+them, because a picker raised from a film has to keep offering film lists.
 
 ---
 

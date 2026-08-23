@@ -278,6 +278,17 @@ ApplicationWindow {
     }
 
     function openDetails(item): void {
+        // A playlist has a page of its own and always did — it was simply
+        // unreachable through this route, so a playlist card opened the VIDEO
+        // details page, which is built around a backdrop, a cast and a similar
+        // rail that a list of tracks has none of. The music library's Playlists
+        // tab is the first surface to hand one to this verb.
+        if (item && String(item.type) === "Playlist" && item.itemId !== undefined
+                && String(item.itemId).length > 0) {
+            root.openPlaylist(String(item.itemId),
+                              item.name !== undefined ? String(item.name) : "");
+            return;
+        }
         // Music routes to its own pages; everything else is the details page.
         if (item && root.openMusic(item))
             return;
@@ -346,6 +357,25 @@ ApplicationWindow {
         PlaylistCtl.refresh();
         root.pushPage(playlistComponent, ({}), () => PlaylistCtl.refresh(),
                       "playlists", qsTr("Playlists"));
+    }
+
+    // The same page, opened ON a playlist. It is one destination and keeps one
+    // history key: arriving from a music card and arriving from the rail differ
+    // only in whether anything is open in the right-hand pane, and giving the
+    // two separate entries would make Back retrace a page the user never saw as
+    // a different place.
+    function openPlaylist(playlistId, name): void {
+        PlaylistCtl.open(playlistId, name);
+        if (root.currentKey === "playlists") {
+            root.focusCurrentPage();
+            return;
+        }
+        PlaylistCtl.refresh();
+        const arm = () => {
+            PlaylistCtl.refresh();
+            PlaylistCtl.open(playlistId, name);
+        };
+        root.pushPage(playlistComponent, ({}), arm, "playlists", qsTr("Playlists"));
     }
 
     function openSearch(): void {

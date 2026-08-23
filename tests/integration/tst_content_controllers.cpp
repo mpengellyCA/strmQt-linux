@@ -39,6 +39,8 @@ private slots:
     void seriesFetchesItsOwnRecord();
     void seriesIgnoresAnEmptyId();
     void playlistFetchesDoNotStrandEachOther();
+    void createWhileOpenLeavesTheOpenPlaylistAlone();
+    void creationCarriesTheMediaTypeItWasGiven();
     void musicRetargetDropsTheInFlightPage();
 
 private:
@@ -325,6 +327,84 @@ void ContentControllersTest::playlistFetchesDoNotStrandEachOther()
     QTRY_COMPARE_WITH_TIMEOUT(second.playlists()->rowCount(), 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(second.items()->rowCount(), 1, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!second.loading(), 5000);
+}
+
+// The create-while-open sequence MUSIC.md §3 asks for once music starts leaning
+// on this controller: open a playlist, then make another one while the first
+// one's members are still on the wire.
+//
+// It is not the same test as the one above. That one calls refresh() directly;
+// this one goes through create(), so the refresh happens inside the POST's
+// continuation — a second event-loop turn later, with the members fetch still
+// outstanding. That is the ordering a shared generation counter turns into a
+// spinner over an empty list, so the members route is held back deliberately.
+// Nothing was found to fix: the split holds, and this is what pins it.
+void ContentControllersTest::createWhileOpenLeavesTheOpenPlaylistAlone()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"pl1\",\"Name\":\"Road "
+                                       "Trip\",\"Type\":\"Playlist\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Playlists/pl1/Items"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"t1\",\"Name\":\"Bad\","
+                                       "\"Type\":\"Audio\",\"PlaylistItemId\":\"e1\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Playlists"), 200,
+                     QByteArrayLiteral("{\"Id\":\"pl2\",\"ItemAddedCount\":1}"));
+    // Long enough that the POST lands, its continuation calls refresh(), and
+    // that refresh's own reply comes back — all while this one is still held.
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/Playlists/pl1/Items"), 400);
+
+    PlaylistController playlists(m_client);
+    QSignalSpy failed(&playlists, &PlaylistController::actionFailed);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Road Trip"));
+    QVERIFY(playlists.loading());
+
+    playlists.create(QStringLiteral("New One"), {QStringLiteral("t9")},
+                     QStringLiteral("Audio"));
+
+    // The list refresh create() ends in has already come and gone…
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.playlists()->rowCount(), 1, 5000);
+    // …and the open playlist's members, which were in flight the whole time,
+    // still land: they are guarded by their own counter, so the refresh above
+    // could not retire them.
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.items()->rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(playlists.currentId(), QStringLiteral("pl1"));
+    QCOMPARE(failed.count(), 0);
+}
+
+// The one thing that made an audio playlist an audio playlist, and which
+// nothing in the app passed before MUSIC.md §3. Emby publishes no media type on
+// a playlist, so this parameter at creation is the only record of what kind of
+// list it is — and the music library's Playlists tab is filtered on the server's
+// reading of it.
+void ContentControllersTest::creationCarriesTheMediaTypeItWasGiven()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Playlists"), 200,
+                     QByteArrayLiteral("{\"Id\":\"pl2\",\"ItemAddedCount\":1}"));
+
+    PlaylistController playlists(m_client);
+    QSignalSpy mutated(&playlists, &PlaylistController::playlistsMutated);
+
+    playlists.create(QStringLiteral("Late Night"), {QStringLiteral("t1")},
+                     QStringLiteral("Audio"));
+    QTRY_COMPARE_WITH_TIMEOUT(mutated.count(), 1, 5000);
+    QUrlQuery created(
+        m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Playlists")).query);
+    QCOMPARE(created.queryItemValue(QStringLiteral("MediaType")), QStringLiteral("Audio"));
+    QCOMPARE(created.queryItemValue(QStringLiteral("Ids")), QStringLiteral("t1"));
+
+    // And a non-music caller keeps exactly what it had: no MediaType at all,
+    // rather than a default this change would have imposed on every film list.
+    playlists.create(QStringLiteral("Rewatch"), {QStringLiteral("m1")});
+    QTRY_COMPARE_WITH_TIMEOUT(mutated.count(), 2, 5000);
+    created = QUrlQuery(
+        m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Playlists")).query);
+    QVERIFY(!created.hasQueryItem(QStringLiteral("MediaType")));
 }
 
 // Re-targeting the music scope is a supersede like any other (ARCHITECTURE.md):

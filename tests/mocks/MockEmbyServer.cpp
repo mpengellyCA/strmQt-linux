@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
@@ -29,7 +30,19 @@ QUrl MockEmbyServer::baseUrl() const
 void MockEmbyServer::addRoute(const QString &method, const QString &path, int status,
                               const QByteArray &body, const QByteArray &contentType)
 {
-    m_routes.insert(method.toUpper() + QLatin1Char(' ') + path, Route{status, body, contentType});
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    // Keep any delay already set for this key: tests arm the delay once and
+    // then re-register the route to change its body.
+    const int delayMs = m_routes.value(key).delayMs;
+    m_routes.insert(key, Route{status, body, contentType, delayMs});
+}
+
+void MockEmbyServer::setRouteDelay(const QString &method, const QString &path, int ms)
+{
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    Route route = m_routes.value(key);
+    route.delayMs = ms;
+    m_routes.insert(key, route);
 }
 
 bool MockEmbyServer::addRouteFromFile(const QString &method, const QString &path,
@@ -97,8 +110,10 @@ void MockEmbyServer::handleConnection()
 
             const QString key = request.method + QLatin1Char(' ') + request.path;
             QByteArray response;
+            int delayMs = 0;
             if (m_routes.contains(key)) {
                 const Route &route = m_routes.value(key);
+                delayMs = route.delayMs;
                 response = "HTTP/1.1 " + QByteArray::number(route.status) +
                            " Status\r\n"
                            "Content-Type: " +
@@ -113,8 +128,16 @@ void MockEmbyServer::handleConnection()
                 response = "HTTP/1.1 404 Not Found\r\n"
                            "Content-Length: 0\r\nConnection: close\r\n\r\n";
             }
-            socket->write(response);
-            socket->disconnectFromHost();
+            const auto reply = [socket, response] {
+                socket->write(response);
+                socket->disconnectFromHost();
+            };
+            // `socket` as the timer's context object, so a connection that goes
+            // away while its reply is held back takes the timer with it.
+            if (delayMs > 0)
+                QTimer::singleShot(delayMs, socket, reply);
+            else
+                reply();
         });
         connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
     }

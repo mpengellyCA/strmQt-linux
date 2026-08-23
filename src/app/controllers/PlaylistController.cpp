@@ -96,19 +96,21 @@ void PlaylistController::reload()
         });
 }
 
-void PlaylistController::create(const QString &name, const QStringList &itemIds)
+void PlaylistController::create(const QString &name, const QStringList &itemIds,
+                                const QString &mediaType)
 {
     if (name.trimmed().isEmpty()) {
         emit actionFailed(tr("A playlist needs a name."));
         return;
     }
-    m_client->createPlaylist(name.trimmed(), itemIds)
+    m_client->createPlaylist(name.trimmed(), itemIds, mediaType)
         .then(this, [this, name](const Result<QString> &result) {
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
             }
             emit actionSucceeded(tr("Created \"%1\"").arg(name.trimmed()));
+            emit playlistsMutated();
             refresh();
         });
 }
@@ -179,6 +181,7 @@ void PlaylistController::rename(const QString &playlistId, const QString &name)
                 m_currentName = wanted;
                 emit currentChanged();
             }
+            emit playlistsMutated();
             refresh();
         });
 }
@@ -208,6 +211,7 @@ void PlaylistController::remove(const QString &playlistId)
             emit currentChanged();
             emit currentRemoved();
         }
+        emit playlistsMutated();
         refresh();
     });
 }

@@ -24,6 +24,17 @@ FocusScope {
 
     property string subject: ""
     property var targetIds: []
+    // Emby's MediaType for a playlist this panel CREATES: "Audio" when the
+    // panel was raised from a music surface, empty everywhere else so a film
+    // keeps making the untyped list it always made.
+    //
+    // It matters even though the ids being filed are audio. The server derives
+    // "which library does this playlist belong to" from the playlist's media
+    // type, and that is the only thing the music library's Playlists tab has to
+    // filter on — Emby publishes no media type on the playlist itself
+    // (measured; see MusicController::loadPlaylists). Consumers set it once,
+    // declaratively, rather than passing it per show().
+    property string mediaType: ""
     property bool opened: false
     property var records: []
     property var rows: []
@@ -95,7 +106,7 @@ FocusScope {
         const row = picker.rows[index]
         picker.pending = true
         if (row.create)
-            PlaylistCtl.create(row.name, picker.targetIds)
+            PlaylistCtl.create(row.name, picker.targetIds, picker.mediaType)
         else
             PlaylistCtl.addItems(row.id, picker.targetIds)
         picker.dismiss()
@@ -265,9 +276,16 @@ FocusScope {
                     anchors.right: parent.right
                     anchors.rightMargin: Theme.spacingValue
                     anchors.verticalCenter: parent.verticalCenter
-                    text: pickerRow.modelData.create
-                          ? qsTr("Create “%1”").arg(pickerRow.modelData.name)
-                          : pickerRow.modelData.name
+                    // "New playlist from this" is not a second gesture — it is
+                    // this row. Saying how many items go into it is what makes
+                    // that readable when the panel was raised from a whole
+                    // record rather than from one track.
+                    text: !pickerRow.modelData.create
+                          ? pickerRow.modelData.name
+                          : picker.targetIds.length > 1
+                          ? qsTr("Create “%1” from %n track(s)", "",
+                                 picker.targetIds.length).arg(pickerRow.modelData.name)
+                          : qsTr("Create “%1”").arg(pickerRow.modelData.name)
                     color: Theme.textPrimaryColor
                     font.family: Theme.fontBody
                     font.pixelSize: Theme.fontBodySize

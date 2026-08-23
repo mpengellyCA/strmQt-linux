@@ -37,6 +37,15 @@ class MusicController : public QObject
     // previous phase removed; this list gets its own model and its own
     // generation counter for the same reason.
     Q_PROPERTY(strmqt::MediaItemModel *songs READ songs CONSTANT)
+    // The Playlists TAB: this music library's playlists, and only those.
+    //
+    // NOT PlaylistController's list, which is deliberately every playlist the
+    // user has: that one feeds the "add to…" picker, and a picker raised from a
+    // film has to keep offering film playlists. Narrowing the shared model to
+    // audio for the sake of one tab would break the picker everywhere else, so
+    // the tab gets its own model and its own generation counter — the same
+    // reason `songs` is not `tracks`.
+    Q_PROPERTY(strmqt::MediaItemModel *playlists READ playlists CONSTANT)
     // Albums of the artist currently open.
     Q_PROPERTY(strmqt::MediaItemModel *artistAlbums READ artistAlbums CONSTANT)
     // The artist's most-played tracks. Uses ArtistIds rather than
@@ -57,6 +66,7 @@ class MusicController : public QObject
     Q_PROPERTY(bool canLoadMoreAlbums READ canLoadMoreAlbums NOTIFY albumsChanged)
     Q_PROPERTY(bool canLoadMoreArtists READ canLoadMoreArtists NOTIFY artistsChanged)
     Q_PROPERTY(bool canLoadMoreSongs READ canLoadMoreSongs NOTIFY songsChanged)
+    Q_PROPERTY(bool canLoadMorePlaylists READ canLoadMorePlaylists NOTIFY playlistsChanged)
     // "albumArtists" (the 2,394 an album is filed under) or "artists" (all
     // 3,789 who appear on anything). They are genuinely different lists and
     // which one a music app shows is a real choice.
@@ -80,7 +90,7 @@ class MusicController : public QObject
     //     user can only see the results of one of; leaving them alone would show
     //     yesterday's albums under today's genre.
     //
-    // "albums" | "artists" | "songs".
+    // "albums" | "artists" | "songs" | "playlists".
     Q_PROPERTY(QString tab READ tab WRITE setTab NOTIFY tabChanged)
     // Emby's own sort key for the current tab, e.g. "SortName" | "DateCreated".
     Q_PROPERTY(QString sortBy READ sortBy NOTIFY queryChanged)
@@ -113,6 +123,7 @@ public:
     MediaItemModel *artists() const { return m_artists; }
     MediaItemModel *tracks() const { return m_tracks; }
     MediaItemModel *songs() const { return m_songs; }
+    MediaItemModel *playlists() const { return m_playlists; }
     MediaItemModel *artistAlbums() const { return m_artistAlbums; }
     MediaItemModel *artistTracks() const { return m_artistTracks; }
 
@@ -126,6 +137,7 @@ public:
     bool canLoadMoreAlbums() const;
     bool canLoadMoreArtists() const;
     bool canLoadMoreSongs() const;
+    bool canLoadMorePlaylists() const;
     QString artistMode() const { return m_artistMode; }
     void setArtistMode(const QString &mode);
 
@@ -178,6 +190,36 @@ public:
     Q_INVOKABLE void loadSongs();
     Q_INVOKABLE void loadMoreSongs();
 
+    // ── The Playlists tab ─────────────────────────────────────────────────────
+    // Emby 4.9.5.0 publishes NO media type on a playlist. Measured, three ways:
+    // it is absent from the /Items list payload, absent from the item detail
+    // payload, and `Fields=MediaType` does not add it. The `MediaTypes` query
+    // parameter is worse than absent — asked alongside IncludeItemTypes=Playlist
+    // it DISCARDS the type constraint and answers with the whole library
+    // (204,528 rows of albums and tracks), and Audio and Video return the same
+    // thing.
+    //
+    // What does work, in ONE request and with no per-playlist probe: ParentId.
+    // Emby resolves a library id to that library's content type and matches the
+    // playlist's own media type against it. Proven with a purpose-built triple —
+    // an audio playlist, a video playlist and an untyped one holding a track —
+    // all three stored under /config/data/userplaylists and physically outside
+    // every library folder: the music library's id returned the two audio ones,
+    // the movie library's id returned the video one.
+    //
+    // So there is no N+1 walk and no cache to keep, and the whole audio scoping
+    // is the ParentId. Without one there is nothing separating a video playlist
+    // from an audio one, so an unscoped controller fetches nothing here rather
+    // than filling a music tab with the user's film lists.
+    Q_INVOKABLE void loadPlaylists();
+    Q_INVOKABLE void loadMorePlaylists();
+    // The set of playlists changed somewhere else in the app — PlaylistController
+    // made, renamed or deleted one. Empty this list so it is asked for again,
+    // and refetch now if it is the tab on screen. Same shape as a query change,
+    // for the same reason: a playlist the user just created from a track has to
+    // appear in the tab that is supposed to list it.
+    Q_INVOKABLE void invalidatePlaylists();
+
     // Tracks come back in the server's order, which for an album is disc then
     // track. Sorting by name here would scramble every record ever made.
     Q_INVOKABLE void openAlbum(const QString &albumId, const QString &name);
@@ -214,6 +256,7 @@ signals:
     void albumsChanged();
     void artistsChanged();
     void songsChanged();
+    void playlistsChanged();
     // The query moved (sort, letter, genre, year, favourites): a list is being
     // refilled. Named for LibraryController's signal so FilterBar connects to
     // one name whichever controller it is pointed at.
@@ -237,6 +280,7 @@ private:
     void fetchAlbums(int startIndex);
     void fetchArtists(int startIndex);
     void fetchSongs(int startIndex);
+    void fetchPlaylists(int startIndex);
     void fetchGenrePage(int startIndex, int generation);
     void setLoading(bool loading);
     void setError(const QString &message);
@@ -249,7 +293,7 @@ private:
     void applyQueryChange();
     // Fetch the current tab's first page if its model is empty.
     void ensureCurrentTab();
-    // 0 albums · 1 artists · 2 songs.
+    // 0 albums · 1 artists · 2 songs · 3 playlists.
     int currentTabIndex() const;
 
     emby::EmbyClient *m_client;
@@ -258,6 +302,7 @@ private:
     MediaItemModel *m_artists;
     MediaItemModel *m_tracks;
     MediaItemModel *m_songs;
+    MediaItemModel *m_playlists;
     MediaItemModel *m_artistAlbums;
     MediaItemModel *m_artistTracks;
     // Never published to QML. playAlbum() must not touch `tracks`: that model
@@ -273,7 +318,7 @@ private:
     QString m_artistMode = QStringLiteral("albumArtists");
 
     QString m_tab = QStringLiteral("albums");
-    // Per tab, in tab order: albums, artists, songs. Seeded the way
+    // Per tab, in tab order: albums, artists, songs, playlists. Seeded the way
     // FilterBar.defaultDescendingFor() would: a name sort reads ascending.
     QString m_albumSortBy = QStringLiteral("SortName");
     bool m_albumSortDescending = false;
@@ -281,6 +326,8 @@ private:
     bool m_artistSortDescending = false;
     QString m_songSortBy = QStringLiteral("SortName");
     bool m_songSortDescending = false;
+    QString m_playlistSortBy = QStringLiteral("SortName");
+    bool m_playlistSortDescending = false;
 
     QString m_nameStartsWith;
     QStringList m_genreIds;
@@ -306,6 +353,7 @@ private:
     int m_albumGeneration = 0;
     int m_artistGeneration = 0;
     int m_songGeneration = 0;
+    int m_playlistGeneration = 0;
     int m_genreGeneration = 0;
     int m_playGeneration = 0;
 };

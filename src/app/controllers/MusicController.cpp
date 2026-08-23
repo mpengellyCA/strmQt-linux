@@ -57,8 +57,9 @@ constexpr int kTrackLimit = 500;
 MusicController::MusicController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_albums(new MediaItemModel(this)),
       m_artists(new MediaItemModel(this)), m_tracks(new MediaItemModel(this)),
-      m_songs(new MediaItemModel(this)), m_artistAlbums(new MediaItemModel(this)),
-      m_artistTracks(new MediaItemModel(this)), m_playScratch(new MediaItemModel(this))
+      m_songs(new MediaItemModel(this)), m_playlists(new MediaItemModel(this)),
+      m_artistAlbums(new MediaItemModel(this)), m_artistTracks(new MediaItemModel(this)),
+      m_playScratch(new MediaItemModel(this))
 {
 }
 
@@ -88,6 +89,13 @@ bool MusicController::canLoadMoreSongs() const
     return m_songs->rowCount() < m_songs->totalRecordCount();
 }
 
+bool MusicController::canLoadMorePlaylists() const
+{
+    if (isRandomSort(m_playlistSortBy))
+        return false;
+    return m_playlists->rowCount() < m_playlists->totalRecordCount();
+}
+
 // ── The query surface (ARCHITECTURE.md) ──────────────────────────────────────
 
 QString MusicController::sortBy() const
@@ -96,6 +104,8 @@ QString MusicController::sortBy() const
         return m_artistSortBy;
     if (m_tab == QLatin1String("songs"))
         return m_songSortBy;
+    if (m_tab == QLatin1String("playlists"))
+        return m_playlistSortBy;
     return m_albumSortBy;
 }
 
@@ -105,6 +115,8 @@ bool MusicController::sortDescending() const
         return m_artistSortDescending;
     if (m_tab == QLatin1String("songs"))
         return m_songSortDescending;
+    if (m_tab == QLatin1String("playlists"))
+        return m_playlistSortDescending;
     return m_albumSortDescending;
 }
 
@@ -139,6 +151,19 @@ QVariantList MusicController::availableSorts() const
             sortOption(QStringLiteral("Random"), tr("Random")),
         };
     }
+    if (m_tab == QLatin1String("playlists")) {
+        // Measured against the live server on the ParentId-scoped playlist
+        // query: each of these reordered the first rows, and the two that are
+        // NOT here did not. A playlist has no release year, and community
+        // rating on a user's own list means nothing.
+        return {
+            sortOption(QStringLiteral("SortName"), tr("Sort name")),
+            sortOption(QStringLiteral("DateCreated"), tr("Date added")),
+            sortOption(QStringLiteral("Runtime"), tr("Length")),
+            sortOption(QStringLiteral("PlayCount"), tr("Most played")),
+            sortOption(QStringLiteral("Random"), tr("Random")),
+        };
+    }
     return {
         sortOption(QStringLiteral("SortName"), tr("Sort name")),
         sortOption(QStringLiteral("ProductionYear"), tr("Release year")),
@@ -157,7 +182,8 @@ bool MusicController::filtered() const
 
 void MusicController::setTab(const QString &tab)
 {
-    const QString wanted = (tab == QLatin1String("artists") || tab == QLatin1String("songs"))
+    const QString wanted = (tab == QLatin1String("artists") || tab == QLatin1String("songs")
+                            || tab == QLatin1String("playlists"))
                                ? tab
                                : QStringLiteral("albums");
     if (m_tab == wanted)
@@ -180,6 +206,9 @@ void MusicController::setSort(const QString &key, bool descending)
     } else if (m_tab == QLatin1String("songs")) {
         m_songSortBy = key;
         m_songSortDescending = descending;
+    } else if (m_tab == QLatin1String("playlists")) {
+        m_playlistSortBy = key;
+        m_playlistSortDescending = descending;
     } else {
         m_albumSortBy = key;
         m_albumSortDescending = descending;
@@ -200,6 +229,11 @@ void MusicController::setSort(const QString &key, bool descending)
         emit songsChanged();
         if (m_started)
             fetchSongs(0);
+        break;
+    case 3:
+        emit playlistsChanged();
+        if (m_started)
+            fetchPlaylists(0);
         break;
     default:
         emit albumsChanged();
@@ -274,6 +308,8 @@ int MusicController::currentTabIndex() const
         return 1;
     if (m_tab == QLatin1String("songs"))
         return 2;
+    if (m_tab == QLatin1String("playlists"))
+        return 3;
     return 0;
 }
 
@@ -288,15 +324,18 @@ void MusicController::applyQueryChange()
     ++m_albumGeneration;
     ++m_artistGeneration;
     ++m_songGeneration;
+    ++m_playlistGeneration;
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
+    m_playlists->clear();
     emit albumsChanged();
     emit artistsChanged();
     emit songsChanged();
-    // Only the visible tab refetches. The other two are empty now, so the page's
+    emit playlistsChanged();
+    // Only the visible tab refetches. The others are empty now, so the page's
     // own "load this tab if it is empty" path fills them when they are next
-    // looked at, which is one request instead of three for a filter the user can
+    // looked at, which is one request instead of four for a filter the user can
     // see the results of in one place.
     switch (currentTabIndex()) {
     case 1:
@@ -304,6 +343,9 @@ void MusicController::applyQueryChange()
         break;
     case 2:
         fetchSongs(0);
+        break;
+    case 3:
+        fetchPlaylists(0);
         break;
     default:
         fetchAlbums(0);
@@ -323,6 +365,10 @@ void MusicController::ensureCurrentTab()
     case 2:
         if (m_songs->rowCount() == 0)
             fetchSongs(0);
+        break;
+    case 3:
+        if (m_playlists->rowCount() == 0)
+            fetchPlaylists(0);
         break;
     default:
         if (m_albums->rowCount() == 0)
@@ -354,11 +400,18 @@ void MusicController::setLibrary(const QString &libraryId)
     ++m_albumGeneration;
     ++m_artistGeneration;
     ++m_songGeneration;
+    ++m_playlistGeneration;
     ++m_genreGeneration;
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
     emit songsChanged();
+    // The playlist list is scoped by the library id too, and more literally
+    // than the rest: ParentId is the ONLY thing separating an audio playlist
+    // from a video one, so a page fetched for the old library is not merely
+    // stale here, it is the wrong media type.
+    m_playlists->clear();
+    emit playlistsChanged();
     // The genre list belongs to the library, not to the session: /MusicGenres
     // is scoped by ParentId (measured), so another library's 289 genres are the
     // wrong 289.
@@ -550,6 +603,85 @@ void MusicController::fetchSongs(int startIndex)
             else
                 m_songs->appendItems(result.value.items, result.value.totalRecordCount);
             emit songsChanged();
+        });
+}
+
+// ── Playlists (the fourth tab) ───────────────────────────────────────────────
+// See the header for the measurement this rests on: Emby publishes no media
+// type on a playlist anywhere, but it filters by one — ParentId resolves to a
+// library's content type and matches the playlist's own. One request, no
+// per-playlist probe, no cache.
+
+void MusicController::loadPlaylists()
+{
+    m_started = true;
+    fetchPlaylists(0);
+}
+
+void MusicController::loadMorePlaylists()
+{
+    if (!canLoadMorePlaylists() || m_loading)
+        return;
+    fetchPlaylists(m_playlists->rowCount());
+}
+
+void MusicController::invalidatePlaylists()
+{
+    // Retire whatever is in flight before emptying, or the page requested a
+    // moment ago lands in the model this just cleared and the new playlist is
+    // missing from it anyway.
+    ++m_playlistGeneration;
+    m_playlists->clear();
+    emit playlistsChanged();
+    if (m_started && currentTabIndex() == 3)
+        fetchPlaylists(0);
+}
+
+void MusicController::fetchPlaylists(int startIndex)
+{
+    const int generation = ++m_playlistGeneration;
+    // No library, no audio scoping. An unscoped query would answer with every
+    // playlist the user has, film lists included, under a heading that says
+    // this is their music — which is exactly the thing this tab exists to stop.
+    if (m_libraryId.isEmpty()) {
+        if (m_playlists->rowCount() > 0) {
+            m_playlists->clear();
+            emit playlistsChanged();
+        }
+        return;
+    }
+    setLoading(true);
+
+    ItemsQuery query;
+    query.parentId = m_libraryId;
+    query.includeItemTypes = {QStringLiteral("Playlist")};
+    query.recursive = true;
+    query.sortBy = m_playlistSortBy;
+    query.sortDescending = m_playlistSortDescending;
+    query.startIndex = startIndex;
+    query.limit = kPageSize;
+    applyFilters(query);
+    // Years is not an axis a playlist has: it carries no ProductionYear, and a
+    // year-filtered playlist query answers with nothing rather than everything
+    // (measured) — so the year filter narrows albums and songs and leaves this
+    // list alone, exactly as it does for artists.
+    query.yearFilters.clear();
+
+    m_client->items(query).then(
+        this, [this, generation, startIndex](const Result<ItemsPage> &result) {
+            if (generation != m_playlistGeneration)
+                return;
+            setLoading(false);
+            if (!result.ok()) {
+                setError(result.error);
+                return;
+            }
+            setError(QString());
+            if (startIndex == 0)
+                m_playlists->setItems(result.value.items, result.value.totalRecordCount);
+            else
+                m_playlists->appendItems(result.value.items, result.value.totalRecordCount);
+            emit playlistsChanged();
         });
 }
 

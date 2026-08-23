@@ -4,20 +4,25 @@ import StrmQt
 
 // MusicPage — a music library's front door (ARCHITECTURE.md).
 //
-// Three views of the same library, not one grid with a filter: **Albums**
+// Four views of the same library, not one grid with a filter: **Albums**
 // (5,037 on the target server), **Artists** (2,394 album artists, or 3,789 if
-// you count everyone who appears on anything) and **Songs** (56,283). The first
-// two are square art; the third is the shared TrackTable, because a song is a
-// row and not a tile. All three page, and none ever tries to hold the whole
-// library — StrmGrid and TrackTable both virtualise, and `nearEnd` pulls the
-// next 100 before the user reaches the edge.
+// you count everyone who appears on anything), **Songs** (56,283) and
+// **Playlists** (1,564). Three of them are square art; Songs is the shared
+// TrackTable, because a song is a row and not a tile. All four page, and none
+// ever tries to hold the whole library — StrmGrid and TrackTable both
+// virtualise, and `nearEnd` pulls the next 100 before the user reaches the edge.
 //
-// Why a tab bar rather than three nav-rail destinations: they are three
+// Why a tab bar rather than four nav-rail destinations: they are four
 // readings of one library, and the answer to "where is this record" is
 // sometimes the album, sometimes the artist and sometimes the track. Switching
-// must not refetch what is already loaded, so all three views exist at once and
+// must not refetch what is already loaded, so all four views exist at once and
 // each keeps its own scroll position and its own keyboard cursor; only one is
 // visible, so the hidden ones create no delegates.
+//
+// The Playlists tab is the user's AUDIO playlists and nothing else. The nav
+// rail's own Playlists destination is still every playlist they have — a music
+// library that lists someone's film playlists is the thing this tab exists to
+// avoid, and a global playlist page that hid them would be a different bug.
 //
 // ── Filtering (ARCHITECTURE.md) ────────────────────────────────────────────
 // The bar under the tabs is the SAME FilterBar the library page uses, pointed
@@ -61,11 +66,13 @@ FocusScope {
     readonly property bool albumsTab: page.currentTab === 0
     readonly property bool artistsTab: page.currentTab === 1
     readonly property bool songsTab: page.currentTab === 2
+    readonly property bool playlistsTab: page.currentTab === 3
 
-    // The controller's own vocabulary for the same three tabs. It owns a sort
+    // The controller's own vocabulary for the same four tabs. It owns a sort
     // per tab, so it has to be told which one is on screen; the tab bar stays
     // the source of truth for the INDEX and this is the one translation.
-    readonly property string tabKey: page.songsTab ? "songs"
+    readonly property string tabKey: page.playlistsTab ? "playlists"
+                                   : page.songsTab ? "songs"
                                    : page.artistsTab ? "artists" : "albums"
 
     readonly property bool albumArtistMode: MusicCtl.artistMode === "albumArtists"
@@ -73,9 +80,11 @@ FocusScope {
     readonly property int albumTotal: MusicCtl.albums.totalRecordCount
     readonly property int artistTotal: MusicCtl.artists.totalRecordCount
     readonly property int songTotal: MusicCtl.songs.totalRecordCount
+    readonly property int playlistTotal: MusicCtl.playlists.totalRecordCount
 
     readonly property bool failed: MusicCtl.errorMessage.length > 0
     readonly property int shownCount: page.songsTab ? songsTable.count
+                                    : page.playlistsTab ? playlistsGrid.count
                                     : page.albumsTab ? albumsGrid.count
                                     : artistsGrid.count
     readonly property bool isEmpty: page.shownCount === 0 && !MusicCtl.loading
@@ -96,6 +105,9 @@ FocusScope {
         if (page.songsTab)
             return page.songTotal > 0 ? qsTr("%1 songs").arg(page.formatCount(page.songTotal))
                                       : "";
+        if (page.playlistsTab)
+            return page.playlistTotal > 0
+                    ? qsTr("%1 playlists").arg(page.formatCount(page.playlistTotal)) : "";
         if (page.artistTotal <= 0)
             return "";
         return page.albumArtistMode
@@ -142,6 +154,15 @@ FocusScope {
             MusicCtl.loadSongs()
     }
 
+    // The scope guard is load-bearing here and not merely an optimisation: the
+    // library id is what makes this list AUDIO playlists (see
+    // MusicController::loadPlaylists), so with no scope there is nothing to ask
+    // for. The controller refuses the same way; this just avoids the round trip.
+    function ensurePlaylists() {
+        if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0 && !MusicCtl.loading)
+            MusicCtl.loadPlaylists()
+    }
+
     // /MusicGenres for the filter bar's Genre select, scoped by ParentId —
     // measured: the music library answers 289 genres and every other library
     // answers none.
@@ -181,6 +202,13 @@ FocusScope {
 
     function songAt(index) {
         const model = MusicCtl.songs
+        if (!model || index < 0 || index >= model.count)
+            return null
+        return model.get(index)
+    }
+
+    function playlistAt(index) {
+        const model = MusicCtl.playlists
         if (!model || index < 0 || index >= model.count)
             return null
         return model.get(index)
@@ -248,6 +276,15 @@ FocusScope {
     }
 
     function requestArtist(item) {
+        if (page.idOf(item).length === 0)
+            return
+        Actions.openDetails(item)
+    }
+
+    // A playlist opens the playlist page, through the same one route every
+    // other card uses: Main.qml routes by item type and this page pushes
+    // nothing itself.
+    function requestPlaylist(item) {
         if (page.idOf(item).length === 0)
             return
         Actions.openDetails(item)
@@ -341,7 +378,8 @@ FocusScope {
         anchors.leftMargin: Theme.pageMarginValue
         anchors.topMargin: Theme.spacingTight
 
-        tabs: [{ text: qsTr("Albums") }, { text: qsTr("Artists") }, { text: qsTr("Songs") }]
+        tabs: [{ text: qsTr("Albums") }, { text: qsTr("Artists") }, { text: qsTr("Songs") },
+               { text: qsTr("Playlists") }]
         focus: !page.contentFocusable
 
         KeyNavigation.up: page.artistsTab ? albumArtistChip : shuffleAllButton
@@ -353,11 +391,14 @@ FocusScope {
             // whole of the switch. The ensure* calls stay for the case it
             // cannot cover: a page that opened before anything was asked of the
             // controller at all.
-            MusicCtl.tab = index === 2 ? "songs" : index === 1 ? "artists" : "albums"
+            MusicCtl.tab = index === 3 ? "playlists" : index === 2 ? "songs"
+                         : index === 1 ? "artists" : "albums"
             if (index === 1)
                 page.ensureArtists()
             else if (index === 2)
                 page.ensureSongs()
+            else if (index === 3)
+                page.ensurePlaylists()
             else
                 page.ensureAlbums()
             page.ensureGenres()
@@ -410,7 +451,9 @@ FocusScope {
         // Down out of the bar lands in whichever view it is narrowing, and Up
         // lands back on the tabs — which is where Up out of a grid reached
         // before there was a bar between them.
-        downTarget: page.songsTab ? songsTable : page.artistsTab ? artistsGrid : albumsGrid
+        downTarget: page.songsTab ? songsTable
+                  : page.playlistsTab ? playlistsGrid
+                  : page.artistsTab ? artistsGrid : albumsGrid
         upTarget: tabBar
     }
 
@@ -490,6 +533,54 @@ FocusScope {
         }
         onMenuRequested: (index, mx, my) => musicMenu.popupFor("artist", page.artistAt(index),
                                                                mx, my)
+    }
+
+    // ── Playlists ──────────────────────────────────────────────────────────
+    // The user's AUDIO playlists. Which ones those are is the server's answer,
+    // not a guess made here: MusicController asks with the music library as
+    // ParentId and Emby matches each playlist's own media type against that
+    // library's content type. Nothing on this page inspects a playlist to
+    // decide whether it belongs (MUSIC.md §3 allowed for a per-playlist probe
+    // as a fallback; it is not needed, and the measurement is in the
+    // controller).
+    //
+    // Square cards, like the other two grids: Emby draws a playlist's cover as
+    // a mosaic of its records, which is a sleeve.
+    StrmGrid {
+        id: playlistsGrid
+
+        anchors.top: filterBar.bottom
+        anchors.topMargin: Theme.spacingTight
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        visible: page.playlistsTab
+        enabled: page.playlistsTab
+
+        gridModel: MusicCtl.playlists
+        cardVariant: "square"
+        emptyText: ""
+        prefetchThreshold: 30
+        focus: page.playlistsTab && playlistsGrid.count > 0
+
+        KeyNavigation.up: filterBar.entryItem
+
+        onNearEnd: if (MusicCtl.canLoadMorePlaylists) MusicCtl.loadMorePlaylists()
+
+        onItemActivated: index => page.requestPlaylist(page.playlistAt(index))
+        // ▸ opens it, the same answer the artist grid gives and for a sharper
+        // reason: a playlist's order IS the playlist, and Actions.playAll()
+        // sorts by IndexNumber,SortName, which would hand back the same tracks
+        // in an order the user never chose. The playlist page plays it in its
+        // own order.
+        onItemPlayRequested: index => page.requestPlaylist(page.playlistAt(index))
+        onItemFavoriteToggled: index => {
+            const item = page.playlistAt(index)
+            if (item)
+                Actions.toggleFavorite(item)
+        }
+        onMenuRequested: (index, mx, my) => musicMenu.popupFor("playlist",
+                                                               page.playlistAt(index), mx, my)
     }
 
     // ── Songs ──────────────────────────────────────────────────────────────
@@ -630,6 +721,10 @@ FocusScope {
         id: playlistPicker
 
         z: 800
+        // Only tracks are filed from this page, so a playlist created here is
+        // an audio one — which is what lands it in the tab beside this picker
+        // rather than in no library at all.
+        mediaType: "Audio"
         // Back to the table the row was picked from, not to the top of the
         // page: an overlay that drops the keyboard somewhere else is the same
         // bug as one that never gives it back.
@@ -696,6 +791,17 @@ FocusScope {
                 push({ text: qsTr("Shuffle"), iconName: "shuffle" }, "shuffle")
                 push({ separator: true }, "")
                 push({ text: qsTr("Open album"), iconName: "lib-music" }, "open")
+            } else if (kind === "playlist") {
+                // Open and favourite, and deliberately nothing else. Play and
+                // Shuffle would both have to guess how to expand a playlist id
+                // into items — Actions.shuffle() asks /Items with the id as
+                // ParentId, which is a query nobody has run against a playlist
+                // on this server. The playlist page already owns every verb a
+                // list has, in the one place where its ORDER is visible, so
+                // this menu takes the user there instead of inventing a second
+                // answer. (Delete stays there too: it is irreversible and needs
+                // the confirmation that page raises.)
+                push({ text: qsTr("Open playlist"), iconName: "playlist" }, "open")
             } else {
                 push({ text: qsTr("Open artist"), iconName: "user" }, "open")
             }
@@ -731,6 +837,8 @@ FocusScope {
             case "open":
                 if (musicMenu.mode === "album")
                     page.requestAlbum(item)
+                else if (musicMenu.mode === "playlist")
+                    page.requestPlaylist(item)
                 else
                     page.requestArtist(item)
                 break
@@ -752,7 +860,7 @@ FocusScope {
         anchors.right: parent.right
         visible: MusicCtl.loading && page.shownCount === 0
         // A skeleton has to look like what is coming: rows for the song list,
-        // tiles for the two grids.
+        // tiles for the three grids.
         shape: page.songsTab ? "list" : "grid"
     }
 
@@ -771,6 +879,8 @@ FocusScope {
         onActionTriggered: {
             if (page.songsTab)
                 MusicCtl.loadSongs()
+            else if (page.playlistsTab)
+                MusicCtl.loadPlaylists()
             else if (page.artistsTab)
                 MusicCtl.loadArtists()
             else
@@ -789,10 +899,12 @@ FocusScope {
         // library page draws exactly this distinction; now that music filters,
         // it needs it too — narrowed to nothing with no visible undo is the
         // worst state this page can be in.
-        iconName: MusicCtl.filtered ? "filter" : "lib-music"
+        iconName: MusicCtl.filtered ? "filter"
+                : page.playlistsTab ? "playlist" : "lib-music"
         headline: MusicCtl.filtered
                   ? qsTr("Nothing matches these filters")
                   : page.songsTab ? qsTr("No songs here")
+                  : page.playlistsTab ? qsTr("No music playlists yet")
                   : page.albumsTab ? qsTr("No albums here")
                   : qsTr("No artists here")
         // The artists view has a second answer even unfiltered: the other
@@ -806,6 +918,13 @@ FocusScope {
               : page.songsTab
               ? qsTr("Once your Emby server has scanned some music into this library, "
                      + "the tracks show up here.")
+              // Not "you have no playlists": the user may have plenty, all of
+              // them film. This list is the ones the server files as audio, and
+              // saying which is the difference between an empty shelf and a
+              // broken page.
+              : page.playlistsTab
+              ? qsTr("Playlists you make from an album or a track appear here. "
+                     + "Your video playlists stay under Playlists in the sidebar.")
               : (page.albumArtistMode
                  ? qsTr("Nothing is filed under an album artist in this library. "
                         + "Everyone who appears on a track is still listed.")
@@ -878,6 +997,8 @@ FocusScope {
                 onClicked: {
                     if (page.songsTab)
                         MusicCtl.loadMoreSongs()
+                    else if (page.playlistsTab)
+                        MusicCtl.loadMorePlaylists()
                     else if (page.artistsTab)
                         MusicCtl.loadMoreArtists()
                     else

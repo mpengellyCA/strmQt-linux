@@ -40,6 +40,14 @@ public:
                   const QByteArray &contentType = "application/json");
     bool addRouteFromFile(const QString &method, const QString &path,
                           const QString &fixtureFilePath, int status = 200);
+    // Hold a route's reply back by `ms` before writing it. The request is
+    // recorded when it arrives, so ordering assertions still see it.
+    //
+    // Exists because a generation counter is only interesting when replies land
+    // out of order, and without this the mock answers so fast that "a create
+    // while the open playlist is still loading" resolves before it can strand
+    // anything — the test would pass against the bug it is guarding.
+    void setRouteDelay(const QString &method, const QString &path, int ms);
 
     const QList<ReceivedRequest> &requests() const { return m_requests; }
     ReceivedRequest lastRequestFor(const QString &method, const QString &path) const;
@@ -66,6 +74,7 @@ private:
         int status = 200;
         QByteArray body;
         QByteArray contentType;
+        int delayMs = 0;
     };
 
     void handleConnection();

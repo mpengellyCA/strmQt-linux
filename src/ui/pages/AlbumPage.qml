@@ -440,6 +440,11 @@ FocusScope {
                     // The album's TRACKS, not the album: what a playlist holds
                     // is playable items, and expanding a container id is the
                     // server's business rather than something to assume.
+                    //
+                    // This is also "new playlist from this album": the picker's
+                    // first row creates the name typed into it, out of exactly
+                    // these ids, as an audio playlist. Multi-TRACK selection is
+                    // Phase 8's — TrackTable has no selection model yet.
                     onClicked: playlistPicker.show(page.albumName, page.trackIds())
 
                     KeyNavigation.up: artistLink
@@ -663,6 +668,10 @@ FocusScope {
         id: playlistPicker
 
         z: 800
+        // Everything this page can file is a track, so a playlist made here is
+        // an audio playlist — which is what puts it in the music library's
+        // Playlists tab rather than in nothing at all.
+        mediaType: "Audio"
         // Focus goes back to the button that opened it: a dismissed overlay
         // that drops the keyboard at the top of the page is the same bug as one
         // that never gives it back.

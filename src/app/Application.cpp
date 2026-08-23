@@ -91,8 +91,19 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
                                    m_library->model(), m_search->model(), m_series->episodes(),
                                    m_details->similar(), m_music->albums(), m_music->artists(),
                                    m_music->tracks(), m_music->artistAlbums(),
-                                   m_music->artistTracks(), m_playlists->items() })
+                                   m_music->artistTracks(), m_music->playlists(),
+                                   m_playlists->items() })
         m_actions->registerModel(model);
+    // Two lists of playlists exist on purpose (see MusicController::playlists):
+    // PlaylistController's is every playlist the user has, for the "add to…"
+    // picker, and MusicController's is the music library's alone, for the tab.
+    // Only the first is refreshed by the verbs that change the set, so the
+    // second is told here — otherwise a playlist made from a track never
+    // appears in the tab whose whole job is to list it. Wired in C++ rather
+    // than relayed through QML because it is a real dependency between two
+    // controllers and no page should have to remember to carry it.
+    connect(m_playlists, &PlaylistController::playlistsMutated, m_music,
+            &MusicController::invalidatePlaylists);
     // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), and
     // MusicController::playAlbum() needs them: it fetches an album's tracks
     // into a scratch list of its own and hands the ordered items over, so that

@@ -55,7 +55,16 @@ public:
     Q_INVOKABLE void reload();
 
     // `itemIds` may be empty: an empty playlist is a legitimate thing to make.
-    Q_INVOKABLE void create(const QString &name, const QStringList &itemIds);
+    //
+    // `mediaType` is Emby's `MediaType` on POST /Playlists — "Audio" from a
+    // music surface, empty everywhere else, which is what every caller passed
+    // before this existed. It is the only thing that tells the server what kind
+    // of list this is, and the server's answer to "which playlists belong to
+    // this library" is derived from it: a playlist created with no MediaType
+    // and no members belongs to no library at all (measured on 4.9.5.0), so the
+    // music library's Playlists tab would never show it.
+    Q_INVOKABLE void create(const QString &name, const QStringList &itemIds,
+                            const QString &mediaType = QString());
     Q_INVOKABLE void addItems(const QString &playlistId, const QStringList &itemIds);
     // Entry ids, from the model's playlistItemId role — NOT item ids.
     Q_INVOKABLE void removeEntries(const QStringList &entryIds);
@@ -75,6 +84,13 @@ signals:
     void actionFailed(const QString &message);
     // The open playlist was deleted; the UI must leave it.
     void currentRemoved();
+    // The SET of playlists changed: one was created, renamed or deleted. This
+    // controller answers by refreshing its own list, but it is not the only
+    // list of playlists in the app — MusicController keeps an audio-scoped one
+    // for the music library's Playlists tab, and nothing else would ever tell
+    // it that the playlist the user just made from a track exists. Emitted
+    // alongside refresh(), never instead of it.
+    void playlistsMutated();
 
 private:
     void fetchPlaylistPage(int startIndex);

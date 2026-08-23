@@ -40,6 +40,9 @@ private slots:
     void switchingLibraryDropsThatLibrarysFilters();
     void randomIsASinglePageSort();
     void aPreferenceSetBeforeAnythingLoadsFiresNoRequest();
+    void playlistsAreScopedToTheLibraryNotProbedOneByOne();
+    void anUnscopedControllerFetchesNoPlaylists();
+    void createdPlaylistsReappearInTheMusicTab();
 
 private:
     // `count` MusicGenre rows numbered from `from`, as /MusicGenres answers them.
@@ -605,6 +608,142 @@ void MusicQueryTest::aPreferenceSetBeforeAnythingLoadsFiresNoRequest()
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
     delete fresh;
+}
+
+// ── The Playlists tab (MUSIC.md §3) ─────────────────────────────────────────
+// The open question of that section was whether Emby exposes a playlist's media
+// type on the list payload. Measured against the live 4.9.5.0 server: it does
+// not — not on /Items, not on the item detail payload, and `Fields=MediaType`
+// does not add it. `MediaTypes=Audio` is a trap rather than an answer: asked
+// alongside IncludeItemTypes=Playlist it DISCARDS the type constraint and
+// returns the whole library, and Audio and Video answer identically.
+//
+// ParentId does the job instead, in one request. Emby resolves a library id to
+// that library's content type and matches each playlist's own media type
+// against it — proven with an audio, a video and an untyped playlist, all three
+// stored outside every library folder under /config/data/userplaylists: the
+// music library's id returned the audio pair, the movie library's the video one.
+//
+// So the fallback §3 allowed for — asking /Playlists/{id}/Items for one item and
+// caching its type — is not built, and this test is what says so: the tab costs
+// exactly one request and never touches /Playlists/{id}/Items.
+void MusicQueryTest::playlistsAreScopedToTheLibraryNotProbedOneByOne()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"pl1\",\"Name\":\"Road Trip\","
+                                       "\"Type\":\"Playlist\"}],\"TotalRecordCount\":1564}"));
+
+    m_music->setTab(QStringLiteral("playlists"));
+    m_music->loadPlaylists();
+    settle();
+
+    const QUrlQuery query = lastItemsQuery();
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")),
+             QStringLiteral("Playlist"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    // The whole audio scoping, and the only thing that separates this from the
+    // user's film playlists.
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), kMusicLibrary);
+    // MediaTypes must never be sent: it silently drops IncludeItemTypes.
+    QVERIFY(!query.hasQueryItem(QStringLiteral("MediaTypes")));
+
+    QCOMPARE(m_music->playlists()->rowCount(), 1);
+    // Its own model, never PlaylistController's — that one still has to offer
+    // film playlists to a picker raised from a film.
+    QVERIFY(m_music->playlists() != m_music->songs());
+    QVERIFY(m_music->canLoadMorePlaylists());
+
+    // Not one request per playlist. The N+1 fallback is the thing this design
+    // avoids, so its absence is asserted rather than assumed.
+    QCOMPARE(requestsFor(QStringLiteral("/Playlists/pl1/Items")), 0);
+    QCOMPARE(requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId)), 1);
+
+    m_music->loadMorePlaylists();
+    settle();
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("1"));
+
+    // The sort set is the measured one: a playlist has no release year, and
+    // "Track number" belongs to a song.
+    QStringList keys;
+    for (const QVariant &entry : m_music->availableSorts())
+        keys.append(entry.toMap().value(QStringLiteral("key")).toString());
+    QVERIFY(keys.contains(QStringLiteral("DateCreated")));
+    QVERIFY(keys.contains(QStringLiteral("Runtime")));
+    QVERIFY(!keys.contains(QStringLiteral("ProductionYear")));
+
+    // Shared filters reach it; the year filter deliberately does not. A
+    // playlist carries no ProductionYear and a year-filtered playlist query
+    // answers with nothing at all, which would read as a broken tab rather than
+    // as an axis that does not apply — the same call the artists tab makes.
+    m_music->setNameStartsWith(QStringLiteral("W"));
+    m_music->setGenreIds({QStringLiteral("1932975")});
+    m_music->setYearFilters({QStringLiteral("1999")});
+    settle();
+    const QUrlQuery filtered = lastItemsQuery();
+    QCOMPARE(filtered.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("W"));
+    QCOMPARE(filtered.queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("1932975"));
+    QVERIFY(!filtered.hasQueryItem(QStringLiteral("Years")));
+
+    m_music->setFavoritesOnly(true);
+    settle();
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
+             QStringLiteral("IsFavorite"));
+
+    // Random is a single-page sort here too: Emby reshuffles per request, so a
+    // second page would repeat rows the first already showed.
+    m_music->setSort(QStringLiteral("Random"), false);
+    settle();
+    QVERIFY(!m_music->canLoadMorePlaylists());
+}
+
+// With no library there is no ParentId, and with no ParentId there is nothing
+// telling an audio playlist from a video one. An unscoped fetch would fill a
+// heading that says "music" with the user's film lists, which is precisely the
+// failure MUSIC.md §3 set out to avoid — so it asks for nothing instead.
+void MusicQueryTest::anUnscopedControllerFetchesNoPlaylists()
+{
+    auto *unscoped = new MusicController(m_client, this);
+    const int before = m_mock->requestCount();
+    unscoped->setTab(QStringLiteral("playlists"));
+    unscoped->loadPlaylists();
+    QTest::qWait(80);
+    QCOMPARE(m_mock->requestCount(), before);
+    QCOMPARE(unscoped->playlists()->rowCount(), 0);
+    QVERIFY(!unscoped->loading());
+    delete unscoped;
+}
+
+// A playlist made from a track has to turn up in the tab whose job is to list
+// it. PlaylistController refreshes its own list and cannot know about this one,
+// so the two are joined by a signal (wired in Application) rather than by a
+// page remembering to relay it.
+void MusicQueryTest::createdPlaylistsReappearInTheMusicTab()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"pl1\",\"Name\":\"Road Trip\","
+                                       "\"Type\":\"Playlist\"}],\"TotalRecordCount\":1}"));
+    m_music->setTab(QStringLiteral("playlists"));
+    m_music->loadPlaylists();
+    settle();
+    QCOMPARE(m_music->playlists()->rowCount(), 1);
+    const int before = requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId));
+
+    // On screen: refetch now, or the playlist the user just made is missing
+    // from the grid they made it in front of.
+    m_music->invalidatePlaylists();
+    settle();
+    QCOMPARE(requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId)), before + 1);
+
+    // Not on screen: empty it and let the tab's own "load if empty" path pay
+    // for the request when it is next looked at — one request instead of one
+    // per playlist created while browsing albums.
+    m_music->setTab(QStringLiteral("albums"));
+    settle();
+    const int afterAlbums = requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId));
+    m_music->invalidatePlaylists();
+    QTest::qWait(80);
+    QCOMPARE(requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId)), afterAlbums);
+    QCOMPARE(m_music->playlists()->rowCount(), 0);
 }
 
 QTEST_MAIN(MusicQueryTest)
