@@ -499,6 +499,10 @@ void Settings::clearLastPlayback()
     m_store.remove(kLastItemKey);
     m_store.remove(kLastTitleKey);
     m_store.remove(kLastPositionKey);
+    // A clean stop must be as durable as the crash-resume write. Otherwise a
+    // power loss immediately after Stop can resurrect an already-cleared item
+    // on the next launch.
+    m_store.sync();
 }
 
 QString Settings::deviceId()
