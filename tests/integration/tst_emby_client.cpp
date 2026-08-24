@@ -46,6 +46,7 @@ private slots:
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
     void sessionChangeCancelsOutstandingRequests();
+    void authenticationAdoptionCancelsOutstandingRequests();
     void reassertingTheSameIdentityKeepsRequestsAlive();
     void renameCannotChainAWriteAcrossServers();
 
@@ -326,6 +327,31 @@ void EmbyClientTest::sessionChangeCancelsOutstandingRequests()
     const auto result = waitFor(std::move(future));
     QVERIFY(!result.ok());
     QCOMPARE(result.error, QStringLiteral("request canceled"));
+}
+
+void EmbyClientTest::authenticationAdoptionCancelsOutstandingRequests()
+{
+    const auto oldUser = QStringLiteral("old-user");
+    m_client->setSession(QStringLiteral("old-token"), oldUser);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Views").arg(oldUser), 200,
+                     QByteArrayLiteral("{\"Items\":[]}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Users/%1/Views").arg(oldUser), 250);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    const QFuture<Result<QList<Library>>> oldRequest = m_client->userViews();
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+
+    const auto authentication =
+        waitFor(m_client->authenticateByName(QStringLiteral("mike"), QStringLiteral("pw")));
+    QVERIFY2(authentication.ok(), qPrintable(authentication.error));
+    const auto oldResult = waitFor(oldRequest);
+    QVERIFY(!oldResult.ok());
+    QCOMPARE(oldResult.error, QStringLiteral("request canceled"));
+    QCOMPARE(m_client->accessToken(), authentication.value.accessToken);
+    QCOMPARE(m_client->userId(), authentication.value.user.id);
 }
 
 // Cancellation belongs to a real identity change and to an explicit boundary

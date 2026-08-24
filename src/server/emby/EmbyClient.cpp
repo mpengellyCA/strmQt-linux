@@ -278,9 +278,9 @@ QFuture<Result<SessionInfo>> EmbyClient::authenticateByName(const QString &usern
         if (!session.isValid())
             return Result<SessionInfo>::failure(
                 QStringLiteral("authentication response missing token or user id"));
-        m_accessToken = session.accessToken;
-        m_userId = session.user.id;
-        emit identityChanged();
+        // Identity adoption is a request boundary even when a future caller
+        // authenticates without SessionController's current sequencing.
+        setSession(session.accessToken, session.user.id);
         qCInfo(logServer) << "authenticated as" << session.user.name;
         return Result<SessionInfo>::success(session);
     });
