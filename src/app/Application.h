@@ -71,6 +71,7 @@ signals:
     void interactionContextChanged();
 
 private:
+    void shutdown();
     void wirePlaybackIntegrations();
     void applyWheelScrollPolicy();
     void recomputeLiveUpdatePolicy();
@@ -115,6 +116,7 @@ private:
     QString m_interactionContext = QStringLiteral("login");
     int m_wheelStepPx = 0;
     bool m_lastPlaybackActive = false;
+    bool m_shuttingDown = false;
 };
 
 } // namespace strmqt

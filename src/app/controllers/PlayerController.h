@@ -1,9 +1,11 @@
 #pragma once
 
 #include "app/PlayQueue.h"
+#include "core/Result.h"
 #include "playback/PlayerBackend.h"
 #include "server/dto/PlaybackTicket.h"
 
+#include <QFuture>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -185,6 +187,11 @@ public:
     // deferred continuation and every queue/metadata reference to the outgoing
     // identity. Application calls this before credentials are replaced.
     void shutdownForSessionBoundary();
+    // Normal process exit has one last event-loop window in which the server's
+    // PlaybackStopped request can drain. Local playback is torn down and the
+    // crash-only resume record is settled synchronously; the returned future
+    // represents only that final network report.
+    QFuture<Result<bool>> shutdownForApplicationExit();
     Q_INVOKABLE void seekTo(qint64 positionMs);
     Q_INVOKABLE void seekRelative(qint64 deltaMs);
     Q_INVOKABLE void cycleAudioTrack();

@@ -34,7 +34,10 @@
 #include "app/models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
 
+#include <QEventLoop>
+#include <QFutureWatcher>
 #include <QSysInfo>
+#include <QTimer>
 
 namespace strmqt {
 
@@ -180,6 +183,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_mpris = new MprisPlayer(this);
     m_mpris->registerOnBus();
     wirePlaybackIntegrations();
+    connect(this, &QCoreApplication::aboutToQuit, this, &Application::shutdown,
+            Qt::DirectConnection);
     // SessionController emits this before it replaces the server or
     // credentials. Keeping teardown here makes logout one application-level
     // transaction instead of a navigation-only event in QML.
@@ -245,6 +250,42 @@ void Application::teardownAuthenticatedSession()
     m_mpris->setQueueState(false, false);
     m_mpris->setPositionMs(0);
     m_mpris->setNowPlaying({});
+    m_powerInhibit->release();
+}
+
+void Application::shutdown()
+{
+    if (m_shuttingDown)
+        return;
+    m_shuttingDown = true;
+
+    m_live->stop();
+    const QFuture<Result<bool>> stoppedReport = m_player->shutdownForApplicationExit();
+
+    // aboutToQuit is the last point at which network completions can still be
+    // processed. Give the final stop report a short, explicit drain window,
+    // never an unbounded wait that can wedge desktop logout.
+    if (stoppedReport.isValid() && !stoppedReport.isFinished()) {
+        constexpr int kShutdownDrainMs = 1000;
+        QEventLoop drainLoop;
+        QFutureWatcher<Result<bool>> watcher;
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        connect(&watcher, &QFutureWatcher<Result<bool>>::finished, &drainLoop,
+                &QEventLoop::quit);
+        connect(&deadline, &QTimer::timeout, &drainLoop, &QEventLoop::quit);
+        watcher.setFuture(stoppedReport);
+        if (!stoppedReport.isFinished()) {
+            deadline.start(kShutdownDrainMs);
+            drainLoop.exec(QEventLoop::ExcludeUserInputEvents);
+        }
+        if (!stoppedReport.isFinished())
+            qCWarning(logApp) << "timed out draining final PlaybackStopped report";
+    }
+
+    // Settings also owns non-playback values whose QSettings UpdateRequest may
+    // not run after aboutToQuit. Make the process boundary explicit.
+    m_settings->flush();
     m_powerInhibit->release();
 }
 
@@ -448,6 +489,9 @@ void Application::pushNowPlayingToMpris()
     m_mpris->setNowPlaying(track);
 }
 
-Application::~Application() = default;
+Application::~Application()
+{
+    shutdown();
+}
 
 } // namespace strmqt

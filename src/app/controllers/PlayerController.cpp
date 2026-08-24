@@ -1245,6 +1245,34 @@ void PlayerController::shutdownForSessionBoundary()
     finishSession(TerminationReason::SessionBoundary);
 }
 
+QFuture<Result<bool>> PlayerController::shutdownForApplicationExit()
+{
+    QFuture<Result<bool>> stoppedReport;
+    if (m_active && m_reporting && m_itemReachedReady) {
+        // Persist before starting the request so an abnormal interruption of
+        // the short drain window still has the newest known playhead. The clean
+        // boundary below removes that crash-only record once local teardown is
+        // complete.
+        persistResume();
+        if (m_settings)
+            m_settings->flush();
+        stoppedReport = m_client->reportPlaybackStopped(progressNow());
+        stoppedReport.then(this, [](const Result<bool> &result) {
+            if (!result.ok())
+                qCWarning(logPlayback) << "final PlaybackStopped report failed:" << result.error;
+        });
+        // finishSession() funnels through closeCurrentSession(); mark the
+        // server session closed so that path cannot issue a duplicate request.
+        // m_itemReachedReady deliberately survives rung reloads where m_started
+        // is temporarily false but the server session is still open.
+        m_started = false;
+    }
+    finishSession(TerminationReason::SessionBoundary);
+    if (m_settings)
+        m_settings->flush();
+    return stoppedReport;
+}
+
 void PlayerController::seekTo(qint64 positionMs)
 {
     // Clamped at BOTH ends. Without the ceiling, holding skip-forward past the

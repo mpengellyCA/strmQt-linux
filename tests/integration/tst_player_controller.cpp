@@ -53,6 +53,7 @@ private slots:
     void allRungsFailingSurfacesError();
     void endReachedReportsFullRuntime();
     void stopReportsAndDeactivates();
+    void controlledShutdownDrainsAndClearsResume();
     void staleEventsCannotControlAReplacement();
     void failedHandoffIsIdleAndPreservesCrashResume();
     void stopWhileResolvingCancelsTheLoad();
@@ -317,6 +318,44 @@ void PlayerControllerTest::stopReportsAndDeactivates()
         !m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"))
              .method.isEmpty());
     expectReport(QStringLiteral("/Sessions/Playing/Stopped"), QStringLiteral("DirectPlay"));
+}
+
+void PlayerControllerTest::controlledShutdownDrainsAndClearsResume()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(300'000);
+
+    // Enter a watchdog reload: m_started is temporarily false, but the server
+    // session opened by the original rung still needs its final stop report.
+    QTRY_VERIFY(m_backend->seeks.contains(Q_INT64_C(301000)));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+
+    const QFuture<Result<bool>> drain = m_controller->shutdownForApplicationExit();
+    QVERIFY(drain.isValid());
+    QTRY_VERIFY(drain.isFinished());
+    QVERIFY(!m_controller->active());
+    QCOMPARE(m_backend->state(), PlayerBackend::State::Idle);
+    QVERIFY(m_controller->crashResumeInfo().isEmpty());
+
+    QTRY_VERIFY(
+        !m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"))
+             .method.isEmpty());
+    expectReport(QStringLiteral("/Sessions/Playing/Stopped"), QStringLiteral("DirectPlay"));
+    const QJsonObject body = QJsonDocument::fromJson(
+                                 m_mock
+                                     ->lastRequestFor(
+                                         QStringLiteral("POST"),
+                                         QStringLiteral("/Sessions/Playing/Stopped"))
+                                     .body)
+                                 .object();
+    QCOMPARE(static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()),
+             Q_INT64_C(301000) * kTicksPerMs);
+
+    QFile durable(m_dir->filePath(QStringLiteral("settings.ini")));
+    QVERIFY(durable.open(QIODevice::ReadOnly));
+    QVERIFY(!durable.readAll().contains("positionMs="));
 }
 
 void PlayerControllerTest::staleEventsCannotControlAReplacement()
