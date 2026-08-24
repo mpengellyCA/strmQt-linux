@@ -117,6 +117,15 @@ Item {
     implicitHeight: row.rowHeight + (row.startsDisc ? row.discHeaderHeight : 0)
     height: row.implicitHeight
 
+    Accessible.role: Accessible.ListItem
+    Accessible.name: row.title
+    Accessible.description: [row.secondary, row.artist, row.durationText]
+                            .filter(part => part.length > 0).join(", ")
+    Accessible.selectable: true
+    Accessible.selected: row.selected || row.current || row.playing
+    Accessible.focused: row.current
+    Accessible.onPressAction: row.activated(Qt.NoModifier)
+
     // Only a NUMBERED disc gets a banner. Measured on this server, a 52-track
     // deluxe edition comes back as discs [-1, 1, 2, 3]: the record proper
     // carries no ParentIndexNumber at all and the bonus discs do. Captioning

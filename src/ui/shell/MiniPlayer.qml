@@ -133,6 +133,10 @@ FocusScope {
     // Left/Right walks the rest without ever leaving the stop.
     activeFocusOnTab: true
 
+    Accessible.role: Accessible.Pane
+    Accessible.name: qsTr("Now playing")
+    Accessible.description: mini.trackTitle
+
     // ── Now-playing data ────────────────────────────────────────────────────
     // The queue is the only place the current item's artwork and its music
     // identity live: the controller publishes `title` and nothing else visual.
@@ -463,6 +467,12 @@ FocusScope {
         implicitWidth: link.maxWidth > 0 ? Math.min(linkLabel.implicitWidth, link.maxWidth)
                                          : linkLabel.implicitWidth
 
+        Accessible.role: link.interactive ? Accessible.Link : Accessible.StaticText
+        Accessible.name: link.label
+        Accessible.focusable: link.interactive
+        Accessible.focused: link.activeFocus
+        Accessible.onPressAction: link.activate()
+
         function activate(): void {
             if (link.interactive)
                 link.activated();
@@ -563,6 +573,10 @@ FocusScope {
             value: mini.positionMs
             buffered: mini.bufferedPosition
             stepSize: 10000
+            accessibleName: qsTr("Playback position")
+            accessibleDescription: qsTr("%1 of %2")
+                                   .arg(mini.formatTime(value))
+                                   .arg(mini.formatTime(to))
 
             onCommitted: v => PlayerCtl.seekTo(Math.round(v))
 
@@ -624,6 +638,10 @@ FocusScope {
                     // but the square itself is in the air.
                     opacity: mini.sleeveInFlight ? 0 : 1
 
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Open player: %1").arg(mini.trackTitle)
+                    Accessible.onPressAction: mini.expandRequested()
+
                     Image {
                         anchors.fill: parent
                         source: mini.artUrl
@@ -672,6 +690,10 @@ FocusScope {
 
                         width: parent.width
                         height: titleText.implicitHeight
+
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Open player: %1").arg(mini.trackTitle)
+                        Accessible.onPressAction: mini.expandRequested()
 
                         Text {
                             id: titleText

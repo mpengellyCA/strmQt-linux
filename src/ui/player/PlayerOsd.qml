@@ -394,6 +394,10 @@ Item {
                     stepSize: 10000
                     enabled: PlayerCtl.durationMs > 0
                     previewComponent: scrubPreview
+                    accessibleName: qsTr("Playback position")
+                    accessibleDescription: qsTr("%1 of %2")
+                                           .arg(osd.formatTime(value))
+                                           .arg(osd.formatTime(to))
 
                     KeyNavigation.down: buttons
                     KeyNavigation.up: null

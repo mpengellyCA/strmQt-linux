@@ -200,6 +200,12 @@ FocusScope {
             keyNavigationWraps: false
             highlightMoveDuration: Theme.animFastMs
 
+            Accessible.role: Accessible.List
+            Accessible.name: panel.tab === 0 ? qsTr("Audio tracks")
+                                             : qsTr("Subtitle tracks")
+            Accessible.focusable: true
+            Accessible.focused: list.activeFocus
+
             ScrollBar.vertical: StrmScrollBar {}
 
             Keys.onReturnPressed: event => {
@@ -248,6 +254,15 @@ FocusScope {
 
                 width: ListView.view.width
                 height: Theme.scale(52)
+
+                Accessible.role: Accessible.ListItem
+                Accessible.name: String(trackRow.modelData.label)
+                Accessible.description: String(trackRow.modelData.detail)
+                Accessible.selectable: true
+                Accessible.selected: trackRow.modelData.selected === true
+                                     || trackRow.highlighted
+                Accessible.focused: trackRow.highlighted
+                Accessible.onPressAction: panel.applyRow(trackRow.index)
 
                 Rectangle {
                     anchors.fill: parent

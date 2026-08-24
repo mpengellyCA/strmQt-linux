@@ -296,6 +296,8 @@ FocusScope {
                 to: PlayerCtl.maxVolume
                 stepSize: 5
                 value: PlayerCtl.muted ? 0 : PlayerCtl.volume
+                accessibleName: qsTr("Volume")
+                accessibleDescription: qsTr("%1 percent").arg(Math.round(value))
 
                 onMoved: value => {
                     row.woken();

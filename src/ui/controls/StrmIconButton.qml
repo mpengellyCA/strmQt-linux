@@ -14,6 +14,12 @@ Item {
     property string iconName: ""
     property string tooltip: ""
     property string shortcut: ""
+    // The tooltip is the normal accessible name. Call sites with a deliberately
+    // different spoken label can override this without changing pointer copy.
+    property string accessibleName: button.tooltip
+    property string accessibleDescription: button.shortcut.length > 0
+                                                   ? qsTr("Shortcut: %1").arg(button.shortcut)
+                                                   : ""
     property bool checked: false
     property bool round: false
     // Additive to the shared contract: OSD and inline uses need a smaller box
@@ -38,6 +44,19 @@ Item {
     implicitWidth: button.size
     implicitHeight: button.size
     activeFocusOnTab: button.enabled
+
+    Accessible.role: Accessible.Button
+    Accessible.name: button.accessibleName
+    Accessible.description: button.accessibleDescription
+    Accessible.focusable: button.enabled
+    Accessible.focused: button.activeFocus
+    Accessible.pressed: button.checked || button.pressed
+    Accessible.onPressAction: button.activate()
+
+    Component.onCompleted: {
+        if (button.accessibleName.trim().length === 0)
+            console.warn("StrmIconButton requires a tooltip or accessibleName", button.iconName);
+    }
 
     scale: !button.enabled ? 1.0
          : button.pressed ? Theme.pressScale

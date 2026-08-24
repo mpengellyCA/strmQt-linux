@@ -46,6 +46,13 @@ Item {
     // Unlinked chips keep the linked padding so a mixed row still lines up.
     implicitWidth: row.implicitWidth + 2 * Theme.spacingValue
 
+    Accessible.role: chip.interactive ? Accessible.Link : Accessible.StaticText
+    Accessible.name: chip.sublabel.length > 0
+                     ? chip.label + ", " + chip.sublabel : chip.label
+    Accessible.focusable: chip.interactive && (chip.activeFocusOnTab || chip.highlighted)
+    Accessible.focused: chip.highlighted || chip.activeFocus
+    Accessible.onPressAction: chip.activate()
+
     // Press < hover < focus, exactly as StrmButton and StrmCard order them.
     scale: !chip.interactive ? 1.0
          : chip.pressed ? Theme.pressScale

@@ -417,6 +417,10 @@ FocusScope {
                     showKnobOnHoverOnly: false
                     stepSize: 10000
                     enabled: panel.seekable
+                    accessibleName: qsTr("Playback position")
+                    accessibleDescription: qsTr("%1 of %2")
+                                           .arg(panel.formatTime(value))
+                                           .arg(panel.formatTime(to))
 
                     KeyNavigation.down: playPause
                     KeyNavigation.up: null
@@ -609,6 +613,8 @@ FocusScope {
                             to: PlayerCtl.maxVolume
                             stepSize: 5
                             value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume
+                            accessibleName: qsTr("Volume")
+                            accessibleDescription: qsTr("%1 percent").arg(Math.round(value))
 
                             onMoved: value => {
                                 PlayerCtl.setMuted(false);
@@ -873,6 +879,11 @@ FocusScope {
                 // take the page's arrow keys away before the user asked.
                 activeFocusOnTab: true
 
+                Accessible.role: Accessible.List
+                Accessible.name: qsTr("Up next")
+                Accessible.focusable: true
+                Accessible.focused: queueList.activeFocus
+
                 ScrollBar.vertical: StrmScrollBar {}
 
                 Keys.onReturnPressed: event => {
@@ -948,6 +959,15 @@ FocusScope {
 
                     width: ListView.view.width
                     height: Theme.scale(56)
+
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: trackRow.model.name !== undefined
+                                     ? String(trackRow.model.name) : ""
+                    Accessible.description: rowSubtitle.text
+                    Accessible.selectable: true
+                    Accessible.selected: trackRow.highlighted || trackRow.playing
+                    Accessible.focused: trackRow.highlighted
+                    Accessible.onPressAction: panel.jumpTo(trackRow.index)
 
                     Rectangle {
                         anchors.fill: parent

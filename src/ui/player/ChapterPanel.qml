@@ -116,6 +116,11 @@ FocusScope {
             keyNavigationWraps: false
             highlightMoveDuration: Theme.animFastMs
 
+            Accessible.role: Accessible.List
+            Accessible.name: qsTr("Chapters")
+            Accessible.focusable: true
+            Accessible.focused: list.activeFocus
+
             // Set once rather than bound: the keyboard writes currentIndex, and
             // a binding that the first Down keypress destroys is a binding that
             // was lying about what it did.
@@ -160,6 +165,14 @@ FocusScope {
 
                 width: ListView.view.width
                 height: Theme.scale(46)
+
+                Accessible.role: Accessible.ListItem
+                Accessible.name: panel.chapterName(chapterRow.index)
+                Accessible.description: qsTr("Starts at %1").arg(startLabel.text)
+                Accessible.selectable: true
+                Accessible.selected: chapterRow.playing || chapterRow.highlighted
+                Accessible.focused: chapterRow.highlighted
+                Accessible.onPressAction: panel.jumpTo(chapterRow.index)
 
                 Rectangle {
                     anchors.fill: parent

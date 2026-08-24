@@ -74,6 +74,7 @@ TextField {
         anchors.rightMargin: Theme.scale(4)
         visible: field.clearVisible
         iconName: "close"
+        tooltip: qsTr("Clear search")
         round: true
         size: Theme.scale(26)
         onClicked: {

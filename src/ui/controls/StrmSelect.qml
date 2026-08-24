@@ -32,6 +32,7 @@ Item {
     // Owned by the consumer. See the note above before assigning it from here.
     property int currentIndex: -1
     property string placeholder: qsTr("Select…")
+    property string accessibleName: select.placeholder
 
     // ── Multi-select (ARCHITECTURE.md) ─────────────────────────────────────
     // A music library has 289 genres (measured), which is a set no row of chips
@@ -105,6 +106,15 @@ Item {
     height: implicitHeight
 
     activeFocusOnTab: true
+
+    Accessible.role: Accessible.ComboBox
+    Accessible.name: select.accessibleName
+    Accessible.description: select.multiSelect ? select._multiLabel
+                                                : (select.currentIndex >= 0
+                                                   ? select.currentText : select.placeholder)
+    Accessible.focusable: select.enabled
+    Accessible.focused: select.activeFocus
+    Accessible.onPressAction: select.toggle()
 
     // A control could not close its own dropdown before `toggledFromParent`
     // existed: the press closed the menu and the release of that same click

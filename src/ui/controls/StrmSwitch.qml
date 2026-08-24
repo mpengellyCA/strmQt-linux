@@ -11,6 +11,8 @@ Item {
 
     property bool checked: false
     property string text: ""
+    property string accessibleName: control.text
+    property string accessibleDescription: ""
 
     signal toggled
 
@@ -20,6 +22,17 @@ Item {
     implicitHeight: Theme.controlHeight
     implicitWidth: track.width + (label.visible ? Theme.spacingTight + label.implicitWidth : 0)
     activeFocusOnTab: control.enabled
+
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: control.accessibleName
+    Accessible.description: control.accessibleDescription
+    Accessible.checkable: true
+    Accessible.checked: control.checked
+    Accessible.focusable: control.enabled
+    Accessible.focused: control.activeFocus
+    Accessible.pressed: control.pressed
+    Accessible.onPressAction: control.activate()
+    Accessible.onToggleAction: control.activate()
 
     function activate(): void {
         if (control.enabled)

@@ -71,6 +71,14 @@ Item {
     width: implicitWidth
     height: implicitHeight
 
+    Accessible.role: Accessible.ListItem
+    Accessible.name: card.label
+    Accessible.description: card.sublabel
+    Accessible.selectable: true
+    Accessible.selected: card.highlighted
+    Accessible.focused: card.highlighted
+    Accessible.onPressAction: card.activate()
+
     function activate() { card.activated() }
 
     // Scene-space menu request from an arbitrary child point.

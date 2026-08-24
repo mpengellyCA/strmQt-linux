@@ -16,6 +16,8 @@ Item {
     property string iconName: ""
     property bool checked: false
     property bool closable: false
+    property string accessibleName: chip.text
+    property string accessibleDescription: chip.closable ? qsTr("Can be removed") : ""
 
     signal toggled
     signal closed
@@ -36,6 +38,17 @@ Item {
     implicitHeight: Theme.scale(32)
     implicitWidth: row.implicitWidth + 2 * Theme.spacingValue
     activeFocusOnTab: chip.enabled
+
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: chip.accessibleName
+    Accessible.description: chip.accessibleDescription
+    Accessible.checkable: true
+    Accessible.checked: chip.checked
+    Accessible.focusable: chip.enabled
+    Accessible.focused: chip.activeFocus
+    Accessible.pressed: chip.pressed
+    Accessible.onPressAction: chip.activate()
+    Accessible.onToggleAction: chip.activate()
 
     scale: !chip.enabled ? 1.0
          : chip.pressed ? Theme.pressScale

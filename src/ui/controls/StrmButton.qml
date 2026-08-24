@@ -18,6 +18,8 @@ Item {
     property string variant: "secondary"
     property bool busy: false
     property bool destructive: false
+    property string accessibleName: button.text
+    property string accessibleDescription: ""
 
     signal clicked
 
@@ -55,6 +57,14 @@ Item {
     implicitHeight: Theme.controlHeight
     implicitWidth: row.implicitWidth + 2 * button.hPad
     activeFocusOnTab: button.interactive
+
+    Accessible.role: Accessible.Button
+    Accessible.name: button.accessibleName
+    Accessible.description: button.busy ? qsTr("Working") : button.accessibleDescription
+    Accessible.focusable: button.interactive
+    Accessible.focused: button.activeFocus
+    Accessible.pressed: button.pressed
+    Accessible.onPressAction: button.activate()
 
     // Press < hover < focus. When hover and focus are both true the larger
     // (focus) scale applies, and the ring below draws on top of it.

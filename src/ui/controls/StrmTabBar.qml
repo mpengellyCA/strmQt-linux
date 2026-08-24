@@ -30,6 +30,18 @@ FocusScope {
 
     activeFocusOnTab: true
 
+    Accessible.role: Accessible.PageTabList
+    Accessible.name: qsTr("Sections")
+    Accessible.description: bar.tabs.length > 0 && bar.currentIndex >= 0
+                            ? String(bar.tabs[bar.currentIndex].text !== undefined
+                                     ? bar.tabs[bar.currentIndex].text
+                                     : bar.tabs[bar.currentIndex]) : ""
+    Accessible.focusable: bar.enabled
+    Accessible.focused: bar.activeFocus
+    Accessible.onDecreaseAction: bar.select(Math.max(0, bar.currentIndex - 1))
+    Accessible.onIncreaseAction: bar.select(Math.min(bar.tabs.length - 1,
+                                                     bar.currentIndex + 1))
+
     function select(index) {
         if (index < 0 || index >= bar.tabs.length || index === bar.currentIndex)
             return

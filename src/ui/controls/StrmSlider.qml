@@ -31,6 +31,12 @@ Item {
     property Component previewComponent: null
     // Keyboard/wheel increment.
     property real stepSize: (slider.to - slider.from) / 20
+    property string accessibleName: qsTr("Slider")
+    property string accessibleDescription: ""
+    // QAccessibleQuickItem discovers these conventional names to provide its
+    // value interface for a custom Item-backed slider.
+    readonly property real minimumValue: slider.from
+    readonly property real maximumValue: slider.to
 
     signal moved(real value)
     signal committed(real value)
@@ -89,6 +95,21 @@ Item {
     implicitWidth: Theme.scale(200)
     implicitHeight: Theme.touchTarget
     activeFocusOnTab: slider.enabled
+
+    Accessible.role: Accessible.Slider
+    Accessible.name: slider.accessibleName
+    Accessible.description: slider.accessibleDescription
+    Accessible.focusable: slider.enabled
+    Accessible.focused: slider.activeFocus
+    Accessible.onIncreaseAction: slider.accessibleNudge(1)
+    Accessible.onDecreaseAction: slider.accessibleNudge(-1)
+
+    function accessibleNudge(direction: int): void {
+        if (!slider.enabled)
+            return;
+        slider.nudge(direction);
+        slider.emitCommitted();
+    }
 
     Rectangle {
         id: track
