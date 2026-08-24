@@ -71,16 +71,21 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
                 m_restoringTracks = false;
                 return;
             }
+            // A pending id survives until the engine actually reports it.
+            // Clearing it on the first tracksChanged regardless of content lost
+            // the user's choice whenever the engine re-emitted the list for an
+            // unrelated reason before the selection took effect; the request is
+            // retired instead by the next load, stop, or session boundary.
             bool confirmed = m_trackSelectionPending;
-            if (m_pendingAudioTrack) {
-                confirmed = confirmed ||
-                    m_backend->currentAudioTrackId() == *m_pendingAudioTrack;
+            if (m_pendingAudioTrack &&
+                m_backend->currentAudioTrackId() == *m_pendingAudioTrack) {
                 m_pendingAudioTrack.reset();
+                confirmed = true;
             }
-            if (m_pendingSubtitleTrack) {
-                confirmed = confirmed ||
-                    m_backend->currentSubtitleTrackId() == *m_pendingSubtitleTrack;
+            if (m_pendingSubtitleTrack &&
+                m_backend->currentSubtitleTrackId() == *m_pendingSubtitleTrack) {
                 m_pendingSubtitleTrack.reset();
+                confirmed = true;
             }
             if (confirmed) {
                 m_trackSelectionPending = false;

@@ -184,6 +184,9 @@ public:
         m_subtitleTrackId = selectedIdOf(subtitles);
         emit tracksChanged();
     }
+    // The engine re-publishing its track list without the requested selection
+    // having taken effect yet: mpv does this whenever the list itself changes.
+    void republishTracksUnchanged() { emit tracksChanged(); }
     void confirmAudioTrack(int id)
     {
         m_audioTrackId = selectIn(m_audioTracks, id);

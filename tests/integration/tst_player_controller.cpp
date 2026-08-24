@@ -547,6 +547,12 @@ void PlayerControllerTest::trackPersistenceWaitsForBackendReadback()
     QCOMPARE(m_backend->currentAudioTrackId(), 1);
     QVERIFY(!m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
 
+    // An unrelated track-list republication before the selection takes effect
+    // must not retire the request: the readback that follows is still the one
+    // that decides what gets remembered.
+    m_backend->republishTracksUnchanged();
+    QVERIFY(!m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
+
     m_backend->confirmAudioTrack(2);
     QVERIFY(m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
     QCOMPARE(m_settings->recalledTracks(QStringLiteral("301001"), sourceId).first, 2);
