@@ -59,9 +59,16 @@ void watchCall(SecretsStore *store, const QDBusMessage &message, Completion comp
     const QPointer<SecretsStore> self(store);
     QObject::connect(watcher, &QDBusPendingCallWatcher::finished, watcher,
                      [self, watcher, completion = std::move(completion)]() mutable {
-                         if (self)
-                             completion(watcher->reply());
+                         const QDBusMessage reply = watcher->reply();
+                         // Future settlement below is a reentrancy point: a
+                         // context-free continuation may synchronously delete
+                         // the store and its children. Detach and retire the
+                         // watcher before invoking any completion, then never
+                         // touch its raw pointer again.
+                         watcher->setParent(QCoreApplication::instance());
                          watcher->deleteLater();
+                         if (self)
+                             completion(reply);
                      });
 }
 
@@ -99,8 +106,12 @@ void runLegacyTask(SecretsStore *store, Work work, Completion completion)
     auto *watcher = new QFutureWatcher<T>(store);
     QObject::connect(watcher, &QFutureWatcher<T>::finished, watcher,
                      [watcher, completion = std::move(completion)]() mutable {
-                         completion(watcher->result());
+                         T result = watcher->result();
+                         // See watchCall(): completion can synchronously delete
+                         // SecretsStore through the public operation's future.
+                         watcher->setParent(QCoreApplication::instance());
                          watcher->deleteLater();
+                         completion(std::move(result));
                      });
     watcher->setFuture(promise->future());
     QThreadPool::globalInstance()->start([promise, work = std::move(work)]() mutable {
@@ -497,11 +508,14 @@ void SecretsStore::finishCurrent(const Result<QString> &result)
         return;
     Operation operation = std::move(*m_current);
     m_current.reset();
+    // Schedule before settling the promise. A context-free QFuture::then can
+    // synchronously destroy this store from operation.finish(); the timer is
+    // context-bound and will be canceled by QObject destruction.
+    QTimer::singleShot(0, this, &SecretsStore::processNext);
     if (operation.identity != m_identity)
         operation.finish(Result<QString>::failure(QStringLiteral("secret operation canceled")));
     else
         operation.finish(result);
-    QTimer::singleShot(0, this, &SecretsStore::processNext);
 }
 
 void SecretsStore::setStorageMode(StorageMode mode)

@@ -8,6 +8,7 @@
 #include "platform/SecretsStore.h"
 
 #include <algorithm>
+#include <utility>
 
 using strmqt::Result;
 using strmqt::SecretsStore;
@@ -65,6 +66,8 @@ private slots:
     void identityChangeDuringReadRetiresTheReply();
     void identityChangeDuringWriteOrdersRemovalAfterIt();
     void identityChangeDuringRemoveOrdersNewWriteAfterIt();
+    void selfDeletingContinuationIsSafeAfterLegacyWorker();
+    void selfDeletingContinuationIsSafeAfterTransportCompletion();
     void destructionSettlesCurrentAndQueuedOperations();
 };
 
@@ -372,6 +375,49 @@ void SecretsStoreTest::identityChangeDuringRemoveOrdersNewWriteAfterIt()
     QCOMPARE(store.calls.last().value, QStringLiteral("new-token"));
     store.replyWrite(true);
     QVERIFY(awaitResult(write).ok());
+}
+
+void SecretsStoreTest::selfDeletingContinuationIsSafeAfterLegacyWorker()
+{
+    QTemporaryDir dir;
+    SecretsStore *store = new SecretsStore(dir.filePath(QStringLiteral("secrets.ini")));
+    QFuture<Result<bool>> write =
+        store->writeSecret(QStringLiteral("token"), QStringLiteral("value"));
+    bool operationSucceeded = false;
+    const QFuture<void> deleted =
+        write.then([&store, &operationSucceeded](const Result<bool> &result) {
+            operationSucceeded = result.ok();
+            delete std::exchange(store, nullptr);
+        });
+
+    QTRY_VERIFY(deleted.isFinished());
+    QVERIFY(operationSucceeded);
+    QVERIFY(store == nullptr);
+}
+
+void SecretsStoreTest::selfDeletingContinuationIsSafeAfterTransportCompletion()
+{
+    QTemporaryDir dir;
+    auto *store = new FakeSecretsStore;
+    store->setLegacyFilePathForTests(dir.filePath(QStringLiteral("missing.ini")));
+    initializeWallet(*store);
+
+    QFuture<Result<QString>> read = store->readSecret(QStringLiteral("token"));
+    QTRY_VERIFY(lastCallIs(*store, FakeSecretsStore::CallType::Read));
+    bool operationSucceeded = false;
+    const QFuture<void> deleted =
+        read.then([&store, &operationSucceeded](const Result<QString> &result) {
+            operationSucceeded = result.ok();
+            delete std::exchange(store, nullptr);
+        });
+
+    store->replyRead(true, QStringLiteral("value"));
+
+    // Context-free continuations run inline with promise settlement. This
+    // specifically exercises deletion before completeReadPassword() returns.
+    QVERIFY(deleted.isFinished());
+    QVERIFY(operationSucceeded);
+    QVERIFY(store == nullptr);
 }
 
 void SecretsStoreTest::destructionSettlesCurrentAndQueuedOperations()
