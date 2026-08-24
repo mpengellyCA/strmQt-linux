@@ -40,6 +40,24 @@ FocusScope {
     readonly property bool showEmpty: !HomeCtl.busy && !page.hasContent
                                       && HomeCtl.errorMessage.length === 0
 
+    // BoundedNavigationStack cannot find a semantic owner that a virtual
+    // ListView has not instantiated. Position the outer rail by its stable key;
+    // the stack's next bounded retry then discovers the real StrmRail and lets
+    // that control restore its card identity without issuing network work.
+    function prepareNavigationFocusOwner(controlKey): bool {
+        const prefix = "home-"
+        const key = String(controlKey)
+        if (!key.startsWith(prefix))
+            return false
+        const row = HomeCtl.rails.indexOfKey(key.slice(prefix.length))
+        if (row < 0)
+            return false
+        railList.currentIndex = row
+        railList.positionViewAtIndex(row, ListView.Contain)
+        railList.forceLayout()
+        return true
+    }
+
     // ── Item verbs ─────────────────────────────────────────────────────────
     // Rails hand back an index into their own model; every verb needs the item
     // map, so one helper resolves it and every handler stays a single line.
@@ -358,6 +376,7 @@ FocusScope {
                 id: mediaRail
 
                 navigationFocusKey: "home-" + cell.railKey
+                navigationFocusRefillActive: HomeCtl.busy
 
                 // No anchors: StrmRail binds its own width to parent.width, and
                 // anchoring left/right from here would override that binding.

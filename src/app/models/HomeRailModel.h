@@ -44,6 +44,8 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    Q_INVOKABLE int indexOfKey(const QString &key) const;
+
     void setDescriptors(QList<Descriptor> descriptors);
 
 signals:

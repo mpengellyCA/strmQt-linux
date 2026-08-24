@@ -1367,6 +1367,8 @@ FocusScope {
             StrmRail {
                 id: movieRail
                 navigationFocusKey: "search-movies"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: movieModel.count > 0
                 title: qsTr("Movies")
                 railModel: movieModel
@@ -1388,6 +1390,8 @@ FocusScope {
             StrmRail {
                 id: seriesRail
                 navigationFocusKey: "search-series"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: seriesModel.count > 0
                 title: qsTr("Series")
                 railModel: seriesModel
@@ -1412,6 +1416,8 @@ FocusScope {
             StrmRail {
                 id: episodeRail
                 navigationFocusKey: "search-episodes"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: episodeModel.count > 0
                 title: qsTr("Episodes")
                 railModel: episodeModel
@@ -1438,6 +1444,8 @@ FocusScope {
             StrmRail {
                 id: collectionRail
                 navigationFocusKey: "search-collections"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: collectionModel.count > 0
                 title: qsTr("Collections")
                 railModel: collectionModel
@@ -1465,6 +1473,8 @@ FocusScope {
             StrmRail {
                 id: artistRail
                 navigationFocusKey: "search-artists"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: artistModel.count > 0
                 title: qsTr("Artists")
                 railModel: artistModel
@@ -1491,6 +1501,8 @@ FocusScope {
             StrmRail {
                 id: albumRail
                 navigationFocusKey: "search-albums"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: albumModel.count > 0
                 title: qsTr("Albums")
                 railModel: albumModel
@@ -1530,6 +1542,8 @@ FocusScope {
             StrmRail {
                 id: otherRail
                 navigationFocusKey: "search-other"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 visible: otherModel.count > 0
                 title: qsTr("Other results")
                 railModel: otherModel

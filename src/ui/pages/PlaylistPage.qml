@@ -780,6 +780,8 @@ FocusScope {
             id: memberList
 
             navigationFocusKey: "playlist-members"
+            navigationFocusFallbackItem: filterField
+            navigationFocusRefillActive: PlaylistCtl.loading
 
             anchors.left: parent.left
             anchors.right: parent.right
@@ -871,6 +873,7 @@ FocusScope {
                 required property var model
 
                 width: memberList.width
+                navigationFocusOwner: memberList
 
                 rowHeight: Theme.scale(64)
                 surfaceTopMargin: Theme.scale(2)
@@ -938,7 +941,10 @@ FocusScope {
                     size: Theme.scale(28)
                     activeFocusOnTab: false
                     tooltip: qsTr("Play from here")
-                    onClicked: page.playFrom(memberRow.index)
+                    onClicked: {
+                        memberList.cancelNavigationFocusRestore()
+                        page.playFrom(memberRow.index)
+                    }
                 }
 
                 StrmIconButton {
@@ -949,7 +955,10 @@ FocusScope {
                     enabled: memberRow.index > 0
                     tooltip: qsTr("Move up")
                     shortcut: "Alt+Up"
-                    onClicked: page.moveRow(memberRow.index, -1)
+                    onClicked: {
+                        memberList.cancelNavigationFocusRestore()
+                        page.moveRow(memberRow.index, -1)
+                    }
                 }
 
                 StrmIconButton {
@@ -960,7 +969,10 @@ FocusScope {
                     enabled: memberRow.index < page.memberCount - 1
                     tooltip: qsTr("Move down")
                     shortcut: "Alt+Down"
-                    onClicked: page.moveRow(memberRow.index, 1)
+                    onClicked: {
+                        memberList.cancelNavigationFocusRestore()
+                        page.moveRow(memberRow.index, 1)
+                    }
                 }
 
                 StrmIconButton {
@@ -970,7 +982,10 @@ FocusScope {
                     activeFocusOnTab: false
                     tooltip: qsTr("Remove from this playlist")
                     shortcut: "Del"
-                    onClicked: page.removeRow(memberRow.index)
+                    onClicked: {
+                        memberList.cancelNavigationFocusRestore()
+                        page.removeRow(memberRow.index)
+                    }
                 }
             }
         }

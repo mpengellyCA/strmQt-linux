@@ -16,9 +16,11 @@ private slots:
     void capsGraphsAndReconstructsMetadata();
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
+    void restoresPerEntryMusicTab();
     void restoresVirtualFocusAcrossDelayedRefill();
     void stableOwnersAndPlaylistIdentitySurviveReorder();
     void terminalFallbackAndUserOverride();
+    void pendingRestoreIsNotResurrected();
     void preservesFavoriteStateAcrossReconstruction();
     void preservesBaseAndKeepsTransientPagesOutOfHistory();
 };
@@ -44,9 +46,12 @@ Item {
     property string preparedDetailsId: ""
     property string preparedAlbumId: ""
     property string searchQuery: ""
+    property string musicTab: "albums"
     property int refillBatch: 0
     property int virtualNearEndCount: 0
+    property bool virtualRefillActive: false
     property bool twinSwapped: false
+    property bool delayTwinOwners: false
     readonly property int virtualCount: virtualRows.count
 
     function itemFor(id): var {
@@ -136,6 +141,7 @@ Item {
 
     function clearVirtualWithoutRefill(): void {
         refillTimer.stop();
+        root.virtualRefillActive = false;
         virtualRows.clear();
     }
 
@@ -153,6 +159,11 @@ Item {
             history.currentItem.focusOverride();
     }
 
+    function focusVirtualSameOwnerAction(): void {
+        if (history.currentItem && history.currentItem.focusSameOwnerAction)
+            history.currentItem.focusSameOwnerAction();
+    }
+
     function pushTwin(): void {
         history.pushRoute({ "kind": "person", "id": "twins", "name": "Twins",
                             "key": "person:twins", "title": "Twins" });
@@ -165,6 +176,7 @@ Item {
 
     function swapTwinOwnersAndRows(): void {
         root.twinSwapped = true;
+        root.delayTwinOwners = true;
         duplicateRows.clear();
         duplicateRows.append({ "playlistItemId": "entry-b", "itemId": "same-media",
                                "name": "Second occurrence" });
@@ -175,6 +187,7 @@ Item {
     function refillVirtualRows(): void {
         virtualRows.clear();
         root.refillBatch = 0;
+        root.virtualRefillActive = true;
         refillTimer.restart();
     }
 
@@ -184,8 +197,10 @@ Item {
         for (let i = start; i < end; ++i)
             virtualRows.append({ "itemId": "row-" + i, "name": "Row " + i });
         ++root.refillBatch;
-        if (end >= 30)
+        if (end >= 30) {
             refillTimer.stop();
+            root.virtualRefillActive = false;
+        }
     }
 
     function resetBase(kind): void {
@@ -207,6 +222,16 @@ Item {
     }
 
     function setSearchQuery(query): void { root.searchQuery = String(query); }
+    function pushMusic(tab): void {
+        root.musicTab = String(tab);
+        history.pushRoute({ "kind": "music", "id": "music-1", "name": "Music",
+                            "key": "music-1", "title": "Music", "tab": root.musicTab });
+    }
+    function setMusicTab(tab): void {
+        root.musicTab = String(tab);
+        if (history.currentItem && history.currentItem.selectedTab !== undefined)
+            history.currentItem.selectedTab = root.musicTab;
+    }
     function goBack(): void { history.goBack(); }
     function goForward(): void { history.goForward(); }
     function goHome(): void { history.goHome(); }
@@ -230,6 +255,8 @@ Item {
             root.preparedAlbumId = route.id;
         else if (route.kind === "search")
             root.searchQuery = route.query;
+        else if (route.kind === "music")
+            root.musicTab = route.tab;
         else if (route.kind === "library")
             root.refillVirtualRows();
     }
@@ -302,6 +329,7 @@ Item {
     component VirtualProbe: FocusScope {
         readonly property int focusedIndex: virtualGrid.currentIndex
         readonly property bool restorePending: virtualGrid.navigationFocusRestorePending
+        readonly property bool emptyViewFocused: virtualRows.count === 0 && virtualGrid.activeFocus
         objectName: "virtual-page"
         focus: true
 
@@ -311,17 +339,32 @@ Item {
         function restoreMissing(index): void {
             virtualGrid.restoreNavigationFocus("i:missing-row", index);
         }
-        function focusOverride(): void { virtualOverride.forceActiveFocus(Qt.OtherFocusReason); }
+        function focusOverride(): void { virtualOverride.forceActiveFocus(Qt.TabFocusReason); }
+        function focusSameOwnerAction(): void {
+            // Mirrors StrmCard/TrackTable's pointer-action funnel: the action
+            // explicitly retires restoration even when focus stays in the
+            // same delegate/owner.
+            virtualGrid._cancelNavigationFocusForUser();
+            virtualSameOwnerAction.forceActiveFocus(Qt.MouseFocusReason);
+        }
 
         StrmGrid {
             id: virtualGrid
             navigationFocusKey: "virtual-primary"
+            navigationFocusFallbackItem: virtualOverride
             width: 220
             height: 90
             gridModel: virtualRows
+            navigationFocusRefillActive: root.virtualRefillActive
             cellsAcross: 1
             prefetchThreshold: 0
             onNearEnd: root.virtualNearEndCount += 1
+
+            TextInput {
+                id: virtualSameOwnerAction
+                objectName: "virtual-same-owner-action"
+                text: "Cell action"
+            }
         }
         TextInput {
             id: virtualOverride
@@ -362,6 +405,7 @@ Item {
                                               ? second.item.currentIndex : -1
         objectName: "twin-page"
         focus: true
+        property bool ownersReady: !root.delayTwinOwners
 
         function owner(key): var {
             if (first.item && first.item.navigationFocusKey === key)
@@ -379,12 +423,20 @@ Item {
         Row {
             Loader {
                 id: first
+                active: parent.parent.ownersReady
                 sourceComponent: root.twinSwapped ? twinOwnerBComponent : twinOwnerAComponent
             }
             Loader {
                 id: second
+                active: parent.parent.ownersReady
                 sourceComponent: root.twinSwapped ? twinOwnerAComponent : twinOwnerBComponent
             }
+        }
+
+        Timer {
+            interval: 2300
+            running: root.delayTwinOwners && !parent.ownersReady
+            onTriggered: parent.ownersReady = true
         }
     }
 
@@ -411,6 +463,15 @@ Item {
         }
     }
 
+    component MusicProbe: FocusScope {
+        property string libraryId: ""
+        property string libraryName: ""
+        property string initialTab: "albums"
+        property string selectedTab: initialTab
+        objectName: "music-" + selectedTab
+        focus: true
+    }
+
     Component { id: detailsComponent; DetailsProbe {} }
     Component { id: albumComponent; AlbumProbe {} }
     Component { id: artistComponent; ArtistProbe {} }
@@ -419,6 +480,7 @@ Item {
     Component { id: personComponent; TwinProbe {} }
     Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
+    Component { id: musicComponent; MusicProbe {} }
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
     Component { id: homeComponent; FocusScope { objectName: "home-base"; focus: true } }
     Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
@@ -435,7 +497,7 @@ Item {
     }
     Timer {
         id: refillTimer
-        interval: 15
+        interval: 225
         repeat: true
         onTriggered: root.appendVirtualBatch()
     }
@@ -447,6 +509,7 @@ Item {
         historyLimit: 4
         focusItem: root.Window.window ? root.Window.window.activeFocusItem : null
         currentSearchQuery: root.searchQuery
+        currentMusicTab: root.musicTab
         initialRoute: ({
             "kind": "details", "id": "0", "name": "Item 0", "itemType": "Movie",
             "key": "details:0", "title": "Title 0",
@@ -465,6 +528,7 @@ Item {
         personPageComponent: personComponent
         libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
+        musicPageComponent: musicComponent
         loginPageComponent: loginComponent
         homePageComponent: homeComponent
         onPrepareRequested: route => root.prepareRoute(route)
@@ -474,6 +538,7 @@ Item {
         root.refillBatch = 0;
         while (virtualRows.count < 30)
             root.appendVirtualBatch();
+        root.virtualRefillActive = false;
     }
 }
 )QML";
@@ -745,6 +810,33 @@ void NavigationHistoryTest::restoresPerEntrySearchAndPreparesRouteKinds()
     QVERIFY(prepared.contains(QStringLiteral("search:beta edited")));
 }
 
+void NavigationHistoryTest::restoresPerEntryMusicTab()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushMusic", QStringLiteral("albums")));
+    QVERIFY(invoke(root, "setMusicTab", QStringLiteral("songs")));
+    QVERIFY(invoke(root, "pushRoute", 91));
+
+    const QVariantMap retainedMusic = listProperty(history, "navTrail").at(1).toMap();
+    QCOMPARE(retainedMusic.value(QStringLiteral("tab")).toString(), QStringLiteral("songs"));
+
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("selectedTab").toString(),
+                 QStringLiteral("songs"));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_COMPARE(currentItem(history)->property("initialTab").toString(),
+                 QStringLiteral("songs"));
+    QTRY_COMPARE(currentItem(history)->property("selectedTab").toString(),
+                 QStringLiteral("songs"));
+}
+
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
 {
     QTemporaryDir dir;
@@ -771,6 +863,12 @@ void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
     QVERIFY(virtualLocator.startsWith(
         QStringLiteral("[\"semantic\",\"virtual-primary\",\"i:row-17\",")));
     QVERIFY(invoke(root, "goBack"));
+    // A normal controller response may take longer than the old 400 ms grace.
+    // While its explicit loading state is true, no fallback may retire the
+    // exact identity or trigger pagination from growing counts.
+    QTest::qWait(500);
+    QVERIFY(currentItem(history)->property("restorePending").toBool());
+    QVERIFY(currentItem(history)->property("focusedIndex").toInt() != 17);
     QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
     QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
 
@@ -817,6 +915,11 @@ void NavigationHistoryTest::stableOwnersAndPlaylistIdentitySurviveReorder()
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "swapTwinOwnersAndRows"));
     QVERIFY(invoke(root, "goForward"));
+    // Reconstructed owners may be Loader-backed and appear after the former
+    // two-second object-tree retry window. The route locator must remain live
+    // within the bounded controller window.
+    QTest::qWait(2100);
+    QCOMPARE(currentItem(history)->property("focusedOwnerKey").toString(), QString());
     QTRY_COMPARE(currentItem(history)->property("focusedOwnerKey").toString(),
                  QStringLiteral("twin-b"));
     QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 0);
@@ -848,15 +951,64 @@ void NavigationHistoryTest::terminalFallbackAndUserOverride()
     QCOMPARE(currentItem(history)->property("focusedIndex").toInt(), 4);
     QCOMPARE(root->property("virtualNearEndCount").toInt(), nearEndBeforeRestore);
 
+    // With no eligible row, terminal fallback must leave the empty view and
+    // move through the page's ordinary focus chain.
     QVERIFY(invoke(root, "clearVirtualWithoutRefill"));
+    QVERIFY(invoke(root, "restoreMissingVirtual", 3));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+    QTest::qWait(450);
+    QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
+    QVERIFY(view.activeFocusItem());
+    QVERIFY(!currentItem(history)->property("emptyViewFocused").toBool());
+
+    // A pointer action inside the same semantic owner is still an explicit
+    // override even though neither owner key nor cursor changed.
+    QVERIFY(invoke(root, "clearVirtualWithoutRefill"));
+    QVERIFY(invoke(root, "restoreMissingVirtual", 3));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+    QVERIFY(invoke(root, "focusVirtualSameOwnerAction"));
+    QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
+    QVERIFY(view.activeFocusItem());
+    const QString sameOwnerFocus = view.activeFocusItem()->objectName();
+    QVERIFY(invoke(root, "appendLateVirtual"));
+    QTest::qWait(450);
+    QCOMPARE(view.activeFocusItem()->objectName(), sameOwnerFocus);
+
+    // The external page override follows the same rule.
     QVERIFY(invoke(root, "restoreMissingVirtual", 3));
     QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
     QVERIFY(invoke(root, "focusVirtualOverride"));
     QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
     QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
-    QVERIFY(invoke(root, "appendLateVirtual"));
-    QTest::qWait(450);
-    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
+}
+
+void NavigationHistoryTest::pendingRestoreIsNotResurrected()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushVirtual", QStringLiteral("cancelled")));
+    QVERIFY(invoke(root, "focusVirtual", 17));
+    QVERIFY(invoke(root, "pushRoute", 91));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+
+    const QVariantMap route = history->property("currentEntry").toMap();
+    const QString token = QString::number(route.value(QStringLiteral("token")).toInt());
+    QVERIFY(history->property("focusMemory").toMap().contains(token));
+
+    // Leaving while the old locator is still waiting is an explicit
+    // cancellation. It must delete, rather than retain, the previous visit's
+    // token or a later Back would revive a choice the user abandoned.
+    QVERIFY(invoke(root, "pushRoute", 92));
+    QVERIFY(!history->property("focusMemory").toMap().contains(token));
+    QVERIFY(invoke(root, "goBack"));
+    QTest::qWait(50);
+    QVERIFY(!currentItem(history)->property("restorePending").toBool());
 }
 
 void NavigationHistoryTest::preservesFavoriteStateAcrossReconstruction()

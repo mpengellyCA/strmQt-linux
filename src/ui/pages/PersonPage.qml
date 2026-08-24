@@ -573,6 +573,7 @@ FocusScope {
         id: filmGrid
 
         navigationFocusKey: "person-films"
+        navigationFocusRefillActive: LibraryCtl.loading
 
         anchors.top: filmHeading.bottom
         anchors.topMargin: Theme.spacingValue

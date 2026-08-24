@@ -17,6 +17,9 @@ StackView {
     // binds this to the current controller query so a route captures edits made
     // while its page is active before any navigation transition hides it.
     property string currentSearchQuery: ""
+    // MusicController is process-wide while each retained music route owns the
+    // tab its semantic focus key belongs to.
+    property string currentMusicTab: "albums"
 
     property Component loginPageComponent: null
     property Component homePageComponent: null
@@ -43,7 +46,7 @@ StackView {
     readonly property int semanticControlLimit: 128
     readonly property int semanticTraversalLimit: 4096
     readonly property int semanticIndexLimit: 2147483646
-    readonly property int focusRetryLimit: 40
+    readonly property int focusRetryLimit: 400
 
     readonly property int retainedRouteCount: navTrail.length + navForward.length
     readonly property int focusMemoryCount: Object.keys(focusMemory).length
@@ -154,6 +157,7 @@ StackView {
             "key": navigation.boundedText(route.key, 2048),
             "title": navigation.boundedText(route.title, 1024),
             "query": navigation.boundedText(route.query, 1024),
+            "tab": navigation.boundedText(route.tab, 16),
 
             // Strict, bounded page-header DTO. These are the complete scalar
             // fields Details/Album/Artist consume from their original model
@@ -240,6 +244,8 @@ StackView {
         case "artist": return { "artistItem": item };
         case "album": return { "albumItem": item };
         case "person": return { "personId": route.id, "personName": route.name };
+        case "music": return { "libraryId": route.id, "libraryName": route.name,
+                               "initialTab": route.tab };
         default: return ({});
         }
     }
@@ -280,9 +286,12 @@ StackView {
 
     function retainCurrentRouteState(): void {
         const route = navigation.currentEntry;
-        if (!route || route.kind !== "search")
+        if (!route)
             return;
-        route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
+        if (route.kind === "search")
+            route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
+        else if (route.kind === "music")
+            route.tab = navigation.boundedText(navigation.currentMusicTab, 16);
     }
 
     function semanticKey(item): string {
@@ -447,6 +456,11 @@ StackView {
                 || index < 0 || index > navigation.semanticIndexLimit)
             return false;
         const controls = navigation.semanticControls(controlKey);
+        if (controls.length === 0
+                && typeof navigation.currentItem["prepareNavigationFocusOwner"] === "function") {
+            navigation.currentItem["prepareNavigationFocusOwner"](controlKey);
+            return false;
+        }
         if (controls.length !== 1)
             return false;
         const control = controls[0];
@@ -487,11 +501,16 @@ StackView {
             return;
         }
         const locator = navigation.focusLocator(item);
+        const next = Object.assign({}, navigation.focusMemory);
         if (locator.length > 0) {
-            const next = Object.assign({}, navigation.focusMemory);
             next[String(route.token)] = locator;
-            navigation.focusMemory = next;
+        } else {
+            // A pending locator belongs to the previous visit. Navigating away
+            // before it settles is a cancellation, not permission to resurrect
+            // the older saved target on the next visit.
+            delete next[String(route.token)];
         }
+        navigation.focusMemory = next;
         navigation.cancelFocusRetry();
         navigation.cancelLiveFocusRestores();
     }
@@ -507,13 +526,13 @@ StackView {
         const locator = key.length > 0 && navigation.focusMemory[key] !== undefined
                       ? String(navigation.focusMemory[key]) : "";
         navigation.cancelFocusRetry();
+        navigation.focusCurrentPage();
         if (navigation.restoreFocusLocator(locator))
             return;
-        navigation.focusCurrentPage();
         if (route && locator.length > 0) {
-            // Dynamic Home rails may appear only after their model arrives.
-            // Retry for two seconds; virtual controls take over their own
-            // constant-space refill wait as soon as one is found.
+            // Dynamic Home rails may appear only after their controller model
+            // arrives. Retry within the same bounded request window; virtual
+            // controls take over their own refill wait as soon as one exists.
             navigation.armFocusRetry(route.token, locator);
         }
     }

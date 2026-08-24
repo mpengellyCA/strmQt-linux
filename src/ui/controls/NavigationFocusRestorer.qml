@@ -1,17 +1,20 @@
 import QtQuick
 
 // Constant-space focus restoration for a virtual view. History retains only a
-// stable row identity and the old cursor. A short timer lets a controller's
-// already-started refill land naturally; this helper never starts pagination
-// or any other network work. If the exact row does not arrive, focus settles on
-// the nearest eligible row and the pending target is retired.
+// stable row identity and the old cursor. A controller tells the helper while
+// its already-started refill is active; this helper never starts pagination or
+// any other network work. Once that refill reaches a terminal state, a short
+// settle interval lets the model notification land before focus falls back to
+// the nearest eligible row.
 QtObject {
     id: restorer
 
     property var model: null
     property int count: 0
     property int currentIndex: -1
+    property bool refillActive: false
     property int settleInterval: 400
+    property int terminalInterval: 20000
 
     readonly property int maximumIndex: 2147483646
     readonly property int qmlScanLimit: 512
@@ -22,11 +25,32 @@ QtObject {
     property int _generation: 0
 
     signal focusRequested(int index)
+    signal fallbackRequested()
 
     property Timer settleTimer: Timer {
         interval: restorer.settleInterval
         repeat: false
         onTriggered: restorer.finishWithFallback(restorer._generation)
+    }
+
+    // Controller requests are bounded independently, but keep one final guard
+    // here as well. A broken loading signal must not leave a dead locator able
+    // to steal focus for the rest of the session.
+    property Timer terminalTimer: Timer {
+        interval: restorer.terminalInterval
+        repeat: false
+        onTriggered: restorer.finishWithFallback(restorer._generation)
+    }
+
+    onRefillActiveChanged: {
+        if (!restorer.pending)
+            return
+        if (restorer.refillActive) {
+            restorer.settleTimer.stop()
+            return
+        }
+        if (!restorer.retry())
+            restorer.settleTimer.restart()
     }
 
     function boundedId(value): string {
@@ -93,8 +117,8 @@ QtObject {
         restorer._pendingIdentity = boundedIdentity
         restorer._pendingIndex = numericIndex
         ++restorer._generation
-        restorer.focusRequested(-1)
-        if (!restorer.retry())
+        restorer.terminalTimer.restart()
+        if (!restorer.retry() && !restorer.refillActive)
             restorer.settleTimer.restart()
         return true
     }
@@ -102,6 +126,7 @@ QtObject {
     function cancel(): void {
         ++restorer._generation
         restorer.settleTimer.stop()
+        restorer.terminalTimer.stop()
         restorer._pendingIdentity = ""
         restorer._pendingIndex = -1
     }
@@ -152,6 +177,9 @@ QtObject {
         const target = restorer.count > 0
                      ? Math.min(restorer._pendingIndex, restorer.count - 1) : -1
         restorer.cancel()
-        restorer.focusRequested(target)
+        if (target >= 0)
+            restorer.focusRequested(target)
+        else
+            restorer.fallbackRequested()
     }
 }

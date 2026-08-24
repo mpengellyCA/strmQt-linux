@@ -647,6 +647,8 @@ FocusScope {
         id: trackList
 
         navigationFocusKey: "album-tracks"
+        navigationFocusFallbackItem: shuffleButton
+        navigationFocusRefillActive: MusicCtl.detailLoading
 
         anchors.left: parent.left
         anchors.right: parent.right
@@ -682,6 +684,7 @@ FocusScope {
                                               ? String(trackRow.model.itemId) : ""
 
             width: trackList.width
+            navigationFocusOwner: trackList
 
             rowHeight: page.rowHeight
             discHeaderHeight: page.discHeaderHeight

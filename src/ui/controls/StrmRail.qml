@@ -19,6 +19,8 @@ FocusScope {
     property bool showMore: false
     property string emptyText: qsTr("Nothing here yet")
     property string navigationFocusKey: ""
+    property Item navigationFocusFallbackItem: null
+    property bool navigationFocusRefillActive: false
 
     signal itemActivated(int index)
     signal itemPlayRequested(int index)
@@ -52,6 +54,27 @@ FocusScope {
         list.forceActiveFocus(Qt.OtherFocusReason)
         rail._navigationFocusWriting = false
     }
+    function _applyNavigationFallback(): void {
+        if (rail.navigationFocusFallbackItem
+                && rail.navigationFocusFallbackItem.visible
+                && rail.navigationFocusFallbackItem.enabled) {
+            rail.navigationFocusFallbackItem.forceActiveFocus(Qt.OtherFocusReason)
+            return
+        }
+        let candidate = list
+        for (let step = 0; step < 256; ++step) {
+            candidate = candidate.nextItemInFocusChain(true)
+            if (!candidate || candidate === list)
+                return
+            let cursor = candidate
+            while (cursor && cursor !== rail)
+                cursor = cursor.parent
+            if (cursor !== rail) {
+                candidate.forceActiveFocus(Qt.OtherFocusReason)
+                return
+            }
+        }
+    }
 
     // Which card the pointer is over, or -1. Published separately from
     // currentIndex because hover and focus are separate states: a page driving
@@ -70,7 +93,9 @@ FocusScope {
         model: rail.railModel
         count: list.count
         currentIndex: list.currentIndex
+        refillActive: rail.navigationFocusRefillActive
         onFocusRequested: index => rail._applyNavigationFocus(index)
+        onFallbackRequested: rail._applyNavigationFallback()
     }
 
     Connections {
@@ -189,7 +214,10 @@ FocusScope {
             text: qsTr("See all")
             iconName: "chevron-right"
             variant: "ghost"
-            onClicked: rail.moreRequested()
+            onClicked: {
+                rail._cancelNavigationFocusForUser()
+                rail.moreRequested()
+            }
 
             Behavior on opacity {
                 NumberAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
@@ -338,10 +366,22 @@ FocusScope {
                     list.forceActiveFocus(Qt.MouseFocusReason)
                     rail.itemActivated(cell.index)
                 }
-                onPlayRequested: rail.itemPlayRequested(cell.index)
-                onPlayedToggled: rail.itemPlayedToggled(cell.index)
-                onFavoriteToggled: rail.itemFavoriteToggled(cell.index)
-                onMenuRequested: (mx, my) => rail.menuRequested(cell.index, mx, my)
+                onPlayRequested: {
+                    rail._cancelNavigationFocusForUser()
+                    rail.itemPlayRequested(cell.index)
+                }
+                onPlayedToggled: {
+                    rail._cancelNavigationFocusForUser()
+                    rail.itemPlayedToggled(cell.index)
+                }
+                onFavoriteToggled: {
+                    rail._cancelNavigationFocusForUser()
+                    rail.itemFavoriteToggled(cell.index)
+                }
+                onMenuRequested: (mx, my) => {
+                    rail._cancelNavigationFocusForUser()
+                    rail.menuRequested(cell.index, mx, my)
+                }
             }
         }
 

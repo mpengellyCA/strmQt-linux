@@ -1866,6 +1866,8 @@ FocusScope {
             StrmRail {
                 id: similarRail
                 navigationFocusKey: "details-similar"
+                navigationFocusFallbackItem: page.heroButton
+                navigationFocusRefillActive: page.detailsLoading
                 visible: DetailsCtl.similar.count > 0
                 title: qsTr("More like this")
                 railModel: DetailsCtl.similar

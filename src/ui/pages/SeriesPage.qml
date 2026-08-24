@@ -305,6 +305,12 @@ FocusScope {
     // Where the keyboard starts after a season loads: on the next unwatched
     // episode when this season holds it, otherwise at the top.
     function focusInitialEpisode() {
+        // A Back/Forward locator is a stronger statement than the page's
+        // next-unwatched default. The controller may report completion before
+        // its model-reset notification is delivered, so remember that a
+        // locator claimed this visit even after its exact row has landed.
+        if (episodeGrid.navigationFocusClaimed)
+            return
         let target = 0
         if (page.nextId.length > 0) {
             for (let i = 0; i < SeriesCtl.episodes.count; ++i) {
@@ -792,9 +798,11 @@ FocusScope {
         readonly property string navigationFocusKey: "series-episodes"
         readonly property bool navigationFocusRestorePending: episodeNavigationFocus.pending
         property bool _navigationFocusWriting: false
+        property bool navigationFocusClaimed: false
 
         function navigationFocusSnapshot(): var { return episodeNavigationFocus.snapshot() }
         function restoreNavigationFocus(identity, index): bool {
+            episodeGrid.navigationFocusClaimed = true
             return episodeNavigationFocus.restore(identity, index)
         }
         function cancelNavigationFocusRestore(): void { episodeNavigationFocus.cancel() }
@@ -811,13 +819,34 @@ FocusScope {
             episodeGrid.forceActiveFocus(Qt.OtherFocusReason)
             episodeGrid._navigationFocusWriting = false
         }
+        function applyNavigationFallback(): void {
+            if (page.heroButton && page.heroButton.visible && page.heroButton.enabled) {
+                page.heroButton.forceActiveFocus(Qt.OtherFocusReason)
+                return
+            }
+            let candidate = episodeGrid
+            for (let step = 0; step < 256; ++step) {
+                candidate = candidate.nextItemInFocusChain(true)
+                if (!candidate || candidate === episodeGrid)
+                    return
+                let cursor = candidate
+                while (cursor && cursor !== episodeGrid)
+                    cursor = cursor.parent
+                if (cursor !== episodeGrid) {
+                    candidate.forceActiveFocus(Qt.OtherFocusReason)
+                    return
+                }
+            }
+        }
 
         NavigationFocusRestorer {
             id: episodeNavigationFocus
             model: SeriesCtl.episodes
             count: episodeGrid.count
             currentIndex: episodeGrid.currentIndex
+            refillActive: SeriesCtl.loading
             onFocusRequested: index => episodeGrid.applyNavigationFocus(index)
+            onFallbackRequested: episodeGrid.applyNavigationFallback()
         }
 
         Connections {
@@ -1030,11 +1059,22 @@ FocusScope {
                     episodeGrid.forceActiveFocus(Qt.MouseFocusReason)
                     page.playRow(cell.index)
                 }
-                onPlayRequested: page.playRow(cell.index)
-                onPlayedToggled: Actions.togglePlayed(SeriesCtl.episodes.get(cell.index))
-                onFavoriteToggled: Actions.toggleFavorite(SeriesCtl.episodes.get(cell.index))
-                onMenuRequested: (mx, my) => itemMenu.popupForItem(
-                                     SeriesCtl.episodes.get(cell.index), mx, my)
+                onPlayRequested: {
+                    episodeGrid.cancelNavigationFocusForUser()
+                    page.playRow(cell.index)
+                }
+                onPlayedToggled: {
+                    episodeGrid.cancelNavigationFocusForUser()
+                    Actions.togglePlayed(SeriesCtl.episodes.get(cell.index))
+                }
+                onFavoriteToggled: {
+                    episodeGrid.cancelNavigationFocusForUser()
+                    Actions.toggleFavorite(SeriesCtl.episodes.get(cell.index))
+                }
+                onMenuRequested: (mx, my) => {
+                    episodeGrid.cancelNavigationFocusForUser()
+                    itemMenu.popupForItem(SeriesCtl.episodes.get(cell.index), mx, my)
+                }
             }
         }
     }

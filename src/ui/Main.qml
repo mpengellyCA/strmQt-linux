@@ -100,9 +100,9 @@ ApplicationWindow {
         stack.rememberFocus();
     }
 
-    // Focus is restored to the exact item the page was left on, not to the page
-    // as a whole. That difference is what makes the app feel like it remembers
-    // where you were instead of resetting you to the first card.
+    // Focus is restored by stable item identity when that row is in the
+    // controller's bounded refill. A missing item settles to the nearest loaded
+    // row without navigation issuing extra requests.
     function restoreFocusToPage(): void {
         stack.restoreFocusToCurrentPage();
     }
@@ -273,7 +273,14 @@ ApplicationWindow {
             break;
         case "music":
             MusicCtl.setLibrary(route.id);
-            if (MusicCtl.albums.count === 0)
+            MusicCtl.tab = route.tab;
+            if (MusicCtl.tab === "artists" && MusicCtl.artists.count === 0)
+                MusicCtl.loadArtists();
+            else if (MusicCtl.tab === "songs" && MusicCtl.songs.count === 0)
+                MusicCtl.loadSongs();
+            else if (MusicCtl.tab === "playlists" && MusicCtl.playlists.count === 0)
+                MusicCtl.loadPlaylists();
+            else if (MusicCtl.tab === "albums" && MusicCtl.albums.count === 0)
                 MusicCtl.loadAlbums();
             break;
         case "artist":
@@ -388,10 +395,11 @@ ApplicationWindow {
                 return;
             }
             MusicCtl.setLibrary(libraryId);
+            MusicCtl.tab = "albums";
             MusicCtl.loadAlbums();
             root.pushPage({ "kind": "music", "id": libraryId, "name": name,
                             "collectionType": collectionType,
-                            "key": libraryId, "title": name });
+                            "key": libraryId, "title": name, "tab": "albums" });
             return;
         }
         // Guarded like the others, and for a second reason: without it, clicking
@@ -528,6 +536,7 @@ ApplicationWindow {
         historyLimit: root.navigationHistoryLimit
         focusItem: root.activeFocusItem
         currentSearchQuery: SearchCtl.query
+        currentMusicTab: MusicCtl.tab
         initialRoute: Session.authenticated
                       ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
                       : ({ "kind": "login", "key": "login", "title": qsTr("Sign in") })

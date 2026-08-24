@@ -79,6 +79,9 @@ Item {
     property bool favorite: false
     property bool showFavorite: false
     property bool showMenu: false
+    // Set by TrackTable call sites so row-level pointer verbs can retire an
+    // in-progress semantic restore without relying on focus movement.
+    property TrackTable navigationFocusOwner: null
 
     // > 0 draws a disc banner above this row and adds its height. The table
     // decides which rows begin a disc; the row only draws it.
@@ -114,6 +117,15 @@ Item {
     signal favoriteToggled()
     signal menuRequested(real sceneX, real sceneY)
 
+    // Pointer verbs can keep focus inside the current row, so a focus-change
+    // observer cannot distinguish them from restoration. Retire the owning
+    // table explicitly before every user verb.
+    function cancelNavigationRestore(): void {
+        const owner = row.navigationFocusOwner
+        if (owner)
+            owner.cancelNavigationFocusRestore()
+    }
+
     implicitHeight: row.rowHeight + (row.startsDisc ? row.discHeaderHeight : 0)
     height: row.implicitHeight
 
@@ -124,7 +136,10 @@ Item {
     Accessible.selectable: true
     Accessible.selected: row.selected || row.current || row.playing
     Accessible.focused: row.current
-    Accessible.onPressAction: row.activated(Qt.NoModifier)
+    Accessible.onPressAction: {
+        row.cancelNavigationRestore()
+        row.activated(Qt.NoModifier)
+    }
 
     // Only a NUMBERED disc gets a banner. Measured on this server, a 52-track
     // deluxe edition comes back as discs [-1, 1, 2, 3]: the record proper
@@ -204,13 +219,17 @@ Item {
             // does. That is the only route from a pointer handler to
             // Ctrl+Click, and it is a live probe rather than a reading — see
             // tests/unit/tst_tap_modifiers.cpp, which fails without it.
-            onTapped: row.activated(rowTap.point.modifiers)
+            onTapped: {
+                row.cancelNavigationRestore()
+                row.activated(rowTap.point.modifiers)
+            }
         }
 
         TapHandler {
             acceptedButtons: Qt.RightButton
             gesturePolicy: TapHandler.ReleaseWithinBounds
             onTapped: eventPoint => {
+                row.cancelNavigationRestore()
                 const p = surface.mapToItem(null, eventPoint.position.x, eventPoint.position.y)
                 row.menuRequested(p.x, p.y)
             }
@@ -373,7 +392,10 @@ Item {
                     activeFocusOnTab: false
                     tooltip: row.favorite ? qsTr("Remove from favourites")
                                           : qsTr("Add to favourites")
-                    onClicked: row.favoriteToggled()
+                    onClicked: {
+                        row.cancelNavigationRestore()
+                        row.favoriteToggled()
+                    }
                 }
 
                 StrmIconButton {
@@ -385,6 +407,7 @@ Item {
                     activeFocusOnTab: false
                     tooltip: qsTr("More…")
                     onClicked: {
+                        row.cancelNavigationRestore()
                         const p = menuButton.mapToItem(null, menuButton.width / 2,
                                                        menuButton.height)
                         row.menuRequested(p.x, p.y)

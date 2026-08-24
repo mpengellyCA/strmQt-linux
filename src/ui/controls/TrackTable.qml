@@ -68,10 +68,13 @@ ListView {
     id: table
 
     property string navigationFocusKey: ""
+    property Item navigationFocusFallbackItem: null
+    property bool navigationFocusRefillActive: false
     readonly property string navigationFocusKind: "tracks"
     readonly property bool navigationFocusRestorePending: navigationFocus.pending
     property bool _navigationFocusWriting: false
     property bool _navigationFocusPrefetchSuppressed: false
+    property int _navigationFocusWriteGeneration: 0
 
     function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
     function restoreNavigationFocus(identity, index): bool {
@@ -85,13 +88,38 @@ ListView {
     function _applyNavigationFocus(index): void {
         table._navigationFocusWriting = true
         table._navigationFocusPrefetchSuppressed = true
+        const generation = ++table._navigationFocusWriteGeneration
         if (index >= 0) {
             table.currentIndex = index
             table.positionViewAtIndex(index, ListView.Contain)
         }
         table.forceActiveFocus(Qt.OtherFocusReason)
         table._navigationFocusWriting = false
-        Qt.callLater(() => { table._navigationFocusPrefetchSuppressed = false })
+        Qt.callLater(() => {
+            if (generation === table._navigationFocusWriteGeneration)
+                table._navigationFocusPrefetchSuppressed = false
+        })
+    }
+    function _applyNavigationFallback(): void {
+        if (table.navigationFocusFallbackItem
+                && table.navigationFocusFallbackItem.visible
+                && table.navigationFocusFallbackItem.enabled) {
+            table.navigationFocusFallbackItem.forceActiveFocus(Qt.OtherFocusReason)
+            return
+        }
+        let candidate = table
+        for (let step = 0; step < 256; ++step) {
+            candidate = candidate.nextItemInFocusChain(true)
+            if (!candidate || candidate === table)
+                return
+            let cursor = candidate
+            while (cursor && cursor !== table)
+                cursor = cursor.parent
+            if (cursor !== table) {
+                candidate.forceActiveFocus(Qt.OtherFocusReason)
+                return
+            }
+        }
     }
 
     NavigationFocusRestorer {
@@ -99,7 +127,9 @@ ListView {
         model: table.model
         count: table.count
         currentIndex: table.currentIndex
+        refillActive: table.navigationFocusRefillActive
         onFocusRequested: index => table._applyNavigationFocus(index)
+        onFallbackRequested: table._applyNavigationFallback()
     }
 
     Connections {
@@ -271,7 +301,8 @@ ListView {
     property int _lastNearEndCount: -1
 
     function _checkNearEnd(): void {
-        if (table._navigationFocusPrefetchSuppressed || table.prefetchThreshold <= 0
+        if (navigationFocus.pending || table._navigationFocusPrefetchSuppressed
+                || table.prefetchThreshold <= 0
                 || table.count <= 0
                 || table.count === table._lastNearEndCount)
             return
@@ -420,6 +451,7 @@ ListView {
     // are decided. `modifiers` is Qt::KeyboardModifiers; omitted means none,
     // which is what every keyboard activation passes.
     function activateAt(index, modifiers): void {
+        table._cancelNavigationFocusForUser()
         if (index < 0 || index >= table.count)
             return
         const mods = (modifiers === undefined || modifiers === null) ? Qt.NoModifier : modifiers

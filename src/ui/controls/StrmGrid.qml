@@ -39,6 +39,10 @@ FocusScope {
     // Route-stable owner id used by bounded navigation history. Page call
     // sites provide it; visual/BFS order is deliberately irrelevant.
     property string navigationFocusKey: ""
+    property Item navigationFocusFallbackItem: null
+    // True only while the page's controller is refilling this view. Focus
+    // restoration waits for that request's terminal signal; it never pages.
+    property bool navigationFocusRefillActive: false
     // How close to the end of loaded content counts as "near", in items.
     property int prefetchThreshold: 30
 
@@ -56,6 +60,7 @@ FocusScope {
     readonly property bool navigationFocusRestorePending: navigationFocus.pending
     property bool _navigationFocusWriting: false
     property bool _navigationFocusPrefetchSuppressed: false
+    property int _navigationFocusWriteGeneration: 0
 
     function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
     function restoreNavigationFocus(identity, index): bool {
@@ -69,13 +74,38 @@ FocusScope {
     function _applyNavigationFocus(index): void {
         grid._navigationFocusWriting = true
         grid._navigationFocusPrefetchSuppressed = true
+        const generation = ++grid._navigationFocusWriteGeneration
         if (index >= 0) {
             view.currentIndex = index
             view.positionViewAtIndex(index, GridView.Contain)
         }
         view.forceActiveFocus(Qt.OtherFocusReason)
         grid._navigationFocusWriting = false
-        Qt.callLater(() => { grid._navigationFocusPrefetchSuppressed = false })
+        Qt.callLater(() => {
+            if (generation === grid._navigationFocusWriteGeneration)
+                grid._navigationFocusPrefetchSuppressed = false
+        })
+    }
+    function _applyNavigationFallback(): void {
+        if (grid.navigationFocusFallbackItem
+                && grid.navigationFocusFallbackItem.visible
+                && grid.navigationFocusFallbackItem.enabled) {
+            grid.navigationFocusFallbackItem.forceActiveFocus(Qt.OtherFocusReason)
+            return
+        }
+        let candidate = view
+        for (let step = 0; step < 256; ++step) {
+            candidate = candidate.nextItemInFocusChain(true)
+            if (!candidate || candidate === view)
+                return
+            let cursor = candidate
+            while (cursor && cursor !== grid)
+                cursor = cursor.parent
+            if (cursor !== grid) {
+                candidate.forceActiveFocus(Qt.OtherFocusReason)
+                return
+            }
+        }
     }
 
     // See StrmRail.hoveredIndex: hover is published separately from focus, and
@@ -178,7 +208,9 @@ FocusScope {
         model: grid.gridModel
         count: view.count
         currentIndex: view.currentIndex
+        refillActive: grid.navigationFocusRefillActive
         onFocusRequested: index => grid._applyNavigationFocus(index)
+        onFallbackRequested: grid._applyNavigationFallback()
     }
 
     Connections {
@@ -193,7 +225,8 @@ FocusScope {
     onGridModelChanged: navigationFocus.cancel()
 
     function _checkNearEnd() {
-        if (grid._navigationFocusPrefetchSuppressed || view.count <= 0
+        if (navigationFocus.pending || grid._navigationFocusPrefetchSuppressed
+                || view.count <= 0
                 || view.count === grid._lastNearEndCount)
             return
         const cursorNear = view.currentIndex >= 0
@@ -357,10 +390,22 @@ FocusScope {
                 onHoveredChanged: cell.setHovered(hovered)
 
                 onActivated: cell.open()
-                onPlayRequested: grid.itemPlayRequested(cell.index)
-                onPlayedToggled: grid.itemPlayedToggled(cell.index)
-                onFavoriteToggled: grid.itemFavoriteToggled(cell.index)
-                onMenuRequested: (mx, my) => grid.menuRequested(cell.index, mx, my)
+                onPlayRequested: {
+                    grid._cancelNavigationFocusForUser()
+                    grid.itemPlayRequested(cell.index)
+                }
+                onPlayedToggled: {
+                    grid._cancelNavigationFocusForUser()
+                    grid.itemPlayedToggled(cell.index)
+                }
+                onFavoriteToggled: {
+                    grid._cancelNavigationFocusForUser()
+                    grid.itemFavoriteToggled(cell.index)
+                }
+                onMenuRequested: (mx, my) => {
+                    grid._cancelNavigationFocusForUser()
+                    grid.menuRequested(cell.index, mx, my)
+                }
             }
 
             // ── List row ───────────────────────────────────────────────────
@@ -404,6 +449,7 @@ FocusScope {
                     acceptedButtons: Qt.RightButton
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: eventPoint => {
+                        grid._cancelNavigationFocusForUser()
                         const p = row.mapToItem(null, eventPoint.position.x,
                                                 eventPoint.position.y)
                         grid.menuRequested(cell.index, p.x, p.y)
@@ -560,7 +606,10 @@ FocusScope {
                                 iconName: "play"
                                 size: Theme.scale(32)
                                 tooltip: qsTr("Play")
-                                onClicked: grid.itemPlayRequested(cell.index)
+                                onClicked: {
+                                    grid._cancelNavigationFocusForUser()
+                                    grid.itemPlayRequested(cell.index)
+                                }
                             }
 
                             StrmIconButton {
@@ -569,7 +618,10 @@ FocusScope {
                                 checked: cell.itemPlayed
                                 tooltip: cell.itemPlayed ? qsTr("Mark unwatched")
                                                          : qsTr("Mark watched")
-                                onClicked: grid.itemPlayedToggled(cell.index)
+                                onClicked: {
+                                    grid._cancelNavigationFocusForUser()
+                                    grid.itemPlayedToggled(cell.index)
+                                }
                             }
 
                             StrmIconButton {
@@ -578,7 +630,10 @@ FocusScope {
                                 checked: cell.itemFavorite
                                 tooltip: cell.itemFavorite ? qsTr("Remove from favourites")
                                                            : qsTr("Add to favourites")
-                                onClicked: grid.itemFavoriteToggled(cell.index)
+                                onClicked: {
+                                    grid._cancelNavigationFocusForUser()
+                                    grid.itemFavoriteToggled(cell.index)
+                                }
                             }
 
                             StrmIconButton {
@@ -587,6 +642,7 @@ FocusScope {
                                 size: Theme.scale(32)
                                 tooltip: qsTr("More…")
                                 onClicked: {
+                                    grid._cancelNavigationFocusForUser()
                                     const p = rowMore.mapToItem(null, rowMore.width / 2,
                                                                 rowMore.height)
                                     grid.menuRequested(cell.index, p.x, p.y)

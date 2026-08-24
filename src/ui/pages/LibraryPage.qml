@@ -434,6 +434,8 @@ FocusScope {
         id: grid
 
         navigationFocusKey: "library-items"
+        navigationFocusFallbackItem: filterBar
+        navigationFocusRefillActive: LibraryCtl.loading
 
         anchors.top: viewBar.bottom
         anchors.topMargin: Theme.spacingTight

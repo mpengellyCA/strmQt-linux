@@ -290,6 +290,9 @@ void ModelsTest::homeRailDescriptorsAreIncremental()
 
     model.setDescriptors(descriptors);
     QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.indexOfKey(QStringLiteral("resume")), 0);
+    QCOMPARE(model.indexOfKey(QStringLiteral("next-up")), 1);
+    QCOMPARE(model.indexOfKey(QStringLiteral("missing")), -1);
     QCOMPARE(resetSpy.count(), 0);
     QVERIFY(!insertedSpy.isEmpty());
 
@@ -310,6 +313,8 @@ void ModelsTest::homeRailDescriptorsAreIncremental()
     changedSpy.clear();
     descriptors.move(1, 0);
     model.setDescriptors(descriptors);
+    QCOMPARE(model.indexOfKey(QStringLiteral("next-up")), 0);
+    QCOMPARE(model.indexOfKey(QStringLiteral("resume")), 1);
     QCOMPARE(movedSpy.count(), 1);
     QCOMPARE(insertedSpy.count(), 0);
     QCOMPARE(removedSpy.count(), 0);

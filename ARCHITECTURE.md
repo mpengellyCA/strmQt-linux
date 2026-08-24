@@ -217,8 +217,10 @@ Two conventions worth knowing:
 ### Pages
 
 `Main.qml` owns a `StackView`, the navigation history (including a forward stack,
-which `StackView` does not provide), and focus memory — focus is restored to the
-exact item a page was left on, not to the page as a whole.
+which `StackView` does not provide), and focus memory. It restores the exact
+loaded item by stable identity after Back/Forward; if that item is absent when
+the controller's bounded refill finishes, it uses the nearest eligible row (or
+the page's normal empty-state focus) without fetching extra pages.
 
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Music ·
 Album · Artist · Search · Settings · Player.

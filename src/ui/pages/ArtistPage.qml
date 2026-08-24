@@ -639,6 +639,8 @@ FocusScope {
         id: topTracks
 
         navigationFocusKey: "artist-top-tracks"
+        navigationFocusFallbackItem: mixButton
+        navigationFocusRefillActive: MusicCtl.detailLoading
 
         anchors.top: topSelection.bottom
         anchors.left: parent.left
@@ -676,6 +678,7 @@ FocusScope {
                                               ? String(topRow.model.itemId) : ""
 
             width: topTracks.width
+            navigationFocusOwner: topTracks
 
             rowHeight: page.topTrackRowHeight
             artistColumn: page.topArtistColumn
@@ -768,6 +771,8 @@ FocusScope {
         id: albumGrid
 
         navigationFocusKey: "artist-albums"
+        navigationFocusFallbackItem: mixButton
+        navigationFocusRefillActive: MusicCtl.detailLoading
 
         anchors.top: albumHeading.bottom
         anchors.topMargin: Theme.spacingValue

@@ -41,6 +41,15 @@ QHash<int, QByteArray> HomeRailModel::roleNames() const
     };
 }
 
+int HomeRailModel::indexOfKey(const QString &key) const
+{
+    for (int row = 0; row < m_descriptors.size(); ++row) {
+        if (m_descriptors.at(row).key == key)
+            return row;
+    }
+    return -1;
+}
+
 void HomeRailModel::setDescriptors(QList<Descriptor> descriptors)
 {
     const int oldCount = static_cast<int>(m_descriptors.size());

@@ -50,6 +50,7 @@ FocusScope {
     // its own scope, and so the header can name the library.
     property string libraryId: ""
     property string libraryName: ""
+    property string initialTab: "albums"
 
     // What the lists are actually scoped to. The page property wins when it is
     // set; otherwise the controller's own scope is the answer, which is the
@@ -74,6 +75,11 @@ FocusScope {
     readonly property string tabKey: page.playlistsTab ? "playlists"
                                    : page.songsTab ? "songs"
                                    : page.artistsTab ? "artists" : "albums"
+
+    function tabIndex(key): int {
+        return key === "artists" ? 1 : key === "songs" ? 2
+             : key === "playlists" ? 3 : 0
+    }
 
     readonly property bool albumArtistMode: MusicCtl.artistMode === "albumArtists"
 
@@ -180,8 +186,16 @@ FocusScope {
     Component.onCompleted: {
         if (page.libraryId.length > 0)
             MusicCtl.setLibrary(page.libraryId)
+        tabBar.currentIndex = page.tabIndex(page.initialTab)
         MusicCtl.tab = page.tabKey
-        page.ensureAlbums()
+        if (page.artistsTab)
+            page.ensureArtists()
+        else if (page.songsTab)
+            page.ensureSongs()
+        else if (page.playlistsTab)
+            page.ensurePlaylists()
+        else
+            page.ensureAlbums()
         page.ensureGenres()
     }
 
@@ -551,6 +565,8 @@ FocusScope {
         id: albumsGrid
 
         navigationFocusKey: "music-albums"
+        navigationFocusFallbackItem: tabBar
+        navigationFocusRefillActive: MusicCtl.loading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -590,6 +606,8 @@ FocusScope {
         id: artistsGrid
 
         navigationFocusKey: "music-artists"
+        navigationFocusFallbackItem: tabBar
+        navigationFocusRefillActive: MusicCtl.loading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -641,6 +659,8 @@ FocusScope {
         id: playlistsGrid
 
         navigationFocusKey: "music-playlists"
+        navigationFocusFallbackItem: tabBar
+        navigationFocusRefillActive: MusicCtl.loading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -732,6 +752,8 @@ FocusScope {
         id: songsTable
 
         navigationFocusKey: "music-songs"
+        navigationFocusFallbackItem: tabBar
+        navigationFocusRefillActive: MusicCtl.loading
 
         anchors.top: songSelection.bottom
         anchors.topMargin: Theme.spacingTight
@@ -774,6 +796,7 @@ FocusScope {
                                               ? String(songRow.model.itemId) : ""
 
             width: songsTable.width
+            navigationFocusOwner: songsTable
 
             rowHeight: page.songRowHeight
             numberColumn: page.songNumberColumn
