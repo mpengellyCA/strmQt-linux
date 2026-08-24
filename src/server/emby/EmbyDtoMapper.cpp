@@ -443,7 +443,12 @@ QList<StreamCandidate> buildLadder(const MediaSource &source, const QUrl &baseUr
         candidate.method = PlayMethod::DirectPlay;
         candidate.container = source.container;
         candidate.mediaSourceId = source.id;
-        const QString path = QStringLiteral("/Videos/%1/stream.%2").arg(itemId, source.container);
+        const bool isAudioOnly =
+            source.videoStream() == nullptr && !source.audioStreams().isEmpty();
+        const QString path =
+            (isAudioOnly ? QStringLiteral("/Audio/%1/stream.%2")
+                         : QStringLiteral("/Videos/%1/stream.%2"))
+                .arg(itemId, source.container);
         QUrlQuery query;
         query.addQueryItem(QStringLiteral("static"), QStringLiteral("true"));
         query.addQueryItem(QStringLiteral("MediaSourceId"), source.id);

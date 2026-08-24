@@ -29,6 +29,8 @@ class PlaybackTicketTest : public QObject
 
 private slots:
     void singleSourceLadderOrdering();
+    void directPlayUsesMediaEndpoint_data();
+    void directPlayUsesMediaEndpoint();
     void transcodeOnly();
     void emptyResponseIsInvalid();
     void reverseProxyBasePathPreserved();
@@ -94,6 +96,47 @@ void PlaybackTicketTest::singleSourceLadderOrdering()
     QVERIFY(!ticket.candidate(0, 3));
     QVERIFY(!ticket.candidate(1, 0));
     QVERIFY(!ticket.source(1));
+}
+
+void PlaybackTicketTest::directPlayUsesMediaEndpoint_data()
+{
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<QString>("itemId");
+    QTest::addColumn<QString>("expectedPath");
+    QTest::addColumn<QString>("mediaSourceId");
+    QTest::addColumn<QString>("playSessionId");
+
+    QTest::newRow("video") << QStringLiteral("playback_info.json")
+                           << QStringLiteral("301001")
+                           << QStringLiteral("/Videos/301001/stream.mkv")
+                           << QStringLiteral("ms301001") << QStringLiteral("ps0011");
+    QTest::newRow("audio") << QStringLiteral("playback_info_audio.json")
+                           << QStringLiteral("301004")
+                           << QStringLiteral("/Audio/301004/stream.flac")
+                           << QStringLiteral("ms301004") << QStringLiteral("ps0014");
+}
+
+void PlaybackTicketTest::directPlayUsesMediaEndpoint()
+{
+    QFETCH(QString, fixture);
+    QFETCH(QString, itemId);
+    QFETCH(QString, expectedPath);
+    QFETCH(QString, mediaSourceId);
+    QFETCH(QString, playSessionId);
+
+    const PlaybackTicket ticket =
+        emby::parsePlaybackTicket(loadFixture(fixture), kBase, itemId, kToken, kDeviceId);
+    const StreamCandidate *direct = ticket.candidate(0, 0);
+    QVERIFY(direct);
+    QCOMPARE(direct->method, PlayMethod::DirectPlay);
+    QCOMPARE(direct->url.path(), expectedPath);
+
+    const QUrlQuery query(direct->url.query());
+    QCOMPARE(query.queryItemValue(QStringLiteral("static")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("MediaSourceId")), mediaSourceId);
+    QCOMPARE(query.queryItemValue(QStringLiteral("DeviceId")), kDeviceId);
+    QCOMPARE(query.queryItemValue(QStringLiteral("PlaySessionId")), playSessionId);
+    QCOMPARE(query.allQueryItemValues(QStringLiteral("api_key")), QStringList({kToken}));
 }
 
 void PlaybackTicketTest::transcodeOnly()
