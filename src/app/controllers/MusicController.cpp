@@ -380,8 +380,14 @@ int MusicController::retire(int &generation, int &inFlight)
 
 void MusicController::updateLoading()
 {
+    // The aggregate may remain true while ownership moves between lanes, so it
+    // cannot notify the four lane properties. Publish every marker transition
+    // separately; callers invoke this immediately after each retire/start/end.
+    // Set the aggregate first so observers of the lane signal see one coherent
+    // snapshot of both answers.
     setLoading(m_albumInFlight != 0 || m_artistInFlight != 0 || m_songInFlight != 0
                || m_playlistInFlight != 0);
+    emit browseLoadingChanged();
 }
 
 int MusicController::beginDetail(const QString &kind, const QString &id)

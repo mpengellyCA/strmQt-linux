@@ -635,8 +635,13 @@ StackView {
         Qt.callLater(navigation.focusCurrentPage);
     }
 
-    function pushRoute(route, initialProperties): void {
-        navigation.rememberFocus();
+    function pushRoute(route, initialProperties, departureCaptured): void {
+        // Retargetable global controllers may destroy the departing route's
+        // dynamic state before the destination page can be pushed. Main can
+        // explicitly remember it first, prepare the new scope, then set this
+        // flag so that preparation is not allowed to overwrite the snapshot.
+        if (departureCaptured !== true)
+            navigation.rememberFocus();
         navigation.navForward = [];
 
         const entry = navigation.descriptor(route, navigation.retainedItem(initialProperties));

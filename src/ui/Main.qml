@@ -127,6 +127,21 @@ ApplicationWindow {
         stack.pushRoute(route, initialProperties);
     }
 
+    // Some process-wide controllers clear route-owned state while retargeting.
+    // Those transitions use capturePageDeparture()/pushCapturedPage() around
+    // their synchronous controller preparation: the old route is retained
+    // before it changes, while the destination page is still constructed only
+    // after the new controller scope is coherent.
+    function capturePageDeparture(): void {
+        if (root.playerOnTop)
+            stack.pop(StackView.Immediate);
+        stack.rememberFocus();
+    }
+
+    function pushCapturedPage(route, initialProperties): void {
+        stack.pushRoute(route, initialProperties, true);
+    }
+
     // Every route into the player goes through the same focus hand-off. The
     // player may already be showing (for example activeChanged followed by a
     // remote activation), in which case this simply reseats focus.
@@ -364,9 +379,10 @@ ApplicationWindow {
     }
 
     function openSeries(seriesId, seriesName): void {
+        root.capturePageDeparture();
         SeriesCtl.open(seriesId, seriesName);
-        root.pushPage({ "kind": "series", "id": seriesId, "name": seriesName,
-                        "key": "series", "title": seriesName });
+        root.pushCapturedPage({ "kind": "series", "id": seriesId, "name": seriesName,
+                                "key": "series", "title": seriesName });
     }
 
     // Favorites is a filter across every library rather than a library of its
@@ -393,12 +409,13 @@ ApplicationWindow {
                 root.focusCurrentPage();
                 return;
             }
+            root.capturePageDeparture();
             MusicCtl.setLibrary(libraryId);
             MusicCtl.tab = "albums";
             MusicCtl.loadAlbums();
-            root.pushPage({ "kind": "music", "id": libraryId, "name": name,
-                            "collectionType": collectionType,
-                            "key": libraryId, "title": name, "tab": "albums" });
+            root.pushCapturedPage({ "kind": "music", "id": libraryId, "name": name,
+                                    "collectionType": collectionType,
+                                    "key": libraryId, "title": name, "tab": "albums" });
             return;
         }
         // Guarded like the others, and for a second reason: without it, clicking

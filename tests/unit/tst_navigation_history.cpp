@@ -18,6 +18,7 @@ private slots:
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void restoresPerEntryMusicTab();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
+    void productionRetargetOrderingRetainsDepartingScopes();
     void restoresVirtualFocusAcrossDelayedRefill();
     void pendingBackRestoreHonorsUserOverride();
     void progressExtendsRefillWithoutAdmittingStaleRows();
@@ -262,6 +263,15 @@ Item {
         if (history.currentItem && history.currentItem.selectedTab !== undefined)
             history.currentItem.selectedTab = root.musicTab;
     }
+    // The production Main.qml transaction: capture A, retarget the shared
+    // controller to Albums in B, then construct B without re-snapshotting A.
+    function openMusicLibraryFromMain(libraryId): void {
+        history.rememberFocus();
+        root.musicTab = "albums";
+        history.pushRoute({ "kind": "music", "id": String(libraryId), "name": "Music B",
+                            "key": String(libraryId), "title": "Music B", "tab": "albums" },
+                          undefined, true);
+    }
     function pushSeries(seasonId): void {
         root.seriesSeasonId = String(seasonId);
         history.pushRoute({ "kind": "series", "id": "series-1", "name": "Series",
@@ -270,6 +280,15 @@ Item {
     }
     function setSeriesSeason(seasonId): void {
         root.seriesSeasonId = String(seasonId);
+    }
+    // SeriesController::open clears currentSeasonId while B loads. The push
+    // must retain A first but must still construct B after that transition.
+    function openSeriesFromMain(seriesId): void {
+        history.rememberFocus();
+        root.seriesSeasonId = "";
+        history.pushRoute({ "kind": "series", "id": String(seriesId), "name": "Series B",
+                            "key": "series", "title": "Series B", "seasonId": "" },
+                          undefined, true);
     }
     function goBack(): void { history.goBack(); }
     function goForward(): void { history.goForward(); }
@@ -511,14 +530,18 @@ Item {
         property string libraryName: ""
         property string initialTab: "albums"
         property string selectedTab: initialTab
+        property string controllerTabAtCreation: ""
         objectName: "music-" + selectedTab
         focus: true
+        Component.onCompleted: controllerTabAtCreation = root.musicTab
     }
 
     component SeriesProbe: FocusScope {
         readonly property string selectedSeasonId: root.seriesSeasonId
+        property string controllerSeasonAtCreation: ""
         objectName: "series-" + selectedSeasonId
         focus: true
+        Component.onCompleted: controllerSeasonAtCreation = root.seriesSeasonId
     }
 
     Component { id: detailsComponent; DetailsProbe {} }
@@ -940,6 +963,81 @@ void NavigationHistoryTest::restoresPerEntrySeriesSeasonAndAcceptsLaterSelection
     const QVariantMap updatedSeries = listProperty(history, "navTrail").at(1).toMap();
     QCOMPARE(updatedSeries.value(QStringLiteral("seasonId")).toString(),
              QStringLiteral("season-c"));
+}
+
+void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
+{
+    // Pin the real Main call sites to the same capture-prepare-push transaction
+    // the behavioral probe below exercises. This catches a production reorder
+    // rather than proving only the stack API.
+    QFile main(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
+    QVERIFY(main.open(QIODevice::ReadOnly));
+    const QByteArray source = main.readAll();
+    const auto functionBody = [&source](const QByteArray &name, const QByteArray &next) {
+        const qsizetype begin = source.indexOf("function " + name);
+        const qsizetype end = source.indexOf("function " + next, begin + 1);
+        return begin >= 0 && end > begin ? source.mid(begin, end - begin) : QByteArray{};
+    };
+    const QByteArray seriesBody = functionBody("openSeries", "openFavorites");
+    QVERIFY(!seriesBody.isEmpty());
+    const qsizetype seriesCapture = seriesBody.indexOf("root.capturePageDeparture");
+    const qsizetype seriesPrepare = seriesBody.indexOf("SeriesCtl.open");
+    const qsizetype seriesPush = seriesBody.indexOf("root.pushCapturedPage");
+    QVERIFY(seriesCapture >= 0);
+    QVERIFY(seriesPrepare >= 0);
+    QVERIFY(seriesPush >= 0);
+    QVERIFY(seriesCapture < seriesPrepare);
+    QVERIFY(seriesPrepare < seriesPush);
+    const QByteArray libraryBody = functionBody("openLibrary", "openPlaylists");
+    QVERIFY(!libraryBody.isEmpty());
+    const qsizetype musicCapture = libraryBody.indexOf("root.capturePageDeparture");
+    const qsizetype musicPrepare = libraryBody.indexOf("MusicCtl.setLibrary");
+    const qsizetype musicLoad = libraryBody.indexOf("MusicCtl.loadAlbums");
+    const qsizetype musicPush = libraryBody.indexOf("root.pushCapturedPage");
+    QVERIFY(musicCapture >= 0);
+    QVERIFY(musicPrepare >= 0);
+    QVERIFY(musicLoad >= 0);
+    QVERIFY(musicPush >= 0);
+    QVERIFY(musicCapture < musicPrepare);
+    QVERIFY(musicLoad < musicPush);
+
+    QFile musicPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicPage.qml"));
+    QVERIFY(musicPage.open(QIODevice::ReadOnly));
+    const QByteArray musicSource = musicPage.readAll();
+    QCOMPARE(musicSource.count("navigationFocusRefillActive: MusicCtl.loading"), 0);
+    for (const QByteArray &lane : {QByteArrayLiteral("albums"), QByteArrayLiteral("artists"),
+                                   QByteArrayLiteral("songs"),
+                                   QByteArrayLiteral("playlists")}) {
+        QVERIFY(musicSource.contains("navigationFocusRefillActive: MusicCtl." + lane
+                                     + "Loading"));
+    }
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushSeries", QStringLiteral("season-a")));
+    QVERIFY(invoke(root, "setSeriesSeason", QStringLiteral("season-b")));
+    QVERIFY(invoke(root, "openSeriesFromMain", QStringLiteral("series-2")));
+    QVariantList trail = listProperty(history, "navTrail");
+    QCOMPARE(trail.size(), 3);
+    QCOMPARE(trail.at(1).toMap().value(QStringLiteral("seasonId")).toString(),
+             QStringLiteral("season-b"));
+    QCOMPARE(currentItem(history)->property("controllerSeasonAtCreation").toString(), QString{});
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("between-scopes")));
+    QVERIFY(invoke(root, "pushMusic", QStringLiteral("albums")));
+    QVERIFY(invoke(root, "setMusicTab", QStringLiteral("songs")));
+    QVERIFY(invoke(root, "openMusicLibraryFromMain", QStringLiteral("music-2")));
+    trail = listProperty(history, "navTrail");
+    QCOMPARE(trail.size(), 3);
+    QCOMPARE(trail.at(1).toMap().value(QStringLiteral("tab")).toString(),
+             QStringLiteral("songs"));
+    QCOMPARE(currentItem(history)->property("controllerTabAtCreation").toString(),
+             QStringLiteral("albums"));
 }
 
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()

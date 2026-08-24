@@ -69,6 +69,14 @@ FocusScope {
     readonly property bool songsTab: page.currentTab === 2
     readonly property bool playlistsTab: page.currentTab === 3
 
+    // Each tab owns a separate request lane. Aggregate loading answers whether
+    // anything in the controller is busy; it is not a lifecycle signal for the
+    // visible view because a hidden tab may still be finishing its own page.
+    readonly property bool currentTabLoading: page.playlistsTab ? MusicCtl.playlistsLoading
+                                              : page.songsTab ? MusicCtl.songsLoading
+                                              : page.artistsTab ? MusicCtl.artistsLoading
+                                              : MusicCtl.albumsLoading
+
     // The controller's own vocabulary for the same four tabs. It owns a sort
     // per tab, so it has to be told which one is on screen; the tab bar stays
     // the source of truth for the INDEX and this is the one translation.
@@ -93,7 +101,7 @@ FocusScope {
                                     : page.playlistsTab ? playlistsGrid.count
                                     : page.albumsTab ? albumsGrid.count
                                     : artistsGrid.count
-    readonly property bool isEmpty: page.shownCount === 0 && !MusicCtl.loading
+    readonly property bool isEmpty: page.shownCount === 0 && !page.currentTabLoading
     // Nothing below the tab bar can take focus while the first page is in
     // flight or the view is empty, so the tab bar holds it — a page that
     // arrives with the keyboard pointing at nothing is a page you cannot leave
@@ -129,34 +137,30 @@ FocusScope {
     // Guarded on the scope so a page constructed with none (the self-test)
     // issues no request at all, and on `count` so returning to a library
     // already loaded does not re-fetch it.
-    // All three carry the `!MusicCtl.loading` guard, and it is not cosmetic on
-    // any of them.
-    //
-    // For albums: Main.qml arms MusicCtl and calls loadAlbums() *before* pushing
-    // this page, so without it the first request is always issued twice and the
-    // first reply always thrown away by the controller's generation counter.
-    //
-    // For artists and songs: `MusicCtl.tab = …` ends in the controller's own
+    // Each ensure uses its own lane's loading flag. For artists and songs,
+    // `MusicCtl.tab = …` ends in the controller's own
     // ensureCurrentTab(), which already issues the tab's first page when its
     // model is empty. The request is async, so `count` is still 0 on the very
     // next line — the guard the two used to have could not tell "nobody has
     // asked" from "somebody asked a microsecond ago". That cost a wasted 100-row
-    // query against a 56,283-track library on every cold tab switch, and again
-    // after every filter change, since a query change empties the other two
-    // tabs. `loading` is true by then because fetchArtists()/fetchSongs() set it
-    // before returning, which is exactly the distinction that was missing.
+    // query against a 56,283-track library on every cold tab switch. A hidden
+    // lane is deliberately ignored here: it neither owns nor admits work for
+    // the visible tab.
     function ensureAlbums() {
-        if (page.scopeId.length > 0 && MusicCtl.albums.count === 0 && !MusicCtl.loading)
+        if (page.scopeId.length > 0 && MusicCtl.albums.count === 0
+                && !MusicCtl.albumsLoading)
             MusicCtl.loadAlbums()
     }
 
     function ensureArtists() {
-        if (page.scopeId.length > 0 && MusicCtl.artists.count === 0 && !MusicCtl.loading)
+        if (page.scopeId.length > 0 && MusicCtl.artists.count === 0
+                && !MusicCtl.artistsLoading)
             MusicCtl.loadArtists()
     }
 
     function ensureSongs() {
-        if (page.scopeId.length > 0 && MusicCtl.songs.count === 0 && !MusicCtl.loading)
+        if (page.scopeId.length > 0 && MusicCtl.songs.count === 0
+                && !MusicCtl.songsLoading)
             MusicCtl.loadSongs()
     }
 
@@ -165,7 +169,8 @@ FocusScope {
     // MusicController::loadPlaylists), so with no scope there is nothing to ask
     // for. The controller refuses the same way; this just avoids the round trip.
     function ensurePlaylists() {
-        if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0 && !MusicCtl.loading)
+        if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0
+                && !MusicCtl.playlistsLoading)
             MusicCtl.loadPlaylists()
     }
 
@@ -566,7 +571,7 @@ FocusScope {
 
         navigationFocusKey: "music-albums"
         navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.loading
+        navigationFocusRefillActive: MusicCtl.albumsLoading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -607,7 +612,7 @@ FocusScope {
 
         navigationFocusKey: "music-artists"
         navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.loading
+        navigationFocusRefillActive: MusicCtl.artistsLoading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -660,7 +665,7 @@ FocusScope {
 
         navigationFocusKey: "music-playlists"
         navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.loading
+        navigationFocusRefillActive: MusicCtl.playlistsLoading
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -753,7 +758,7 @@ FocusScope {
 
         navigationFocusKey: "music-songs"
         navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.loading
+        navigationFocusRefillActive: MusicCtl.songsLoading
 
         anchors.top: songSelection.bottom
         anchors.topMargin: Theme.spacingTight
@@ -1032,7 +1037,7 @@ FocusScope {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        visible: MusicCtl.loading && page.shownCount === 0
+        visible: page.currentTabLoading && page.shownCount === 0
         // A skeleton has to look like what is coming: rows for the song list,
         // tiles for the three grids.
         shape: page.songsTab ? "list" : "grid"

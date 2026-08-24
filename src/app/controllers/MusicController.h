@@ -61,6 +61,12 @@ class MusicController : public QObject
     Q_PROPERTY(QString artistId READ artistId NOTIFY artistChanged)
     Q_PROPERTY(QString artistName READ artistName NOTIFY artistChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    // Browse requests are independent lanes. A hidden slow tab must not keep
+    // the visible tab's focus restoration or empty/loading state pending.
+    Q_PROPERTY(bool albumsLoading READ albumsLoading NOTIFY browseLoadingChanged)
+    Q_PROPERTY(bool artistsLoading READ artistsLoading NOTIFY browseLoadingChanged)
+    Q_PROPERTY(bool songsLoading READ songsLoading NOTIFY browseLoadingChanged)
+    Q_PROPERTY(bool playlistsLoading READ playlistsLoading NOTIFY browseLoadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
     // Album/artist pages share one retargetable detail lane. Keep its owner and
     // status separate from the library lists so unrelated replies cannot clear
@@ -146,6 +152,10 @@ public:
     QString artistId() const { return m_artistId; }
     QString artistName() const { return m_artistName; }
     bool loading() const { return m_loading; }
+    bool albumsLoading() const { return m_albumInFlight != 0; }
+    bool artistsLoading() const { return m_artistInFlight != 0; }
+    bool songsLoading() const { return m_songInFlight != 0; }
+    bool playlistsLoading() const { return m_playlistInFlight != 0; }
     QString errorMessage() const { return m_error; }
     QString detailKind() const { return m_detailKind; }
     QString detailId() const { return m_detailId; }
@@ -306,6 +316,7 @@ signals:
     void tabChanged();
     void genresChanged();
     void loadingChanged();
+    void browseLoadingChanged();
     void errorChanged();
     void detailStatusChanged();
     // A one-shot verb failed. Separate from errorMessage, which is the state of

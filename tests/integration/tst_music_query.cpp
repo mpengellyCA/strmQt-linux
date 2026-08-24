@@ -35,6 +35,7 @@ private slots:
     void repeatedAlbumEnsureKeepsTheInFlightPage();
     void tabAwayAndBackKeepsTheInFlightPageZero();
     void albumPagingIgnoresAnUnrelatedArtistRequest();
+    void browseLoadingIsPublishedPerIndependentLane();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
@@ -314,6 +315,39 @@ void MusicQueryTest::albumPagingIgnoresAnUnrelatedArtistRequest()
              QStringLiteral("1"));
     QTRY_COMPARE_WITH_TIMEOUT(m_music->albums()->rowCount(), 2, 5000);
     settle();
+}
+
+void MusicQueryTest::browseLoadingIsPublishedPerIndependentLane()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     onePageOf("MusicAlbum", 1));
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     onePageOf("MusicArtist", 1));
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 700);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 120);
+
+    QSignalSpy laneSpy(m_music, &MusicController::browseLoadingChanged);
+    // Albums remains the visible tab while a hidden Artists ensure is slow.
+    m_music->loadArtists();
+    m_music->loadAlbums();
+    QVERIFY(m_music->artistsLoading());
+    QVERIFY(m_music->albumsLoading());
+    QVERIFY(m_music->loading());
+
+    // The visible Albums owner may settle while a hidden Artists request is
+    // still live. Its lifecycle must publish that transition even though the
+    // aggregate `loading` value remains true throughout it.
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->albumsLoading(), 5000);
+    QVERIFY(m_music->artistsLoading());
+    QVERIFY(m_music->loading());
+    QVERIFY(laneSpy.count() >= 3);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->artistsLoading(), 5000);
+    QVERIFY(!m_music->loading());
+    QVERIFY(!m_music->songsLoading());
+    QVERIFY(!m_music->playlistsLoading());
 }
 
 // A genre or a letter is a statement about the music, so it survives switching
