@@ -143,6 +143,18 @@ public:
     // Best-known user state, including changes not yet confirmed by the server.
     Q_INVOKABLE bool isPlayed(const QString &itemId) const;
     Q_INVOKABLE bool isFavorite(const QString &itemId) const;
+    // Only locally changed or externally refreshed rows need a mirror here.
+    // Keeping a hard ceiling prevents a long session from retaining one entry
+    // for every item the user has ever touched.
+    static constexpr int kMaxCachedUserStates = 1024;
+    // Test seam: production keeps the ceiling above. Tests shrink it so
+    // eviction can be exercised without issuing a thousand server mutations.
+    void setUserStateCacheLimitForTests(int maximum);
+    int cachedUserStateCountForTests() const { return m_state.size(); }
+    int pendingUserStateRequestCountForTests() const
+    {
+        return m_playedRequests.size() + m_favoriteRequests.size();
+    }
     // The item map for an id, or an empty map when no registered model has it.
     Q_INVOKABLE QVariantMap itemFor(const QString &itemId) const;
 
@@ -190,6 +202,8 @@ private:
     void fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart);
     bool requireQueueTarget();
     UserState knownState(const QString &itemId) const;
+    void rememberState(const QString &itemId, const UserState &state);
+    void syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow);
     void applyPlayed(const QString &itemId, bool played);
     void applyFavorite(const QString &itemId, bool favorite);
     void patchModels(const QString &itemId, const UserState &state);
@@ -200,8 +214,11 @@ private:
     PlayerController *m_player;
     QList<QPointer<MediaItemModel>> m_models;
     QHash<QString, UserState> m_state;
+    QList<QString> m_stateOrder;
+    int m_userStateCacheLimit = kMaxCachedUserStates;
     QHash<QString, InFlight> m_playedRequests;
     QHash<QString, InFlight> m_favoriteRequests;
+    bool m_patchingModels = false;
     quint64 m_playbackIntentGeneration = 0;
     quint64 m_sessionGeneration = 0;
 };

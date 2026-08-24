@@ -65,6 +65,9 @@ private slots:
     void failedToggleFavoriteRollsBack();
     void rapidTogglesCoalesceIntoOneRequest();
     void rapidTogglePairConvergesOnTheServer();
+    void phoneUpdateThenSiblingTogglesPreserveFreshState();
+    void userStateCacheIsBoundedAndReset();
+    void identityChangeClearsUserState();
     void signalsCarryTheRightItemId();
     void playResumesAndPlayFromStartDoesNot();
     void navigationVerbsEmitRequests();
@@ -240,6 +243,77 @@ void ItemActionsTest::rapidTogglePairConvergesOnTheServer()
     QTest::qWait(50);
     QVERIFY(!m_actions->isPlayed(kItemId));
     QCOMPARE(m_model->get(0).value(QStringLiteral("played")).toBool(), false);
+}
+
+// UserDataChanged carries played and favorite together. If a phone changes both
+// after this process has cached the row, toggling either field here must carry
+// the phone's fresh sibling through the optimistic model patch.
+void ItemActionsTest::phoneUpdateThenSiblingTogglesPreserveFreshState()
+{
+    m_mock->addRoute(QStringLiteral("POST"), playedPath(kItemId), 204, {});
+    m_mock->addRoute(QStringLiteral("DELETE"), playedPath(kItemId), 204, {});
+    m_mock->addRoute(QStringLiteral("DELETE"), favoritePath(kItemId), 204, {});
+
+    // Seed ItemActions' session cache through an ordinary local mutation.
+    m_actions->setPlayed(kItemId, true);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), playedPath(kItemId)), 1);
+
+    // This is the exact patch HomeController/LibraryController apply when the
+    // live socket reports a phone-side change.
+    m_model->updateUserData(kItemId, true, true);
+    QVERIFY(m_actions->isFavorite(kItemId));
+
+    m_actions->togglePlayed(m_model->get(0));
+    const QVariantMap afterPlayedToggle = m_model->get(0);
+    QVERIFY(!afterPlayedToggle.value(QStringLiteral("played")).toBool());
+    QVERIFY(afterPlayedToggle.value(QStringLiteral("favorite")).toBool());
+    QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), playedPath(kItemId)), 1);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+
+    m_model->updateUserData(kItemId, true, true);
+    QVERIFY(m_actions->isPlayed(kItemId));
+
+    m_actions->toggleFavorite(m_model->get(0));
+    const QVariantMap afterFavoriteToggle = m_model->get(0);
+    QVERIFY(afterFavoriteToggle.value(QStringLiteral("played")).toBool());
+    QVERIFY(!afterFavoriteToggle.value(QStringLiteral("favorite")).toBool());
+    QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), favoritePath(kItemId)), 1);
+}
+
+void ItemActionsTest::userStateCacheIsBoundedAndReset()
+{
+    m_actions->setUserStateCacheLimitForTests(3);
+    const QStringList ids{QStringLiteral("cache-0"), QStringLiteral("cache-1"),
+                          QStringLiteral("cache-2"), QStringLiteral("cache-3")};
+    for (const QString &id : ids) {
+        m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
+        m_actions->setFavorite(id, true);
+    }
+    for (const QString &id : ids)
+        QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 1);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 3);
+    QVERIFY(!m_actions->isFavorite(ids.first()));
+    QVERIFY(m_actions->isFavorite(ids.last()));
+
+    m_actions->resetSessionState();
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
+    QVERIFY(!m_actions->isFavorite(ids.last()));
+}
+
+void ItemActionsTest::identityChangeClearsUserState()
+{
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(kItemId), 204, {});
+    m_actions->setFavorite(kItemId, true);
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QCOMPARE(m_model->rowCount(), 1);
+
+    m_client->setSession(QStringLiteral("second-token"), QStringLiteral("second-user"));
+
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
+    QCOMPARE(m_model->rowCount(), 0);
+    QVERIFY(!m_actions->isFavorite(kItemId));
 }
 
 void ItemActionsTest::signalsCarryTheRightItemId()

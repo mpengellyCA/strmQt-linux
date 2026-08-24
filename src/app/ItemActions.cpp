@@ -103,6 +103,14 @@ QString titleFor(const QVariantMap &item)
 ItemActions::ItemActions(emby::EmbyClient *client, PlayerController *player, QObject *parent)
     : QObject(parent), m_client(client), m_player(player)
 {
+    if (m_client) {
+        // Application normally announces the session boundary first, but the
+        // client is also used directly by tests and embedders. The identity
+        // signal is the final ownership boundary: no cached state or optimistic
+        // request from A may be consulted after B becomes current.
+        connect(m_client, &emby::EmbyClient::identityChanged, this,
+                &ItemActions::resetSessionState);
+    }
 }
 
 void ItemActions::resetSessionState()
@@ -110,11 +118,14 @@ void ItemActions::resetSessionState()
     ++m_playbackIntentGeneration;
     ++m_sessionGeneration;
     m_state.clear();
+    m_stateOrder.clear();
     m_playedRequests.clear();
     m_favoriteRequests.clear();
     m_models.removeIf([](const QPointer<MediaItemModel> &model) { return model.isNull(); });
-    for (const QPointer<MediaItemModel> &model : std::as_const(m_models))
-        model->clear();
+    for (const QPointer<MediaItemModel> &model : std::as_const(m_models)) {
+        if (model->rowCount() > 0)
+            model->clear();
+    }
 }
 
 void ItemActions::registerModel(MediaItemModel *model)
@@ -126,10 +137,28 @@ void ItemActions::registerModel(MediaItemModel *model)
             return;
     }
     m_models.append(model);
+
+    const auto syncAll = [this, model] { syncCachedUserState(model, 0, model->rowCount() - 1); };
+    connect(model, &QAbstractItemModel::dataChanged, this,
+            [this, model](const QModelIndex &topLeft, const QModelIndex &bottomRight,
+                          const QList<int> &roles) {
+                if (!roles.isEmpty() && !roles.contains(MediaItemModel::PlayedRole) &&
+                    !roles.contains(MediaItemModel::FavoriteRole))
+                    return;
+                syncCachedUserState(model, topLeft.row(), bottomRight.row());
+            });
+    connect(model, &QAbstractItemModel::modelReset, this, syncAll);
+    connect(model, &QAbstractItemModel::rowsInserted, this,
+            [this, model](const QModelIndex &, int first, int last) {
+                syncCachedUserState(model, first, last);
+            });
+    syncAll();
 }
 
 void ItemActions::unregisterModel(MediaItemModel *model)
 {
+    if (model)
+        disconnect(model, nullptr, this, nullptr);
     m_models.removeIf([model](const QPointer<MediaItemModel> &known) {
         return known.isNull() || known == model;
     });
@@ -585,32 +614,102 @@ void ItemActions::shuffleSeries(const QString &seriesId)
 
 ItemActions::UserState ItemActions::knownState(const QString &itemId) const
 {
+    UserState state;
+    bool found = false;
     const auto cached = m_state.constFind(itemId);
-    if (cached != m_state.cend())
-        return *cached;
-    for (const QPointer<MediaItemModel> &model : m_models) {
-        if (model.isNull())
-            continue;
-        for (const MediaItem &item : model->items()) {
-            if (item.id == itemId)
-                return {item.played, item.favorite};
+    if (cached != m_state.cend()) {
+        state = *cached;
+        found = true;
+    } else {
+        for (const QPointer<MediaItemModel> &model : m_models) {
+            if (model.isNull())
+                continue;
+            for (const MediaItem &item : model->items()) {
+                if (item.id != itemId)
+                    continue;
+                state = {item.played, item.favorite};
+                found = true;
+                break;
+            }
+            if (found)
+                break;
         }
     }
-    return {};
+
+    // A bounded cache may evict an item while its request is still running.
+    // The request tables therefore remain the source for optimistic fields;
+    // the queued value is the newest intent when one exists.
+    const auto playedRequest = m_playedRequests.constFind(itemId);
+    if (playedRequest != m_playedRequests.cend())
+        state.played = playedRequest->hasQueued ? playedRequest->queued : playedRequest->requested;
+    const auto favoriteRequest = m_favoriteRequests.constFind(itemId);
+    if (favoriteRequest != m_favoriteRequests.cend())
+        state.favorite =
+            favoriteRequest->hasQueued ? favoriteRequest->queued : favoriteRequest->requested;
+    return state;
+}
+
+void ItemActions::rememberState(const QString &itemId, const UserState &state)
+{
+    if (itemId.isEmpty())
+        return;
+    m_state.insert(itemId, state);
+    m_stateOrder.removeOne(itemId);
+    m_stateOrder.append(itemId);
+    while (m_stateOrder.size() > m_userStateCacheLimit)
+        m_state.remove(m_stateOrder.takeFirst());
+}
+
+void ItemActions::setUserStateCacheLimitForTests(int maximum)
+{
+    m_userStateCacheLimit = qMax(1, maximum);
+    while (m_stateOrder.size() > m_userStateCacheLimit)
+        m_state.remove(m_stateOrder.takeFirst());
+}
+
+void ItemActions::syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow)
+{
+    if (m_patchingModels || !model || firstRow < 0 || lastRow < firstRow)
+        return;
+    const QList<MediaItem> &items = model->items();
+    const int boundedLast = qMin(lastRow, items.size() - 1);
+    for (int row = firstRow; row <= boundedLast; ++row) {
+        const MediaItem &item = items.at(row);
+        if (item.id.isEmpty())
+            continue;
+        auto playedRequest = m_playedRequests.find(item.id);
+        auto favoriteRequest = m_favoriteRequests.find(item.id);
+        if (!m_state.contains(item.id) && playedRequest == m_playedRequests.end() &&
+            favoriteRequest == m_favoriteRequests.end())
+            continue;
+
+        UserState state = knownState(item.id);
+        if (playedRequest == m_playedRequests.end())
+            state.played = item.played;
+        else
+            playedRequest->baseline = item.played;
+        if (favoriteRequest == m_favoriteRequests.end())
+            state.favorite = item.favorite;
+        else
+            favoriteRequest->baseline = item.favorite;
+        rememberState(item.id, state);
+    }
 }
 
 void ItemActions::patchModels(const QString &itemId, const UserState &state)
 {
     m_models.removeIf([](const QPointer<MediaItemModel> &model) { return model.isNull(); });
+    m_patchingModels = true;
     for (const QPointer<MediaItemModel> &model : std::as_const(m_models))
         model->updateUserData(itemId, state.played, state.favorite);
+    m_patchingModels = false;
 }
 
 void ItemActions::applyPlayed(const QString &itemId, bool played)
 {
     UserState state = knownState(itemId);
     state.played = played;
-    m_state.insert(itemId, state);
+    rememberState(itemId, state);
     patchModels(itemId, state);
     emit playedChanged(itemId, played);
 }
@@ -619,7 +718,7 @@ void ItemActions::applyFavorite(const QString &itemId, bool favorite)
 {
     UserState state = knownState(itemId);
     state.favorite = favorite;
-    m_state.insert(itemId, state);
+    rememberState(itemId, state);
     patchModels(itemId, state);
     emit favoriteChanged(itemId, favorite);
 }
@@ -695,8 +794,8 @@ void ItemActions::togglePlayed(const QVariant &item)
         return;
     }
     bool current = false;
-    if (m_state.contains(itemId))
-        current = m_state.value(itemId).played; // newest intent wins over a stale map
+    if (m_state.contains(itemId) || m_playedRequests.contains(itemId))
+        current = knownState(itemId).played; // newest intent wins over a stale map
     else if (map.contains(QStringLiteral("played")))
         current = map.value(QStringLiteral("played")).toBool();
     else
@@ -763,8 +862,8 @@ void ItemActions::toggleFavorite(const QVariant &item)
         return;
     }
     bool current = false;
-    if (m_state.contains(itemId))
-        current = m_state.value(itemId).favorite;
+    if (m_state.contains(itemId) || m_favoriteRequests.contains(itemId))
+        current = knownState(itemId).favorite;
     else if (map.contains(QStringLiteral("favorite")))
         current = map.value(QStringLiteral("favorite")).toBool();
     else
