@@ -33,6 +33,10 @@ VlcPlayer::VlcPlayer(QObject *parent) : PlayerBackend(parent)
         return;
     }
     m_player = libvlc_media_player_new(m_vlc);
+    if (!m_player) {
+        qCCritical(logPlayback) << "libvlc_media_player_new failed";
+        return;
+    }
 
     libvlc_video_set_format_callbacks(m_player, formatCb, nullptr);
     libvlc_video_set_callbacks(m_player, lockCb, unlockCb, displayCb, this);
@@ -60,10 +64,15 @@ unsigned VlcPlayer::formatCb(void **opaque, char *chroma, unsigned *width, unsig
 {
     auto *self = static_cast<VlcPlayer *>(*opaque);
     qCInfo(logPlayback) << "vlc vmem format:" << *width << "x" << *height;
+    unsigned pitch = 0;
+    if (!self->m_frames.configure(*width, *height, &pitch)) {
+        qCWarning(logPlayback) << "vlc vmem rejected unsafe frame dimensions" << *width << "x"
+                               << *height;
+        return 0;
+    }
     qstrcpy(chroma, "RV32"); // BGRA on little-endian → QImage::Format_RGB32
-    pitches[0] = *width * 4;
+    pitches[0] = pitch;
     lines[0] = *height;
-    self->m_frames.configure(QSize(int(*width), int(*height)));
     return 1;
 }
 
@@ -83,11 +92,18 @@ void VlcPlayer::displayCb(void *opaque, void *picture)
     auto *self = static_cast<VlcPlayer *>(opaque);
     if (!self->m_frames.display(picture))
         return; // scratch frame from a retired load
-    if (!self->m_sawFirstFrame) {
-        self->m_sawFirstFrame = true;
+    if (!self->m_sawFirstFrame.exchange(true, std::memory_order_acq_rel)) {
         qCInfo(logPlayback) << "vlc vmem: first frame displayed";
     }
-    emit self->frameReady(); // queued to any connected GUI item
+    if (self->m_frameNotifications.request()) {
+        QMetaObject::invokeMethod(
+            self,
+            [self] {
+                self->m_frameNotifications.release();
+                emit self->frameReady();
+            },
+            Qt::QueuedConnection);
+    }
 }
 
 QImage VlcPlayer::currentFrame() const
@@ -242,7 +258,7 @@ void VlcPlayer::stop()
 void VlcPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
 {
     m_pendingStartMs = 0;
-    m_sawFirstFrame = false;
+    m_sawFirstFrame.store(false, std::memory_order_release);
     if (m_positionMs != positionMs) {
         m_positionMs = positionMs;
         emit positionChanged(positionMs, loadId);

@@ -41,7 +41,9 @@ void VlcVideoItem::setPlayerObject(QObject *player)
         disconnect(m_player, nullptr, this, nullptr);
     m_player = vlcPlayer;
     if (m_player)
-        connect(m_player, &VlcPlayer::frameReady, this, [this] { update(); }, Qt::QueuedConnection);
+        // VlcPlayer already coalesces decoder callbacks onto its GUI thread.
+        // A second queued hop would reopen the very backlog that gate closes.
+        connect(m_player, &VlcPlayer::frameReady, this, [this] { update(); });
     emit playerChanged();
     update();
 }

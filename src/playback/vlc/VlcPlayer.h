@@ -6,6 +6,9 @@
 #include <QMutex>
 
 #include <atomic>
+#include <cstdlib>
+#include <limits>
+#include <utility>
 
 struct libvlc_instance_t;
 struct libvlc_media_player_t;
@@ -22,14 +25,42 @@ namespace vlcframes {
 class Buffers
 {
 public:
-    void configure(const QSize &size)
+    static constexpr unsigned kPlaneAlignment = 32;
+    static constexpr quint64 kMaxFramePixels = 4096ULL * 4096ULL;
+    static constexpr unsigned kMaxFrameDimension = 16384;
+
+    bool configure(unsigned width, unsigned height, unsigned *pitchOut = nullptr)
     {
         QMutexLocker lock(&m_mutex);
         m_publishToken = 0;
         m_hasFront = false;
-        m_front = QImage(size, QImage::Format_RGB32);
-        m_back = QImage(size, QImage::Format_RGB32);
-        m_scratch = QImage(size, QImage::Format_RGB32);
+        const quint64 pixels = quint64(width) * height;
+        const quint64 rowBytes = quint64(width) * 4;
+        const quint64 alignedPitch =
+            (rowBytes + kPlaneAlignment - 1) & ~(quint64(kPlaneAlignment) - 1);
+        if (width == 0 || height == 0 || width > kMaxFrameDimension ||
+            height > kMaxFrameDimension || pixels > kMaxFramePixels ||
+            alignedPitch > quint64(std::numeric_limits<int>::max())) {
+            invalidateFrames();
+            return false;
+        }
+
+        const QSize size{int(width), int(height)};
+        QImage front = allocateFrame(size, unsigned(alignedPitch));
+        QImage back = allocateFrame(size, unsigned(alignedPitch));
+        QImage scratch = allocateFrame(size, unsigned(alignedPitch));
+        if (front.isNull() || back.isNull() || scratch.isNull()) {
+            invalidateFrames();
+            return false;
+        }
+        m_size = size;
+        m_pitch = unsigned(alignedPitch);
+        m_front = std::move(front);
+        m_back = std::move(back);
+        m_scratch = std::move(scratch);
+        if (pitchOut)
+            *pitchOut = m_pitch;
+        return true;
     }
 
     void clear()
@@ -44,12 +75,25 @@ public:
     void *lock(void **planes)
     {
         m_mutex.lock();
-        QImage *target = !m_back.isNull() ? &m_back : &m_scratch;
-        // formatCb always precedes decoder locks, so scratch is full-sized. A
-        // defensive one-pixel allocation still makes a contract violation
-        // non-null rather than handing VLC a null plane immediately.
+        QImage *target = &m_back;
+        // A GUI paint can still hold the previously published backing store
+        // after it rotates into m_back. Allocate a fresh aligned plane instead
+        // of asking QImage::bits() to deep-detach/copy the obsolete pixels.
+        if (!m_back.isNull() && !m_back.isDetached()) {
+            QImage replacement = allocateFrame(m_size, m_pitch);
+            if (!replacement.isNull())
+                m_back = std::move(replacement);
+            else
+                target = &m_scratch; // full-sized, aligned, and never published
+        }
         if (target->isNull())
-            m_scratch = QImage(1, 1, QImage::Format_RGB32);
+            target = &m_scratch;
+        if (target->isNull()) {
+            planes[0] = nullptr;
+            m_publishToken = 0;
+            m_mutex.unlock();
+            return nullptr;
+        }
         planes[0] = target->bits();
         do {
             ++m_nextToken;
@@ -83,13 +127,56 @@ public:
     }
 
 private:
+    static QImage allocateFrame(const QSize &size, unsigned pitch)
+    {
+        if (!size.isValid() || pitch == 0)
+            return {};
+        const size_t byteCount = size_t(pitch) * size_t(size.height());
+        if (byteCount == 0 || byteCount % kPlaneAlignment != 0)
+            return {};
+        void *storage = std::aligned_alloc(kPlaneAlignment, byteCount);
+        if (!storage)
+            return {};
+        return QImage(static_cast<uchar *>(storage), size.width(), size.height(), int(pitch),
+                      QImage::Format_RGB32, [](void *pointer) { std::free(pointer); }, storage);
+    }
+
+    void invalidateFrames()
+    {
+        m_size = {};
+        m_pitch = 0;
+        m_front = {};
+        m_back = {};
+        m_scratch = {};
+    }
+
     mutable QMutex m_mutex;
+    QSize m_size;
+    unsigned m_pitch = 0;
     QImage m_front;
     QImage m_back;
     QImage m_scratch;
     quintptr m_nextToken = 0;
     quintptr m_publishToken = 0;
     bool m_hasFront = false;
+};
+
+// A decoder can outrun Qt's render loop, but the UI only ever needs the newest
+// published frame. At most one queued delivery is outstanding; all intervening
+// displays collapse into it.
+class NotificationGate
+{
+public:
+    bool request()
+    {
+        bool expected = false;
+        return m_pending.compare_exchange_strong(expected, true, std::memory_order_acq_rel);
+    }
+    void release() { m_pending.store(false, std::memory_order_release); }
+    bool pending() const { return m_pending.load(std::memory_order_acquire); }
+
+private:
+    std::atomic_bool m_pending = false;
 };
 
 } // namespace vlcframes
@@ -150,12 +237,13 @@ private:
     qint64 m_durationMs = 0;
     qint64 m_pendingStartMs = 0;
     bool m_buffering = false;
-    bool m_sawFirstFrame = false;
+    std::atomic_bool m_sawFirstFrame = false;
     // Written by load()/stop() on the GUI thread and read by eventCb() on
     // libvlc's event thread, which is the whole point of stamping events.
     std::atomic<LoadId> m_loadId = 0;
 
     vlcframes::Buffers m_frames;
+    vlcframes::NotificationGate m_frameNotifications;
 };
 
 } // namespace strmqt
