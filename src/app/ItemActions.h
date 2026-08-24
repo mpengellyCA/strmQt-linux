@@ -7,6 +7,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QVariant>
 #include <QVariantMap>
@@ -144,8 +145,8 @@ public:
     Q_INVOKABLE bool isPlayed(const QString &itemId) const;
     Q_INVOKABLE bool isFavorite(const QString &itemId) const;
     // Only locally changed or externally refreshed rows need a mirror here.
-    // Keeping a hard ceiling prevents a long session from retaining one entry
-    // for every item the user has ever touched.
+    // Pending mutations are pinned in the same bounded set: admission evicts
+    // only settled rows and rejects a new id when every slot is in flight.
     static constexpr int kMaxCachedUserStates = 1024;
     // Test seam: production keeps the ceiling above. Tests shrink it so
     // eviction can be exercised without issuing a thousand server mutations.
@@ -204,6 +205,9 @@ private:
     UserState knownState(const QString &itemId) const;
     void rememberState(const QString &itemId, const UserState &state);
     void syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow);
+    bool admitUserState(const QString &itemId);
+    bool evictOldestSettledUserState();
+    bool hasPendingUserState(const QString &itemId) const;
     void applyPlayed(const QString &itemId, bool played);
     void applyFavorite(const QString &itemId, bool favorite);
     void patchModels(const QString &itemId, const UserState &state);
@@ -218,6 +222,7 @@ private:
     int m_userStateCacheLimit = kMaxCachedUserStates;
     QHash<QString, InFlight> m_playedRequests;
     QHash<QString, InFlight> m_favoriteRequests;
+    QSet<QString> m_admittingUserStates;
     bool m_patchingModels = false;
     quint64 m_playbackIntentGeneration = 0;
     quint64 m_sessionGeneration = 0;

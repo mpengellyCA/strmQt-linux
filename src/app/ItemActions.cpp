@@ -121,6 +121,7 @@ void ItemActions::resetSessionState()
     m_stateOrder.clear();
     m_playedRequests.clear();
     m_favoriteRequests.clear();
+    m_admittingUserStates.clear();
     m_models.removeIf([](const QPointer<MediaItemModel> &model) { return model.isNull(); });
     for (const QPointer<MediaItemModel> &model : std::as_const(m_models)) {
         if (model->rowCount() > 0)
@@ -425,8 +426,18 @@ void ItemActions::playNextAll(const QVariantList &items)
 
 void ItemActions::setFavoriteAll(const QStringList &itemIds, bool favorite)
 {
-    for (const QString &itemId : itemIds)
+    for (const QString &itemId : itemIds) {
+        // A bulk gesture reports capacity pressure once and stops admitting
+        // work; it must not turn the bounded table into an unbounded burst of
+        // rejected signals after all slots become pinned.
+        if (!admitUserState(itemId)) {
+            qCWarning(logApp) << "ItemActions: pending user-state limit reached";
+            emit actionFailed(
+                tr("Too many item updates are still pending. Try again in a moment."));
+            break;
+        }
         setFavorite(itemId, favorite);
+    }
 }
 
 void ItemActions::instantMix(const QVariant &item)
@@ -653,18 +664,59 @@ void ItemActions::rememberState(const QString &itemId, const UserState &state)
 {
     if (itemId.isEmpty())
         return;
+    if (!m_state.contains(itemId) && !admitUserState(itemId)) {
+        qCCritical(logApp) << "ItemActions: user-state admission invariant failed for" << itemId;
+        return;
+    }
     m_state.insert(itemId, state);
     m_stateOrder.removeOne(itemId);
     m_stateOrder.append(itemId);
-    while (m_stateOrder.size() > m_userStateCacheLimit)
-        m_state.remove(m_stateOrder.takeFirst());
+    while (m_state.size() > m_userStateCacheLimit && evictOldestSettledUserState()) {
+    }
 }
 
 void ItemActions::setUserStateCacheLimitForTests(int maximum)
 {
-    m_userStateCacheLimit = qMax(1, maximum);
-    while (m_stateOrder.size() > m_userStateCacheLimit)
-        m_state.remove(m_stateOrder.takeFirst());
+    if (!m_playedRequests.isEmpty() || !m_favoriteRequests.isEmpty() ||
+        !m_admittingUserStates.isEmpty()) {
+        qCWarning(logApp) << "ItemActions: cannot change the user-state limit with pending work";
+        return;
+    }
+    m_userStateCacheLimit = qBound(1, maximum, kMaxCachedUserStates);
+    while (m_state.size() > m_userStateCacheLimit && evictOldestSettledUserState()) {
+    }
+}
+
+bool ItemActions::hasPendingUserState(const QString &itemId) const
+{
+    return m_admittingUserStates.contains(itemId) || m_playedRequests.contains(itemId) ||
+           m_favoriteRequests.contains(itemId);
+}
+
+bool ItemActions::evictOldestSettledUserState()
+{
+    for (qsizetype index = 0; index < m_stateOrder.size(); ++index) {
+        const QString &candidate = m_stateOrder.at(index);
+        if (hasPendingUserState(candidate))
+            continue;
+        m_state.remove(candidate);
+        m_stateOrder.removeAt(index);
+        return true;
+    }
+    return false;
+}
+
+bool ItemActions::admitUserState(const QString &itemId)
+{
+    if (itemId.isEmpty())
+        return false;
+    if (m_state.contains(itemId) || hasPendingUserState(itemId))
+        return true;
+    while (m_state.size() >= m_userStateCacheLimit) {
+        if (!evictOldestSettledUserState())
+            return false;
+    }
+    return true;
 }
 
 void ItemActions::syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow)
@@ -737,8 +789,18 @@ void ItemActions::setPlayed(const QString &itemId, bool played)
 {
     if (itemId.isEmpty())
         return;
+    if (!admitUserState(itemId)) {
+        qCWarning(logApp) << "ItemActions: pending user-state limit reached";
+        emit actionFailed(tr("Too many item updates are still pending. Try again in a moment."));
+        return;
+    }
+    const quint64 sessionGeneration = m_sessionGeneration;
+    m_admittingUserStates.insert(itemId);
     const bool previous = knownState(itemId).played;
     applyPlayed(itemId, played); // optimistic: the UI moves now
+    m_admittingUserStates.remove(itemId);
+    if (sessionGeneration != m_sessionGeneration)
+        return;
 
     const auto inFlight = m_playedRequests.find(itemId);
     if (inFlight != m_playedRequests.end()) {
@@ -807,8 +869,18 @@ void ItemActions::setFavorite(const QString &itemId, bool favorite)
 {
     if (itemId.isEmpty())
         return;
+    if (!admitUserState(itemId)) {
+        qCWarning(logApp) << "ItemActions: pending user-state limit reached";
+        emit actionFailed(tr("Too many item updates are still pending. Try again in a moment."));
+        return;
+    }
+    const quint64 sessionGeneration = m_sessionGeneration;
+    m_admittingUserStates.insert(itemId);
     const bool previous = knownState(itemId).favorite;
     applyFavorite(itemId, favorite);
+    m_admittingUserStates.remove(itemId);
+    if (sessionGeneration != m_sessionGeneration)
+        return;
 
     const auto inFlight = m_favoriteRequests.find(itemId);
     if (inFlight != m_favoriteRequests.end()) {

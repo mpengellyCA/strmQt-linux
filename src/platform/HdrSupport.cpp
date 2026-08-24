@@ -36,8 +36,9 @@ HdrSupport::~HdrSupport()
 {
     m_timeout.stop();
     if (m_process && m_process->state() != QProcess::NotRunning) {
+        // Teardown must not hold the GUI thread for an unresponsive helper.
+        // QProcess owns/reaps its child during destruction after this kill.
         m_process->kill();
-        m_process->waitForFinished(kTerminateGraceMs);
     }
 }
 
