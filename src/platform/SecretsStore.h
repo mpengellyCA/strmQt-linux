@@ -48,6 +48,7 @@ private:
     // or the user rejects access; the caller then keeps secrets in memory only.
     bool ensureWallet();
     QString fallbackFilePath() const;
+    bool removeLegacySecret(const QString &key) const;
 
     bool m_walletProbed = false;
     int m_walletHandle = -1;

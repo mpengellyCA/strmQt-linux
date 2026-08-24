@@ -97,8 +97,15 @@ bool SecretsStore::ensureWallet()
                                                    legacy.value(key).toString(), appId());
             migrated = migrated && rc.isValid() && rc.value() == 0;
         }
-        if (migrated && QFile::remove(legacyPath))
-            qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
+        if (migrated) {
+            if (QFile::remove(legacyPath))
+                qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
+            else
+                qCWarning(logCore) << "migrated legacy credentials but could not remove"
+                                   << legacyPath;
+        } else {
+            qCWarning(logCore) << "legacy credential migration incomplete; plaintext retained";
+        }
     }
     return true;
 }
@@ -123,6 +130,21 @@ QString SecretsStore::fallbackFilePath() const
     return dir + QStringLiteral("/secrets.ini");
 }
 
+bool SecretsStore::removeLegacySecret(const QString &key) const
+{
+    const QString path = fallbackFilePath();
+    if (!QFileInfo::exists(path))
+        return true;
+    QSettings legacy(path, QSettings::IniFormat);
+    legacy.remove(key);
+    legacy.sync();
+    if (legacy.status() != QSettings::NoError || legacy.contains(key))
+        return false;
+    if (!legacy.allKeys().isEmpty())
+        return true;
+    return QFile::remove(path) || !QFileInfo::exists(path);
+}
+
 bool SecretsStore::writeSecret(const QString &key, const QString &value)
 {
     if (ensureWallet()) {
@@ -130,8 +152,14 @@ bool SecretsStore::writeSecret(const QString &key, const QString &value)
         const QDBusReply<int> rc = wallet->call(QStringLiteral("writePassword"), m_walletHandle,
                                                 kWalletFolder, key, value, appId());
         delete wallet;
-        if (rc.isValid() && rc.value() == 0)
+        if (rc.isValid() && rc.value() == 0) {
+            if (!removeLegacySecret(key)) {
+                qCWarning(logCore) << "wallet write succeeded but legacy credential cleanup failed"
+                                   << key;
+                return false;
+            }
             return true;
+        }
         qCWarning(logCore) << "wallet writePassword failed for" << key;
         return false;
     }
@@ -180,7 +208,11 @@ bool SecretsStore::removeSecret(const QString &key)
         const QDBusReply<int> rc = wallet->call(QStringLiteral("removeEntry"), m_walletHandle,
                                                 kWalletFolder, key, appId());
         delete wallet;
-        return rc.isValid() && rc.value() == 0;
+        const bool removed = rc.isValid() && rc.value() == 0;
+        const bool legacyRemoved = removeLegacySecret(key);
+        if (!legacyRemoved)
+            qCWarning(logCore) << "could not remove legacy plaintext credential" << key;
+        return removed && legacyRemoved;
     }
 
     if (m_storageMode != StorageMode::PlaintextFallback)
