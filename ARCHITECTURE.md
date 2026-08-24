@@ -56,11 +56,16 @@ Four rules hold this together:
 
 ### Threading and async
 
-There are no worker threads. Everything is single-threaded Qt event-loop code:
+Application and controller state is affine to the Qt event-loop thread. Work
+that can block or consume a frame budget is dispatched in bounded tasks and
+returns value types before that state is touched again:
 
 - Network calls return `QFuture<Result<T>>` resolved on the caller's thread.
 - `Result<T>` is an explicit success/error union — no exceptions cross an API
   boundary.
+- Image decoding and legacy secret-file `QSettings`/`QFile` work run on bounded
+  Qt thread-pool tasks. Their GUI-thread owners receive only copied result
+  values through lifetime-guarded watchers.
 - libmpv runs its own threads internally and is marshalled back through
   `QMetaObject::invokeMethod`.
 
