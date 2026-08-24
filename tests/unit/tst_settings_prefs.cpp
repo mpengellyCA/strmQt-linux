@@ -19,6 +19,7 @@ private slots:
     void autoPlayNextEpisodeDefaultsOn();
     void densityDefaultsAndValidation();
     void themeAccentDefaultsAndValidation();
+    void reducedMotionDefaultsAndPersists();
     void volumeClampsAndPersists();
     void replayGainDefaultsOffAndValidates();
     void mutePersists();
@@ -84,6 +85,19 @@ void SettingsPrefsTest::themeAccentDefaultsAndValidation()
     Settings reloaded(ini);
     QCOMPARE(reloaded.themeAccent(), QStringLiteral("jellyfin"));
     QCOMPARE(Settings::themeAccents().size(), 4);
+}
+
+void SettingsPrefsTest::reducedMotionDefaultsAndPersists()
+{
+    QTemporaryDir dir;
+    const QString ini = dir.filePath(QStringLiteral("motion.ini"));
+    Settings settings(ini);
+    QVERIFY(!settings.reducedMotion());
+    QSignalSpy spy(&settings, &Settings::reducedMotionChanged);
+    settings.setReducedMotion(true);
+    settings.setReducedMotion(true);
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(Settings(ini).reducedMotion());
 }
 
 void SettingsPrefsTest::volumeClampsAndPersists()

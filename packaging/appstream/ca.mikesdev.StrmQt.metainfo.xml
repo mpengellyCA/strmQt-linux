@@ -22,7 +22,7 @@
       <li>Ten-foot interface: home rails, library grids, series drill-down, and search</li>
       <li>Resume playback, watched state, and favourites synchronised with the server</li>
       <li>MPRIS2 media controls, so KDE Connect and the Plasma applet just work</li>
-      <li>Credentials stored in KWallet, never in plain text on disk</li>
+      <li>Access tokens stored in KWallet, or kept session-only when no wallet is available</li>
       <li>HDR-aware tone mapping and screensaver inhibition during playback</li>
     </ul>
   </description>

@@ -1,6 +1,7 @@
 #include "Settings.h"
 
 #include <QRegularExpression>
+#include <QCryptographicHash>
 
 #include <QUuid>
 
@@ -15,6 +16,7 @@ const auto kEngineKey = QStringLiteral("playback/engine");
 const auto kToneMappingKey = QStringLiteral("playback/toneMapping");
 const auto kDensityKey = QStringLiteral("appearance/density");
 const auto kThemeAccentKey = QStringLiteral("appearance/accent");
+const auto kReducedMotionKey = QStringLiteral("appearance/reducedMotion");
 const auto kVolumeKey = QStringLiteral("playback/volume");
 const auto kMutedKey = QStringLiteral("playback/muted");
 const auto kReplayGainKey = QStringLiteral("playback/replayGain");
@@ -43,6 +45,26 @@ Settings::Settings(QObject *parent) : QObject(parent) {}
 Settings::Settings(const QString &iniFilePath, QObject *parent)
     : QObject(parent), m_store(iniFilePath, QSettings::IniFormat)
 {
+}
+
+QString Settings::sessionScope() const
+{
+    const QUrl url = serverUrl();
+    const QString user = userId();
+    if (url.isEmpty() || user.isEmpty())
+        return {};
+    const QByteArray identity = url.adjusted(QUrl::StripTrailingSlash)
+                                    .toString(QUrl::FullyEncoded)
+                                    .toUtf8() +
+                                '\0' + user.toUtf8();
+    return QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+}
+
+QString Settings::scopedKey(const QString &key) const
+{
+    const QString scope = sessionScope();
+    return scope.isEmpty() ? QString() : QStringLiteral("sessions/%1/%2").arg(scope, key);
 }
 
 QUrl Settings::serverUrl() const
@@ -146,6 +168,19 @@ void Settings::setThemeAccent(const QString &accent)
         return;
     m_store.setValue(kThemeAccentKey, accent);
     emit themeAccentChanged();
+}
+
+bool Settings::reducedMotion() const
+{
+    return m_store.value(kReducedMotionKey, false).toBool();
+}
+
+void Settings::setReducedMotion(bool reduced)
+{
+    if (reduced == reducedMotion())
+        return;
+    m_store.setValue(kReducedMotionKey, reduced);
+    emit reducedMotionChanged();
 }
 
 int Settings::volume() const
@@ -352,55 +387,59 @@ QString Settings::libraryViewMode(const QString &libraryKey) const
 {
     if (libraryKey.isEmpty())
         return {};
-    return m_store.value(QStringLiteral("libraryView/%1/mode").arg(libraryKey)).toString();
+    return m_store.value(scopedKey(QStringLiteral("libraryView/%1/mode").arg(libraryKey)))
+        .toString();
 }
 
 void Settings::setLibraryViewMode(const QString &libraryKey, const QString &mode)
 {
-    if (libraryKey.isEmpty())
+    const QString key = scopedKey(QStringLiteral("libraryView/%1/mode").arg(libraryKey));
+    if (libraryKey.isEmpty() || key.isEmpty())
         return;
-    m_store.setValue(QStringLiteral("libraryView/%1/mode").arg(libraryKey), mode);
+    m_store.setValue(key, mode);
 }
 
 int Settings::libraryCardSizeStep(const QString &libraryKey) const
 {
-    if (libraryKey.isEmpty())
+    const QString key = scopedKey(QStringLiteral("libraryView/%1/size").arg(libraryKey));
+    if (libraryKey.isEmpty() || key.isEmpty())
         return -1;
     bool ok = false;
-    const int step =
-        m_store.value(QStringLiteral("libraryView/%1/size").arg(libraryKey), -1).toInt(&ok);
+    const int step = m_store.value(key, -1).toInt(&ok);
     return ok ? step : -1;
 }
 
 void Settings::setLibraryCardSizeStep(const QString &libraryKey, int step)
 {
-    if (libraryKey.isEmpty())
+    const QString key = scopedKey(QStringLiteral("libraryView/%1/size").arg(libraryKey));
+    if (libraryKey.isEmpty() || key.isEmpty())
         return;
-    m_store.setValue(QStringLiteral("libraryView/%1/size").arg(libraryKey), step);
+    m_store.setValue(key, step);
 }
 
 void Settings::rememberTracks(const QString &itemId, const QString &mediaSourceId, int audioId,
                               int subtitleId)
 {
-    if (itemId.isEmpty())
+    const QString key = scopedKey(QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId));
+    if (itemId.isEmpty() || key.isEmpty())
         return;
-    const QString key = QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId);
     m_store.setValue(key, QStringLiteral("%1,%2").arg(audioId).arg(subtitleId));
 }
 
 bool Settings::hasRememberedTracks(const QString &itemId, const QString &mediaSourceId) const
 {
-    if (itemId.isEmpty())
+    const QString key = scopedKey(QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId));
+    if (itemId.isEmpty() || key.isEmpty())
         return false;
-    return m_store.contains(QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId));
+    return m_store.contains(key);
 }
 
 QPair<int, int> Settings::recalledTracks(const QString &itemId,
                                          const QString &mediaSourceId) const
 {
-    if (itemId.isEmpty())
+    const QString key = scopedKey(QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId));
+    if (itemId.isEmpty() || key.isEmpty())
         return {-1, -1};
-    const QString key = QStringLiteral("tracks/%1_%2").arg(itemId, mediaSourceId);
     const QStringList parts = m_store.value(key).toString().split(QLatin1Char(','));
     if (parts.size() != 2)
         return {-1, -1};
@@ -413,16 +452,18 @@ QPair<int, int> Settings::recalledTracks(const QString &itemId,
 
 QString Settings::rememberedVersion(const QString &itemId) const
 {
-    if (itemId.isEmpty())
+    const QString key = scopedKey(QStringLiteral("versions/%1").arg(itemId));
+    if (itemId.isEmpty() || key.isEmpty())
         return {};
-    return m_store.value(QStringLiteral("versions/%1").arg(itemId)).toString();
+    return m_store.value(key).toString();
 }
 
 void Settings::rememberVersion(const QString &itemId, const QString &mediaSourceId)
 {
-    if (itemId.isEmpty())
+    const QString key = scopedKey(QStringLiteral("versions/%1").arg(itemId));
+    if (itemId.isEmpty() || key.isEmpty())
         return;
-    m_store.setValue(QStringLiteral("versions/%1").arg(itemId), mediaSourceId);
+    m_store.setValue(key, mediaSourceId);
 }
 
 bool Settings::muted() const
@@ -476,29 +517,39 @@ void Settings::setPollIntervalSeconds(int seconds)
 
 void Settings::setLastPlayback(const QString &itemId, const QString &title, qint64 positionMs)
 {
-    m_store.setValue(kLastItemKey, itemId);
-    m_store.setValue(kLastTitleKey, title);
-    m_store.setValue(kLastPositionKey, positionMs);
+    const QString itemKey = scopedKey(kLastItemKey);
+    if (itemKey.isEmpty())
+        return;
+    m_store.setValue(itemKey, itemId);
+    m_store.setValue(scopedKey(kLastTitleKey), title);
+    m_store.setValue(scopedKey(kLastPositionKey), positionMs);
     m_store.sync(); // must survive a crash — flush now
 }
 
 QVariantMap Settings::lastPlayback() const
 {
-    const QString itemId = m_store.value(kLastItemKey).toString();
+    const QString itemKey = scopedKey(kLastItemKey);
+    if (itemKey.isEmpty())
+        return {};
+    const QString itemId = m_store.value(itemKey).toString();
     if (itemId.isEmpty())
         return {};
     QVariantMap map;
     map.insert(QStringLiteral("itemId"), itemId);
-    map.insert(QStringLiteral("title"), m_store.value(kLastTitleKey).toString());
-    map.insert(QStringLiteral("positionMs"), m_store.value(kLastPositionKey).toLongLong());
+    map.insert(QStringLiteral("title"), m_store.value(scopedKey(kLastTitleKey)).toString());
+    map.insert(QStringLiteral("positionMs"),
+               m_store.value(scopedKey(kLastPositionKey)).toLongLong());
     return map;
 }
 
 void Settings::clearLastPlayback()
 {
-    m_store.remove(kLastItemKey);
-    m_store.remove(kLastTitleKey);
-    m_store.remove(kLastPositionKey);
+    const QString itemKey = scopedKey(kLastItemKey);
+    if (itemKey.isEmpty())
+        return;
+    m_store.remove(itemKey);
+    m_store.remove(scopedKey(kLastTitleKey));
+    m_store.remove(scopedKey(kLastPositionKey));
     // A clean stop must be as durable as the crash-resume write. Otherwise a
     // power loss immediately after Stop can resurrect an already-cleared item
     // on the next launch.

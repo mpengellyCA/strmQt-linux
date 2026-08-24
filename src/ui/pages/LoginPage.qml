@@ -3,9 +3,9 @@ import StrmQt
 
 // First-run / logged-out state: server + credentials.
 //
-// Credentials are never stored. `Session.login()` exchanges them for a token
-// and only the token reaches SecretsStore; nothing here writes either field
-// anywhere, and the password field is cleared the moment a sign-in is issued.
+// The password is never stored. `Session.login()` exchanges it for a token;
+// KWallet persists that token when available, otherwise it remains in memory
+// for this process only. The password field is cleared as sign-in is issued.
 //
 // This is the first screen anyone sees, so it gets the projection-booth
 // treatment in full (ARCHITECTURE.md): warm near-black ground, one amber beam
@@ -172,7 +172,11 @@ FocusScope {
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: qsTr("StrmQt %1 · credentials are never stored").arg(Qt.application.version)
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: qsTr("StrmQt %1 · passwords are never stored · access tokens use KWallet or remain session-only")
+                      .arg(Qt.application.version)
             color: Theme.textTertiary
             font.family: Theme.fontMono
             font.pixelSize: Theme.fontCaption

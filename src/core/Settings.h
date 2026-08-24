@@ -25,6 +25,8 @@ class Settings : public QObject
     Q_PROPERTY(QString densityMode READ densityMode WRITE setDensityMode NOTIFY densityModeChanged)
     Q_PROPERTY(
         QString themeAccent READ themeAccent WRITE setThemeAccent NOTIFY themeAccentChanged)
+    Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY
+                   reducedMotionChanged)
     Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
     Q_PROPERTY(bool liveUpdatesEnabled READ liveUpdatesEnabled WRITE setLiveUpdatesEnabled NOTIFY
@@ -179,6 +181,8 @@ public:
     QString themeAccent() const;
     void setThemeAccent(const QString &accent);
     static QStringList themeAccents();
+    bool reducedMotion() const;
+    void setReducedMotion(bool reduced);
 
     // ── Playback volume (ARCHITECTURE.md) ────────────────────────────────────
     // 0–130, matching PlayerBackend::setVolume()'s contract; values outside the
@@ -220,12 +224,15 @@ signals:
     void usernameChanged();
     void densityModeChanged();
     void themeAccentChanged();
+    void reducedMotionChanged();
     void volumeChanged();
     void mutedChanged();
     void liveUpdatesEnabledChanged();
     void pollIntervalSecondsChanged();
 
 private:
+    QString sessionScope() const;
+    QString scopedKey(const QString &key) const;
     QSettings m_store;
 };
 

@@ -69,14 +69,20 @@ EmbyClient::EmbyClient(QObject *parent) : QObject(parent), m_nam(new QNetworkAcc
 void EmbyClient::setBaseUrl(const QUrl &url)
 {
     invalidateOutstandingRequests();
+    if (url == m_baseUrl)
+        return;
     m_baseUrl = url;
+    emit identityChanged();
 }
 
 void EmbyClient::setSession(const QString &accessToken, const QString &userId)
 {
     invalidateOutstandingRequests();
+    if (accessToken == m_accessToken && userId == m_userId)
+        return;
     m_accessToken = accessToken;
     m_userId = userId;
+    emit identityChanged();
 }
 
 EmbyClient::RequestContext EmbyClient::requestContext() const
@@ -270,6 +276,7 @@ QFuture<Result<SessionInfo>> EmbyClient::authenticateByName(const QString &usern
                 QStringLiteral("authentication response missing token or user id"));
         m_accessToken = session.accessToken;
         m_userId = session.user.id;
+        emit identityChanged();
         qCInfo(logServer) << "authenticated as" << session.user.name;
         return Result<SessionInfo>::success(session);
     });

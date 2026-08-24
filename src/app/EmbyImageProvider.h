@@ -4,9 +4,11 @@
 #include <QNetworkRequest>
 #include <QQuickAsyncImageProvider>
 #include <QQuickImageResponse>
+#include <QStringList>
 #include <QUrl>
 
 class QNetworkAccessManager;
+class QNetworkDiskCache;
 
 namespace strmqt {
 
@@ -80,9 +82,12 @@ signals:
 
 private:
     QNetworkRequest imageRequest(const QUrl &url) const;
+    void resetCachePartition();
 
     emby::EmbyClient *m_client;
     QNetworkAccessManager *m_nam;
+    QNetworkDiskCache *m_cache = nullptr;
+    QStringList m_exportDirectories;
 };
 
 // Resolves image://emby/{itemId}/{imageType}/{tag} (see MediaItemModel role URLs).

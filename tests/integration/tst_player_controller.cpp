@@ -101,6 +101,8 @@ void PlayerControllerTest::init()
     m_backend = new FakePlayerBackend(this);
     m_dir = new QTemporaryDir;
     m_settings = new Settings(m_dir->filePath(QStringLiteral("settings.ini")), this);
+    m_settings->setServerUrl(m_mock->baseUrl());
+    m_settings->setUserId(kUserId);
     m_controller = new PlayerController(m_client, m_backend, m_settings, this);
     m_controller->setTimingForTests(20, 2, 10);
 }

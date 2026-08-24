@@ -7,6 +7,8 @@
 #include <QDBusInterface>
 #include <QDBusReply>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -38,7 +40,7 @@ SecretsStore::SecretsStore(QObject *parent) : QObject(parent) {}
 SecretsStore::SecretsStore(const QString &fallbackFilePath, QObject *parent)
     : QObject(parent), m_walletProbed(true) // never touch the wallet
       ,
-      m_forcedFallbackPath(fallbackFilePath)
+      m_forcedFallbackPath(fallbackFilePath), m_storageMode(StorageMode::PlaintextFallback)
 {
 }
 
@@ -53,14 +55,17 @@ bool SecretsStore::ensureWallet()
     QDBusInterface wallet(kWalletService, kWalletPath, kWalletInterface,
                           QDBusConnection::sessionBus());
     if (!wallet.isValid()) {
-        qCWarning(logCore) << "kwalletd6 not reachable; secrets fall back to plaintext"
-                           << fallbackFilePath();
+        qCWarning(logCore) << "kwalletd6 not reachable; secrets are session-only";
+        m_storageMode = StorageMode::SessionOnly;
+        emit storageModeChanged();
         return false;
     }
 
     const QDBusReply<QString> walletName = wallet.call(QStringLiteral("networkWallet"));
     if (!walletName.isValid()) {
         qCWarning(logCore) << "networkWallet failed:" << walletName.error().message();
+        m_storageMode = StorageMode::SessionOnly;
+        emit storageModeChanged();
         return false;
     }
 
@@ -68,17 +73,45 @@ bool SecretsStore::ensureWallet()
     const QDBusReply<int> handle =
         wallet.call(QStringLiteral("open"), walletName.value(), qlonglong(0), appId());
     if (!handle.isValid() || handle.value() < 0) {
-        qCWarning(logCore) << "wallet open rejected or failed; secrets fall back to plaintext";
+        qCWarning(logCore) << "wallet open rejected or failed; secrets are session-only";
+        m_storageMode = StorageMode::SessionOnly;
+        emit storageModeChanged();
         return false;
     }
 
     m_walletHandle = handle.value();
+    m_storageMode = StorageMode::Wallet;
+    emit storageModeChanged();
+
+    // Migrate credentials written by older releases, then remove the plaintext
+    // file only if every wallet write succeeded.
+    const QString legacyPath = fallbackFilePath();
+    if (QFileInfo::exists(legacyPath)) {
+        QSettings legacy(legacyPath, QSettings::IniFormat);
+        bool migrated = true;
+        for (const QString &key : legacy.allKeys()) {
+            QDBusInterface target(kWalletService, kWalletPath, kWalletInterface,
+                                  QDBusConnection::sessionBus());
+            const QDBusReply<int> rc = target.call(QStringLiteral("writePassword"), m_walletHandle,
+                                                   kWalletFolder, key,
+                                                   legacy.value(key).toString(), appId());
+            migrated = migrated && rc.isValid() && rc.value() == 0;
+        }
+        if (migrated && QFile::remove(legacyPath))
+            qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
+    }
     return true;
 }
 
 bool SecretsStore::isWalletBacked()
 {
     return ensureWallet();
+}
+
+SecretsStore::StorageMode SecretsStore::storageMode()
+{
+    ensureWallet();
+    return m_storageMode;
 }
 
 QString SecretsStore::fallbackFilePath() const
@@ -103,10 +136,24 @@ bool SecretsStore::writeSecret(const QString &key, const QString &value)
         return false;
     }
 
+    if (m_storageMode != StorageMode::PlaintextFallback) {
+        m_sessionSecrets.insert(key, value);
+        return true;
+    }
+
     QSettings store(fallbackFilePath(), QSettings::IniFormat);
     store.setValue(key, value);
     store.sync();
-    return store.status() == QSettings::NoError;
+    const bool written = store.status() == QSettings::NoError && store.value(key).toString() == value;
+    const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    if (!written || !QFile::setPermissions(fallbackFilePath(), ownerOnly))
+        return false;
+    const QFile::Permissions actual = QFileInfo(fallbackFilePath()).permissions();
+    const QFile::Permissions exposed = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
+                                       QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                       QFileDevice::WriteOther | QFileDevice::ExeOther;
+    return actual.testFlag(QFileDevice::ReadOwner) &&
+           actual.testFlag(QFileDevice::WriteOwner) && !(actual & exposed);
 }
 
 QString SecretsStore::readSecret(const QString &key)
@@ -118,6 +165,9 @@ QString SecretsStore::readSecret(const QString &key)
         delete wallet;
         return value.isValid() ? value.value() : QString();
     }
+
+    if (m_storageMode != StorageMode::PlaintextFallback)
+        return m_sessionSecrets.value(key);
 
     QSettings store(fallbackFilePath(), QSettings::IniFormat);
     return store.value(key).toString();
@@ -133,10 +183,13 @@ bool SecretsStore::removeSecret(const QString &key)
         return rc.isValid() && rc.value() == 0;
     }
 
+    if (m_storageMode != StorageMode::PlaintextFallback)
+        return m_sessionSecrets.remove(key) > 0 || !m_sessionSecrets.contains(key);
+
     QSettings store(fallbackFilePath(), QSettings::IniFormat);
     store.remove(key);
     store.sync();
-    return true;
+    return store.status() == QSettings::NoError && !store.contains(key);
 }
 
 } // namespace strmqt

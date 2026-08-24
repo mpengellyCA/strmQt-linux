@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
 #include <QString>
 
 namespace strmqt {
@@ -11,29 +12,48 @@ namespace strmqt {
 class SecretsStore : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(StorageMode storageMode READ storageMode NOTIFY storageModeChanged)
+    Q_PROPERTY(bool persistent READ persistent NOTIFY storageModeChanged)
 
 public:
+    enum class StorageMode
+    {
+        Unknown,
+        Wallet,
+        SessionOnly,
+        PlaintextFallback,
+    };
+    Q_ENUM(StorageMode)
+
     explicit SecretsStore(QObject *parent = nullptr);
-    // Test/fallback-only constructor: bypass the wallet, store in this INI file.
+    // Test-only explicit plaintext mode: bypass the wallet and use this INI file.
     explicit SecretsStore(const QString &fallbackFilePath, QObject *parent = nullptr);
     ~SecretsStore() override;
 
-    // True when secrets are actually going to KWallet (not the plaintext fallback).
+    // True when secrets are actually going to KWallet.
     bool isWalletBacked();
+    StorageMode storageMode();
+    bool persistent() { return storageMode() == StorageMode::Wallet ||
+                               storageMode() == StorageMode::PlaintextFallback; }
 
     bool writeSecret(const QString &key, const QString &value);
     QString readSecret(const QString &key);
     bool removeSecret(const QString &key);
 
+signals:
+    void storageModeChanged();
+
 private:
     // Opens the wallet on first use. Returns false when kwalletd6 is unavailable
-    // or the user rejects access; the caller then uses the fallback.
+    // or the user rejects access; the caller then keeps secrets in memory only.
     bool ensureWallet();
     QString fallbackFilePath() const;
 
     bool m_walletProbed = false;
     int m_walletHandle = -1;
     QString m_forcedFallbackPath;
+    StorageMode m_storageMode = StorageMode::Unknown;
+    QHash<QString, QString> m_sessionSecrets;
 };
 
 } // namespace strmqt

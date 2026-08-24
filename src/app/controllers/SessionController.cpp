@@ -5,10 +5,43 @@
 #include "platform/SecretsStore.h"
 #include "server/emby/EmbyClient.h"
 
+#include <QCoreApplication>
+#include <QHostAddress>
+
 namespace strmqt {
 
 namespace {
 const auto kTokenSecretKey = QStringLiteral("emby/accessToken");
+
+QString serverUrlError(const QUrl &url)
+{
+    if (url.isEmpty())
+        return {};
+    if (!url.isValid() || url.host().isEmpty())
+        return QCoreApplication::translate("SessionController",
+                                           "Enter a complete server address with a host.");
+    const QString scheme = url.scheme().toLower();
+    if (scheme != QLatin1String("https") && scheme != QLatin1String("http"))
+        return QCoreApplication::translate("SessionController",
+                                           "The server address must use HTTPS or HTTP.");
+    if (!url.userName().isEmpty() || !url.password().isEmpty())
+        return QCoreApplication::translate("SessionController",
+                                           "Do not include credentials in the server address.");
+    if (url.hasQuery() || url.hasFragment())
+        return QCoreApplication::translate("SessionController",
+                                           "Remove the query or fragment from the server address.");
+    if (scheme == QLatin1String("http")) {
+        QHostAddress address;
+        const bool loopback = url.host().compare(QLatin1String("localhost"),
+                                                  Qt::CaseInsensitive) == 0 ||
+                              (address.setAddress(url.host()) && address.isLoopback());
+        if (!loopback)
+            return QCoreApplication::translate(
+                "SessionController",
+                "HTTPS is required for non-local servers because HTTP exposes your token.");
+    }
+    return {};
+}
 } // namespace
 
 SessionController::SessionController(Settings *settings, SecretsStore *secrets,
@@ -29,12 +62,21 @@ QUrl SessionController::serverUrl() const
 
 void SessionController::setServerUrl(const QUrl &url)
 {
-    if (url == m_settings->serverUrl())
+    const QString validationError = serverUrlError(url);
+    if (!validationError.isEmpty()) {
+        setError(validationError);
+        return;
+    }
+    QUrl normalized = url.adjusted(QUrl::StripTrailingSlash);
+    if (normalized.path() == QLatin1String("/"))
+        normalized.setPath({});
+    if (normalized == m_settings->serverUrl())
         return;
     beginSessionBoundary();
     clearCredentials();
-    m_settings->setServerUrl(url);
-    m_client->setBaseUrl(url);
+    m_settings->setServerUrl(normalized);
+    m_client->setBaseUrl(normalized);
+    setError({});
     emit serverUrlChanged();
 }
 
@@ -83,6 +125,11 @@ void SessionController::login(const QString &username, const QString &password)
         // the request fails somewhere in QtNetwork and surfaces as a URL error,
         // which does not tell the user what to do about it.
         setError(tr("Enter the address of your Emby server."));
+        return;
+    }
+    if (const QString validationError = serverUrlError(m_settings->serverUrl());
+        !validationError.isEmpty()) {
+        setError(validationError);
         return;
     }
     if (m_busy)

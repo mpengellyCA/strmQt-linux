@@ -1,6 +1,7 @@
 #include "SearchController.h"
 
 #include <QSettings>
+#include <QCryptographicHash>
 
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
@@ -12,7 +13,6 @@ constexpr int kDebounceMs = 350;
 constexpr int kResultLimit = 60;
 constexpr int kFacetLimit = 12;
 constexpr int kRecentLimit = 8;
-const auto kRecentKey = QStringLiteral("search/recent");
 
 // Person and genre rows carry an image tag but arrive as plain items, so the
 // provider URL is built the same way MediaItemModel does it.
@@ -45,9 +45,34 @@ SearchController::SearchController(emby::EmbyClient *client, QObject *parent)
 {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(kDebounceMs);
-    QSettings store;
-    m_recentQueries = store.value(kRecentKey).toStringList();
+    reloadRecentQueries();
+    connect(m_client, &emby::EmbyClient::identityChanged, this,
+            &SearchController::reloadRecentQueries);
     connect(&m_debounce, &QTimer::timeout, this, &SearchController::runSearch);
+}
+
+QString SearchController::recentKey() const
+{
+    if (m_client->baseUrl().isEmpty() || m_client->userId().isEmpty())
+        return {};
+    const QByteArray identity = m_client->baseUrl()
+                                    .adjusted(QUrl::StripTrailingSlash)
+                                    .toString(QUrl::FullyEncoded)
+                                    .toUtf8() +
+                                '\0' + m_client->userId().toUtf8();
+    const QString scope = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+    return QStringLiteral("sessions/%1/search/recent").arg(scope);
+}
+
+void SearchController::reloadRecentQueries()
+{
+    const QString key = recentKey();
+    const QStringList recent = key.isEmpty() ? QStringList() : QSettings().value(key).toStringList();
+    if (recent == m_recentQueries)
+        return;
+    m_recentQueries = recent;
+    emit recentQueriesChanged();
 }
 
 void SearchController::setQuery(const QString &query)
@@ -134,7 +159,9 @@ void SearchController::noteQueryUsed(const QString &query)
     m_recentQueries.prepend(trimmed);
     while (m_recentQueries.size() > kRecentLimit)
         m_recentQueries.removeLast();
-    QSettings().setValue(kRecentKey, m_recentQueries);
+    const QString key = recentKey();
+    if (!key.isEmpty())
+        QSettings().setValue(key, m_recentQueries);
     emit recentQueriesChanged();
 }
 
@@ -143,7 +170,9 @@ void SearchController::clearRecentQueries()
     if (m_recentQueries.isEmpty())
         return;
     m_recentQueries.clear();
-    QSettings().remove(kRecentKey);
+    const QString key = recentKey();
+    if (!key.isEmpty())
+        QSettings().remove(key);
     emit recentQueriesChanged();
 }
 

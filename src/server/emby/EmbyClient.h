@@ -248,6 +248,11 @@ public:
     QUrl imageUrl(const QString &itemId, const QString &imageType, int maxWidth,
                   const QString &tag = QString()) const;
 
+signals:
+    // Base URL/user/token jointly define the privacy boundary for caches and
+    // other retained presentation state.
+    void identityChanged();
+
 private:
     struct RequestContext
     {

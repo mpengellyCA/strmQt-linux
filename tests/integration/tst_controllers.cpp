@@ -38,6 +38,7 @@ private slots:
     void sessionWithoutServerDoesNotRestore();
     void logoutRetiresALateLogin();
     void serverChangeRetiresALateLogin();
+    void serverUrlPolicyRejectsUnsafeAddresses();
     void homeRefreshBuildsRails();
     void libraryPaging();
 
@@ -188,6 +189,31 @@ void ControllersTest::serverChangeRetiresALateLogin()
     QVERIFY(!session.authenticated());
     QVERIFY(!m_client->hasSession());
     QVERIFY(m_secrets->readSecret(QStringLiteral("emby/accessToken")).isEmpty());
+}
+
+void ControllersTest::serverUrlPolicyRejectsUnsafeAddresses()
+{
+    SessionController session(m_settings, m_secrets, m_client);
+    const QUrl original = session.serverUrl();
+
+    const QList<QUrl> rejected = {
+        QUrl(QStringLiteral("ftp://example.org")),
+        QUrl(QStringLiteral("https://user:password@example.org")),
+        QUrl(QStringLiteral("https:///missing-host")),
+        QUrl(QStringLiteral("http://example.org:8096")),
+        QUrl(QStringLiteral("https://example.org/path?token=secret")),
+    };
+    for (const QUrl &url : rejected) {
+        session.setServerUrl(url);
+        QCOMPARE(session.serverUrl(), original);
+        QVERIFY(!session.errorMessage().isEmpty());
+    }
+
+    session.setServerUrl(QUrl(QStringLiteral("http://127.0.0.1:8096/")));
+    QCOMPARE(session.serverUrl(), QUrl(QStringLiteral("http://127.0.0.1:8096")));
+    QVERIFY(session.errorMessage().isEmpty());
+    session.setServerUrl(QUrl(QStringLiteral("https://emby.example.org/")));
+    QCOMPARE(session.serverUrl(), QUrl(QStringLiteral("https://emby.example.org")));
 }
 
 void ControllersTest::homeRefreshBuildsRails()

@@ -57,6 +57,8 @@ signals:
 
 private:
     void runSearch();
+    QString recentKey() const;
+    void reloadRecentQueries();
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_model;

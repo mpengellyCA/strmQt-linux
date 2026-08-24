@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QFileInfo>
 
 #include "platform/SecretsStore.h"
 
@@ -26,7 +27,14 @@ void SecretsStoreTest::roundTrip()
     {
         SecretsStore store(path);
         QVERIFY(!store.isWalletBacked());
+        QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
         QVERIFY(store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("token-123")));
+        const QFileDevice::Permissions permissions = QFileInfo(path).permissions();
+        QVERIFY(permissions.testFlag(QFileDevice::ReadOwner));
+        QVERIFY(permissions.testFlag(QFileDevice::WriteOwner));
+        QVERIFY(!(permissions & (QFileDevice::ReadGroup | QFileDevice::WriteGroup |
+                                 QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                 QFileDevice::WriteOther | QFileDevice::ExeOther)));
     }
 
     SecretsStore reloaded(path);
