@@ -59,7 +59,7 @@ finish-args:
   # ── D-Bus ──────────────────────────────────────────────────────────────────
   # KWallet is the SecretsStore backend (AGENTS.md: no plaintext credentials).
   # Load-bearing: without this name the wallet is unreachable inside the sandbox
-  # and SecretsStore falls back to storing the Emby token in plaintext config.
+  # and SecretsStore keeps the Emby token in memory for this process only.
   - --talk-name=org.kde.kwalletd6
   # MPRIS2: media-key handling, KDE Connect remote control, Plasma media applet.
   - --own-name=org.mpris.MediaPlayer2.strmqt

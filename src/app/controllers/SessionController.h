@@ -41,10 +41,11 @@ public:
     QString playbackEngine() const;
     void setPlaybackEngine(const QString &engine); // applies on next launch
 
-    // Restores token/user from storage; returns true when a session was restored.
+    // Starts an asynchronous token restore. The window is already available
+    // while KWallet opens; authenticatedChanged announces a successful restore.
     QVariantList publicUsers() const { return m_publicUsers; }
 
-    Q_INVOKABLE bool restore();
+    Q_INVOKABLE void restore();
     Q_INVOKABLE void login(const QString &username, const QString &password);
     Q_INVOKABLE void logout();
     // Sign out and return to the login screen WITHOUT forgetting the server —
@@ -70,7 +71,7 @@ signals:
 
 private:
     quint64 beginSessionBoundary();
-    void clearCredentials();
+    void clearCredentials(quint64 epoch);
     void setBusy(bool busy);
     void setError(const QString &message);
     void setAuthenticated(bool authenticated);
@@ -80,6 +81,7 @@ private:
     emby::EmbyClient *m_client;
     bool m_authenticated = false;
     bool m_busy = false;
+    bool m_restorePending = false;
     QString m_errorMessage;
     QVariantList m_publicUsers;
     quint64 m_epoch = 0;

@@ -115,7 +115,12 @@ void printItems(const QList<MediaItem> &items)
 // piece is missing (caller should suggest `login`).
 bool restoreSession(emby::EmbyClient &client, Settings &settings, SecretsStore &secrets)
 {
-    const QString token = secrets.readSecret(kTokenSecretKey);
+    const Result<QString> stored = await(secrets.readSecret(kTokenSecretKey));
+    if (!stored.ok()) {
+        err() << "warning: could not read the saved access token: " << stored.error << "\n";
+        return false;
+    }
+    const QString token = stored.value;
     const QString userId = settings.userId();
     if (token.isEmpty() || userId.isEmpty())
         return false;
@@ -162,22 +167,29 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
     settings.setServerUrl(client.baseUrl());
     settings.setUsername(result.value.user.name);
     settings.setUserId(result.value.user.id);
-    if (!secrets.writeSecret(kTokenSecretKey, result.value.accessToken)) {
+    const Result<bool> stored =
+        await(secrets.writeSecret(kTokenSecretKey, result.value.accessToken));
+    if (!stored.ok()) {
         err() << "warning: could not persist the access token; you will need to log in "
                  "again next time.\n";
     }
 
     out() << "Logged in as " << result.value.user.name
           << (secrets.isWalletBacked() ? " (token stored in KWallet)\n"
-                                       : " (token stored in fallback file)\n");
+                                       : " (token kept for this process only)\n");
     return 0;
 }
 
 int commandLogout(Settings &settings, SecretsStore &secrets)
 {
-    secrets.removeSecret(kTokenSecretKey);
+    const Result<bool> removed = await(secrets.removeSecret(kTokenSecretKey));
     settings.setUserId(QString());
-    out() << "Logged out; stored token removed.\n";
+    if (!removed.ok()) {
+        err() << "warning: logged out, but the saved token could not be removed: " << removed.error
+              << "\n";
+        return 1;
+    }
+    out() << "Logged out; saved token removed.\n";
     return 0;
 }
 

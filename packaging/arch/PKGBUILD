@@ -43,7 +43,7 @@ depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg'
 # Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).
 makedepends=('cmake' 'ninja' 'pkgconf' 'git')
 optdepends=(
-  'kwallet: store Emby credentials in KWallet instead of a plaintext INI file'
+  'kwallet: persist the Emby access token between sessions'
   'kscreen: HDR display detection via kscreen-doctor'
 )
 

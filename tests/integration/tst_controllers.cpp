@@ -1,6 +1,8 @@
+#include <QFutureWatcher>
 #include <QSignalSpy>
 #include <QtTest>
 
+#include "FakeSecretsStore.h"
 #include "MockEmbyServer.h"
 #include "app/controllers/HomeController.h"
 #include "app/controllers/LibraryController.h"
@@ -23,6 +25,23 @@ QString fixturePath(const QString &name)
 const auto kUserId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
 const auto kToken = QStringLiteral("not-a-real-token-fixture-only");
 
+template<class T> Result<T> awaitResult(QFuture<Result<T>> future)
+{
+    if (!future.isFinished()) {
+        QEventLoop loop;
+        QFutureWatcher<Result<T>> watcher;
+        QObject::connect(&watcher, &QFutureWatcher<Result<T>>::finished, &loop, &QEventLoop::quit);
+        watcher.setFuture(future);
+        loop.exec();
+    }
+    return future.result();
+}
+
+bool lastSecretCallIs(const test::FakeSecretsStore &store, test::FakeSecretsStore::CallType type)
+{
+    return !store.calls.isEmpty() && store.calls.last().type == type;
+}
+
 } // namespace
 
 class ControllersTest : public QObject
@@ -39,6 +58,9 @@ private slots:
     void publicUserImagesUseSessionNamespace();
     void logoutRetiresALateLogin();
     void serverChangeRetiresALateLogin();
+    void delayedWalletRestoreIsRetiredByLogout();
+    void loginSupersedesADelayedWalletRestore();
+    void logoutDuringDelayedTokenWriteCannotReauthenticate();
     void serverUrlPolicyRejectsUnsafeAddresses();
     void homeRefreshBuildsRails();
     void homeSessionResetRetiresOldCountersAndGenreCallbacks();
@@ -104,25 +126,25 @@ void ControllersTest::sessionLoginPersistsAndRestores()
                                      fixturePath(QStringLiteral("auth_by_name.json"))));
 
     SessionController session(m_settings, m_secrets, m_client);
-    QVERIFY(!session.restore()); // nothing stored yet
+    session.restore(); // nothing stored yet
     QVERIFY(!session.authenticated());
 
     session.login(QStringLiteral("mike"), QStringLiteral("pw"));
     QTRY_VERIFY(session.authenticated());
     QCOMPARE(session.username(), QStringLiteral("mike"));
-    QCOMPARE(m_secrets->readSecret(QStringLiteral("emby/accessToken")), kToken);
+    QCOMPARE(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value, kToken);
 
     // A fresh controller + client restores the same session from storage.
     emby::EmbyClient freshClient;
     SessionController restored(m_settings, m_secrets, &freshClient);
-    QVERIFY(restored.restore());
-    QVERIFY(restored.authenticated());
+    restored.restore();
+    QTRY_VERIFY(restored.authenticated());
     QCOMPARE(freshClient.accessToken(), kToken);
     QCOMPARE(freshClient.userId(), kUserId);
 
     restored.logout();
     QVERIFY(!restored.authenticated());
-    QCOMPARE(m_secrets->readSecret(QStringLiteral("emby/accessToken")), QString());
+    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
 }
 
 // A stored credential with no server address must NOT come back as a session.
@@ -143,11 +165,11 @@ void ControllersTest::sessionWithoutServerDoesNotRestore()
 
     // The credential survives; only the address is gone.
     m_settings->setServerUrl(QUrl());
-    QCOMPARE(m_secrets->readSecret(QStringLiteral("emby/accessToken")), kToken);
+    QCOMPARE(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value, kToken);
 
     emby::EmbyClient freshClient;
     SessionController restored(m_settings, m_secrets, &freshClient);
-    QVERIFY(!restored.restore());
+    restored.restore();
     QVERIFY(!restored.authenticated());
     QVERIFY(!restored.errorMessage().isEmpty()); // the login screen has to say why
 }
@@ -183,7 +205,7 @@ void ControllersTest::logoutRetiresALateLogin()
     QTest::qWait(260);
     QVERIFY(!session.authenticated());
     QVERIFY(!m_client->hasSession());
-    QVERIFY(m_secrets->readSecret(QStringLiteral("emby/accessToken")).isEmpty());
+    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
 }
 
 void ControllersTest::serverChangeRetiresALateLogin()
@@ -206,7 +228,97 @@ void ControllersTest::serverChangeRetiresALateLogin()
     QCOMPARE(m_client->baseUrl(), nextServer.baseUrl());
     QVERIFY(!session.authenticated());
     QVERIFY(!m_client->hasSession());
-    QVERIFY(m_secrets->readSecret(QStringLiteral("emby/accessToken")).isEmpty());
+    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
+}
+
+void ControllersTest::delayedWalletRestoreIsRetiredByLogout()
+{
+    test::FakeSecretsStore secrets;
+    secrets.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("missing-legacy.ini")));
+    m_settings->setUsername(QStringLiteral("old-user"));
+    m_settings->setUserId(kUserId);
+
+    SessionController session(m_settings, &secrets, m_client);
+    session.restore();
+    QVERIFY(session.busy());
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::NetworkWallet));
+    secrets.replyNetworkWallet(true);
+    QCOMPARE(secrets.calls.last().type, test::FakeSecretsStore::CallType::Open);
+    secrets.replyOpen(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Read));
+
+    session.logout();
+    QVERIFY(!session.busy());
+    secrets.replyRead(true, kToken);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
+    secrets.replyRemove(true);
+    QCoreApplication::processEvents();
+
+    QVERIFY(!session.authenticated());
+    QVERIFY(!m_client->hasSession());
+    QVERIFY(m_settings->userId().isEmpty());
+}
+
+void ControllersTest::logoutDuringDelayedTokenWriteCannotReauthenticate()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+    test::FakeSecretsStore secrets;
+    secrets.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("missing-legacy.ini")));
+
+    SessionController session(m_settings, &secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::NetworkWallet));
+    secrets.replyNetworkWallet(true);
+    secrets.replyOpen(true);
+    // login() clears the previous persisted token before admitting the new one.
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
+    secrets.replyRemove(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Write));
+    QVERIFY(session.busy());
+
+    session.logout();
+    QVERIFY(!m_client->hasSession());
+    secrets.replyWrite(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
+    secrets.replyRemove(true);
+    QCoreApplication::processEvents();
+
+    QVERIFY(!session.authenticated());
+    QVERIFY(!session.busy());
+    QVERIFY(!m_client->hasSession());
+    QVERIFY(m_settings->userId().isEmpty());
+}
+
+void ControllersTest::loginSupersedesADelayedWalletRestore()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+    test::FakeSecretsStore secrets;
+    secrets.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("missing-legacy.ini")));
+    m_settings->setUsername(QStringLiteral("old-user"));
+    m_settings->setUserId(QStringLiteral("old-id"));
+
+    SessionController session(m_settings, &secrets, m_client);
+    session.restore();
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::NetworkWallet));
+    secrets.replyNetworkWallet(true);
+    secrets.replyOpen(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Read));
+
+    // The sign-in gesture must remain usable while a wallet daemon is slow.
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    secrets.replyRead(true, QStringLiteral("retired-token"));
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
+    secrets.replyRemove(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Write));
+    secrets.replyWrite(true);
+
+    QTRY_VERIFY(session.authenticated());
+    QCOMPARE(m_client->accessToken(), kToken);
+    QCOMPARE(m_client->userId(), kUserId);
 }
 
 void ControllersTest::serverUrlPolicyRejectsUnsafeAddresses()

@@ -73,8 +73,8 @@ void SessionController::setServerUrl(const QUrl &url)
         normalized.setPath({});
     if (normalized == m_settings->serverUrl())
         return;
-    beginSessionBoundary();
-    clearCredentials();
+    const quint64 epoch = beginSessionBoundary();
+    clearCredentials(epoch);
     m_settings->setServerUrl(normalized);
     m_client->setBaseUrl(normalized);
     setError({});
@@ -94,13 +94,14 @@ void SessionController::setPlaybackEngine(const QString &engine)
     emit playbackEngineChanged();
 }
 
-bool SessionController::restore()
+void SessionController::restore()
 {
+    if (m_busy)
+        return;
     m_client->setBaseUrl(m_settings->serverUrl());
-    const QString token = m_secrets->readSecret(kTokenSecretKey);
     const QString userId = m_settings->userId();
-    if (token.isEmpty() || userId.isEmpty())
-        return false;
+    if (userId.isEmpty())
+        return;
     // A credential is not a session: without an address there is nowhere to
     // send it. Restoring on the token alone brought the app up looking signed
     // in, with every request failing as `Protocol "" is unknown` and no way
@@ -111,13 +112,30 @@ bool SessionController::restore()
         qCWarning(logApp) << "session for" << m_settings->username()
                           << "has no server address; signing in again";
         setError(tr("Enter the address of your Emby server to sign in again."));
-        return false;
+        return;
     }
-    m_client->setSession(token, userId);
-    m_settings->migrateLegacySessionData();
-    setAuthenticated(true);
-    qCInfo(logApp) << "session restored for user" << m_settings->username();
-    return true;
+
+    const quint64 epoch = m_epoch;
+    m_restorePending = true;
+    setBusy(true);
+    m_secrets->readSecret(kTokenSecretKey)
+        .then(this, [this, epoch, userId](const Result<QString> &result) {
+            if (epoch != m_epoch)
+                return;
+            m_restorePending = false;
+            setBusy(false);
+            if (!result.ok()) {
+                qCWarning(logApp) << "could not read persisted access token:" << result.error;
+                setError(tr("Could not read the saved sign-in. Sign in again to continue."));
+                return;
+            }
+            if (result.value.isEmpty())
+                return;
+            m_client->setSession(result.value, userId);
+            m_settings->migrateLegacySessionData();
+            setAuthenticated(true);
+            qCInfo(logApp) << "session restored for user" << m_settings->username();
+        });
 }
 
 void SessionController::login(const QString &username, const QString &password)
@@ -134,10 +152,12 @@ void SessionController::login(const QString &username, const QString &password)
         setError(validationError);
         return;
     }
-    if (m_busy)
+    // A user who is already at the login page may supersede a slow wallet
+    // restore. Double-submit during an actual authentication remains blocked.
+    if (m_busy && !m_restorePending)
         return;
     const quint64 epoch = beginSessionBoundary();
-    clearCredentials();
+    clearCredentials(epoch);
     setError({});
     setBusy(true);
     m_client->setBaseUrl(m_settings->serverUrl());
@@ -146,8 +166,8 @@ void SessionController::login(const QString &username, const QString &password)
         .then(this, [this, epoch](const Result<SessionInfo> &result) {
             if (epoch != m_epoch)
                 return;
-            setBusy(false);
             if (!result.ok()) {
+                setBusy(false);
                 setError(result.error);
                 return;
             }
@@ -157,16 +177,22 @@ void SessionController::login(const QString &username, const QString &password)
             // Server and user are both known only now, which is the earliest
             // point the pre-scoping keys have an owner to be adopted by.
             m_settings->migrateLegacySessionData();
-            if (!m_secrets->writeSecret(kTokenSecretKey, result.value.accessToken))
-                qCWarning(logApp) << "could not persist access token";
-            setAuthenticated(true);
+            m_secrets->writeSecret(kTokenSecretKey, result.value.accessToken)
+                .then(this, [this, epoch](const Result<bool> &stored) {
+                    if (epoch != m_epoch)
+                        return;
+                    if (!stored.ok())
+                        qCWarning(logApp) << "could not persist access token:" << stored.error;
+                    setBusy(false);
+                    setAuthenticated(true);
+                });
         });
 }
 
 void SessionController::logout()
 {
-    beginSessionBoundary();
-    clearCredentials();
+    const quint64 epoch = beginSessionBoundary();
+    clearCredentials(epoch);
 }
 
 void SessionController::switchUser()
@@ -209,6 +235,8 @@ void SessionController::loadPublicUsers()
 quint64 SessionController::beginSessionBoundary()
 {
     const quint64 epoch = ++m_epoch;
+    m_secrets->beginIdentity();
+    m_restorePending = false;
     // The boundary itself retires server work, not the credential clearing that
     // follows it: logging out mid-login leaves the client's identity unchanged
     // (empty to empty), and that reply must still be dropped rather than
@@ -223,10 +251,12 @@ quint64 SessionController::beginSessionBoundary()
     return epoch;
 }
 
-void SessionController::clearCredentials()
+void SessionController::clearCredentials(quint64 epoch)
 {
-    if (!m_secrets->removeSecret(kTokenSecretKey))
-        qCWarning(logApp) << "could not remove persisted access token";
+    m_secrets->removeSecret(kTokenSecretKey).then(this, [this, epoch](const Result<bool> &removed) {
+        if (epoch == m_epoch && !removed.ok())
+            qCWarning(logApp) << "could not remove persisted access token:" << removed.error;
+    });
     m_settings->setUserId({});
     m_client->setSession({}, {});
     setAuthenticated(false);
