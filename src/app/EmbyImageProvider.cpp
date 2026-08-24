@@ -8,6 +8,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QNetworkAccessManager>
@@ -126,6 +127,23 @@ void pruneExports(const QDir &dir)
     const QFileInfoList files = dir.entryInfoList(QDir::Files, QDir::Time);
     for (qsizetype i = kMaxExportedFiles; i < files.size(); ++i)
         QFile::remove(files.at(i).absoluteFilePath());
+}
+
+void sweepRetiredAssets()
+{
+    const QString imagesRoot =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+        QStringLiteral("/images");
+    QDirIterator it(imagesRoot, {QStringLiteral("assets.retired-*")},
+                    QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    QStringList retiredPaths;
+    while (it.hasNext())
+        retiredPaths.append(it.next());
+    for (const QString &path : std::as_const(retiredPaths)) {
+        QDir retired(path);
+        if (retired.exists() && !retired.removeRecursively())
+            qCWarning(logApp) << "could not remove retired image cache" << path;
+    }
 }
 
 } // namespace
@@ -292,7 +310,14 @@ void EmbyImageFetcher::schedulePartitionMaintenance(const CachePartitionPtr &par
 {
     // Startup pruning and partition cleanup are filesystem scans, never GUI
     // work. A per-partition mutex orders them against stores from decode jobs.
-    m_decodePool.start([partition] { pruneAssets(partition, /*lockIo=*/true); });
+    m_decodePool.start([partition] {
+        pruneAssets(partition, /*lockIo=*/true);
+        // A crash or a transient removal failure can strand a tombstone outside
+        // the active assets directory and therefore outside its 512 MiB cap.
+        // Retrying every maintenance pass keeps those retired generations from
+        // accumulating indefinitely.
+        sweepRetiredAssets();
+    });
     if (!outgoing || outgoing->assetDir == partition->assetDir)
         return;
     QSemaphore *cleanupGate = nullptr;
@@ -321,7 +346,9 @@ void EmbyImageFetcher::schedulePartitionMaintenance(const CachePartitionPtr &par
             if (!QDir().rename(outgoing->assetDir, retiredPath))
                 return;
         }
-        QDir(retiredPath).removeRecursively();
+        QDir retired(retiredPath);
+        if (!retired.removeRecursively() && retired.exists())
+            qCWarning(logApp) << "could not remove retired image cache" << retiredPath;
     });
 }
 
@@ -601,8 +628,13 @@ void EmbyImageFetcher::exportToFile(const QString &id, const QString &subdir)
         }
         if (!m_exportDirectories.contains(dir.absolutePath()))
             m_exportDirectories.append(dir.absolutePath());
-        const QString path = dir.filePath(safeName(parts[0]) + QLatin1Char('-') +
-                                          safeName(parts[2]) + QLatin1Char('.') + suffix);
+        // External consumers cache by URL, so deleting A's file is insufficient
+        // if B then recreates the same path. The provider's opaque per-process,
+        // per-identity generation makes the URL itself a session boundary.
+        const QString path =
+            dir.filePath(safeName(partition->sourceNamespace) + QLatin1Char('-') +
+                         safeName(parts[0]) + QLatin1Char('-') + safeName(parts[2]) +
+                         QLatin1Char('.') + suffix);
 
         // QSaveFile, not QFile: another process reads this path, and a partial
         // write is a corrupt image rather than a missing one.

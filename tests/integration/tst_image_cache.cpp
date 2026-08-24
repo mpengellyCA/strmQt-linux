@@ -55,7 +55,8 @@ private slots:
     void identitySwitchRejectsDelayedOldWork();
     void qmlPixmapCacheSeparatesIdentityNamespaces();
     void delayedCleanupCannotDeleteReactivatedPartition();
-    void persistedMprisExportIsRemovedByNewFetcher();
+    void mprisExportsArePartitionedAndRetired();
+    void startupRemovesRetiredAssetTombstones();
     void startupPrunesAnOversizedAssetPartition();
 
 private:
@@ -324,7 +325,7 @@ void ImageCacheTest::delayedCleanupCannotDeleteReactivatedPartition()
 // Export paths were registered only after a successful export in the current
 // process. A freshly constructed fetcher therefore knew nothing about artwork
 // an earlier process left for Plasma and could not remove it at logout.
-void ImageCacheTest::persistedMprisExportIsRemovedByNewFetcher()
+void ImageCacheTest::mprisExportsArePartitionedAndRetired()
 {
     QSignalSpy exported(m_fetcher, &EmbyImageFetcher::fileExported);
     m_fetcher->exportToFile(kImageId, QStringLiteral("mpris"));
@@ -333,11 +334,49 @@ void ImageCacheTest::persistedMprisExportIsRemovedByNewFetcher()
     const QString exportedPath = exported.at(0).at(1).toUrl().toLocalFile();
     QVERIFY(!exportedPath.isEmpty());
     QVERIFY(QFileInfo::exists(exportedPath));
+    const QImage firstImage(exportedPath);
+    QVERIFY(!firstImage.isNull());
 
-    delete m_fetcher;
-    m_fetcher = new EmbyImageFetcher(m_client, this);
+    // B can have the same Emby item id and tag but different bytes. Removing
+    // A's file is not enough: external MPRIS clients cache by URL, so B must
+    // receive a distinct path as well.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"),
+                     200, pngBytes(120, 80, Qt::blue), "image/png");
     m_client->setSession(kToken, QStringLiteral("second-user"));
     QVERIFY(!QFileInfo::exists(exportedPath));
+    m_fetcher->exportToFile(kImageId, QStringLiteral("mpris"));
+    QTRY_COMPARE_WITH_TIMEOUT(exported.count(), 2, 5000);
+    const QString secondPath = exported.at(1).at(1).toUrl().toLocalFile();
+    QVERIFY(!secondPath.isEmpty());
+    QVERIFY(secondPath != exportedPath);
+    QVERIFY(QFileInfo::exists(secondPath));
+    const QImage secondImage(secondPath);
+    QVERIFY(!secondImage.isNull());
+    QVERIFY(firstImage.pixelColor(0, 0) != secondImage.pixelColor(0, 0));
+
+    // A fresh process still knows the supported export directory before its
+    // first partition reset and removes the file left for the prior session.
+    delete m_fetcher;
+    m_fetcher = new EmbyImageFetcher(m_client, this);
+    QVERIFY(!QFileInfo::exists(secondPath));
+}
+
+void ImageCacheTest::startupRemovesRetiredAssetTombstones()
+{
+    delete m_fetcher;
+    m_fetcher = nullptr;
+
+    QDir tombstone(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                   QStringLiteral("/images/orphan/assets.retired-crashed-generation"));
+    QVERIFY(tombstone.mkpath(QStringLiteral(".")));
+    QFile stranded(tombstone.filePath(QStringLiteral("stranded-image")));
+    QVERIFY(stranded.open(QIODevice::WriteOnly));
+    QCOMPARE(stranded.write("old pixels"), qint64(10));
+    stranded.close();
+
+    m_fetcher = new EmbyImageFetcher(m_client, this);
+    m_fetcher->waitForMaintenanceForTests();
+    QVERIFY(!tombstone.exists());
 }
 
 void ImageCacheTest::startupPrunesAnOversizedAssetPartition()
