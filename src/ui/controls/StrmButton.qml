@@ -167,7 +167,7 @@ Item {
         color: button.labelColor
 
         RotationAnimation on rotation {
-            running: button.busy
+            running: button.busy && !Theme.reducedMotion
             from: 0
             to: 360
             duration: Theme.animAmbient

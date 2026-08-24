@@ -72,6 +72,14 @@ Item {
     // already lifted off the bar while the page builds behind it.
     function place(frame: rect, radius: real): void {
         travel.stop();
+        // Reduced motion keeps the signature's two designed endpoints but
+        // removes the spatial flight between them. The surrounding chrome also
+        // swaps instantly through Theme's zero-duration policy.
+        if (Theme.reducedMotion) {
+            sleeve.visible = false;
+            flight.landed();
+            return;
+        }
         sleeve.x = frame.x;
         sleeve.y = frame.y;
         sleeve.width = frame.width;
@@ -86,6 +94,10 @@ Item {
     // the animations restart from wherever the square has got to, which is what
     // makes "expand, then immediately minimise" a turn rather than a jump.
     function flyTo(frame: rect, radius: real): void {
+        if (Theme.reducedMotion) {
+            flight.cancel();
+            return;
+        }
         if (!sleeve.visible || frame.width <= 0 || frame.height <= 0) {
             flight.cancel();
             return;

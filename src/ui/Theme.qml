@@ -79,7 +79,10 @@ QtObject {
 
     readonly property color textPrimaryColor: "#F5F1EA"
     readonly property color textSecondaryColor: "#A29A8E"
-    readonly property color textTertiary: "#6E675E"
+    // Small informative copy (timecodes, durations, codec/readout captions)
+    // uses this role throughout the player. #928A80 remains visibly quieter
+    // than secondary text while clearing 4.5:1 even on surfaceOverlay.
+    readonly property color textTertiary: "#928A80"
     readonly property color textDisabled: "#4A453F"
 
     // Semantic, deliberately separate from the accent.
@@ -169,10 +172,12 @@ QtObject {
     // The rule that matters more than the numbers: hover is `instant`, focus is
     // `fast`. Hover must track the cursor with no perceived lag; focus is a
     // deliberate act and can afford to glide (ARCHITECTURE.md).
-    readonly property int animInstant: 90
-    readonly property int animFastMs: 160
-    readonly property int animNormalMs: 240
-    readonly property int animSlow: 420
+    property bool reducedMotion: typeof Prefs !== "undefined" ? Prefs.reducedMotion : false
+
+    readonly property int animInstant: theme.reducedMotion ? 0 : 90
+    readonly property int animFastMs: theme.reducedMotion ? 0 : 160
+    readonly property int animNormalMs: theme.reducedMotion ? 0 : 240
+    readonly property int animSlow: theme.reducedMotion ? 0 : 420
     readonly property int animAmbient: 1200
 
     readonly property int easeInstant: Easing.OutQuad

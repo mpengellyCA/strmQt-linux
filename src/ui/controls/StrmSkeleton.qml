@@ -15,7 +15,7 @@ Rectangle {
     id: skeleton
 
     property bool active: true
-    property bool reduceMotion: false
+    property bool reduceMotion: Theme.reducedMotion
 
     radius: Theme.radiusCardValue
     color: Theme.surfaceColor
