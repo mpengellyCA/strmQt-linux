@@ -43,10 +43,12 @@ QHash<int, QByteArray> LibraryListModel::roleNames() const
 
 void LibraryListModel::setLibraries(QList<Library> libraries)
 {
+    const int oldCount = static_cast<int>(m_libraries.size());
     beginResetModel();
     m_libraries = std::move(libraries);
     endResetModel();
-    emit countChanged();
+    if (oldCount != static_cast<int>(m_libraries.size()))
+        emit countChanged();
 }
 
 } // namespace strmqt

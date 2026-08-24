@@ -30,69 +30,10 @@ FocusScope {
 
     signal openLibrary(string libraryId, string name, string collectionType)
 
-    // ── Genre rails (ARCHITECTURE.md) ─────────────────────────────────────────
-    // A genre is a destination, not a word under a poster: `HomeCtl.genreRails`
-    // is the same {title, model} shape as `latestRails` plus the genre's own id,
-    // and each one renders as an ordinary rail whose "See all" opens the full
-    // genre through `Actions.browseGenre`.
-    //
-    // The property does not exist in HomeController yet — it is the one thing
-    // this wave hands back (see the report; the exact contract is
-    // `Q_PROPERTY(QVariantList genreRails ...)` with entries
-    // {title, genreId, model}). It is read defensively rather than assumed,
-    // because that is the difference between "the rails appear the day the
-    // property lands" and "Home breaks today": an absent property on a context
-    // object reads as undefined, and `railsData` must survive that. The same
-    // capability-check pattern LibraryPage uses for `Prefs.libraryViewMode`.
-    //
-    // They are appended *last* deliberately. Home is the front door, the rail
-    // ListView only builds what is near the viewport, and everything above them
-    // is what the user came for — so genre rails cost nothing until scrolled to,
-    // whatever order the fetches complete in.
-    readonly property var genreRails: {
-        const rails = HomeCtl.genreRails
-        return (rails === undefined || rails === null) ? [] : rails
-    }
-
-    // Rail descriptors for the vertical list; rebuilt when models change shape.
-    // `genreId` is empty for every rail that is not a genre, and its emptiness
-    // is what decides whether the rail offers a "See all" at all — a "See all"
-    // on Continue Watching would have nowhere to go.
-    readonly property var railsData: {
-        var rails = []
-        if (HomeCtl.resume.count > 0)
-            // Wide: these two are mostly episodes, whose art IS 16:9. A movie in
-            // the same rail has a Thumb the server already provides.
-            rails.push({ title: qsTr("Continue Watching"), model: HomeCtl.resume,
-                         library: false, wide: true, genreId: "" })
-        if (HomeCtl.nextUp.count > 0)
-            rails.push({ title: qsTr("Next Up"), model: HomeCtl.nextUp,
-                         library: false, wide: true, genreId: "" })
-        if (HomeCtl.libraries.count > 0)
-            rails.push({ title: qsTr("Libraries"), model: HomeCtl.libraries,
-                         library: true, wide: false, genreId: "" })
-        if (HomeCtl.favorites.count > 0)
-            rails.push({ title: qsTr("Favorites"), model: HomeCtl.favorites,
-                         library: false, wide: false, genreId: "" })
-        for (var i = 0; i < HomeCtl.latestRails.length; ++i) {
-            var rail = HomeCtl.latestRails[i]
-            rails.push({ title: rail.title, model: rail.model,
-                         library: false, wide: false, genreId: "" })
-        }
-        const genres = page.genreRails
-        for (var g = 0; g < genres.length; ++g) {
-            const genre = genres[g]
-            if (!genre || !genre.model || genre.model.count === 0)
-                continue
-            const genreId = (genre.genreId === undefined || genre.genreId === null)
-                            ? "" : String(genre.genreId)
-            rails.push({ title: genre.title, model: genre.model,
-                         library: false, wide: false, genreId: genreId })
-        }
-        return rails
-    }
-
-    readonly property bool hasContent: page.railsData.length > 0
+    // HomeCtl.rails is a stable keyed QAbstractListModel. Each child model can
+    // reset or change count without replacing this vertical model, so sibling
+    // rail delegates and their image trees survive content refreshes.
+    readonly property bool hasContent: HomeCtl.rails.count > 0
     readonly property bool showLoading: HomeCtl.busy && !page.hasContent
     readonly property bool showError: !HomeCtl.busy && !page.hasContent
                                       && HomeCtl.errorMessage.length > 0
@@ -220,7 +161,7 @@ FocusScope {
         }
     }
 
-    onRailsDataChanged: {
+    onHasContentChanged: {
         if (!page.hasContent) {
             page.washFocusUrl = ""
             page.washHoverUrl = ""
@@ -326,7 +267,7 @@ FocusScope {
         // its active focus and does not hand it back when it reappears, so the
         // rails stay visible-but-empty and only the focus moves.
         focus: page.hasContent
-        model: page.railsData
+        model: HomeCtl.rails
         // Preserved verbatim from the prototype: no wrapping, and ApplyRange so
         // the focused rail is never jammed against the top or bottom edge.
         keyNavigationWraps: false
@@ -346,21 +287,21 @@ FocusScope {
             id: cell
 
             required property int index
-            required property var modelData
+            required property string title
+            required property var railModel
+            required property bool library
+            required property bool wide
+            required property string genreId
 
-            readonly property bool isLibraryRail: cell.modelData.library === true
+            readonly property bool isLibraryRail: cell.library
             readonly property bool isCurrent: cell.ListView.isCurrentItem
-            // Empty for every rail that is not a genre.
-            readonly property string genreId: (cell.modelData.genreId === undefined
-                                               || cell.modelData.genreId === null)
-                                              ? "" : String(cell.modelData.genreId)
 
             // Backdrop of the card this rail has *selected*. Only meaningful
             // while this is the current rail; publishFocus() enforces that.
             readonly property string focusBackdropUrl: {
                 if (cell.isLibraryRail)
                     return ""
-                const item = page.itemAt(cell.modelData.model, mediaRail.currentIndex)
+                const item = page.itemAt(cell.railModel, mediaRail.currentIndex)
                 return (item && item.backdropUrl) ? item.backdropUrl : ""
             }
 
@@ -372,7 +313,7 @@ FocusScope {
             readonly property string hoverBackdropUrl: {
                 if (cell.isLibraryRail)
                     return ""
-                const item = page.itemAt(cell.modelData.model, mediaRail.hoveredIndex)
+                const item = page.itemAt(cell.railModel, mediaRail.hoveredIndex)
                 return (item && item.backdropUrl) ? item.backdropUrl : ""
             }
 
@@ -411,12 +352,12 @@ FocusScope {
                 visible: !cell.isLibraryRail
                 enabled: !cell.isLibraryRail
                 focus: !cell.isLibraryRail
-                title: cell.isLibraryRail ? "" : cell.modelData.title
-                railModel: cell.isLibraryRail ? null : cell.modelData.model
+                title: cell.isLibraryRail ? "" : cell.title
+                railModel: cell.isLibraryRail ? null : cell.railModel
                 // Poster for every media rail: MediaItemModel.posterUrl is the
                 // server's Primary image for every type, so a "still" variant
                 // would only change which items get cropped, not whether any do.
-                cardVariant: cell.modelData.wide === true ? "still" : "poster"
+                cardVariant: cell.wide ? "still" : "poster"
                 emptyText: ""
                 // A genre rail is a doorway: the shelf is a sample, "See all"
                 // is the genre itself. StrmRail already shows the affordance on
@@ -425,15 +366,15 @@ FocusScope {
 
                 onMoreRequested: {
                     if (cell.genreId.length > 0)
-                        Actions.browseGenre(cell.genreId, cell.modelData.title)
+                        Actions.browseGenre(cell.genreId, cell.title)
                 }
 
-                onItemActivated: index => page.activate(cell.modelData.model, index)
-                onItemPlayRequested: index => page.playItem(cell.modelData.model, index)
-                onItemPlayedToggled: index => page.togglePlayed(cell.modelData.model, index)
-                onItemFavoriteToggled: index => page.toggleFavorite(cell.modelData.model, index)
+                onItemActivated: index => page.activate(cell.railModel, index)
+                onItemPlayRequested: index => page.playItem(cell.railModel, index)
+                onItemPlayedToggled: index => page.togglePlayed(cell.railModel, index)
+                onItemFavoriteToggled: index => page.toggleFavorite(cell.railModel, index)
                 onMenuRequested: (index, mx, my) =>
-                    page.showMenu(cell.modelData.model, index, mx, my)
+                    page.showMenu(cell.railModel, index, mx, my)
             }
 
             // ── Libraries rail ─────────────────────────────────────────────
@@ -475,7 +416,7 @@ FocusScope {
                     anchors.top: parent.top
                     anchors.leftMargin: Theme.pageMarginValue
                     anchors.rightMargin: Theme.pageMarginValue
-                    text: cell.isLibraryRail ? cell.modelData.title : ""
+                    text: cell.isLibraryRail ? cell.title : ""
                     color: Theme.textPrimaryColor
                     font.family: Theme.fontDisplay
                     font.pixelSize: Theme.fontTitle
@@ -501,7 +442,7 @@ FocusScope {
                     rightMargin: Theme.pageMarginValue
                     focus: true
                     clip: true
-                    model: cell.isLibraryRail ? cell.modelData.model : null
+                    model: cell.isLibraryRail ? cell.railModel : null
                     boundsBehavior: Flickable.StopAtBounds
                     // Same wheel contract as StrmRail: a vertical wheel belongs
                     // to the page, not to a horizontal shelf.

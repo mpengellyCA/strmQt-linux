@@ -264,6 +264,17 @@ void ControllersTest::homeRefreshBuildsRails()
     auto *railModel = rail.value(QStringLiteral("model")).value<MediaItemModel *>();
     QVERIFY(railModel);
     QCOMPARE(railModel->rowCount(), 2);
+
+    // A refresh that replaces every child model with same-cardinality content
+    // must not republish an identical descriptor snapshot. QML consumes the
+    // stable HomeRailModel, and compatibility listeners should be quiet too.
+    QSignalSpy latestRailsSpy(&home, &HomeController::latestRailsChanged);
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+    QCOMPARE(latestRailsSpy.count(), 0);
+    QCOMPARE(home.latestRails().first().toMap()
+                 .value(QStringLiteral("model")).value<MediaItemModel *>(),
+             railModel);
 }
 
 void ControllersTest::libraryPaging()

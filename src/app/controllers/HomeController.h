@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/models/HomeRailModel.h"
 #include "app/models/LibraryListModel.h"
 #include "app/models/MediaItemModel.h"
 #include "server/dto/Library.h"
@@ -40,6 +41,9 @@ class HomeController : public QObject
     Q_PROPERTY(strmqt::MediaItemModel *nextUp READ nextUp CONSTANT)
     Q_PROPERTY(strmqt::MediaItemModel *favorites READ favorites CONSTANT)
     Q_PROPERTY(strmqt::LibraryListModel *libraries READ libraries CONSTANT)
+    // Stable, keyed descriptor model consumed by HomePage's vertical ListView.
+    // Item updates stay inside each child model and never reset sibling rails.
+    Q_PROPERTY(strmqt::HomeRailModel *rails READ rails CONSTANT)
     // List of { title: string, model: MediaItemModel* } for the Latest rails.
     Q_PROPERTY(QVariantList latestRails READ latestRails NOTIFY latestRailsChanged)
     // List of { title, genreId, model } for the genre rails (ARCHITECTURE.md).
@@ -66,6 +70,7 @@ public:
     MediaItemModel *nextUp() const { return m_nextUp; }
     MediaItemModel *favorites() const { return m_favorites; }
     LibraryListModel *libraries() const { return m_libraries; }
+    HomeRailModel *rails() const { return m_rails; }
     QVariantList latestRails() const { return m_latestRails; }
     QVariantList genreRails() const { return m_genreRails; }
     bool busy() const { return m_pending > 0; }
@@ -156,6 +161,7 @@ private:
     void updateAllModels(const QString &itemId, bool played, bool favorite,
                          qint64 positionTicks, int playCount);
     MediaItemModel *railModelFor(const QString &libraryId);
+    void syncRailDescriptors();
 
     emby::EmbyClient *m_client;
     QElapsedTimer m_lastUserDataRefresh;
@@ -166,6 +172,7 @@ private:
     MediaItemModel *m_nextUp;
     MediaItemModel *m_favorites;
     LibraryListModel *m_libraries;
+    HomeRailModel *m_rails;
     QVariantList m_latestRails;
     // Rail models live as long as their library does, keyed by library id, so a
     // refresh does not invalidate the pointers QML and ItemActions hold.

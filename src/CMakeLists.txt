@@ -30,6 +30,7 @@ target_compile_definitions(strmqt_core PUBLIC STRMQT_VERSION="${PROJECT_VERSION}
 
 # App services layer: QML-facing models and controllers (QtCore only, testable).
 qt_add_library(strmqt_app STATIC
+    app/models/HomeRailModel.h app/models/HomeRailModel.cpp
     app/models/MediaItemModel.h app/models/MediaItemModel.cpp
     app/models/LibraryListModel.h app/models/LibraryListModel.cpp
     app/controllers/SessionController.h app/controllers/SessionController.cpp

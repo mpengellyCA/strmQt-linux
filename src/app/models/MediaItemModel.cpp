@@ -258,13 +258,19 @@ QHash<int, QByteArray> MediaItemModel::mediaRoleNames()
 
 void MediaItemModel::setItems(QList<MediaItem> items, int totalRecordCount)
 {
+    const int oldCount = static_cast<int>(m_items.size());
+    const int oldTotalRecordCount = m_totalRecordCount;
+    const int newTotalRecordCount =
+        totalRecordCount >= 0 ? totalRecordCount : static_cast<int>(items.size());
+
     beginResetModel();
     m_items = std::move(items);
-    m_totalRecordCount =
-        totalRecordCount >= 0 ? totalRecordCount : static_cast<int>(m_items.size());
+    m_totalRecordCount = newTotalRecordCount;
     endResetModel();
-    emit countChanged();
-    emit totalRecordCountChanged();
+    if (oldCount != static_cast<int>(m_items.size()))
+        emit countChanged();
+    if (oldTotalRecordCount != m_totalRecordCount)
+        emit totalRecordCountChanged();
 }
 
 void MediaItemModel::appendItems(const QList<MediaItem> &items, int totalRecordCount)

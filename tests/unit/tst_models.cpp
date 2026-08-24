@@ -1,6 +1,7 @@
 #include <QSignalSpy>
 #include <QtTest>
 
+#include "app/models/HomeRailModel.h"
 #include "app/models/LibraryListModel.h"
 #include "app/models/MediaItemModel.h"
 
@@ -33,9 +34,12 @@ private slots:
     void initTestCase();
     void episodeRoles();
     void appendAndReset();
+    void setItemsNotifiesOnlyChangedProperties();
     void getReturnsAllRoles();
     void userDataUpdateEmitsDataChanged();
     void libraryModelRoles();
+    void setLibrariesNotifiesOnlyChangedCount();
+    void homeRailDescriptorsAreIncremental();
 };
 
 void ModelsTest::initTestCase()
@@ -100,6 +104,38 @@ void ModelsTest::appendAndReset()
     QCOMPARE(model.totalRecordCount(), 0);
 }
 
+void ModelsTest::setItemsNotifiesOnlyChangedProperties()
+{
+    MediaItemModel model;
+    QSignalSpy countSpy(&model, &MediaItemModel::countChanged);
+    QSignalSpy totalSpy(&model, &MediaItemModel::totalRecordCountChanged);
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+
+    model.setItems({makeEpisode()}, 50);
+    QCOMPARE(countSpy.count(), 1);
+    QCOMPARE(totalSpy.count(), 1);
+    QCOMPARE(resetSpy.count(), 1);
+
+    countSpy.clear();
+    totalSpy.clear();
+    resetSpy.clear();
+    MediaItem replacement = makeEpisode();
+    replacement.id = QStringLiteral("replacement");
+    model.setItems({replacement}, 50);
+    QCOMPARE(resetSpy.count(), 1); // same-cardinality content still replaced
+    QCOMPARE(countSpy.count(), 0);
+    QCOMPARE(totalSpy.count(), 0);
+
+    model.setItems({replacement, makeEpisode()}, 50);
+    QCOMPARE(countSpy.count(), 1);
+    QCOMPARE(totalSpy.count(), 0);
+
+    countSpy.clear();
+    model.setItems({replacement, makeEpisode()}, 51);
+    QCOMPARE(countSpy.count(), 0);
+    QCOMPARE(totalSpy.count(), 1);
+}
+
 void ModelsTest::getReturnsAllRoles()
 {
     MediaItemModel model;
@@ -145,6 +181,77 @@ void ModelsTest::libraryModelRoles()
              QStringLiteral("Movies"));
     QCOMPARE(model.data(model.index(0), LibraryListModel::ImageUrlRole).toString(),
              QStringLiteral("image://emby/test-session/4/Primary/imgtag"));
+}
+
+void ModelsTest::setLibrariesNotifiesOnlyChangedCount()
+{
+    Library movies;
+    movies.id = QStringLiteral("4");
+    movies.name = QStringLiteral("Movies");
+
+    Library television = movies;
+    television.id = QStringLiteral("5");
+    television.name = QStringLiteral("Television");
+
+    LibraryListModel model;
+    QSignalSpy countSpy(&model, &LibraryListModel::countChanged);
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    model.setLibraries({movies});
+    QCOMPARE(countSpy.count(), 1);
+
+    countSpy.clear();
+    resetSpy.clear();
+    model.setLibraries({television});
+    QCOMPARE(resetSpy.count(), 1); // replacement remains visible through modelReset
+    QCOMPARE(countSpy.count(), 0);
+
+    model.setLibraries({movies, television});
+    QCOMPARE(countSpy.count(), 1);
+}
+
+void ModelsTest::homeRailDescriptorsAreIncremental()
+{
+    QObject resume;
+    QObject nextUp;
+    HomeRailModel model;
+    QList<HomeRailModel::Descriptor> descriptors = {
+        {QStringLiteral("resume"), QStringLiteral("Continue Watching"), &resume, false, true, {}},
+        {QStringLiteral("next-up"), QStringLiteral("Next Up"), &nextUp, false, true, {}},
+    };
+
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy insertedSpy(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removedSpy(&model, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy movedSpy(&model, &QAbstractItemModel::rowsMoved);
+    QSignalSpy changedSpy(&model, &QAbstractItemModel::dataChanged);
+
+    model.setDescriptors(descriptors);
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(resetSpy.count(), 0);
+    QVERIFY(!insertedSpy.isEmpty());
+
+    insertedSpy.clear();
+    model.setDescriptors(descriptors);
+    QCOMPARE(insertedSpy.count(), 0);
+    QCOMPARE(removedSpy.count(), 0);
+    QCOMPARE(movedSpy.count(), 0);
+    QCOMPARE(changedSpy.count(), 0);
+    QCOMPARE(resetSpy.count(), 0);
+
+    descriptors[0].title = QStringLiteral("Keep Watching");
+    model.setDescriptors(descriptors);
+    QCOMPARE(changedSpy.count(), 1);
+    QCOMPARE(insertedSpy.count(), 0);
+    QCOMPARE(removedSpy.count(), 0);
+
+    changedSpy.clear();
+    descriptors.move(1, 0);
+    model.setDescriptors(descriptors);
+    QCOMPARE(movedSpy.count(), 1);
+    QCOMPARE(insertedSpy.count(), 0);
+    QCOMPARE(removedSpy.count(), 0);
+    QCOMPARE(changedSpy.count(), 0);
+    QCOMPARE(resetSpy.count(), 0);
 }
 
 QTEST_GUILESS_MAIN(ModelsTest)

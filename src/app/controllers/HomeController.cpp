@@ -43,8 +43,14 @@ QSet<QString> idsOf(const MediaItemModel *model)
 HomeController::HomeController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_resume(new MediaItemModel(this)),
       m_nextUp(new MediaItemModel(this)), m_favorites(new MediaItemModel(this)),
-      m_libraries(new LibraryListModel(this))
+      m_libraries(new LibraryListModel(this)), m_rails(new HomeRailModel(this))
 {
+    const auto syncRails = [this] { syncRailDescriptors(); };
+    connect(m_resume, &MediaItemModel::countChanged, this, syncRails);
+    connect(m_nextUp, &MediaItemModel::countChanged, this, syncRails);
+    connect(m_favorites, &MediaItemModel::countChanged, this, syncRails);
+    connect(m_libraries, &LibraryListModel::countChanged, this, syncRails);
+
     m_userDataRefreshTimer.setSingleShot(true);
     connect(&m_userDataRefreshTimer, &QTimer::timeout, this, [this] {
         m_userDataRefreshQueued = false;
@@ -71,14 +77,17 @@ void HomeController::resetSessionState()
     m_favorites->clear();
     m_libraries->setLibraries({});
 
+    const bool hadLatestRails = !m_latestRails.isEmpty();
     m_latestRails.clear();
     for (MediaItemModel *model : std::as_const(m_railModels)) {
         model->clear();
         model->deleteLater();
     }
     m_railModels.clear();
-    emit latestRailsChanged();
+    if (hadLatestRails)
+        emit latestRailsChanged();
 
+    const bool hadGenreRails = !m_genreRails.isEmpty();
     m_genreRails.clear();
     for (MediaItemModel *model : std::as_const(m_genreModels)) {
         model->clear();
@@ -86,7 +95,9 @@ void HomeController::resetSessionState()
     }
     m_genreModels.clear();
     m_genreRailsFetched = false;
-    emit genreRailsChanged();
+    if (hadGenreRails)
+        emit genreRailsChanged();
+    syncRailDescriptors();
 
     m_incoming = Snapshot{};
     m_held = Snapshot{};
@@ -329,6 +340,51 @@ MediaItemModel *HomeController::railModelFor(const QString &libraryId)
     return model;
 }
 
+void HomeController::syncRailDescriptors()
+{
+    QList<HomeRailModel::Descriptor> descriptors;
+    if (m_resume->rowCount() > 0) {
+        descriptors.append({QStringLiteral("resume"), tr("Continue Watching"), m_resume,
+                            false, true, {}});
+    }
+    if (m_nextUp->rowCount() > 0) {
+        descriptors.append(
+            {QStringLiteral("next-up"), tr("Next Up"), m_nextUp, false, true, {}});
+    }
+    if (m_libraries->rowCount() > 0) {
+        descriptors.append(
+            {QStringLiteral("libraries"), tr("Libraries"), m_libraries, true, false, {}});
+    }
+    if (m_favorites->rowCount() > 0) {
+        descriptors.append(
+            {QStringLiteral("favorites"), tr("Favorites"), m_favorites, false, false, {}});
+    }
+
+    for (const QVariant &value : std::as_const(m_latestRails)) {
+        const QVariantMap rail = value.toMap();
+        const QString libraryId = rail.value(QStringLiteral("libraryId")).toString();
+        QObject *model = rail.value(QStringLiteral("model")).value<MediaItemModel *>();
+        if (libraryId.isEmpty() || !model)
+            continue;
+        descriptors.append({QStringLiteral("latest:%1").arg(libraryId),
+                            rail.value(QStringLiteral("title")).toString(), model, false, false,
+                            {}});
+    }
+
+    for (const QVariant &value : std::as_const(m_genreRails)) {
+        const QVariantMap rail = value.toMap();
+        const QString genreId = rail.value(QStringLiteral("genreId")).toString();
+        QObject *model = rail.value(QStringLiteral("model")).value<MediaItemModel *>();
+        if (genreId.isEmpty() || !model)
+            continue;
+        descriptors.append({QStringLiteral("genre:%1").arg(genreId),
+                            rail.value(QStringLiteral("title")).toString(), model, false, false,
+                            genreId});
+    }
+
+    m_rails->setDescriptors(std::move(descriptors));
+}
+
 void HomeController::applySnapshot(const Snapshot &snapshot)
 {
     m_resume->setItems(snapshot.resume, snapshot.resumeTotal);
@@ -350,15 +406,15 @@ void HomeController::applySnapshot(const Snapshot &snapshot)
         live.insert(entry.first.id);
 
         QVariantMap rail;
+        rail.insert(QStringLiteral("libraryId"), entry.first.id);
         rail.insert(QStringLiteral("title"),
                     QStringLiteral("Latest — %1").arg(entry.first.name));
         rail.insert(QStringLiteral("model"), QVariant::fromValue(model));
         rails.append(rail);
     }
 
-    // Libraries that went away take their models with them. Deleting is safe
-    // because the new rails list no longer references them, and QML rebinds off
-    // latestRailsChanged below.
+    // Libraries that went away take their models with them. The descriptor sync
+    // below removes their rows before deleteLater() can destroy either model.
     for (auto it = m_railModels.begin(); it != m_railModels.end();) {
         if (live.contains(it.key())) {
             ++it;
@@ -368,10 +424,11 @@ void HomeController::applySnapshot(const Snapshot &snapshot)
         it = m_railModels.erase(it);
     }
 
-    m_latestRails = rails;
-    emit latestRailsChanged();
-
-
+    if (m_latestRails != rails) {
+        m_latestRails = rails;
+        emit latestRailsChanged();
+        syncRailDescriptors();
+    }
 }
 
 void HomeController::loadGenreRails()
@@ -440,8 +497,11 @@ void HomeController::fetchGenreRails()
                             if (entry.isValid() && !entry.toMap().isEmpty())
                                 live.append(entry);
                         }
-                        m_genreRails = live;
-                        emit genreRailsChanged();
+                        if (m_genreRails != live) {
+                            m_genreRails = live;
+                            emit genreRailsChanged();
+                            syncRailDescriptors();
+                        }
                     });
             }
         });
