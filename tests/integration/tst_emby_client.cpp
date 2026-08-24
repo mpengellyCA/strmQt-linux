@@ -39,7 +39,7 @@ private slots:
     void authenticateAdoptsSession();
     void authenticatedCallsCarryToken();
     void railsAndItems();
-    void mediaDetailFieldsRequested();
+    void mediaDetailFieldsStayOffListQueries();
     void httpErrorSurfaces();
     void invalidJsonSurfaces();
     void unauthenticatedCallsFailFast();
@@ -175,7 +175,7 @@ void EmbyClientTest::railsAndItems()
     QVERIFY(itemsRequest.query.contains(QStringLiteral("SortBy=SortName")));
 }
 
-void EmbyClientTest::mediaDetailFieldsRequested()
+void EmbyClientTest::mediaDetailFieldsStayOffListQueries()
 {
     // The version picker, media-info surface, and chapter navigation all need
     // fields Emby omits unless asked for by name (ARCHITECTURE.md).
@@ -195,10 +195,9 @@ void EmbyClientTest::mediaDetailFieldsRequested()
                                        QStringLiteral("/Users/%1/Items").arg(kUserId))
                       .query)
             .queryItemValue(QStringLiteral("Fields"));
-    // Caller-requested fields survive; the media fields are merged in.
-    QCOMPARE(itemsFields.split(QLatin1Char(',')),
-             QStringList({QStringLiteral("Overview"), QStringLiteral("MediaSources"),
-                          QStringLiteral("MediaStreams"), QStringLiteral("Chapters")}));
+    // Caller-requested fields survive, but heavy single-item fields do not get
+    // downloaded and discarded for every row in a list.
+    QCOMPARE(itemsFields, QStringLiteral("Overview"));
 
     QVERIFY(waitFor(m_client->itemDetails(QStringLiteral("301001"))).ok());
     const QString detailFields =

@@ -17,17 +17,18 @@ namespace {
 constexpr int kTransferTimeoutMs = 15'000;
 const auto kClientName = QLatin1String("StrmQt");
 
-// Fields needed for the version picker, the media-info/track surfaces, and
-// chapter navigation. Emby omits all three unless they are asked for by name.
-QStringList mediaDetailFields()
+// Fields needed for one item's version picker, media-info/track surfaces, and
+// chapter navigation. List DTOs deliberately do not retain any of these heavy
+// arrays, so only itemDetails() asks the server for them.
+QStringList itemMediaFields()
 {
     return {QStringLiteral("MediaSources"), QStringLiteral("MediaStreams"),
             QStringLiteral("Chapters")};
 }
 
 // Extra fields worth requesting for ONE item and never for a page of them:
-// People alone is ~60 objects per movie, so folding these into
-// mediaDetailFields() would multiply every 100-item grid fetch by that.
+// People alone is ~60 objects per movie, so folding these into a list fetch
+// would multiply every 100-item grid response by that.
 QStringList itemDetailFields()
 {
     return {QStringLiteral("ProviderIds"),   QStringLiteral("ExternalUrls"),
@@ -328,8 +329,8 @@ QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query)
     if (!query.includeItemTypes.isEmpty())
         params.addQueryItem(QStringLiteral("IncludeItemTypes"),
                             query.includeItemTypes.join(QLatin1Char(',')));
-    params.addQueryItem(QStringLiteral("Fields"),
-                        mergedFields(query.fields, mediaDetailFields()));
+    if (!query.fields.isEmpty())
+        params.addQueryItem(QStringLiteral("Fields"), query.fields.join(QLatin1Char(',')));
     if (!query.filters.isEmpty())
         params.addQueryItem(QStringLiteral("Filters"), query.filters.join(QLatin1Char(',')));
     if (!query.genreIds.isEmpty())
@@ -451,7 +452,6 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::nextEpisode(const QString &seriesI
     params.addQueryItem(QStringLiteral("StartItemId"), episodeId);
     // Two rows: the current episode and the one after it.
     params.addQueryItem(QStringLiteral("Limit"), QStringLiteral("2"));
-    params.addQueryItem(QStringLiteral("Fields"), mergedFields({}, mediaDetailFields()));
     QNetworkReply *reply = startGet(QStringLiteral("/Shows/%1/Episodes").arg(seriesId), params);
     return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
         const QList<MediaItem> items =
@@ -468,7 +468,7 @@ QFuture<Result<ItemDetails>> EmbyClient::itemDetails(const QString &itemId)
         return failedFuture<ItemDetails>(QStringLiteral("not authenticated"));
     QUrlQuery params;
     params.addQueryItem(QStringLiteral("Fields"),
-                        mergedFields(itemDetailFields(), mediaDetailFields()));
+                        mergedFields(itemDetailFields(), itemMediaFields()));
     QNetworkReply *reply =
         startGet(QStringLiteral("/Users/%1/Items/%2").arg(m_userId, itemId), params);
     return finishJson<ItemDetails>(reply, [](const QJsonDocument &doc) {
@@ -499,10 +499,6 @@ QFuture<Result<ItemsPage>> EmbyClient::instantMix(const QString &itemId, int lim
     QUrlQuery params;
     params.addQueryItem(QStringLiteral("UserId"), m_userId);
     params.addQueryItem(QStringLiteral("Limit"), QString::number(limit));
-    // The same fields every other list fetch asks for: a mix goes straight into
-    // the play queue, and a queue entry that arrived without its album, its
-    // artists or its cover tag would draw a hole in the docked bar.
-    params.addQueryItem(QStringLiteral("Fields"), mergedFields({}, mediaDetailFields()));
     // No StartIndex: the endpoint does not page (see the header).
     QNetworkReply *reply = startGet(QStringLiteral("/Items/%1/InstantMix").arg(itemId), params);
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
@@ -795,7 +791,6 @@ QFuture<Result<ItemsPage>> EmbyClient::playlistItems(const QString &playlistId, 
     params.addQueryItem(QStringLiteral("UserId"), m_userId);
     params.addQueryItem(QStringLiteral("StartIndex"), QString::number(startIndex));
     params.addQueryItem(QStringLiteral("Limit"), QString::number(limit));
-    params.addQueryItem(QStringLiteral("Fields"), mergedFields({}, mediaDetailFields()));
     QNetworkReply *reply = startGet(QStringLiteral("/Playlists/%1/Items").arg(playlistId), params);
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
         return Result<ItemsPage>::success(parseItemsPage(doc.object()));

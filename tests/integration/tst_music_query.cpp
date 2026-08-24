@@ -304,7 +304,9 @@ void MusicQueryTest::songsAreTheirOwnModelWithTheirOwnQuery()
     QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), kMusicLibrary);
     QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("100"));
     const QString fields = query.queryItemValue(QStringLiteral("Fields"));
-    QVERIFY(fields.contains(QStringLiteral("MediaSources")));
+    QVERIFY(!fields.contains(QStringLiteral("MediaSources")));
+    QVERIFY(!fields.contains(QStringLiteral("MediaStreams")));
+    QVERIFY(!fields.contains(QStringLiteral("Chapters")));
     QVERIFY(fields.contains(QStringLiteral("Genres")));
     QVERIFY(fields.contains(QStringLiteral("ParentIndexNumber")));
 

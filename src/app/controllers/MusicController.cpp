@@ -623,11 +623,10 @@ void MusicController::fetchSongs(int startIndex)
     query.sortDescending = m_songSortDescending;
     query.startIndex = startIndex;
     query.limit = kPageSize;
-    // MediaSources so a row can be played without a second round trip, Genres
-    // because a genre-filtered list should be able to say why a row is in it,
-    // and ParentIndexNumber because TrackTable's disc pass reads it.
-    query.fields = {QStringLiteral("MediaSources"), QStringLiteral("Genres"),
-                    QStringLiteral("ParentIndexNumber")};
+    // Genres lets a filtered list say why a row is in it; ParentIndexNumber is
+    // consumed by TrackTable's disc pass. Playback always resolves its own
+    // PlaybackInfo ticket, so list rows do not need the discarded media arrays.
+    query.fields = {QStringLiteral("Genres"), QStringLiteral("ParentIndexNumber")};
     applyFilters(query);
 
     m_client->items(query).then(
@@ -849,7 +848,6 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     // every record ever made.
     query.recursive = false;
     query.limit = kTrackLimit;
-    query.fields = {QStringLiteral("MediaSources")};
 
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
@@ -875,7 +873,6 @@ void MusicController::expandAlbum(const QString &albumId, std::function<bool()> 
     // disc then track order.
     query.recursive = false;
     query.limit = kTrackLimit;
-    query.fields = {QStringLiteral("MediaSources")};
 
     m_client->items(query).then(
         this, [this, stillCurrent = std::move(stillCurrent), onItems = std::move(onItems),
@@ -1002,7 +999,7 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     tracks.sortBy = QStringLiteral("PlayCount,SortName");
     tracks.sortDescending = true;
     tracks.limit = 50;
-    tracks.fields = {QStringLiteral("MediaSources"), QStringLiteral("ArtistItems")};
+    tracks.fields = {QStringLiteral("ArtistItems")};
     m_client->items(tracks).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation || !result.ok())
             return;
