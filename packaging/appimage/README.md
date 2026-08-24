@@ -1,7 +1,7 @@
 # StrmQt AppImage
 
     ./packaging/appimage/build-appimage.sh
-    # -> build/dist/StrmQt-0.1.0-x86_64.AppImage   (~99 MB)
+    # -> build/dist/StrmQt-0.3.0-x86_64.AppImage   (~99 MB)
 
 ## Read this before you hand the file to anyone
 
@@ -133,7 +133,7 @@ find $APPDIR/usr -type f -name '*.so*' -exec patchelf --print-needed {} \; | gre
 
 # Headless smoke test (this is what qoffscreen is bundled for).
 QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen \
-  ./build/dist/StrmQt-0.1.0-x86_64.AppImage
+  ./build/dist/StrmQt-0.3.0-x86_64.AppImage
 ```
 
 `build-appimage.sh` runs the forbidden-soname assertion and the
@@ -144,24 +144,12 @@ By the time the file exists, every dependant was already resolved against it;
 deleting it leaves dangling `DT_NEEDED` entries that fail at `dlopen` time, in a
 code path nobody tests, months later.
 
-## Known issue: the mpv-only build does not start
+## VLC-disabled runtime check
 
-The AppImage configures with `-DSTRMQT_WITH_VLC=OFF`. That drops
-`src/playback/vlc/VlcVideoItem.h`, which is what registers the `VlcVideo` QML
-type — but `src/ui/pages/PlayerPage.qml:45` instantiates `VlcVideo`
-unconditionally. The result:
-
-```
-qrc:/qt/qml/StrmQt/ui/Main.qml:89:9: Type PlayerPage unavailable
-qrc:/qt/qml/StrmQt/ui/pages/PlayerPage.qml:45:9: VlcVideo is not a type
-```
-
-`Main.qml` instantiates `PlayerPage`, so root object creation fails and the app
-exits 1. This is a source-level bug, not a packaging one — any
-`-DSTRMQT_WITH_VLC=OFF` build is affected, AppImage or not. It needs a fix in
-`src/ui` (guard the `VlcVideo` component behind a `Loader`, or register a stub
-when VLC is disabled). Until then the AppImage builds and its runtime verifies
-clean, but the GUI will not come up.
+The AppImage configures with `-DSTRMQT_WITH_VLC=OFF`; `PlayerPage` loads the
+VLC video plane conditionally, so the mpv-only QML module remains complete.
+Release CI runs `STRMQT_SELFTEST=1` from inside the finished AppImage and fails
+the job if any of the 13 pages cannot be constructed.
 
 ## appimagetool AppStream warning
 

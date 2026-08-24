@@ -275,7 +275,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 28 suites
+ctest --preset dev                     # 29 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
@@ -349,8 +349,8 @@ assertion catches the rot.
   `RV32` chroma with no fallback.
 - **No gapless audio advance.** mpv gapless wants a playlist handed to the engine,
   not per-item loads.
-- MPRIS Next/Previous, chapter thumbnails, PiP and drag-to-reorder are unimplemented;
-  each needs a verb or an id grammar the current interfaces do not have.
+- Chapter thumbnails, PiP and drag-to-reorder are unimplemented; each needs a verb or an
+  id grammar the current interfaces do not have.
 - The AppImage's glibc floor is set by the bundled FFmpeg, not by this code. It runs
   on current Arch and little else.
 - **Season badges go stale outside the loaded season.** `SeriesController`'s seasons

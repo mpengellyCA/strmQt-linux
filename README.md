@@ -18,7 +18,7 @@ It is written to stay portable to other Plasma/Wayland and X11 systems, but that
 
 ## Status
 
-Version **0.2.0** — early but broadly functional. Everything below has been exercised
+Version **0.3.0** — early but broadly functional. Everything below has been exercised
 against a live Emby 4.9 server:
 
 - Browse libraries, collections, series, people and music; search across all of them
@@ -28,7 +28,7 @@ against a live Emby 4.9 server:
 - Playlists, favourites, resume, and watch state reported back to the server
 - Remote control from another Emby client, and MPRIS2 for KDE Connect
 
-The build is clean under `-Werror`, `ctest` passes 24/24, `strmqt_qmllint` reports no
+The build is clean under `-Werror`, `ctest` passes 29/29, `strmqt_qmllint` reports no
 type errors, and `STRMQT_SELFTEST=1` constructs all 13 pages.
 
 **Caveats worth knowing before you try it.** The interface has been verified by tests,
@@ -111,8 +111,8 @@ desktop entry.
 
 ## Configuration
 
-Server URL and username are set in **Settings** (`F2` in the app). A default server URL is
-compiled in, so a fresh install only needs credentials.
+Server URL and username are set in **Settings** (`F2` in the app). There is no compiled-in
+server address; a fresh install asks for the user's own Emby server.
 
 - Access token: KWallet folder **`StrmQt`**, key **`emby/accessToken`**.
 - Other settings (server URL, user id, device id, playback engine, tone-mapping curve):
@@ -147,8 +147,8 @@ playback, `I` for the OSD, `S` to stop.
   but sustained end-to-end use on physical hardware has not been exercised.
 - **No gapless audio advance.** mpv's gapless path wants a playlist handed to the engine
   rather than per-item loads.
-- MPRIS Next/Previous, chapter thumbnails, picture-in-picture and drag-to-reorder are not
-  implemented; each needs a verb or an identifier the current interfaces do not carry.
+- Chapter thumbnails, picture-in-picture and drag-to-reorder are not implemented; each
+  needs a verb or an identifier the current interfaces do not carry.
 - The AppImage's glibc floor is set by the bundled FFmpeg, not by this code: it runs on
   current Arch and little else.
 
