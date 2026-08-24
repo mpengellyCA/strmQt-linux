@@ -111,6 +111,7 @@ signals:
 
 private:
     void fetchPlaylistPage(int startIndex);
+    void fetchMemberPage(const QString &playlistId, int startIndex, int generation);
     void setLoading(bool loading);
     void setError(const QString &message);
 

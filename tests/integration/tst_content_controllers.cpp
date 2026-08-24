@@ -41,6 +41,8 @@ private slots:
     void playlistFetchesDoNotStrandEachOther();
     void createWhileOpenLeavesTheOpenPlaylistAlone();
     void creationCarriesTheMediaTypeItWasGiven();
+    void playlistMembersPageToTheEnd_data();
+    void playlistMembersPageToTheEnd();
     void musicRetargetDropsTheInFlightPage();
     void thePlaylistListPagesToTheEnd();
     void aPlaylistWalkThatStoppedHalfwayIsRetried();
@@ -55,6 +57,20 @@ private:
                 page += ',';
             page += QStringLiteral("{\"Id\":\"pl%1\",\"Name\":\"List %1\","
                                    "\"Type\":\"Playlist\"}")
+                        .arg(from + i)
+                        .toUtf8();
+        }
+        page += QStringLiteral("],\"TotalRecordCount\":%1}").arg(total).toUtf8();
+        return page;
+    }
+    static QByteArray playlistMemberPage(int from, int count, int total)
+    {
+        QByteArray page = QByteArrayLiteral("{\"Items\":[");
+        for (int i = 0; i < count; ++i) {
+            if (i > 0)
+                page += ',';
+            page += QStringLiteral("{\"Id\":\"track%1\",\"Name\":\"Track %1\","
+                                   "\"Type\":\"Audio\",\"PlaylistItemId\":\"entry%1\"}")
                         .arg(from + i)
                         .toUtf8();
         }
@@ -444,6 +460,57 @@ void ContentControllersTest::creationCarriesTheMediaTypeItWasGiven()
     created = QUrlQuery(
         m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Playlists")).query);
     QVERIFY(!created.hasQueryItem(QStringLiteral("MediaType")));
+}
+
+void ContentControllersTest::playlistMembersPageToTheEnd_data()
+{
+    QTest::addColumn<int>("total");
+    QTest::newRow("short-first-page-499") << 499;
+    QTest::newRow("exact-first-page-500") << 500;
+    QTest::newRow("second-page-501") << 501;
+    QTest::newRow("multiple-pages-1201") << 1201;
+}
+
+void ContentControllersTest::playlistMembersPageToTheEnd()
+{
+    QFETCH(int, total);
+    const QString path = QStringLiteral("/Playlists/pl1/Items");
+    const int firstCount = qMin(total, 500);
+    m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                     playlistMemberPage(0, firstCount, total));
+
+    PlaylistController playlists(m_client);
+    int armedAt = firstCount;
+    const auto armNextPage = [this, &playlists, path, total, &armedAt] {
+        const int held = playlists.items()->rowCount();
+        if (held != armedAt || held >= total)
+            return;
+        const int count = qMin(500, total - held);
+        m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                         playlistMemberPage(held, count, total));
+        armedAt += count;
+    };
+    connect(playlists.items(), &QAbstractItemModel::modelReset, &playlists, armNextPage);
+    connect(playlists.items(), &QAbstractItemModel::rowsInserted, &playlists, armNextPage);
+
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Long playlist"));
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.items()->rowCount(), total, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QVERIFY(playlists.errorMessage().isEmpty());
+
+    const int expectedRequests = (total + 499) / 500;
+    QCOMPARE(requestsFor(path), expectedRequests);
+    for (int page = 0; page < expectedRequests; ++page) {
+        const QUrlQuery query(m_mock->requests().at(indexOfNthRequest(path, page)).query);
+        QCOMPARE(query.queryItemValue(QStringLiteral("StartIndex")),
+                 QString::number(page * 500));
+        QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("500"));
+    }
+    QCOMPARE(playlists.items()
+                 ->get(total - 1)
+                 .value(QStringLiteral("playlistItemId"))
+                 .toString(),
+             QStringLiteral("entry%1").arg(total - 1));
 }
 
 // Re-targeting the music scope is a supersede like any other (ARCHITECTURE.md):

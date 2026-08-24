@@ -7,7 +7,7 @@
 namespace strmqt {
 
 namespace {
-constexpr int kMemberLimit = 500;
+constexpr int kMemberPageSize = 500;
 // One page of the playlist LIST. The walk in fetchPlaylistPage() covers the
 // measured 1,564 in four round trips.
 constexpr int kListPageSize = 500;
@@ -111,23 +111,44 @@ void PlaylistController::reload()
         return;
     const int generation = ++m_itemsGeneration;
     setLoading(true);
-    m_client->playlistItems(m_currentId, 0, kMemberLimit)
-        .then(this, [this, generation](const Result<ItemsPage> &result) {
-            // The stale check stays above setLoading(false), which is correct
-            // now that this counter is the members fetch's alone: the only way
-            // to be stale here is that a newer reload() set the flag and is
-            // still in flight, and clearing it would drop the spinner while
-            // that page is still coming. The flag is never stranded, because
-            // whichever reload() currently owns it always gets its own reply.
-            if (generation != m_itemsGeneration)
+    fetchMemberPage(m_currentId, 0, generation);
+}
+
+void PlaylistController::fetchMemberPage(const QString &playlistId, int startIndex,
+                                          int generation)
+{
+    m_client->playlistItems(playlistId, startIndex, kMemberPageSize)
+        .then(this, [this, playlistId, startIndex, generation](const Result<ItemsPage> &result) {
+            // A newer reload/open owns both the model and the spinner. A reply
+            // for the old playlist must touch neither.
+            if (generation != m_itemsGeneration || playlistId != m_currentId)
                 return;
-            setLoading(false);
             if (!result.ok()) {
+                setLoading(false);
                 setError(result.error);
                 return;
             }
+
+            if (startIndex == 0)
+                m_items->setItems(result.value.items, result.value.totalRecordCount);
+            else
+                m_items->appendItems(result.value.items, result.value.totalRecordCount);
+
+            const int received = static_cast<int>(result.value.items.size());
+            const int nextIndex = startIndex + received;
+            // Trust a positive advertised total when we have reached it, but
+            // never trust zero: several Emby list endpoints return rows with a
+            // zero total (ARCHITECTURE.md §2). A short page remains the
+            // authoritative end marker in either case.
+            const bool reachedAdvertisedTotal =
+                result.value.totalRecordCount > 0 && nextIndex >= result.value.totalRecordCount;
+            if (received == kMemberPageSize && !reachedAdvertisedTotal) {
+                fetchMemberPage(playlistId, nextIndex, generation);
+                return;
+            }
+
             setError(QString());
-            m_items->setItems(result.value.items, result.value.totalRecordCount);
+            setLoading(false);
         });
 }
 
