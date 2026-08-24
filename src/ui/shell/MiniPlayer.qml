@@ -144,24 +144,9 @@ FocusScope {
     // identity live: the controller publishes `title` and nothing else visual.
     // Reading it through `currentIndex` (a notifying property) rather than
     // through currentItem() is what makes this a live binding, not a snapshot.
-    readonly property var nowItem: {
-        const q = PlayerCtl.queue;
-        if (q === undefined || q === null)
-            return ({});
-        if (q.currentIndex < 0 || q.count <= 0)
-            return ({});
-        return q.itemAt(q.currentIndex);
-    }
-
-    readonly property string nowItemId: {
-        const id = mini.nowItem.itemId;
-        return (id !== undefined) ? String(id) : "";
-    }
-
-    readonly property var queueModel: {
-        const q = PlayerCtl.queue;
-        return (q !== undefined && q !== null) ? q : null;
-    }
+    readonly property var nowItem: NowPlayingInfo.item
+    readonly property string nowItemId: NowPlayingInfo.itemId
+    readonly property var queueModel: NowPlayingInfo.queue
 
     // Rule 1, the square is the unit (MUSIC.md §4). A track's art is 1:1 and it
     // fills; `thumbUrl` is a 16:9 crop that a track does not have and an album
@@ -169,53 +154,18 @@ FocusScope {
     // MediaItem::coverSource() already resolves a track to its *album's* cover
     // rather than to whatever the ripper embedded, and reconstructing an image
     // URL here would throw that away.
-    readonly property string artUrl: {
-        const item = mini.nowItem;
-        if (mini.isAudio)
-            return (item.posterUrl !== undefined) ? String(item.posterUrl) : "";
-        if (item.thumbUrl !== undefined && String(item.thumbUrl).length > 0)
-            return String(item.thumbUrl);
-        if (item.backdropUrl !== undefined && String(item.backdropUrl).length > 0)
-            return String(item.backdropUrl);
-        if (item.posterUrl !== undefined && String(item.posterUrl).length > 0)
-            return String(item.posterUrl);
-        return "";
-    }
-    readonly property bool artIsWide: {
-        if (mini.isAudio)
-            return false;
-        const item = mini.nowItem;
-        return (item.thumbUrl !== undefined && String(item.thumbUrl).length > 0)
-            || (item.backdropUrl !== undefined && String(item.backdropUrl).length > 0);
-    }
+    readonly property string artUrl: NowPlayingInfo.artUrl
+    readonly property bool artIsWide: NowPlayingInfo.videoArtIsWide
 
-    // PlayerCtl.title is MediaItemModel's label — "Series — S5E14 — Name" for an
-    // episode — so the same split the OSD does gives the VIDEO bar a subline
-    // without the controller growing a second title property.
+    // Video metadata comes from structured queue roles, keeping punctuation in
+    // the view layer instead of parsing a rendered label back into fields.
     //
     // Music does not go anywhere near it. A track's context was structured
     // before it was ever composed into a label, and PlayQueue::itemFromVariant
     // carries `album`, `albumId`, `albumArtist`, `artists` and `artistIds`
     // through the round trip precisely so this bar can read the fields instead
     // of guessing at a display string.
-    readonly property var titleParts: {
-        const raw = PlayerCtl.title !== undefined ? String(PlayerCtl.title) : "";
-        const parts = raw.split(" — ");
-        if (parts.length >= 3)
-            return ({ "title": parts.slice(2).join(" — "),
-                      "subline": parts[0] + "  ·  " + parts[1] });
-        return ({ "title": raw, "subline": "" });
-    }
-
-    readonly property string trackTitle: {
-        if (mini.isAudio) {
-            const name = mini.nowItem.name;
-            if (name !== undefined && String(name).length > 0)
-                return String(name);
-            return PlayerCtl.title !== undefined ? String(PlayerCtl.title) : "";
-        }
-        return mini.titleParts.title;
-    }
+    readonly property string trackTitle: NowPlayingInfo.title
 
     // The bar shows ONE credit, not the whole cast: "Godspeed You! Black
     // Emperor" already fills the line it is on, and the link has one
@@ -230,40 +180,14 @@ FocusScope {
     // same artist — reading `artists[0]` and `artistIds[0]` as a pair did not,
     // because the two lists are only aligned where the server has an artist
     // item for every credited name.
-    readonly property var artistTarget: {
-        const target = Actions.artistTarget(mini.nowItem);
-        return (target !== undefined && target !== null) ? target : ({});
-    }
-
-    readonly property string artistText: {
-        const name = mini.artistTarget.name;
-        return (name !== undefined) ? String(name) : "";
-    }
-
-    readonly property string artistId: {
-        const id = mini.artistTarget.itemId;
-        return (id !== undefined) ? String(id) : "";
-    }
-
-    readonly property string albumText: {
-        const album = mini.nowItem.album;
-        return (album !== undefined) ? String(album) : "";
-    }
-
-    readonly property string albumId: {
-        const id = mini.nowItem.albumId;
-        return (id !== undefined) ? String(id) : "";
-    }
+    readonly property var artistTarget: NowPlayingInfo.artistTarget
+    readonly property string artistText: NowPlayingInfo.artistName
+    readonly property string artistId: NowPlayingInfo.artistId
+    readonly property string albumText: NowPlayingInfo.albumName
+    readonly property string albumId: NowPlayingInfo.albumId
 
     // The video bar's second line, which is a caption rather than a route.
-    readonly property string subline: {
-        if (mini.titleParts.subline.length > 0)
-            return mini.titleParts.subline;
-        const item = mini.nowItem;
-        if (item.subtitle !== undefined && String(item.subtitle).length > 0)
-            return String(item.subtitle);
-        return "";
-    }
+    readonly property string subline: NowPlayingInfo.videoContext
 
     // ── Queue state ─────────────────────────────────────────────────────────
     // PlayQueue already owns shuffle and repeat — per-entry keys, a shuffle
@@ -338,34 +262,21 @@ FocusScope {
             mini.albumRequested(mini.albumId, mini.albumText);
     }
 
-    readonly property real positionMs: Number(PlayerCtl.positionMs)
-    readonly property real durationMs: Number(PlayerCtl.durationMs)
-    readonly property bool seekable: mini.durationMs > 0
+    readonly property real positionMs: NowPlayingInfo.positionMs
+    readonly property real durationMs: NowPlayingInfo.durationMs
+    readonly property bool seekable: NowPlayingInfo.seekable
 
     // bufferedMs is measured ahead of the playhead; StrmSlider wants an absolute
     // value on the same axis as `value`.
-    readonly property real bufferedPosition: {
-        const b = PlayerCtl.backend;
-        if (b === undefined || b === null || b.bufferedMs === undefined)
-            return 0;
-        return Number(b.bufferedMs) + mini.positionMs;
-    }
+    readonly property real bufferedPosition: NowPlayingInfo.bufferedPosition
 
     function formatTime(ms: real): string {
-        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds / 60) % 60);
-        const seconds = totalSeconds % 60;
-        const pad = v => (v < 10 ? "0" : "") + v;
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds);
+        return NowPlayingInfo.formatTime(ms);
     }
 
-    readonly property string elapsedText: mini.formatTime(mini.positionMs)
-    readonly property string remainingText: mini.seekable
-        ? "−" + mini.formatTime(Math.max(0, mini.durationMs - mini.positionMs))
-        : "--:--"
-    readonly property string timeText: mini.elapsedText + "  /  " + mini.remainingText
+    readonly property string elapsedText: NowPlayingInfo.elapsedText
+    readonly property string remainingText: NowPlayingInfo.remainingText
+    readonly property string timeText: NowPlayingInfo.timeText
 
     // Rule 3, numerals line up (MUSIC.md §4). Mono with tabular figures gives
     // every digit the same advance, which stops "1:12" turning into "1:13" a

@@ -77,54 +77,22 @@ FocusScope {
     // `currentIndex` (a notifying property) rather than currentItem() is what
     // makes this a live binding instead of a snapshot — the same route
     // MiniPlayer takes, deliberately, rather than inventing a second one.
-    readonly property var queueModel: {
-        const q = PlayerCtl.queue;
-        return (q !== undefined && q !== null) ? q : null;
-    }
-
-    readonly property var nowItem: {
-        const q = panel.queueModel;
-        if (q === null || q.currentIndex < 0 || q.count <= 0)
-            return ({});
-        return q.itemAt(q.currentIndex);
-    }
+    readonly property var queueModel: NowPlayingInfo.queue
+    readonly property var nowItem: NowPlayingInfo.item
 
     // Album art is square, so the poster is the right image — `thumbUrl` is a
     // 16:9 crop and only exists for things that have one at all.
-    readonly property string artUrl: {
-        const item = panel.nowItem;
-        if (item.posterUrl !== undefined && String(item.posterUrl).length > 0)
-            return String(item.posterUrl);
-        if (item.thumbUrl !== undefined && String(item.thumbUrl).length > 0)
-            return String(item.thumbUrl);
-        return "";
-    }
+    readonly property string artUrl: NowPlayingInfo.audioArtUrl
 
     // `name` is the bare track name; PlayerCtl.title is MediaItemModel's label,
     // which for a track is the same string. The queue entry wins because the
     // bare-playItem path seeds the queue from the title anyway, so there is no
     // case where the fallback is worse.
-    readonly property string trackTitle: {
-        const item = panel.nowItem;
-        if (item.name !== undefined && String(item.name).length > 0)
-            return String(item.name);
-        return PlayerCtl.title !== undefined ? String(PlayerCtl.title) : "";
-    }
+    readonly property string trackTitle: NowPlayingInfo.title
 
-    readonly property string artistText: {
-        const item = panel.nowItem;
-        const list = item.artists;
-        if (list !== undefined && list !== null && list.length > 0)
-            return Array.prototype.join.call(list, ", ");
-        if (item.albumArtist !== undefined && String(item.albumArtist).length > 0)
-            return String(item.albumArtist);
-        return "";
-    }
+    readonly property string artistText: NowPlayingInfo.artistsText
 
-    readonly property string albumText: {
-        const item = panel.nowItem;
-        return (item.album !== undefined) ? String(item.album) : "";
-    }
+    readonly property string albumText: NowPlayingInfo.albumName
 
     // ── Technical readout (MUSIC.md §4) ─────────────────────────────────────
     // "FLAC 24/96 · 2,304 kbps · Direct play", small and mono under the sleeve.
@@ -136,94 +104,24 @@ FocusScope {
     // The FIRST audio stream, not a selected one: a track has exactly one, and
     // where a file somehow has more the engine is playing the default, which is
     // the one the server lists first.
-    readonly property var audioStream: {
-        const list = PlayerCtl.audioStreams;
-        if (list === undefined || list === null || list.length === 0)
-            return null;
-        return list[0];
-    }
-
-    readonly property string streamMethodLabel: {
-        const method = PlayerCtl.streamMethod;
-        if (method === undefined || String(method).length === 0)
-            return "";
-        if (method === "DirectPlay")
-            return qsTr("Direct play");
-        if (method === "DirectStream")
-            return qsTr("Direct stream");
-        return qsTr("Transcoding");
-    }
-
-    readonly property string technicalText: {
-        const parts = [];
-        const stream = panel.audioStream;
-        const source = PlayerCtl.currentSource;
-
-        // Codec, then bit depth over sample rate the way a mastering engineer
-        // writes it: 24/96, not "24 bit, 96000 Hz".
-        let format = "";
-        if (stream !== null && stream.codec !== undefined && String(stream.codec).length > 0)
-            format = String(stream.codec).toUpperCase();
-        else if (source && source.container !== undefined && String(source.container).length > 0)
-            format = String(source.container).toUpperCase();
-        if (stream !== null) {
-            const depth = Number(stream.bitDepth);
-            const rate = Number(stream.sampleRate);
-            if (rate > 0) {
-                const khz = rate / 1000;
-                const rateText = khz === Math.round(khz) ? String(Math.round(khz))
-                                                         : khz.toFixed(1);
-                format += (format.length > 0 ? " " : "")
-                        + (depth > 0 ? depth + "/" + rateText : rateText + " kHz");
-            }
-        }
-        if (format.length > 0)
-            parts.push(format);
-
-        // The stream's own rate when the server measured one, the whole
-        // source's otherwise — for a music file the two are the same number.
-        let bits = 0;
-        if (stream !== null && Number(stream.bitRate) > 0)
-            bits = Number(stream.bitRate);
-        else if (source && Number(source.bitrate) > 0)
-            bits = Number(source.bitrate);
-        if (bits > 0) {
-            parts.push(qsTr("%1 kbps").arg(
-                Math.round(bits / 1000).toLocaleString(Qt.locale(), "f", 0)));
-        }
-
-        if (panel.streamMethodLabel.length > 0)
-            parts.push(panel.streamMethodLabel);
-
-        // Channel layout only when it is worth saying — every record is stereo.
-        if (stream !== null && stream.channelLayout !== undefined
-            && String(stream.channelLayout).length > 0
-            && String(stream.channelLayout) !== "stereo")
-            parts.push(String(stream.channelLayout));
-
-        return parts.join("  ·  ");
-    }
+    readonly property var audioStream: NowPlayingInfo.audioStream
+    readonly property string streamMethodLabel: NowPlayingInfo.streamMethodLabel
+    readonly property string technicalText: NowPlayingInfo.audioTechnicalText
 
     // ── Up next, in context (MUSIC.md §4) ───────────────────────────────────
     // Where this queue came from. Derived by PlayQueue from what the queue
     // actually holds rather than remembered from the verb that built it: a
     // label carried from a click can outlive the queue it described, and this
     // one cannot be wrong about a queue it is reading.
-    readonly property string queueContext: panel.queueModel !== null
-                                           ? String(panel.queueModel.contextLabel) : ""
+    readonly property string queueContext: NowPlayingInfo.queueContext
 
-    readonly property real positionMs: Number(PlayerCtl.positionMs)
-    readonly property real durationMs: Number(PlayerCtl.durationMs)
-    readonly property bool seekable: panel.durationMs > 0
+    readonly property real positionMs: NowPlayingInfo.positionMs
+    readonly property real durationMs: NowPlayingInfo.durationMs
+    readonly property bool seekable: NowPlayingInfo.seekable
 
     // bufferedMs is measured ahead of the playhead; StrmSlider wants an
     // absolute value on the same axis as `value`.
-    readonly property real bufferedPosition: {
-        const b = PlayerCtl.backend;
-        if (b === undefined || b === null || b.bufferedMs === undefined)
-            return 0;
-        return Number(b.bufferedMs) + panel.positionMs;
-    }
+    readonly property real bufferedPosition: NowPlayingInfo.bufferedPosition
 
     readonly property int repeatMode: panel.queueModel !== null
                                       ? Number(panel.queueModel.repeatMode) : 0
@@ -236,13 +134,7 @@ FocusScope {
 
     // ── Helpers ─────────────────────────────────────────────────────────────
     function formatTime(ms: real): string {
-        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds / 60) % 60);
-        const seconds = totalSeconds % 60;
-        const pad = v => (v < 10 ? "0" : "") + v;
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds);
+        return NowPlayingInfo.formatTime(ms);
     }
 
     readonly property string endsAt: {

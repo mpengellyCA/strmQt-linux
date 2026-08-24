@@ -81,43 +81,14 @@ Item {
         return (ahead !== undefined ? Number(ahead) : 0) + PlayerCtl.positionMs;
     }
 
-    // PlayerCtl.title is MediaItemModel's label, i.e. "Series — S5E14 — Name"
-    // for an episode and a plain name for anything else. Splitting it here is
-    // what gives the OSD an episode subline without the controller having to
-    // grow a second title property.
-    readonly property var titleParts: {
-        const raw = PlayerCtl.title;
-        const parts = raw.split(" — ");
-        if (parts.length >= 3)
-            return ({ "title": parts.slice(2).join(" — "), "subline": parts[0] + "  ·  " + parts[1] });
-        return ({ "title": raw, "subline": "" });
-    }
+    // Structured queue roles, never punctuation parsed back out of a rendered
+    // label. MiniPlayer and the audio page consume this same presentation.
+    readonly property var titleParts: ({ "title": NowPlayingInfo.title,
+                                         "subline": NowPlayingInfo.videoContext })
 
     // Technical readouts, mono, as chips. Same information the old OSD put in
     // one grey line at the top right.
-    readonly property var techChips: {
-        const out = [];
-        const method = PlayerCtl.streamMethod;
-        if (method !== undefined && method.length > 0)
-            out.push(method);
-
-        const source = PlayerCtl.currentSource;
-        const video = PlayerCtl.videoStream;
-        const bits = [];
-        if (source && source.resolutionLabel)
-            bits.push(String(source.resolutionLabel));
-        if (video && video.codec)
-            bits.push(String(video.codec).toUpperCase());
-        if (bits.length > 0)
-            out.push(bits.join(" "));
-        if (source && source.isHdr === true)
-            out.push("HDR");
-
-        const hwdec = osd.backend.decoderInfo;
-        if (hwdec !== undefined && hwdec.length > 0)
-            out.push("hwdec " + hwdec);
-        return out;
-    }
+    readonly property var techChips: NowPlayingInfo.videoTechChips
 
     readonly property string endsAt: {
         if (PlayerCtl.durationMs <= 0)
@@ -234,13 +205,7 @@ Item {
 
     // ── Helpers ─────────────────────────────────────────────────────────────
     function formatTime(ms: real): string {
-        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds / 60) % 60);
-        const seconds = totalSeconds % 60;
-        const pad = v => (v < 10 ? "0" : "") + v;
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds);
+        return NowPlayingInfo.formatTime(ms);
     }
 
     function chapterIndexAt(ms: real): int {
