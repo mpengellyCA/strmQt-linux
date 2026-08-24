@@ -85,6 +85,8 @@ void MusicController::resetSessionState()
     m_songInFlight = 0;
     m_playlistInFlight = 0;
     m_detailInFlight = 0;
+    m_artistAlbumsInFlight = 0;
+    m_artistTracksInFlight = 0;
 
     m_albums->clear();
     m_artists->clear();
@@ -385,10 +387,17 @@ void MusicController::updateLoading()
 int MusicController::beginDetail(const QString &kind, const QString &id)
 {
     const int generation = retire(m_generation, m_detailInFlight);
+    m_artistAlbumsInFlight = 0;
+    m_artistTracksInFlight = 0;
     m_detailKind = kind;
     m_detailId = id;
     m_detailError.clear();
-    m_detailInFlight = generation;
+    if (kind == QLatin1String("artist")) {
+        m_artistAlbumsInFlight = generation;
+        m_artistTracksInFlight = generation;
+    } else {
+        m_detailInFlight = generation;
+    }
     emit detailStatusChanged();
     return generation;
 }
@@ -401,6 +410,25 @@ void MusicController::finishDetail(int generation, const QString &error)
     m_detailError = error;
     if (!error.isEmpty())
         qCWarning(logApp) << "music detail:" << error;
+    emit detailStatusChanged();
+}
+
+void MusicController::finishArtistAlbums(int generation, const QString &error)
+{
+    if (generation != m_generation || m_artistAlbumsInFlight != generation)
+        return;
+    m_artistAlbumsInFlight = 0;
+    m_detailError = error;
+    if (!error.isEmpty())
+        qCWarning(logApp) << "music detail:" << error;
+    emit detailStatusChanged();
+}
+
+void MusicController::finishArtistTracks(int generation)
+{
+    if (generation != m_generation || m_artistTracksInFlight != generation)
+        return;
+    m_artistTracksInFlight = 0;
     emit detailStatusChanged();
 }
 
@@ -451,19 +479,19 @@ void MusicController::ensureCurrentTab()
         return;
     switch (currentTabIndex()) {
     case 1:
-        if (m_artists->rowCount() == 0)
+        if (m_artists->rowCount() == 0 && m_artistInFlight == 0)
             fetchArtists(0);
         break;
     case 2:
-        if (m_songs->rowCount() == 0)
+        if (m_songs->rowCount() == 0 && m_songInFlight == 0)
             fetchSongs(0);
         break;
     case 3:
-        if (m_playlists->rowCount() == 0)
+        if (m_playlists->rowCount() == 0 && m_playlistInFlight == 0)
             fetchPlaylists(0);
         break;
     default:
-        if (m_albums->rowCount() == 0)
+        if (m_albums->rowCount() == 0 && m_albumInFlight == 0)
             fetchAlbums(0);
         break;
     }
@@ -922,11 +950,12 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
             return;
-        finishDetail(generation, result.ok() ? QString() : result.error);
         if (!result.ok()) {
+            finishDetail(generation, result.error);
             return;
         }
         m_tracks->setItems(result.value.items, result.value.totalRecordCount);
+        finishDetail(generation, {});
     });
 }
 
@@ -1041,14 +1070,12 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
             return;
-        // The top-tracks fetch below shares this generation and does NOT clear
-        // the marker: the discography is what the page's spinner is about, and
-        // one of the two replies has to own the flag.
-        finishDetail(generation, result.ok() ? QString() : result.error);
         if (!result.ok()) {
+            finishArtistAlbums(generation, result.error);
             return;
         }
         m_artistAlbums->setItems(result.value.items, result.value.totalRecordCount);
+        finishArtistAlbums(generation, {});
     });
 
     // Top tracks, a separate list from the discography.
@@ -1061,9 +1088,11 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     tracks.limit = 50;
     tracks.fields = {QStringLiteral("ArtistItems")};
     m_client->items(tracks).then(this, [this, generation](const Result<ItemsPage> &result) {
-        if (generation != m_generation || !result.ok())
+        if (generation != m_generation)
             return;
-        m_artistTracks->setItems(result.value.items, result.value.totalRecordCount);
+        if (result.ok())
+            m_artistTracks->setItems(result.value.items, result.value.totalRecordCount);
+        finishArtistTracks(generation);
     });
 }
 

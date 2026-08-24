@@ -118,7 +118,7 @@ FocusScope {
     readonly property bool detailMine: MusicCtl.detailKind === "artist"
                                        && MusicCtl.detailId === page.artistId
     readonly property bool discographyLoading: page.scopeMine && page.detailMine
-                                               && MusicCtl.detailLoading
+                                               && MusicCtl.artistAlbumsLoading
 
     readonly property bool discographyEmpty: page.artistId.length > 0
                                              && page.scopeMine
@@ -640,7 +640,8 @@ FocusScope {
 
         navigationFocusKey: "artist-top-tracks"
         navigationFocusFallbackItem: mixButton
-        navigationFocusRefillActive: MusicCtl.detailLoading
+        navigationFocusRefillActive: page.scopeMine && page.detailMine
+                                     && MusicCtl.artistTracksLoading
 
         anchors.top: topSelection.bottom
         anchors.left: parent.left
@@ -772,7 +773,8 @@ FocusScope {
 
         navigationFocusKey: "artist-albums"
         navigationFocusFallbackItem: mixButton
-        navigationFocusRefillActive: MusicCtl.detailLoading
+        navigationFocusRefillActive: page.scopeMine && page.detailMine
+                                     && MusicCtl.artistAlbumsLoading
 
         anchors.top: albumHeading.bottom
         anchors.topMargin: Theme.spacingValue
@@ -784,7 +786,7 @@ FocusScope {
         // artist: a grid quietly full of somebody else's records is worse than
         // no grid at all.
         visible: page.scopeMine && page.detailMine
-                 && !MusicCtl.detailLoading && page.albumsLoaded > 0
+                 && !MusicCtl.artistAlbumsLoading && page.albumsLoaded > 0
         // Focus follows content, never visibility.
         focus: albumGrid.count > 0
 

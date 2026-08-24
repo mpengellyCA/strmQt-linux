@@ -66,6 +66,10 @@ class DetailsController : public QObject
     // 0-100 Rotten-Tomatoes-style score; 0 when the server has none.
     Q_PROPERTY(double criticRating READ criticRating NOTIFY detailsChanged)
     Q_PROPERTY(strmqt::MediaItemModel *similar READ similar CONSTANT)
+    // The similar-items request is independent of the primary details reply.
+    // Focus restoration must wait for this model's own terminal state rather
+    // than guessing from itemLoading.
+    Q_PROPERTY(bool similarLoading READ similarLoading NOTIFY similarStatusChanged)
 
 public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -89,6 +93,7 @@ public:
     QVariantMap person() const { return m_person; }
     double criticRating() const { return m_criticRating; }
     MediaItemModel *similar() const { return m_similar; }
+    bool similarLoading() const { return m_similarLoading; }
 
     void resetSessionState();
 
@@ -107,9 +112,11 @@ signals:
     void detailsChanged();
     void collectionsChanged();
     void personChanged();
+    void similarStatusChanged();
 
 private:
     void cancelRequests();
+    void setSimilarLoading(bool loading);
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
@@ -129,6 +136,7 @@ private:
     QString m_premiereDate;
     QVariantMap m_person;
     double m_criticRating = 0.0;
+    bool m_similarLoading = false;
     int m_generation = 0;
     emby::RequestHandle m_detailsRequest;
     emby::RequestHandle m_collectionsRequest;

@@ -40,6 +40,7 @@ private slots:
     void detailsPersonImageUsesSessionNamespace();
     void detailsClearsBetweenItems();
     void detailsEnsureJoinsUsableStateAndRetriesFailure();
+    void detailsSimilarStatusFollowsItsOwnReply();
     void detailsPersonLoadRetiresAnInFlightItemOwner();
     void supersededDetailsAbortsEveryLane();
     void seriesFetchesItsOwnRecord();
@@ -455,6 +456,60 @@ void ContentControllersTest::detailsEnsureJoinsUsableStateAndRetriesFailure()
     QTRY_COMPARE_WITH_TIMEOUT(details.tagline(), QStringLiteral("Retried"), 5000);
     QCOMPARE(details.itemId(), QStringLiteral("joined"));
     QCOMPARE(requestsFor(detailPath), 3);
+}
+
+void ContentControllersTest::detailsSimilarStatusFollowsItsOwnReply()
+{
+    const QString collectionsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), collectionsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    // Similar can settle before the primary item. Its owner is usable as soon
+    // as its own model is populated; the primary lane must remain honestly
+    // live until its delayed reply arrives.
+    const QString slowDetails = QStringLiteral("/Users/%1/Items/slow-details").arg(kUserId);
+    const QString fastSimilar = QStringLiteral("/Items/slow-details/Similar");
+    m_mock->addRoute(QStringLiteral("GET"), slowDetails, 200,
+                     QByteArrayLiteral("{\"Id\":\"slow-details\",\"Name\":\"Slow\","
+                                       "\"Type\":\"Movie\"}"));
+    m_mock->addRoute(
+        QStringLiteral("GET"), fastSimilar, 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"fast-similar\",\"Name\":\"Fast Similar\","
+                          "\"Type\":\"Movie\"}]}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), slowDetails, 800);
+
+    DetailsController details(m_client);
+    details.load(QStringLiteral("slow-details"));
+    QVERIFY(details.itemLoading());
+    QVERIFY(details.similarLoading());
+    QTRY_COMPARE_WITH_TIMEOUT(details.similar()->rowCount(), 1, 5000);
+    QVERIFY(!details.similarLoading());
+    QVERIFY(details.itemLoading());
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+
+    // Reverse the order. A completed primary item cannot declare the similar
+    // rail terminal while that rail's own request is still outstanding.
+    const QString fastDetails = QStringLiteral("/Users/%1/Items/slow-similar").arg(kUserId);
+    const QString slowSimilar = QStringLiteral("/Items/slow-similar/Similar");
+    m_mock->addRoute(QStringLiteral("GET"), fastDetails, 200,
+                     QByteArrayLiteral("{\"Id\":\"slow-similar\",\"Name\":\"Fast\","
+                                       "\"Type\":\"Movie\",\"Taglines\":[\"Ready\"]}"));
+    m_mock->addRoute(
+        QStringLiteral("GET"), slowSimilar, 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"late-similar\",\"Name\":\"Late Similar\","
+                          "\"Type\":\"Movie\"}]}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), slowSimilar, 800);
+
+    details.load(QStringLiteral("slow-similar"));
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QCOMPARE(details.tagline(), QStringLiteral("Ready"));
+    QVERIFY(details.similarLoading());
+    QCOMPARE(details.similar()->rowCount(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(details.similar()->rowCount(), 1, 5000);
+    QVERIFY(!details.similarLoading());
+
+    details.resetSessionState();
+    QVERIFY(!details.similarLoading());
 }
 
 void ContentControllersTest::detailsPersonLoadRetiresAnInFlightItemOwner()

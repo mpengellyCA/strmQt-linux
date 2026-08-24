@@ -24,6 +24,7 @@ void DetailsController::resetSessionState()
     cancelRequests();
     m_itemId.clear();
     m_itemLoading = false;
+    setSimilarLoading(false);
     m_similar->clear();
     m_tagline.clear();
     m_mediaSources.clear();
@@ -48,6 +49,7 @@ void DetailsController::loadPerson(const QString &personId)
 {
     const int generation = ++m_generation;
     cancelRequests();
+    setSimilarLoading(false);
     const bool retiredItemOwner = !m_itemId.isEmpty() || m_itemLoading;
     m_itemId.clear();
     m_itemLoading = false;
@@ -108,6 +110,7 @@ void DetailsController::load(const QString &itemId)
     m_criticRating = 0.0;
     emit detailsChanged();
     m_similar->clear();
+    setSimilarLoading(!itemId.isEmpty());
 
     m_collections.clear();
     emit collectionsChanged();
@@ -126,6 +129,7 @@ void DetailsController::load(const QString &itemId)
             m_itemId.clear();
             m_collectionsRequest.cancel();
             m_similarRequest.cancel();
+            setSimilarLoading(false);
             qCWarning(logApp) << "item details load failed:" << result.error;
             emit detailsChanged();
             return;
@@ -225,6 +229,7 @@ void DetailsController::load(const QString &itemId)
                 return;
             if (result.ok())
                 m_similar->setItems(result.value);
+            setSimilarLoading(false);
         });
 }
 
@@ -240,6 +245,14 @@ void DetailsController::cancelRequests()
     m_detailsRequest.cancel();
     m_collectionsRequest.cancel();
     m_similarRequest.cancel();
+}
+
+void DetailsController::setSimilarLoading(bool loading)
+{
+    if (m_similarLoading == loading)
+        return;
+    m_similarLoading = loading;
+    emit similarStatusChanged();
 }
 
 } // namespace strmqt

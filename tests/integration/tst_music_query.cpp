@@ -33,6 +33,7 @@ private slots:
     void sortIsPerTabAndReachesTheWire();
     void seededDirectionsAreLeftToTheBar();
     void repeatedAlbumEnsureKeepsTheInFlightPage();
+    void tabAwayAndBackKeepsTheInFlightPageZero();
     void albumPagingIgnoresAnUnrelatedArtistRequest();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void songsAreTheirOwnModelWithTheirOwnQuery();
@@ -253,6 +254,35 @@ void MusicQueryTest::repeatedAlbumEnsureKeepsTheInFlightPage()
     // and replace it with another page-0 download.
     QCOMPARE(requestsFor(itemsPath), 1);
     settle();
+}
+
+void MusicQueryTest::tabAwayAndBackKeepsTheInFlightPageZero()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+
+    // Start the controller and leave the Albums tab settled but empty. Empty is
+    // a valid terminal model, so returning to it can issue another ensure; that
+    // unrelated request must not affect admission on the Artists lane.
+    m_music->loadAlbums();
+    settle();
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 800);
+
+    m_music->setTab(QStringLiteral("artists"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(artistsPath), 1, 5000);
+    QVERIFY(m_music->loading());
+
+    // The Artists model is still empty because page zero is slow. Moving away
+    // and back used to treat that as "not requested" and retire/duplicate the
+    // useful lane. Matching in-flight state is the admission authority.
+    m_music->setTab(QStringLiteral("albums"));
+    m_music->setTab(QStringLiteral("artists"));
+    QTest::qWait(100);
+    QCOMPARE(requestsFor(artistsPath), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->loading(), 5000);
+    QCOMPARE(requestsFor(artistsPath), 1);
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QVERIFY(requestsFor(itemsPath) >= 1);
 }
 
 void MusicQueryTest::albumPagingIgnoresAnUnrelatedArtistRequest()
@@ -1088,7 +1118,11 @@ void MusicQueryTest::artistDetailStatusIsOwnedAndIsolated()
     m_music->openArtist(QStringLiteral("artist-failed"), QStringLiteral("Failed Artist"));
     QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
     QCOMPARE(m_music->detailId(), QStringLiteral("artist-failed"));
+    QVERIFY(m_music->artistAlbumsLoading());
+    QVERIFY(m_music->artistTracksLoading());
     QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QVERIFY(!m_music->artistAlbumsLoading());
+    QVERIFY(!m_music->artistTracksLoading());
     const QString detailFailure = m_music->detailErrorMessage();
     QVERIFY(!detailFailure.isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(!m_music->loading(), 5000);
@@ -1103,11 +1137,17 @@ void MusicQueryTest::artistDetailStatusIsOwnedAndIsolated()
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
     const int beforeA = requestsFor(itemsPath);
     m_music->openArtist(QStringLiteral("artist-a"), QStringLiteral("Artist A"));
+    QVERIFY(m_music->artistAlbumsLoading());
+    QVERIFY(m_music->artistTracksLoading());
     QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), beforeA + 2, 5000);
     m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
     m_music->openArtist(QStringLiteral("artist-b"), QStringLiteral("Artist B"));
+    QVERIFY(m_music->artistAlbumsLoading());
+    QVERIFY(m_music->artistTracksLoading());
     QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QVERIFY(!m_music->artistAlbumsLoading());
+    QVERIFY(!m_music->artistTracksLoading());
     QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
     QCOMPARE(m_music->detailId(), QStringLiteral("artist-b"));
     QVERIFY(m_music->detailErrorMessage().isEmpty());
@@ -1185,6 +1225,8 @@ void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
     QVERIFY(m_music->detailKind().isEmpty());
     QVERIFY(m_music->detailId().isEmpty());
     QVERIFY(!m_music->detailLoading());
+    QVERIFY(!m_music->artistAlbumsLoading());
+    QVERIFY(!m_music->artistTracksLoading());
     QVERIFY(m_music->detailErrorMessage().isEmpty());
     QCOMPARE(m_music->tab(), QStringLiteral("albums"));
     QCOMPARE(m_music->artistMode(), QStringLiteral("albumArtists"));

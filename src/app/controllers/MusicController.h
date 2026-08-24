@@ -69,6 +69,11 @@ class MusicController : public QObject
     Q_PROPERTY(QString detailId READ detailId NOTIFY detailStatusChanged)
     Q_PROPERTY(bool detailLoading READ detailLoading NOTIFY detailStatusChanged)
     Q_PROPERTY(QString detailErrorMessage READ detailErrorMessage NOTIFY detailStatusChanged)
+    // Artist pages have two independent reply lanes. Each virtualized owner
+    // waits on the lane that populates its model; detailLoading remains their
+    // aggregate for callers interested in the whole artist request.
+    Q_PROPERTY(bool artistAlbumsLoading READ artistAlbumsLoading NOTIFY detailStatusChanged)
+    Q_PROPERTY(bool artistTracksLoading READ artistTracksLoading NOTIFY detailStatusChanged)
     // False under SortBy=Random, whatever the totals say: Emby reshuffles per
     // request and has no seed, so a second page is a second shuffle. See
     // isRandomSort() in the .cpp for the whole reason.
@@ -144,8 +149,15 @@ public:
     QString errorMessage() const { return m_error; }
     QString detailKind() const { return m_detailKind; }
     QString detailId() const { return m_detailId; }
-    bool detailLoading() const { return m_detailInFlight != 0; }
+    bool detailLoading() const
+    {
+        return m_detailKind == QLatin1String("artist")
+                   ? (m_artistAlbumsInFlight != 0 || m_artistTracksInFlight != 0)
+                   : m_detailInFlight != 0;
+    }
     QString detailErrorMessage() const { return m_detailError; }
+    bool artistAlbumsLoading() const { return m_artistAlbumsInFlight != 0; }
+    bool artistTracksLoading() const { return m_artistTracksInFlight != 0; }
     bool canLoadMoreAlbums() const;
     bool canLoadMoreArtists() const;
     bool canLoadMoreSongs() const;
@@ -325,6 +337,8 @@ private:
     void setError(const QString &message);
     int beginDetail(const QString &kind, const QString &id);
     void finishDetail(int generation, const QString &error);
+    void finishArtistAlbums(int generation, const QString &error);
+    void finishArtistTracks(int generation);
     // Applies the shared filter axes (letter, genres, favourites) to a
     // query. One place, so the three tabs cannot drift apart on what "filtered"
     // means.
@@ -434,9 +448,12 @@ private:
     int m_artistInFlight = 0;
     int m_songInFlight = 0;
     int m_playlistInFlight = 0;
-    // openAlbum() and openArtist() share m_generation, so they share a marker
-    // and an explicit kind/id owner.
+    // openAlbum() and openArtist() share m_generation and an explicit kind/id
+    // owner. Artist discography and top tracks settle independently because
+    // they populate different focus-restoration owners.
     int m_detailInFlight = 0;
+    int m_artistAlbumsInFlight = 0;
+    int m_artistTracksInFlight = 0;
 };
 
 } // namespace strmqt
