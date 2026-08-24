@@ -43,6 +43,7 @@ class MpvVideoItemTest : public QObject
 private slots:
     void coreInitializesOnFirstLoad();
     void deferredSettingsApplyOnFirstLoad();
+    void deferredSettingsNormalizeBeforeFirstLoad();
     void playerDetachSynchronizesBeforeOwnerDestruction();
     void offThreadFrameNotificationRedrawsTheItem();
 };
@@ -130,6 +131,45 @@ void MpvVideoItemTest::deferredSettingsApplyOnFirstLoad()
     QCOMPARE(subtitlePosition.first, 0);
     QCOMPARE(subtitlePosition.second, int64_t{123});
     QCOMPARE(stringProperty("replaygain"), QStringLiteral("album"));
+    player.stop();
+}
+
+void MpvVideoItemTest::deferredSettingsNormalizeBeforeFirstLoad()
+{
+    MpvPlayer player;
+    player.setVolume(999);
+    player.setPlaybackSpeed(99.0);
+    player.setSubtitleStyle({}, 999, QStringLiteral("not-a-color"), 999, 999);
+    player.setReplayGain(QStringLiteral("unknown"));
+    QCOMPARE(player.volume(), 130);
+    QCOMPARE(player.playbackSpeed(), 4.0);
+
+    player.load(QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media")), 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+
+    double value = 0.0;
+    QCOMPARE(mpv_get_property(handle, "volume", MPV_FORMAT_DOUBLE, &value), 0);
+    QCOMPARE(value, 130.0);
+    QCOMPARE(mpv_get_property(handle, "speed", MPV_FORMAT_DOUBLE, &value), 0);
+    QCOMPARE(value, 4.0);
+    QCOMPARE(mpv_get_property(handle, "sub-scale", MPV_FORMAT_DOUBLE, &value), 0);
+    QCOMPARE(value, 3.0);
+    QCOMPARE(mpv_get_property(handle, "sub-border-size", MPV_FORMAT_DOUBLE, &value), 0);
+    QCOMPARE(value, 0.0);
+
+    int64_t position = 0;
+    QCOMPARE(mpv_get_property(handle, "sub-pos", MPV_FORMAT_INT64, &position), 0);
+    QCOMPARE(position, int64_t{150});
+    const auto stringProperty = [handle](const char *name) {
+        char *raw = mpv_get_property_string(handle, name);
+        const QString result = QString::fromUtf8(raw ? raw : "");
+        mpv_free(raw);
+        return result;
+    };
+    QCOMPARE(stringProperty("sub-color"), QStringLiteral("#FFFFFFFF"));
+    QCOMPARE(stringProperty("sub-back-color"), QStringLiteral("#FF000000"));
+    QCOMPARE(stringProperty("replaygain"), QStringLiteral("no"));
     player.stop();
 }
 
