@@ -405,7 +405,14 @@ src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.busy 
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.errorMessage
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.serverUrl
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.errorMessage.length > 0
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.albumsLoading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.artistsLoading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.playlistsLoading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.songsLoading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: MusicCtl.albumsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: MusicCtl.libraryId
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.artistsTab ? MusicCtl.artistsLoading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.songsTab ? MusicCtl.songsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.instantMix(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.instantMix(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
@@ -466,21 +473,17 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	gridModel: MusicCtl
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	headline: MusicCtl.filtered
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	iconName: MusicCtl.filtered ? "filter"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (MusicCtl.filtered)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.albums.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.albums.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.artists.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.artists.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.songs.count === 0 && !MusicCtl.loading)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.songs.count === 0 && !MusicCtl.loading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.albums.count === 0
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.artists.count === 0
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.playlists.count === 0
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	if (page.scopeId.length > 0 && MusicCtl.songs.count === 0
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	label: (MusicCtl.genresFailed && MusicCtl.genreOptions.length === 0)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	label: (MusicCtl.genresFailed && MusicCtl.genreOptions.length === 0)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	model: MusicCtl.songs
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.loading
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.loading
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.loading
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.loading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.albumsLoading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.artistsLoading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.playlistsLoading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.songsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: Actions.shuffle(page.scopeId, "music")
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: PlayerCtl.togglePause()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onClicked: Actions.shuffle(page.scopeId, "music")
@@ -499,8 +502,8 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl.artistMode = "artists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	options: MusicCtl.genreOptions,
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool albumArtistMode: MusicCtl.artistMode === "albumArtists"
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool currentTabLoading: page.playlistsTab ? MusicCtl.playlistsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool failed: MusicCtl.errorMessage.length > 0
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool isEmpty: page.shownCount === 0 && !MusicCtl.loading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int albumTotal: MusicCtl.albums.totalRecordCount
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int artistTotal: MusicCtl.artists.totalRecordCount
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int playlistTotal: MusicCtl.playlists.totalRecordCount
@@ -509,7 +512,6 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	selected: MusicCtl.
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	target: MusicCtl
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	text: qsTr("Couldn't load more: %1").arg(MusicCtl.errorMessage)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	visible: MusicCtl.loading && page.shownCount === 0
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.errorMessage.length === 0
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.errorMessage.length > 0
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.model.count === 0
