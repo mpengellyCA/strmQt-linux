@@ -63,10 +63,16 @@ class MusicController : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     // Browse requests are independent lanes. A hidden slow tab must not keep
     // the visible tab's focus restoration or empty/loading state pending.
-    Q_PROPERTY(bool albumsLoading READ albumsLoading NOTIFY browseLoadingChanged)
-    Q_PROPERTY(bool artistsLoading READ artistsLoading NOTIFY browseLoadingChanged)
-    Q_PROPERTY(bool songsLoading READ songsLoading NOTIFY browseLoadingChanged)
-    Q_PROPERTY(bool playlistsLoading READ playlistsLoading NOTIFY browseLoadingChanged)
+    Q_PROPERTY(bool albumsLoading READ albumsLoading NOTIFY browseStatusChanged)
+    Q_PROPERTY(bool artistsLoading READ artistsLoading NOTIFY browseStatusChanged)
+    Q_PROPERTY(bool songsLoading READ songsLoading NOTIFY browseStatusChanged)
+    Q_PROPERTY(bool playlistsLoading READ playlistsLoading NOTIFY browseStatusChanged)
+    // Errors belong to the same independent lanes as their models and loading
+    // markers. A hidden request must neither poison nor clear the visible tab.
+    Q_PROPERTY(QString albumsErrorMessage READ albumsErrorMessage NOTIFY browseStatusChanged)
+    Q_PROPERTY(QString artistsErrorMessage READ artistsErrorMessage NOTIFY browseStatusChanged)
+    Q_PROPERTY(QString songsErrorMessage READ songsErrorMessage NOTIFY browseStatusChanged)
+    Q_PROPERTY(QString playlistsErrorMessage READ playlistsErrorMessage NOTIFY browseStatusChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
     // Album/artist pages share one retargetable detail lane. Keep its owner and
     // status separate from the library lists so unrelated replies cannot clear
@@ -156,7 +162,14 @@ public:
     bool artistsLoading() const { return m_artistInFlight != 0; }
     bool songsLoading() const { return m_songInFlight != 0; }
     bool playlistsLoading() const { return m_playlistInFlight != 0; }
-    QString errorMessage() const { return m_error; }
+    QString albumsErrorMessage() const { return m_albumError; }
+    QString artistsErrorMessage() const { return m_artistError; }
+    QString songsErrorMessage() const { return m_songError; }
+    QString playlistsErrorMessage() const { return m_playlistError; }
+    // Compatibility surface for controller callers: the active tab's error.
+    // MusicPage binds the explicit lane properties so a tab switch cannot
+    // accidentally display another lane's terminal state.
+    QString errorMessage() const;
     QString detailKind() const { return m_detailKind; }
     QString detailId() const { return m_detailId; }
     bool detailLoading() const
@@ -316,11 +329,11 @@ signals:
     void tabChanged();
     void genresChanged();
     void loadingChanged();
-    void browseLoadingChanged();
+    void browseStatusChanged();
     void errorChanged();
     void detailStatusChanged();
-    // A one-shot verb failed. Separate from errorMessage, which is the state of
-    // the *lists* — MusicPage renders that as "Couldn't load this music
+    // A one-shot verb failed. Separate from the per-lane browse errors, which
+    // MusicPage renders as "Couldn't load this music
     // library" or, once a page is on screen, as a paging banner with a Retry
     // that calls loadMoreAlbums(). A failed ▸ is neither of those: it has
     // nothing to retry and nothing to keep showing, so it goes out as a toast,
@@ -345,7 +358,8 @@ private:
                      std::function<void(const QList<MediaItem> &)> onItems,
                      const QString &failure);
     void setLoading(bool loading);
-    void setError(const QString &message);
+    static void setBrowseError(QString &laneError, const QString &message);
+    void clearBrowseErrors();
     int beginDetail(const QString &kind, const QString &id);
     void finishDetail(int generation, const QString &error);
     void finishArtistAlbums(int generation, const QString &error);
@@ -367,7 +381,8 @@ private:
     // new generation, which is what a fetch about to be issued carries.
     static int retire(int &generation, int &inFlight);
     // `loading` is the OR of the library-list markers. The detail lane has its
-    // own owner-scoped state. Called after every list retire() and reply.
+    // own owner-scoped state. Publishes one coherent snapshot of lane loading
+    // and errors after every list start, retire and reply.
     void updateLoading();
 
     emby::EmbyClient *m_client;
@@ -388,7 +403,10 @@ private:
     QString m_albumName;
     QString m_artistId;
     QString m_artistName;
-    QString m_error;
+    QString m_albumError;
+    QString m_artistError;
+    QString m_songError;
+    QString m_playlistError;
     QString m_detailKind;
     QString m_detailId;
     QString m_detailError;

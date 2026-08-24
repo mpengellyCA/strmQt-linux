@@ -125,8 +125,8 @@ void MusicController::resetSessionState()
     m_genresFailed = false;
     m_started = false;
 
+    clearBrowseErrors();
     updateLoading();
-    setError({});
     emit detailStatusChanged();
     emit scopeChanged();
     emit albumChanged();
@@ -251,6 +251,20 @@ bool MusicController::filtered() const
     return !m_nameStartsWith.isEmpty() || !m_genreIds.isEmpty() || m_favoritesOnly;
 }
 
+QString MusicController::errorMessage() const
+{
+    switch (currentTabIndex()) {
+    case 1:
+        return m_artistError;
+    case 2:
+        return m_songError;
+    case 3:
+        return m_playlistError;
+    default:
+        return m_albumError;
+    }
+}
+
 void MusicController::setTab(const QString &tab)
 {
     const QString wanted = (tab == QLatin1String("artists") || tab == QLatin1String("songs")
@@ -261,6 +275,7 @@ void MusicController::setTab(const QString &tab)
         return;
     m_tab = wanted;
     emit tabChanged();
+    emit errorChanged();
     // The sort belongs to the tab, so moving between tabs moves the value every
     // sort control on screen is rendering.
     emit queryChanged();
@@ -381,13 +396,17 @@ int MusicController::retire(int &generation, int &inFlight)
 void MusicController::updateLoading()
 {
     // The aggregate may remain true while ownership moves between lanes, so it
-    // cannot notify the four lane properties. Publish every marker transition
-    // separately; callers invoke this immediately after each retire/start/end.
+    // cannot notify the lane properties. Publish every marker/error transition
+    // separately; callers invoke this only after the corresponding model and
+    // terminal state are coherent.
     // Set the aggregate first so observers of the lane signal see one coherent
     // snapshot of both answers.
     setLoading(m_albumInFlight != 0 || m_artistInFlight != 0 || m_songInFlight != 0
                || m_playlistInFlight != 0);
-    emit browseLoadingChanged();
+    emit browseStatusChanged();
+    // errorMessage is the active lane's compatibility view. Publishing it
+    // here keeps that view ordered with the per-lane terminal snapshot.
+    emit errorChanged();
 }
 
 int MusicController::beginDetail(const QString &kind, const QString &id)
@@ -450,15 +469,16 @@ void MusicController::applyQueryChange()
     retire(m_artistGeneration, m_artistInFlight);
     retire(m_songGeneration, m_songInFlight);
     retire(m_playlistGeneration, m_playlistInFlight);
-    updateLoading();
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
     m_playlists->clear();
+    clearBrowseErrors();
     emit albumsChanged();
     emit artistsChanged();
     emit songsChanged();
     emit playlistsChanged();
+    updateLoading();
     // Only the visible tab refetches. The others are empty now, so the page's
     // own "load this tab if it is empty" path fills them when they are next
     // looked at, which is one request instead of four for a filter the user can
@@ -546,7 +566,6 @@ void MusicController::setLibrary(const QString &libraryId)
     retire(m_artistGeneration, m_artistInFlight);
     retire(m_songGeneration, m_songInFlight);
     retire(m_playlistGeneration, m_playlistInFlight);
-    updateLoading();
     ++m_genreGeneration;
     m_albums->clear();
     m_artists->clear();
@@ -564,6 +583,8 @@ void MusicController::setLibrary(const QString &libraryId)
     // stale here, it is the wrong media type.
     m_playlists->clear();
     emit playlistsChanged();
+    clearBrowseErrors();
+    updateLoading();
     // The genre list belongs to the library, not to the session: /MusicGenres
     // is scoped by ParentId (measured), so another library's 289 genres are the
     // wrong 289.
@@ -617,6 +638,7 @@ void MusicController::fetchAlbums(int startIndex)
 {
     const int generation = retire(m_albumGeneration, m_albumInFlight);
     m_albumInFlight = generation;
+    setBrowseError(m_albumError, {});
     updateLoading();
 
     ItemsQuery query;
@@ -636,18 +658,20 @@ void MusicController::fetchAlbums(int startIndex)
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_albumGeneration)
                 return;
-            m_albumInFlight = 0;
-            updateLoading();
             if (!result.ok()) {
-                setError(result.error);
+                setBrowseError(m_albumError, result.error);
+                m_albumInFlight = 0;
+                updateLoading();
                 return;
             }
-            setError(QString());
             if (startIndex == 0)
                 m_albums->setItems(result.value.items, result.value.totalRecordCount);
             else
                 m_albums->appendItems(result.value.items, result.value.totalRecordCount);
             emit albumsChanged();
+            setBrowseError(m_albumError, {});
+            m_albumInFlight = 0;
+            updateLoading();
         });
 }
 
@@ -670,6 +694,7 @@ void MusicController::fetchArtists(int startIndex)
 {
     const int generation = retire(m_artistGeneration, m_artistInFlight);
     m_artistInFlight = generation;
+    setBrowseError(m_artistError, {});
     updateLoading();
 
     ItemsQuery query;
@@ -687,18 +712,20 @@ void MusicController::fetchArtists(int startIndex)
     future.then(this, [this, generation, startIndex](const Result<ItemsPage> &result) {
         if (generation != m_artistGeneration)
             return;
-        m_artistInFlight = 0;
-        updateLoading();
         if (!result.ok()) {
-            setError(result.error);
+            setBrowseError(m_artistError, result.error);
+            m_artistInFlight = 0;
+            updateLoading();
             return;
         }
-        setError(QString());
         if (startIndex == 0)
             m_artists->setItems(result.value.items, result.value.totalRecordCount);
         else
             m_artists->appendItems(result.value.items, result.value.totalRecordCount);
         emit artistsChanged();
+        setBrowseError(m_artistError, {});
+        m_artistInFlight = 0;
+        updateLoading();
     });
 }
 
@@ -726,6 +753,7 @@ void MusicController::fetchSongs(int startIndex)
 {
     const int generation = retire(m_songGeneration, m_songInFlight);
     m_songInFlight = generation;
+    setBrowseError(m_songError, {});
     updateLoading();
 
     ItemsQuery query;
@@ -748,18 +776,20 @@ void MusicController::fetchSongs(int startIndex)
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_songGeneration)
                 return; // a newer filter, sort or library superseded this reply
-            m_songInFlight = 0;
-            updateLoading();
             if (!result.ok()) {
-                setError(result.error);
+                setBrowseError(m_songError, result.error);
+                m_songInFlight = 0;
+                updateLoading();
                 return;
             }
-            setError(QString());
             if (startIndex == 0)
                 m_songs->setItems(result.value.items, result.value.totalRecordCount);
             else
                 m_songs->appendItems(result.value.items, result.value.totalRecordCount);
             emit songsChanged();
+            setBrowseError(m_songError, {});
+            m_songInFlight = 0;
+            updateLoading();
         });
 }
 
@@ -797,9 +827,10 @@ void MusicController::invalidatePlaylists()
     // nothing else lowers stays true for the rest of the session — which is
     // exactly the strand review found here.
     retire(m_playlistGeneration, m_playlistInFlight);
-    updateLoading();
     m_playlists->clear();
+    setBrowseError(m_playlistError, {});
     emit playlistsChanged();
+    updateLoading();
     if (m_started && currentTabIndex() == 3)
         fetchPlaylists(0);
 }
@@ -815,14 +846,16 @@ void MusicController::fetchPlaylists(int startIndex)
     // this early return has to answer for the flag as well — the same strand
     // invalidatePlaylists() had.
     if (m_libraryId.isEmpty()) {
-        updateLoading();
         if (m_playlists->rowCount() > 0) {
             m_playlists->clear();
             emit playlistsChanged();
         }
+        setBrowseError(m_playlistError, {});
+        updateLoading();
         return;
     }
     m_playlistInFlight = generation;
+    setBrowseError(m_playlistError, {});
     updateLoading();
 
     ItemsQuery query;
@@ -846,18 +879,20 @@ void MusicController::fetchPlaylists(int startIndex)
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_playlistGeneration)
                 return;
-            m_playlistInFlight = 0;
-            updateLoading();
             if (!result.ok()) {
-                setError(result.error);
+                setBrowseError(m_playlistError, result.error);
+                m_playlistInFlight = 0;
+                updateLoading();
                 return;
             }
-            setError(QString());
             if (startIndex == 0)
                 m_playlists->setItems(result.value.items, result.value.totalRecordCount);
             else
                 m_playlists->appendItems(result.value.items, result.value.totalRecordCount);
             emit playlistsChanged();
+            setBrowseError(m_playlistError, {});
+            m_playlistInFlight = 0;
+            updateLoading();
         });
 }
 
@@ -888,8 +923,8 @@ void MusicController::fetchGenrePage(int startIndex, int generation)
             if (generation != m_genreGeneration)
                 return; // the library moved under this walk
             if (!result.ok()) {
-                // Deliberately not setError(): errorMessage is the state of the
-                // LISTS, and MusicPage draws it as "Couldn't load this music
+                // Deliberately not a browse error: those are the state of the
+                // LISTS, and MusicPage draws one as "Couldn't load this music
                 // library" over the grid. A genre list that did not arrive
                 // leaves the filter control empty and everything else working,
                 // which is a smaller failure than claiming the library is
@@ -982,8 +1017,8 @@ void MusicController::expandAlbum(const QString &albumId, std::function<bool()> 
                failure](const Result<ItemsPage> &result) {
             if (!stillCurrent())
                 return;
-            // actionFailed(), never setError(): the error property is the state
-            // of the album and artist *lists*, and MusicPage draws it as a
+            // actionFailed(), never a browse error: those properties are the
+            // state of the album and artist *lists*, and MusicPage draws one as a
             // paging banner offering to retry loadMoreAlbums() — the wrong
             // message, the wrong retry, and one nothing here would ever clear.
             // A verb that happened once reports once, as a toast.
@@ -1110,14 +1145,19 @@ void MusicController::setLoading(bool loading)
     emit loadingChanged();
 }
 
-void MusicController::setError(const QString &message)
+void MusicController::setBrowseError(QString &laneError, const QString &message)
 {
     if (!message.isEmpty())
         qCWarning(logApp) << "music:" << message;
-    if (m_error == message)
-        return;
-    m_error = message;
-    emit errorChanged();
+    laneError = message;
+}
+
+void MusicController::clearBrowseErrors()
+{
+    m_albumError.clear();
+    m_artistError.clear();
+    m_songError.clear();
+    m_playlistError.clear();
 }
 
 } // namespace strmqt

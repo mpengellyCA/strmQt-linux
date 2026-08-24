@@ -76,6 +76,11 @@ FocusScope {
                                               : page.songsTab ? MusicCtl.songsLoading
                                               : page.artistsTab ? MusicCtl.artistsLoading
                                               : MusicCtl.albumsLoading
+    readonly property string currentTabErrorMessage:
+        page.playlistsTab ? MusicCtl.playlistsErrorMessage
+        : page.songsTab ? MusicCtl.songsErrorMessage
+        : page.artistsTab ? MusicCtl.artistsErrorMessage
+        : MusicCtl.albumsErrorMessage
 
     // The controller's own vocabulary for the same four tabs. It owns a sort
     // per tab, so it has to be told which one is on screen; the tab bar stays
@@ -96,7 +101,7 @@ FocusScope {
     readonly property int songTotal: MusicCtl.songs.totalRecordCount
     readonly property int playlistTotal: MusicCtl.playlists.totalRecordCount
 
-    readonly property bool failed: MusicCtl.errorMessage.length > 0
+    readonly property bool failed: page.currentTabErrorMessage.length > 0
     readonly property int shownCount: page.songsTab ? songsTable.count
                                     : page.playlistsTab ? playlistsGrid.count
                                     : page.albumsTab ? albumsGrid.count
@@ -1052,7 +1057,7 @@ FocusScope {
         severity: "error"
         iconName: "info"
         headline: qsTr("Couldn't load this music library")
-        body: MusicCtl.errorMessage
+        body: page.currentTabErrorMessage
         actionText: qsTr("Retry")
         actionIcon: "refresh"
         onActionTriggered: {
@@ -1158,7 +1163,7 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 width: pagingRow.width - Theme.iconSize - pagingRetry.width
                        - pagingRow.spacing * 2
-                text: qsTr("Couldn't load more: %1").arg(MusicCtl.errorMessage)
+                text: qsTr("Couldn't load more: %1").arg(page.currentTabErrorMessage)
                 color: Theme.textSecondaryColor
                 font.family: Theme.fontBody
                 font.pixelSize: Theme.fontSmall

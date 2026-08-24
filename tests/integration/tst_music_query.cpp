@@ -36,6 +36,11 @@ private slots:
     void tabAwayAndBackKeepsTheInFlightPageZero();
     void albumPagingIgnoresAnUnrelatedArtistRequest();
     void browseLoadingIsPublishedPerIndependentLane();
+    void browseTerminalSignalSeesCommittedModel_data();
+    void browseTerminalSignalSeesCommittedModel();
+    void browseErrorsStayWithTheirLane_data();
+    void browseErrorsStayWithTheirLane();
+    void libraryRetargetPublishesClearedModelBeforeTerminal();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
@@ -67,6 +72,14 @@ private:
                               "\"TotalRecordCount\":%2}")
             .arg(QLatin1String(type))
             .arg(total)
+            .toUtf8();
+    }
+
+    static QByteArray pageOf(const QString &type, const QString &id)
+    {
+        return QStringLiteral("{\"Items\":[{\"Id\":\"%1\",\"Name\":\"%1\","
+                              "\"Type\":\"%2\"}],\"TotalRecordCount\":1}")
+            .arg(id, type)
             .toUtf8();
     }
 
@@ -328,7 +341,7 @@ void MusicQueryTest::browseLoadingIsPublishedPerIndependentLane()
     m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 700);
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 120);
 
-    QSignalSpy laneSpy(m_music, &MusicController::browseLoadingChanged);
+    QSignalSpy laneSpy(m_music, &MusicController::browseStatusChanged);
     // Albums remains the visible tab while a hidden Artists ensure is slow.
     m_music->loadArtists();
     m_music->loadAlbums();
@@ -348,6 +361,172 @@ void MusicQueryTest::browseLoadingIsPublishedPerIndependentLane()
     QVERIFY(!m_music->loading());
     QVERIFY(!m_music->songsLoading());
     QVERIFY(!m_music->playlistsLoading());
+}
+
+void MusicQueryTest::browseTerminalSignalSeesCommittedModel_data()
+{
+    QTest::addColumn<QString>("lane");
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<QString>("type");
+
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    QTest::newRow("albums") << QStringLiteral("albums") << itemsPath
+                             << QStringLiteral("MusicAlbum");
+    QTest::newRow("artists") << QStringLiteral("artists")
+                              << QStringLiteral("/Artists/AlbumArtists")
+                              << QStringLiteral("MusicArtist");
+    QTest::newRow("songs") << QStringLiteral("songs") << itemsPath << QStringLiteral("Audio");
+    QTest::newRow("playlists") << QStringLiteral("playlists") << itemsPath
+                                << QStringLiteral("Playlist");
+}
+
+void MusicQueryTest::browseTerminalSignalSeesCommittedModel()
+{
+    QFETCH(QString, lane);
+    QFETCH(QString, path);
+    QFETCH(QString, type);
+
+    MediaItemModel *model = lane == QLatin1String("albums")    ? m_music->albums()
+                            : lane == QLatin1String("artists") ? m_music->artists()
+                            : lane == QLatin1String("songs")   ? m_music->songs()
+                                                               : m_music->playlists();
+    const auto loading = [this, &lane] {
+        if (lane == QLatin1String("albums"))
+            return m_music->albumsLoading();
+        if (lane == QLatin1String("artists"))
+            return m_music->artistsLoading();
+        if (lane == QLatin1String("songs"))
+            return m_music->songsLoading();
+        return m_music->playlistsLoading();
+    };
+    const auto load = [this, &lane] {
+        if (lane == QLatin1String("albums"))
+            m_music->loadAlbums();
+        else if (lane == QLatin1String("artists"))
+            m_music->loadArtists();
+        else if (lane == QLatin1String("songs"))
+            m_music->loadSongs();
+        else
+            m_music->loadPlaylists();
+    };
+
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, pageOf(type, QStringLiteral("old")));
+    load();
+    settle();
+    QCOMPARE(model->get(0).value(QStringLiteral("itemId")).toString(), QStringLiteral("old"));
+
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, pageOf(type, QStringLiteral("new")));
+    m_mock->setRouteDelay(QStringLiteral("GET"), path, 80);
+    bool sawStart = false;
+    bool sawTerminal = false;
+    QString idAtTerminal;
+    const QMetaObject::Connection observer =
+        connect(m_music, &MusicController::browseStatusChanged, m_music,
+                [&] {
+                    if (loading()) {
+                        sawStart = true;
+                        return;
+                    }
+                    if (!sawStart || sawTerminal)
+                        return;
+                    sawTerminal = true;
+                    idAtTerminal = model->rowCount() == 1
+                                       ? model->get(0)
+                                             .value(QStringLiteral("itemId"))
+                                             .toString()
+                                       : QStringLiteral("wrong-row-count");
+                });
+
+    load();
+    QTRY_VERIFY_WITH_TIMEOUT(sawTerminal, 5000);
+    disconnect(observer);
+    QCOMPARE(idAtTerminal, QStringLiteral("new"));
+    QCOMPARE(model->get(0).value(QStringLiteral("itemId")).toString(), QStringLiteral("new"));
+}
+
+void MusicQueryTest::browseErrorsStayWithTheirLane_data()
+{
+    QTest::addColumn<int>("albumStatus");
+    QTest::addColumn<int>("artistStatus");
+    QTest::addColumn<int>("albumDelay");
+    QTest::addColumn<int>("artistDelay");
+
+    QTest::newRow("visible failure survives hidden success") << 500 << 200 << 80 << 350;
+    QTest::newRow("hidden failure cannot poison visible success") << 200 << 500 << 350 << 80;
+}
+
+void MusicQueryTest::browseErrorsStayWithTheirLane()
+{
+    QFETCH(int, albumStatus);
+    QFETCH(int, artistStatus);
+    QFETCH(int, albumDelay);
+    QFETCH(int, artistDelay);
+
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, albumStatus,
+                     albumStatus == 200 ? pageOf(QStringLiteral("MusicAlbum"),
+                                                 QStringLiteral("album"))
+                                        : QByteArrayLiteral("{}"));
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, artistStatus,
+                     artistStatus == 200 ? pageOf(QStringLiteral("MusicArtist"),
+                                                  QStringLiteral("artist"))
+                                         : QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, albumDelay);
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, artistDelay);
+
+    // Albums is visible; Artists is deliberately started without switching the
+    // tab, so its terminal state is hidden throughout both reply orders.
+    m_music->loadArtists();
+    m_music->loadAlbums();
+    if (albumDelay < artistDelay) {
+        QTRY_VERIFY_WITH_TIMEOUT(!m_music->albumsLoading() && m_music->artistsLoading(), 5000);
+        QVERIFY(!m_music->albumsErrorMessage().isEmpty());
+        QVERIFY(m_music->artistsErrorMessage().isEmpty());
+        QCOMPARE(m_music->errorMessage(), m_music->albumsErrorMessage());
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(!m_music->artistsLoading() && m_music->albumsLoading(), 5000);
+        QVERIFY(m_music->albumsErrorMessage().isEmpty());
+        QVERIFY(!m_music->artistsErrorMessage().isEmpty());
+        QVERIFY(m_music->errorMessage().isEmpty());
+    }
+
+    settle();
+    QCOMPARE(m_music->albumsErrorMessage().isEmpty(), albumStatus == 200);
+    QCOMPARE(m_music->artistsErrorMessage().isEmpty(), artistStatus == 200);
+    QCOMPARE(m_music->errorMessage(), m_music->albumsErrorMessage());
+    QCOMPARE(m_music->albums()->rowCount(), albumStatus == 200 ? 1 : 0);
+    QCOMPARE(m_music->artists()->rowCount(), artistStatus == 200 ? 1 : 0);
+}
+
+void MusicQueryTest::libraryRetargetPublishesClearedModelBeforeTerminal()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("MusicAlbum"), QStringLiteral("old")));
+    m_music->loadAlbums();
+    settle();
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    m_music->loadAlbums();
+    QTRY_VERIFY_WITH_TIMEOUT(m_music->albumsLoading(), 5000);
+
+    bool sawRetargetTerminal = false;
+    int rowsAtTerminal = -1;
+    connect(m_music, &MusicController::browseStatusChanged, m_music, [&] {
+        if (!m_music->albumsLoading() && !sawRetargetTerminal) {
+            sawRetargetTerminal = true;
+            rowsAtTerminal = m_music->albums()->rowCount();
+        }
+    });
+    m_music->setLibrary(QStringLiteral("other-library"));
+
+    QVERIFY(sawRetargetTerminal);
+    QCOMPARE(rowsAtTerminal, 0);
+    QCOMPARE(m_music->albums()->rowCount(), 0);
+    QTest::qWait(450);
+    QCOMPARE(m_music->albums()->rowCount(), 0);
 }
 
 // A genre or a letter is a statement about the music, so it survives switching
@@ -563,7 +742,7 @@ void MusicQueryTest::aGenreWalkThatStoppedHalfwayIsRetried()
     QCOMPARE(m_music->genreOptions().size(), 200);
     QCOMPARE(requestsFor(QStringLiteral("/MusicGenres")), 2);
 
-    // Not setError(): a genre list that did not arrive is not a broken library.
+    // Not a browse error: a genre list that did not arrive is not a broken library.
     QVERIFY(m_music->errorMessage().isEmpty());
 
     // The retry RESUMES — StartIndex 200, not 0 — so the 200 already held are
@@ -796,7 +975,7 @@ void MusicQueryTest::artistModeAnnouncesItselfWithoutWaitingForTheWire()
     QCOMPARE(slowSpy.count(), 1); // synchronous, with the request still in flight
     settle();
 
-    // Failing: the reply lambda returns at setError() and never emits, so the
+    // Failing: the reply lambda returns at its browse error and never emits, so the
     // setter's own is the only notification there will ever be.
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 500,
                      QByteArrayLiteral("{}"));
