@@ -425,6 +425,34 @@ The immediate implication is to close the state/lifecycle defects before declari
 8. **Address design/system debt.** Accessibility semantics, compact layouts, render-thread synchronization, now-playing presentation model, credential UX, and lint baseline.
 9. **Harden release and reconcile scope.** Before the next release, fix dispatch ref selection and pin appimagetool. Decide the status of lyrics/gapless/recently played, then update version, test count, configuration, and MPRIS documentation together.
 
+## Follow-up review of the repairs — 2026-08-23
+
+A second pass re-ran every validation claimed above (build with warnings as
+errors, 33/33 tests, 859-warning qmllint baseline, 13/13 offscreen page
+construction) and reviewed the repair diff. All of those claims held. Eight
+defects in the repairs themselves were found and fixed; each carries a
+regression test unless noted.
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| FUP-01 | High | AUD-13 replaced the renderer's item update with `QQuickWindow::update()`. That schedules a frame but never sets the framebuffer node's render-pending flag, so mpv's frame notifications stopped reaching `render()` and video would freeze on its last drawn frame. Measured against Qt 6.11: 40 window updates produced 0 renders, 40 item updates produced 40. | Redraw requests go through a shared `MpvUpdateBridge` that posts the item update to the GUI thread. `render()` still never dereferences a GUI object, and the bridge outlives the render context. `tst_mpv_video_item` fails against the old behaviour. |
+| FUP-02 | Medium | `VlcPlayer::m_loadId` was written on the GUI thread and read from libvlc's event thread as a plain `quint64`. | `std::atomic<LoadId>`. |
+| FUP-03 | Medium | Gating the overlay shortcuts on the interaction context left `?` and `Ctrl+K` unable to close the sheet they opened, because opening one makes the context `overlay`. | Each shortcut stays armed for its own overlay, and only its own. |
+| FUP-04 | Medium | `writeSecret()` returned false when the wallet write succeeded but the legacy plaintext copy could not be deleted, so login logged "could not persist access token" about a token safely in the wallet. | The write result reports the write; the leftover copy is reported separately and names the file. The plaintext branch now also removes a secret whose permissions it could not prove. |
+| FUP-05 | Low | The pending track id was cleared on the first `tracksChanged` regardless of content, so an unrelated republication before the readback lost the user's selection. | A request survives until the engine reports it, and is retired by the next load, stop, or session boundary. |
+| FUP-06 | Low | `setBaseUrl()`/`setSession()` retired every in-flight request even when the identity did not change. Making them no-ops revealed that the unconditional bump was load-bearing: it is what drops a login reply that lands after logout. | The boundary is explicit. `retireOutstandingRequests()` is called by `SessionController::beginSessionBoundary()`, and the setters only retire work on a real identity change. |
+| FUP-07 | Low | Session-scoped settings keys shipped with no migration, so an upgrade silently lost view modes, remembered tracks/versions, and the resume point. | `migrateLegacySessionData()` adopts the pre-scoping keys into the first session that can own them, exactly once. |
+| FUP-08 | Low | Home reconciled membership with three queries on every user-data invalidation. Audio playback keeps live updates running, so a progress report cadence became a refetch cadence. | A floor between snapshots: the first invalidation is immediate, anything behind it collapses into one deferred refresh. |
+
+The qmllint gate also now checks the fatal type-error categories independently of
+the baseline, so an unresolvable QML type can never be accepted by `--update`,
+and a wholesale set change is called out as a probable toolchain change.
+
+Still manual, unchanged from above: sustained real mpv/VLC playback (FUP-01 is
+covered by an executable test but not by a real decode), a physical
+multi-controller setup, a live KWallet migration/denial, a screen reader across
+complete pages, and an actual release run.
+
 ## Design decisions worth preserving
 
 - One controller-owned `isAudio` answer is the right direction; it needs to describe committed presentation rather than speculative queue intent.
