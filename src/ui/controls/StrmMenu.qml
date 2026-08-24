@@ -21,6 +21,9 @@ import StrmQt
 Popup {
     id: menu
 
+    Accessible.role: Accessible.Menu
+    Accessible.name: qsTr("Actions")
+
     property var actions: []
     property int currentIndex: -1
     // Off for a menu of TOGGLES rather than of commands: a multi-select genre
@@ -357,6 +360,14 @@ Popup {
             // direct child of the popup any more.
             width: list.width
             height: row.isSeparator ? Theme.spacingTight : Theme.controlHeight
+
+            Accessible.ignored: row.isSeparator
+            Accessible.role: Accessible.MenuItem
+            Accessible.name: row.action.text !== undefined ? String(row.action.text) : ""
+            Accessible.checkable: row.action.checked !== undefined
+            Accessible.checked: row.action.checked === true
+            Accessible.focused: row.current
+            Accessible.onPressAction: menu._activate(row.index)
 
             // Separator: a hairline with breathing room, not a row.
             Rectangle {

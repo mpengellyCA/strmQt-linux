@@ -92,6 +92,8 @@ FocusScope {
     readonly property bool shown: mini.active && !mini.playerOnTop
     // The one answer, shared with PlayerPage (MUSIC.md §4).
     readonly property bool isAudio: PlayerCtl.isAudio === true
+    readonly property bool compactWidth: mini.width < Theme.scale(900)
+    readonly property bool narrowWidth: mini.width < Theme.scale(620)
 
     // Fixed metrics, declared here rather than read back off the children: the
     // root's implicitHeight is what the owner reserves, and deriving it from
@@ -746,7 +748,7 @@ FocusScope {
                         id: musicSubline
 
                         width: parent.width
-                        visible: mini.isAudio
+                        visible: mini.isAudio && !mini.narrowWidth
                         spacing: Theme.spacingTight
 
                         MiniLink {
@@ -798,7 +800,7 @@ FocusScope {
 
                     Text {
                         width: parent.width
-                        visible: !mini.isAudio && mini.subline.length > 0
+                        visible: !mini.isAudio && !mini.narrowWidth && mini.subline.length > 0
                         text: mini.subline
                         color: Theme.textSecondaryColor
                         font.family: Theme.fontBody
@@ -875,7 +877,7 @@ FocusScope {
                 // Queue state is not transport, and the gap says so.
                 Item {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.compactWidth
                     width: Theme.spacingValue
                     height: 1
                 }
@@ -885,7 +887,7 @@ FocusScope {
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.compactWidth
                     activeFocusOnTab: false
                     iconName: "shuffle"
                     tooltip: mini.shuffled ? qsTr("Shuffle on") : qsTr("Shuffle off")
@@ -904,7 +906,7 @@ FocusScope {
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.compactWidth
                     activeFocusOnTab: false
                     iconName: mini.repeatMode === 2 ? "repeat-one" : "repeat"
                     tooltip: mini.repeatMode === 0 ? qsTr("Repeat off")
@@ -953,6 +955,7 @@ FocusScope {
                     width: timeMetrics.width
                     horizontalAlignment: Text.AlignRight
                     text: mini.timeText
+                    visible: !mini.compactWidth
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontCaption
@@ -967,7 +970,7 @@ FocusScope {
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.compactWidth
                     activeFocusOnTab: false
                     iconName: mini.nowFavorite ? "heart-filled" : "heart"
                     tooltip: mini.nowFavorite ? qsTr("Remove from favourites")

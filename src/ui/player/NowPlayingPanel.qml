@@ -49,6 +49,10 @@ FocusScope {
     // The hero hides ITS copy for the duration; the property is bound by the
     // owner and never set, so nothing can forget to undo it.
     property bool sleeveInFlight: false
+    readonly property bool compactGeometry: panel.width < Theme.scale(720)
+                                            || panel.height < Theme.scale(560)
+    readonly property bool shortLandscape: panel.width >= Theme.scale(600)
+                                           && panel.height < Theme.scale(560)
 
     // The transition's large endpoint: where the sleeve lands, in `target`'s
     // coordinates. An empty rect while the pane has not laid out yet, which is
@@ -59,7 +63,7 @@ FocusScope {
         // geometry at all still reports a 72 px sleeve, and a sentinel taken
         // off it would accept the very first tick and fly the cover to a stale
         // destination instead of waiting one more frame.
-        if (artArea.width <= 0 || artArea.height <= 0)
+        if (!artFrame.visible || artArea.width <= 0 || artArea.height <= 0)
             return Qt.rect(0, 0, 0, 0);
         const corner = artFrame.mapToItem(target, 0, 0);
         return Qt.rect(corner.x, corner.y, artFrame.width, artFrame.height);
@@ -331,17 +335,19 @@ FocusScope {
         id: content
 
         anchors.fill: parent
-        anchors.margins: Theme.pageMarginValue
+        anchors.margins: panel.compactGeometry ? Theme.spacingValue
+                                               : Theme.pageMarginValue
 
         // The queue sits beside the artwork when there is room for both to be
         // legible, and underneath it when there is not. It is never dropped:
         // "what is next" is half the reason this page exists.
         readonly property bool sideBySide: content.width >= Theme.scale(900)
+                                           || panel.shortLandscape
         readonly property int gap: Theme.spacingLoose
         // The queue takes a share, clamped: below the floor the track names are
         // all ellipsis, and above the ceiling it is a column of whitespace.
         readonly property int queueWidth: Math.round(
-            Math.max(Theme.scale(340),
+            Math.max(panel.compactGeometry ? Theme.scale(240) : Theme.scale(340),
                      Math.min(Theme.scale(520), content.width * 0.34)))
         readonly property int heroWidth: content.sideBySide
             ? Math.max(0, content.width - content.gap - content.queueWidth)
@@ -354,7 +360,9 @@ FocusScope {
             y: 0
             width: content.heroWidth
             height: content.sideBySide ? content.height
-                                       : Math.round(content.height * 0.58)
+                : Math.min(Math.max(0, content.height - content.gap - Theme.scale(140)),
+                           Math.max(heroControls.implicitHeight + Theme.scale(72),
+                                    Math.round(content.height * 0.58)))
 
             // Laid out from the bottom up so the artwork can take every pixel
             // the controls do not need. Sizing the art from the *pane* rather
@@ -395,7 +403,7 @@ FocusScope {
                     id: albumLabel
 
                     width: parent.width
-                    visible: albumLabel.text.length > 0
+                    visible: albumLabel.text.length > 0 && !panel.shortLandscape
                     text: panel.albumText
                     color: Theme.textSecondaryColor
                     font.family: Theme.fontBody
@@ -646,6 +654,10 @@ FocusScope {
             Item {
                 id: artArea
 
+                readonly property bool hasArtRoom: !panel.shortLandscape
+                    && artArea.width >= Theme.scale(72)
+                    && artArea.height - artArea.readoutHeight >= Theme.scale(72)
+
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -701,7 +713,7 @@ FocusScope {
                     y: artFrame.y
                     width: artFrame.width
                     height: artFrame.height
-                    visible: artFrame.opacity > 0
+                    visible: artFrame.visible && artFrame.opacity > 0
 
                     Rectangle {
                         id: shadowCaster
@@ -732,9 +744,8 @@ FocusScope {
 
                     anchors.horizontalCenter: parent.horizontalCenter
                     y: Math.round((artArea.height - artArea.readoutHeight - artFrame.height) / 2)
-                    width: Math.max(Theme.scale(72),
-                                    Math.min(artArea.width,
-                                             artArea.height - artArea.readoutHeight))
+                    width: artArea.hasArtRoom
+                           ? Math.min(artArea.width, artArea.height - artArea.readoutHeight) : 0
                     height: artFrame.width
                     radius: Theme.radiusPanel
                     color: Theme.surfaceColor
@@ -743,6 +754,7 @@ FocusScope {
                     clip: true
                     // The square is in the air; its place is held, not drawn.
                     opacity: panel.sleeveInFlight ? 0 : 1
+                    visible: artArea.hasArtRoom
 
                     Image {
                         anchors.fill: parent
@@ -788,6 +800,7 @@ FocusScope {
                     font.pixelSize: Theme.fontCaption
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
+                    visible: artFrame.visible && technical.text.length > 0
                 }
             }
         }

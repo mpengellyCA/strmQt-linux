@@ -87,6 +87,10 @@ FocusScope {
                                        : PlayerCtl.volume <= 0 ? "volume-mute"
                                        : PlayerCtl.volume < 40 ? "volume-low"
                                        : "volume-high"
+    // At compact widths the transport stays intact and secondary panels move
+    // behind one labelled menu. Nothing overlaps and every verb remains
+    // available to pointer, keyboard, gamepad, and accessibility clients.
+    readonly property bool compact: row.width < Theme.scale(960)
 
     // ── Transport ───────────────────────────────────────────────────────────
     Row {
@@ -191,6 +195,7 @@ FocusScope {
         Item {
             width: Theme.spacingValue
             height: 1
+            visible: !row.compact
         }
 
         StrmIconButton {
@@ -201,6 +206,7 @@ FocusScope {
             tooltip: qsTr("Previous chapter")
             shortcut: row.shortcutFor("player.previousChapter", "[")
             enabled: row.hasChapters
+            visible: !row.compact
             onClicked: row.jumpChapter(false)
 
             KeyNavigation.left: nextButton
@@ -216,6 +222,7 @@ FocusScope {
             tooltip: qsTr("Next chapter")
             shortcut: row.shortcutFor("player.nextChapter", "]")
             enabled: row.hasChapters
+            visible: !row.compact
             onClicked: row.jumpChapter(true)
 
             KeyNavigation.left: chapterPrevious
@@ -245,7 +252,7 @@ FocusScope {
                                              || volumeSlider.dragging
 
             anchors.verticalCenter: parent.verticalCenter
-            width: muteButton.width + (volumeGroup.expanded
+            width: muteButton.width + (!row.compact && volumeGroup.expanded
                                        ? volumeSlider.implicitWidth + Theme.spacingTight : 0)
             height: Theme.touchTarget
 
@@ -275,8 +282,8 @@ FocusScope {
                     PlayerCtl.toggleMute();
                 }
 
-                KeyNavigation.left: chapterNext
-                KeyNavigation.right: audioButton
+                KeyNavigation.left: row.compact ? nextButton : chapterNext
+                KeyNavigation.right: row.compact ? fullscreenButton : audioButton
                 KeyNavigation.up: row.focusAbove
             }
 
@@ -318,6 +325,7 @@ FocusScope {
             // Lit only for its own half of the panel, never for the subtitle
             // list sharing it.
             checked: row.panelKey === "tracks" && row.panelTab === 0
+            visible: !row.compact
             onClicked: row.panelRequested("tracks", audioButton, 0)
 
             KeyNavigation.left: muteButton
@@ -333,6 +341,7 @@ FocusScope {
             tooltip: qsTr("Subtitles")
             shortcut: row.shortcutFor("player.cycleSubtitle", "C")
             checked: row.panelKey === "tracks" && row.panelTab === 1
+            visible: !row.compact
             onClicked: row.panelRequested("tracks", subtitleButton, 1)
 
             KeyNavigation.left: audioButton
@@ -348,6 +357,7 @@ FocusScope {
             tooltip: qsTr("Chapters")
             enabled: row.hasChapters
             checked: row.panelKey === "chapters"
+            visible: !row.compact
             onClicked: row.panelRequested("chapters", chaptersButton, 0)
 
             KeyNavigation.left: subtitleButton
@@ -362,6 +372,7 @@ FocusScope {
             iconName: "queue"
             tooltip: qsTr("Play queue")
             checked: row.panelKey === "queue"
+            visible: !row.compact
             onClicked: row.panelRequested("queue", queueButton, 0)
 
             KeyNavigation.left: chaptersButton
@@ -376,6 +387,7 @@ FocusScope {
             iconName: "settings"
             tooltip: qsTr("Playback settings")
             checked: row.panelKey === "settings"
+            visible: !row.compact
             onClicked: row.panelRequested("settings", settingsButton, 0)
 
             KeyNavigation.left: queueButton
@@ -391,6 +403,7 @@ FocusScope {
             tooltip: qsTr("Playback statistics")
             shortcut: row.shortcutFor("player.stats", "Ctrl+I")
             checked: row.statsVisible
+            visible: !row.compact
             onClicked: row.statsRequested()
 
             KeyNavigation.left: settingsButton
@@ -407,8 +420,60 @@ FocusScope {
             shortcut: row.shortcutFor("app.fullscreen", "F11")
             onClicked: row.fullscreenRequested()
 
-            KeyNavigation.left: statsButton
+            KeyNavigation.left: row.compact ? muteButton : statsButton
+            KeyNavigation.right: row.compact ? moreButton : null
             KeyNavigation.up: row.focusAbove
+        }
+
+        StrmIconButton {
+            id: moreButton
+
+            anchors.verticalCenter: parent.verticalCenter
+            visible: row.compact
+            iconName: "more-horizontal"
+            tooltip: qsTr("More playback actions")
+            checked: compactMenu.opened || row.panelKey.length > 0 || row.statsVisible
+            onClicked: {
+                const p = moreButton.mapToItem(null, moreButton.width, 0);
+                compactMenu.popupAt(p.x, p.y);
+            }
+
+            KeyNavigation.left: fullscreenButton
+            KeyNavigation.up: row.focusAbove
+        }
+    }
+
+    StrmMenu {
+        id: compactMenu
+
+        parent: row
+        actions: [
+            ({ text: qsTr("Audio track"), iconName: "audio-track",
+               checked: row.panelKey === "tracks" && row.panelTab === 0 }),
+            ({ text: qsTr("Subtitles"), iconName: "subtitles",
+               checked: row.panelKey === "tracks" && row.panelTab === 1 }),
+            ({ text: qsTr("Chapters"), iconName: "list", enabled: row.hasChapters,
+               checked: row.panelKey === "chapters" }),
+            ({ text: qsTr("Play queue"), iconName: "queue",
+               checked: row.panelKey === "queue" }),
+            ({ text: qsTr("Playback settings"), iconName: "settings",
+               checked: row.panelKey === "settings" }),
+            ({ text: qsTr("Playback statistics"), iconName: "info",
+               checked: row.statsVisible })
+        ]
+        onTriggered: index => {
+            if (index === 0)
+                row.panelRequested("tracks", moreButton, 0);
+            else if (index === 1)
+                row.panelRequested("tracks", moreButton, 1);
+            else if (index === 2)
+                row.panelRequested("chapters", moreButton, 0);
+            else if (index === 3)
+                row.panelRequested("queue", moreButton, 0);
+            else if (index === 4)
+                row.panelRequested("settings", moreButton, 0);
+            else if (index === 5)
+                row.statsRequested();
         }
     }
 }

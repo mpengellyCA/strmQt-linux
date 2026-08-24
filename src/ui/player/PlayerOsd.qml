@@ -53,6 +53,10 @@ Item {
     // takes the whole OSD down with it. A missing property reads as "the
     // feature is not available", which is exactly what a disabled control means.
     readonly property var backend: PlayerCtl.backend
+    readonly property bool compactGeometry: osd.width < Theme.scale(800)
+                                            || osd.height < Theme.scale(520)
+    readonly property int safeMargin: osd.compactGeometry ? Theme.spacingValue
+                                                          : Theme.pageMarginValue
 
     readonly property var chapters: {
         const list = PlayerCtl.chapters;
@@ -296,7 +300,7 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: topBlock.implicitHeight + Theme.pageMarginValue
+            height: topBlock.implicitHeight + osd.safeMargin
 
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Theme.scrimColor }
@@ -310,8 +314,8 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.topMargin: Theme.spacingValue
-                anchors.leftMargin: Theme.pageMarginValue
-                anchors.rightMargin: Theme.pageMarginValue
+                anchors.leftMargin: osd.safeMargin
+                anchors.rightMargin: osd.safeMargin
                 spacing: Theme.scale(4)
 
                 Text {
@@ -336,6 +340,7 @@ Item {
 
                 // Mono chips: booth-gear data, tabular and non-reflowing.
                 Row {
+                    visible: !osd.compactGeometry
                     spacing: Theme.spacingTight
                     topPadding: Theme.scale(4)
 
@@ -374,7 +379,7 @@ Item {
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             anchors.right: parent.right
-            height: bottomBlock.implicitHeight + Theme.pageMarginValue
+            height: bottomBlock.implicitHeight + osd.safeMargin
 
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "transparent" }
@@ -388,8 +393,8 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottomMargin: Theme.spacingValue
-                anchors.leftMargin: Theme.pageMarginValue
-                anchors.rightMargin: Theme.pageMarginValue
+                anchors.leftMargin: osd.safeMargin
+                anchors.rightMargin: osd.safeMargin
                 spacing: Theme.spacingTight
 
                 // The scrubber. Seeks commit on release, never per motion event.
@@ -507,15 +512,16 @@ Item {
             id: panelLoader
 
             anchors.right: parent.right
-            anchors.rightMargin: Theme.pageMarginValue
+            anchors.rightMargin: osd.safeMargin
             anchors.bottom: bottomBar.top
             anchors.bottomMargin: Theme.spacingTight
             // The settings sheet carries labelled rows and sliders rather than a
             // list of names, so it gets more room than the three list panels.
-            width: osd.panelKey === "settings" ? Theme.scale(444) : Theme.scale(400)
+            width: Math.min(osd.panelKey === "settings" ? Theme.scale(444) : Theme.scale(400),
+                            Math.max(Theme.scale(240), osd.width - 2 * osd.safeMargin))
             height: Math.min(osd.panelKey === "settings" ? Theme.scale(560) : Theme.scale(480),
-                             Math.max(Theme.scale(200), osd.height - bottomBar.height
-                                                        - topBar.height - Theme.spacingLoose))
+                             Math.max(Theme.scale(120), osd.height - bottomBar.height
+                                                        - topBar.height - Theme.spacingTight))
             active: osd.panelKey.length > 0
             sourceComponent: osd.panelKey === "tracks" ? tracksPanel
                            : osd.panelKey === "chapters" ? chaptersPanel
@@ -549,9 +555,9 @@ Item {
     UpNextCard {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.rightMargin: Theme.pageMarginValue
+        anchors.rightMargin: osd.safeMargin
         anchors.bottomMargin: osd.shown ? bottomBar.height + Theme.spacingTight
-                                        : Theme.pageMarginValue
+                                        : osd.safeMargin
 
         Behavior on anchors.bottomMargin {
             NumberAnimation {
@@ -566,9 +572,10 @@ Item {
     StatsOverlay {
         anchors.left: parent.left
         anchors.top: parent.top
-        anchors.leftMargin: Theme.pageMarginValue
-        anchors.topMargin: osd.shown ? topBar.height : Theme.pageMarginValue
-        width: Theme.scale(440)
+        anchors.leftMargin: osd.safeMargin
+        anchors.topMargin: osd.shown ? topBar.height : osd.safeMargin
+        width: Math.min(Theme.scale(440), Math.max(Theme.scale(240),
+                                                  osd.width - 2 * osd.safeMargin))
 
         shown: osd.statsVisible
 
