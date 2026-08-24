@@ -17,6 +17,18 @@ namespace strmqt {
 // device is a rule nobody can check. Both rules below are covered by
 // tests/unit/tst_gamepad_decision.cpp.
 
+// ── Poll cadence ───────────────────────────────────────────────────────────
+
+// SDL discovers hot-plug events while its event queue is pumped. Stopping the
+// timer at zero pads would therefore make the first pad undiscoverable. Poll
+// slowly while idle, then switch to frame-rate input only for an open device.
+inline int gamepadPollIntervalMs(bool hasConnectedPad)
+{
+    constexpr int kActivePollMs = 16;
+    constexpr int kIdleDiscoveryPollMs = 250;
+    return hasConnectedPad ? kActivePollMs : kIdleDiscoveryPollMs;
+}
+
 // ── Auto-repeat ─────────────────────────────────────────────────────────────
 
 struct RepeatTuning

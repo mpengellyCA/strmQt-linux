@@ -19,6 +19,7 @@ private slots:
     void typableKeysAreTheOnesAFieldWouldEat();
     void suppressionOnlyAppliesWhileAFieldHasFocus();
     void disconnectReleasesOnlyItsDevice();
+    void pollCadenceSleepsWhileWaitingForADevice();
 };
 
 void GamepadDecisionTest::browseRepeatAccelerates()
@@ -123,6 +124,16 @@ void GamepadDecisionTest::disconnectReleasesOnlyItsDevice()
     QVERIFY(final.contains(left));
     QVERIFY(final.contains(right));
     QCOMPARE(ownership.owners(left), 0);
+}
+
+void GamepadDecisionTest::pollCadenceSleepsWhileWaitingForADevice()
+{
+    const int idle = gamepadPollIntervalMs(false);
+    const int active = gamepadPollIntervalMs(true);
+
+    QCOMPARE(active, 16);
+    QVERIFY(idle >= 250);
+    QVERIFY(idle > active * 10);
 }
 
 QTEST_MAIN(GamepadDecisionTest)

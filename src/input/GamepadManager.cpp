@@ -21,8 +21,6 @@ namespace strmqt {
 
 namespace {
 
-constexpr int kPollIntervalMs = 16;
-
 // Stick deadzone, of ±32767. Generous: a worn 360 pad rests well off centre,
 // and a false direction that auto-repeats is far worse than one that does not.
 constexpr int kStickThreshold = 12'000;
@@ -91,7 +89,7 @@ GamepadManager::GamepadManager(InputMap *input, QObject *parent) : QObject(paren
     qCInfo(logApp) << "SDL3 gamepad support active";
 
     m_timer = new QTimer(this);
-    m_timer->setInterval(kPollIntervalMs);
+    m_timer->setInterval(gamepadPollIntervalMs(false));
     connect(m_timer, &QTimer::timeout, this, [this] {
         poll();
         pump();
@@ -224,6 +222,10 @@ void GamepadManager::poll()
             break;
         }
     }
+
+    const int interval = gamepadPollIntervalMs(!m_pads.isEmpty());
+    if (m_timer->interval() != interval)
+        m_timer->setInterval(interval);
 }
 
 void GamepadManager::handleButton(quint32 deviceId, int sdlButton, bool pressed)
