@@ -721,6 +721,9 @@ FocusScope {
         property string title: ""
         property var trackListModel: null
         property int sideMargin: Theme.pageMarginValue
+        property string navigationFocusKey: ""
+        property Item navigationFocusFallbackItem: null
+        property bool navigationFocusRefillActive: false
 
         signal trackActivated(int index)
         signal trackMenuRequested(int index, real x, real y)
@@ -730,15 +733,89 @@ FocusScope {
 
         readonly property int count: tracks.trackListModel ? tracks.trackListModel.count : 0
         readonly property int rowHeight: Theme.scale(56)
+        readonly property int currentIndex: list.currentIndex
+        readonly property string navigationFocusKind: "tracks"
+        readonly property bool navigationFocusRestorePending: navigationFocus.pending
+        property bool _navigationFocusWriting: false
 
         width: parent ? parent.width : Theme.scale(600)
         height: tracks.count > 0 ? heading.height + Theme.spacingValue + list.height : 0
         visible: tracks.count > 0
 
         function activateCurrent(): void {
+            tracks._cancelNavigationFocusForUser()
             if (list.currentIndex >= 0 && list.currentIndex < tracks.count)
                 tracks.trackActivated(list.currentIndex)
         }
+
+        function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
+        function restoreNavigationFocus(identity, index): bool {
+            return navigationFocus.restore(identity, index)
+        }
+        function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
+        function _cancelNavigationFocusForUser(): void {
+            if (!tracks._navigationFocusWriting)
+                navigationFocus.cancel()
+        }
+        function _applyNavigationFocus(index): void {
+            tracks._navigationFocusWriting = true
+            if (index >= 0) {
+                list.currentIndex = index
+                list.positionViewAtIndex(index, ListView.Contain)
+            }
+            list.forceActiveFocus(Qt.OtherFocusReason)
+            if (index >= 0)
+                tracks.rowFocused(list.y + index * tracks.rowHeight, tracks.rowHeight)
+            tracks._navigationFocusWriting = false
+        }
+        function _applyNavigationFallback(): void {
+            if (tracks.navigationFocusFallbackItem
+                    && tracks.navigationFocusFallbackItem.visible
+                    && tracks.navigationFocusFallbackItem.enabled) {
+                tracks.navigationFocusFallbackItem.forceActiveFocus(Qt.OtherFocusReason)
+                return
+            }
+            let candidate = list
+            for (let step = 0; step < 256; ++step) {
+                candidate = candidate.nextItemInFocusChain(true)
+                if (!candidate || candidate === list)
+                    return
+                let cursor = candidate
+                while (cursor && cursor !== tracks)
+                    cursor = cursor.parent
+                if (cursor !== tracks) {
+                    candidate.forceActiveFocus(Qt.OtherFocusReason)
+                    return
+                }
+            }
+        }
+
+        NavigationFocusRestorer {
+            id: navigationFocus
+            model: tracks.trackListModel
+            count: tracks.count
+            currentIndex: list.currentIndex
+            refillActive: tracks.navigationFocusRefillActive
+            onFocusRequested: index => tracks._applyNavigationFocus(index)
+            onFallbackRequested: tracks._applyNavigationFallback()
+        }
+
+        Connections {
+            target: tracks
+            function onActiveFocusChanged() {
+                if (!tracks.activeFocus)
+                    tracks._cancelNavigationFocusForUser()
+            }
+        }
+
+        Connections {
+            target: Qt.isQtObject(tracks.trackListModel) ? tracks.trackListModel : null
+            ignoreUnknownSignals: true
+            function onModelReset() { Qt.callLater(navigationFocus.noteProgress) }
+        }
+
+        onCountChanged: navigationFocus.noteProgress()
+        onTrackListModelChanged: navigationFocus.cancel()
 
         Text {
             id: heading
@@ -783,6 +860,7 @@ FocusScope {
             Keys.onReturnPressed: event => { if (!event.isAutoRepeat) tracks.activateCurrent() }
             Keys.onEnterPressed: event => { if (!event.isAutoRepeat) tracks.activateCurrent() }
             Keys.onPressed: event => {
+                tracks._cancelNavigationFocusForUser()
                 // The context-menu key, anchored under the row it belongs to —
                 // the keyboard's equivalent of a right-click.
                 if (event.key === Qt.Key_Menu && !event.isAutoRepeat && list.currentItem) {
@@ -975,6 +1053,7 @@ FocusScope {
                             activeFocusOnTab: false
                             tooltip: qsTr("Play")
                             onClicked: {
+                                tracks._cancelNavigationFocusForUser()
                                 list.currentIndex = trackRow.index
                                 tracks.trackActivated(trackRow.index)
                             }
@@ -988,6 +1067,7 @@ FocusScope {
                             activeFocusOnTab: false
                             tooltip: qsTr("More…")
                             onClicked: {
+                                tracks._cancelNavigationFocusForUser()
                                 const p = trackMore.mapToItem(null, 0, trackMore.height)
                                 tracks.trackMenuRequested(trackRow.index, p.x, p.y)
                             }
@@ -1013,6 +1093,7 @@ FocusScope {
                     onTapped: {
                         // A click commits *and* makes this row the keyboard's
                         // place, so a following arrow key continues from here.
+                        tracks._cancelNavigationFocusForUser()
                         list.currentIndex = trackRow.index
                         list.forceActiveFocus(Qt.MouseFocusReason)
                         tracks.trackActivated(trackRow.index)
@@ -1023,6 +1104,7 @@ FocusScope {
                     acceptedButtons: Qt.RightButton
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: eventPoint => {
+                        tracks._cancelNavigationFocusForUser()
                         const p = trackRow.mapToItem(null, eventPoint.position.x,
                                                      eventPoint.position.y)
                         tracks.trackMenuRequested(trackRow.index, p.x, p.y)
@@ -1331,6 +1413,9 @@ FocusScope {
             // result the user is reaching for is one they want to hear.
             TrackList {
                 id: trackList
+                navigationFocusKey: "search-tracks"
+                navigationFocusFallbackItem: searchField
+                navigationFocusRefillActive: SearchCtl.searching
                 title: qsTr("Tracks")
                 trackListModel: page.trackModel
 

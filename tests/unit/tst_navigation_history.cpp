@@ -19,6 +19,7 @@ private slots:
     void restoresPerEntryMusicTab();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void productionRetargetOrderingRetainsDepartingScopes();
+    void searchTrackOwnerRestoresAcrossResultLifecycle();
     void restoresVirtualFocusAcrossDelayedRefill();
     void pendingBackRestoreHonorsUserOverride();
     void progressExtendsRefillWithoutAdmittingStaleRows();
@@ -63,6 +64,9 @@ Item {
     property int progressFocusedIndex: -1
     property int progressFallbackCount: 0
     readonly property bool progressRestorePending: progressRestorer.pending
+    property bool searchTrackRefillActive: false
+    property int searchTrackResolutionCount: 0
+    readonly property int searchTrackCount: searchTrackRows.count
 
     function itemFor(id): var {
         const text = String(id);
@@ -253,6 +257,28 @@ Item {
     }
 
     function setSearchQuery(query): void { root.searchQuery = String(query); }
+    function seedSearchTracks(): void {
+        searchTrackRows.clear();
+        searchTrackRows.append({ "itemId": "track-a", "name": "Track A" });
+        searchTrackRows.append({ "itemId": "track-b", "name": "Track B" });
+        searchTrackRows.append({ "itemId": "track-c", "name": "Track C" });
+    }
+    function replaceSearchTracksReordered(): void {
+        searchTrackRows.clear();
+        searchTrackRows.append({ "itemId": "track-b", "name": "Track B fresh" });
+        searchTrackRows.append({ "itemId": "track-c", "name": "Track C fresh" });
+        searchTrackRows.append({ "itemId": "track-a", "name": "Track A fresh" });
+    }
+    function clearSearchTracks(): void { searchTrackRows.clear(); }
+    function setSearchTrackRefill(active): void { root.searchTrackRefillActive = active === true; }
+    function focusSearchTrack(index): void {
+        if (history.currentItem && history.currentItem.focusTrack)
+            history.currentItem.focusTrack(Number(index));
+    }
+    function focusSearchTrackOverride(): void {
+        if (history.currentItem && history.currentItem.focusOverride)
+            history.currentItem.focusOverride();
+    }
     function pushMusic(tab): void {
         root.musicTab = String(tab);
         history.pushRoute({ "kind": "music", "id": "music-1", "name": "Music",
@@ -507,8 +533,14 @@ Item {
         readonly property string routeId: "search:" + queryAtCreation
         property alias focusA: searchFirst
         property alias focusB: searchSecond
+        readonly property int focusedTrackIndex: searchTrackList.currentIndex
+        readonly property bool trackRestorePending: searchTrackFocus.pending
+        readonly property bool trackFocused: searchTrackList.activeFocus
         objectName: routeId
         focus: true
+
+        function focusTrack(index): void { searchTracks._applyNavigationFocus(index); }
+        function focusOverride(): void { searchFirst.forceActiveFocus(Qt.TabFocusReason); }
 
         Component.onCompleted: {
             queryAtCreation = root.searchQuery;
@@ -520,7 +552,82 @@ Item {
         }
 
         Column {
-            TextInput { id: searchFirst; text: parent.parent.queryAtCreation; focus: true }
+            TextInput {
+                id: searchFirst
+                objectName: "search-track-fallback"
+                text: parent.parent.queryAtCreation
+                focus: true
+            }
+            FocusScope {
+                id: searchTracks
+                property string navigationFocusKey: "search-tracks"
+                property Item navigationFocusFallbackItem: searchFirst
+                property bool navigationFocusRefillActive: root.searchTrackRefillActive
+                readonly property bool navigationFocusRestorePending: searchTrackFocus.pending
+                property bool _navigationFocusWriting: false
+                width: 300
+                height: searchTrackRows.count > 0 ? 100 : 0
+                visible: searchTrackRows.count > 0
+
+                function navigationFocusSnapshot(): var { return searchTrackFocus.snapshot(); }
+                function restoreNavigationFocus(identity, index): bool {
+                    return searchTrackFocus.restore(identity, index);
+                }
+                function cancelNavigationFocusRestore(): void { searchTrackFocus.cancel(); }
+                function _cancelNavigationFocusForUser(): void {
+                    if (!searchTracks._navigationFocusWriting)
+                        searchTrackFocus.cancel();
+                }
+                function _applyNavigationFocus(index): void {
+                    searchTracks._navigationFocusWriting = true;
+                    searchTrackList.currentIndex = Number(index);
+                    searchTrackList.positionViewAtIndex(Number(index), ListView.Contain);
+                    searchTrackList.forceActiveFocus(Qt.OtherFocusReason);
+                    searchTracks._navigationFocusWriting = false;
+                }
+                function _applyNavigationFallback(): void {
+                    searchFirst.forceActiveFocus(Qt.OtherFocusReason);
+                }
+
+                NavigationFocusRestorer {
+                    id: searchTrackFocus
+                    model: searchTrackRows
+                    count: searchTrackRows.count
+                    currentIndex: searchTrackList.currentIndex
+                    refillActive: searchTracks.navigationFocusRefillActive
+                    settleInterval: 30
+                    stallInterval: 250
+                    onFocusRequested: index => {
+                        root.searchTrackResolutionCount += 1;
+                        searchTracks._applyNavigationFocus(index);
+                    }
+                    onFallbackRequested: searchTracks._applyNavigationFallback()
+                }
+
+                Connections {
+                    target: searchTracks
+                    function onActiveFocusChanged() {
+                        if (!searchTracks.activeFocus)
+                            searchTracks._cancelNavigationFocusForUser();
+                    }
+                }
+
+                ListView {
+                    id: searchTrackList
+                    objectName: "search-track-list"
+                    anchors.fill: parent
+                    focus: true
+                    model: searchTrackRows
+                    currentIndex: 0
+                    delegate: TextInput {
+                        required property string itemId
+                        required property string name
+                        objectName: "search-row-" + itemId
+                        text: name
+                    }
+                    Keys.onPressed: searchTracks._cancelNavigationFocusForUser()
+                }
+            }
             TextInput { id: searchSecond; text: "second" }
         }
     }
@@ -559,6 +666,7 @@ Item {
     Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
 
     ListModel { id: virtualRows }
+    ListModel { id: searchTrackRows }
     ListModel { id: progressRows }
     NavigationFocusRestorer {
         id: progressRestorer
@@ -1038,6 +1146,105 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
              QStringLiteral("songs"));
     QCOMPARE(currentItem(history)->property("controllerTabAtCreation").toString(),
              QStringLiteral("albums"));
+}
+
+void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
+{
+    // Pin the real custom track section. Unlike the other Search sections it is
+    // not a StrmRail, so the semantic-owner API has to live on TrackList itself.
+    QFile searchPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/SearchPage.qml"));
+    QVERIFY(searchPage.open(QIODevice::ReadOnly));
+    const QByteArray source = searchPage.readAll();
+    const qsizetype componentBegin = source.indexOf("component TrackList: FocusScope");
+    const qsizetype instanceBegin = source.indexOf("            TrackList {", componentBegin + 1);
+    QVERIFY(componentBegin >= 0);
+    QVERIFY(instanceBegin > componentBegin);
+    const QByteArray component = source.mid(componentBegin, instanceBegin - componentBegin);
+    for (const QByteArray &contract : {
+             QByteArrayLiteral("property string navigationFocusKey"),
+             QByteArrayLiteral("readonly property bool navigationFocusRestorePending"),
+             QByteArrayLiteral("function navigationFocusSnapshot()"),
+             QByteArrayLiteral("function restoreNavigationFocus(identity, index)"),
+             QByteArrayLiteral("function cancelNavigationFocusRestore()"),
+             QByteArrayLiteral("NavigationFocusRestorer {")}) {
+        QVERIFY2(component.contains(contract), contract.constData());
+    }
+    const QByteArray instance = source.mid(instanceBegin, 1200);
+    QVERIFY(instance.contains("navigationFocusKey: \"search-tracks\""));
+    QVERIFY(instance.contains("navigationFocusFallbackItem: searchField"));
+    QVERIFY(instance.contains("navigationFocusRefillActive: SearchCtl.searching"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "seedSearchTracks"));
+    QVERIFY(invoke(root, "pushSearch", QStringLiteral("tracks")));
+    QTRY_COMPARE(root->property("searchTrackCount").toInt(), 3);
+    QVERIFY(invoke(root, "focusSearchTrack", 1));
+    QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
+    QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 1);
+
+    QVERIFY(invoke(root, "pushRoute", 91));
+    const QVariantMap searchRoute = listProperty(history, "navTrail").at(1).toMap();
+    const QString locator = history->property("focusMemory")
+                                .toMap()
+                                .value(QString::number(
+                                    searchRoute.value(QStringLiteral("token")).toInt()))
+                                .toString();
+    QVERIFY(locator.startsWith(
+        QStringLiteral("[\"semantic\",\"search-tracks\",\"i:track-b\",1")));
+
+    // The old snapshot still contains the exact id, but the controller has
+    // begun replacing it. Returning must leave that row uncertified until the
+    // terminal edge says the new model is coherent.
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 1);
+    QCOMPARE(root->property("searchTrackResolutionCount").toInt(), 0);
+    QVERIFY(invoke(root, "replaceSearchTracksReordered"));
+    QTest::qWait(50);
+    QVERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QCOMPARE(root->property("searchTrackResolutionCount").toInt(), 0);
+
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
+    QTRY_VERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_COMPARE(root->property("searchTrackResolutionCount").toInt(), 1);
+    QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
+    QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 0);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-row-track-b"));
+
+    // A terminal empty result has no eligible row. The track owner must retire
+    // the locator and hand focus to SearchPage's field.
+    QVERIFY(invoke(root, "pushRoute", 92));
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QVERIFY(invoke(root, "clearSearchTracks"));
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
+    QTRY_VERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+
+    // A user's newer focus choice wins while the replacement is live. A later
+    // matching row and terminal edge must not steal focus back.
+    QVERIFY(invoke(root, "seedSearchTracks"));
+    QVERIFY(invoke(root, "focusSearchTrack", 1));
+    QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
+    QVERIFY(invoke(root, "pushRoute", 93));
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QVERIFY(invoke(root, "focusSearchTrackOverride"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+    QTRY_VERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QVERIFY(invoke(root, "replaceSearchTracksReordered"));
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
+    QTest::qWait(100);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
 }
 
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
