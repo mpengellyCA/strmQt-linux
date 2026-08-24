@@ -13,7 +13,8 @@ include(GNUInstallDirs)
 # Canonical run path is ./build/<preset>/strmqt (AGENTS.md).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Test WebSockets)
+find_package(Qt6 6.8 REQUIRED COMPONENTS
+    Core DBus Gui Network OpenGL Quick QuickControls2 Test WebSockets)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_compile_options(-Wall -Wextra)

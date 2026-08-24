@@ -119,10 +119,8 @@ modules:
       - --disable-static
     sources:
       - type: archive
-        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.gz
-        sha256: caab4b993dd7be6187c55623b789ed75dddefea6e65938af134637c732fe094a
-        mirror-urls:
-          - https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
 
   # ── uchardet ───────────────────────────────────────────────────────────────
   # Not in the runtime. Character-set detection for non-UTF-8 external subtitle

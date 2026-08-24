@@ -6,16 +6,59 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. v0.2.0)'
+        description: 'Tag to build (e.g. v0.3.0)'
         required: true
 
 permissions:
   contents: write
 
 jobs:
+  resolve:
+    name: Resolve release revision
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      ref: ${{ steps.validate.outputs.ref }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Validate release tag
+        id: validate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_REF: ${{ github.ref }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$DISPATCH_TAG"
+          else
+            [[ "$PUSH_REF" == refs/tags/* ]] || {
+              echo "::error::release pushes must name a tag ref"
+              exit 1
+            }
+            TAG="${PUSH_REF#refs/tags/}"
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] || {
+            echo "::error::invalid release tag: $TAG"
+            exit 1
+          }
+          git check-ref-format "refs/tags/$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.validate.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Record immutable revision
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   # ── Arch package ────────────────────────────────────────────────────────────
   arch:
     name: Arch package
+    needs: resolve
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -27,6 +70,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0   # the PKGBUILD clones this checkout by tag
 
       # makepkg refuses to run as root, and a container has no other user.
@@ -47,8 +91,10 @@ jobs:
       # by hand and nothing compared it to the tag being released. Checked here
       # rather than trusted.
       - name: Version consistency
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          TAG="$RELEASE_TAG"
           PKG_TAG=$(sed -n 's/^_tag=//p' packaging/arch/PKGBUILD)
           CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           echo "release tag=$TAG  PKGBUILD _tag=$PKG_TAG  CMake version=$CM_VER"
@@ -88,6 +134,7 @@ jobs:
   # ── AppImage ────────────────────────────────────────────────────────────────
   appimage:
     name: AppImage
+    needs: resolve
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -98,11 +145,15 @@ jobs:
             qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv sdl3
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Fetch appimagetool
         run: |
           wget -q -O /usr/local/bin/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /usr/local/bin/appimagetool" \
+            | sha256sum --check --strict
           chmod +x /usr/local/bin/appimagetool
 
       - name: Build
@@ -128,22 +179,25 @@ jobs:
   # ── Flatpak ─────────────────────────────────────────────────────────────────
   flatpak:
     name: Flatpak
+    needs: resolve
     runs-on: ubuntu-latest
     container:
       image: bilelmoussaoui/flatpak-github-actions:kde-6.7
       options: --privileged
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: ca.mikesdev.StrmQt.flatpak
           manifest-path: packaging/flatpak/ca.mikesdev.StrmQt.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          cache-key: flatpak-builder-${{ needs.resolve.outputs.sha }}
 
   # ── Publish ─────────────────────────────────────────────────────────────────
   release:
     name: Publish release
-    needs: [arch, appimage, flatpak]
+    needs: [resolve, arch, appimage, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -153,8 +207,16 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          TAG="$RELEASE_TAG"
+          cat > artifacts/release-provenance.txt <<EOF
+          tag=$RELEASE_TAG
+          commit=$RELEASE_SHA
+          appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+          EOF
           find artifacts -type f | sort
           # A tag carrying a prerelease suffix (v0.3.0-rc1, -beta2, -alpha) is
           # marked as one. Without this it publishes looking like a final
@@ -168,4 +230,4 @@ jobs:
             --title "StrmQt $TAG" \
             --generate-notes \
             --draft $PRERELEASE \
-            $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.flatpak' \) | tr '\n' ' ')
+            $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.flatpak' -o -name 'release-provenance.txt' \) | tr '\n' ' ')
