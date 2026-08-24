@@ -132,6 +132,15 @@ QtObject {
 
     function scale(value) { return Math.round(value * theme.density) }
 
+    // ── Pointer ────────────────────────────────────────────────────────────
+    // How far one wheel notch moves a scrollable surface. Qt scrolls the
+    // vertical views for us from the same figure (Application sets the style
+    // hint it derives this from), so the horizontal rails — which handle the
+    // wheel themselves — have one number to agree with instead of a literal
+    // each. The guard is the same one densityMode carries: a page rendered
+    // outside the application, as the QML tests do, still has to lay out.
+    readonly property int wheelStepPx: typeof App !== "undefined" ? App.wheelStepPx : 72
+
     // ── Type ramp ──────────────────────────────────────────────────────────
     readonly property int fontCaption: scale(12)
     readonly property int fontSmall: scale(14)

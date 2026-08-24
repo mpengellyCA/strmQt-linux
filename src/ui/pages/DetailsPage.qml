@@ -197,7 +197,7 @@ FocusScope {
             WheelHandler {
                 orientation: Qt.Horizontal
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onWheel: event => strip.scrollBy(-event.angleDelta.x)
+                onWheel: event => strip.scrollBy(-event.angleDelta.x / 120 * Theme.wheelStepPx)
             }
 
             delegate: Item {
@@ -262,7 +262,7 @@ FocusScope {
                     return
                 }
                 wheel.accepted = true
-                strip.scrollBy(-wheel.angleDelta.y)
+                strip.scrollBy(-wheel.angleDelta.y / 120 * Theme.wheelStepPx)
             }
         }
 
@@ -419,7 +419,7 @@ FocusScope {
             WheelHandler {
                 orientation: Qt.Horizontal
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                onWheel: event => shelf.scrollBy(-event.angleDelta.x)
+                onWheel: event => shelf.scrollBy(-event.angleDelta.x / 120 * Theme.wheelStepPx)
             }
 
             delegate: Item {
@@ -462,7 +462,7 @@ FocusScope {
                     return
                 }
                 wheel.accepted = true
-                shelf.scrollBy(-wheel.angleDelta.y)
+                shelf.scrollBy(-wheel.angleDelta.y / 120 * Theme.wheelStepPx)
             }
         }
 

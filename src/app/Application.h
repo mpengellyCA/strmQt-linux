@@ -38,6 +38,10 @@ class Application : public QGuiApplication
     Q_OBJECT
     Q_PROPERTY(QString interactionContext READ interactionContext WRITE setInteractionContext
                    NOTIFY interactionContextChanged)
+    // How far one mouse-wheel notch moves a scrollable surface, in pixels.
+    // Published so the horizontal rails — which handle the wheel themselves —
+    // move by exactly as much as the vertical views Qt scrolls for us.
+    Q_PROPERTY(int wheelStepPx READ wheelStepPx CONSTANT)
 
 public:
     Application(int &argc, char **argv);
@@ -60,6 +64,7 @@ public:
     MusicController *music() const { return m_music; }
     LiveUpdateService *live() const { return m_live; }
     QString interactionContext() const { return m_interactionContext; }
+    int wheelStepPx() const { return m_wheelStepPx; }
     void setInteractionContext(const QString &context);
 
 signals:
@@ -67,6 +72,7 @@ signals:
 
 private:
     void wirePlaybackIntegrations();
+    void applyWheelScrollPolicy();
     void recomputeLiveUpdatePolicy();
     void teardownAuthenticatedSession();
     // Rebuilds the MPRIS track from the queue entry under the playhead and, when
@@ -107,6 +113,7 @@ private:
     // with. Playback activity is deliberately not an input context: playback
     // may continue underneath an ordinary browse page.
     QString m_interactionContext = QStringLiteral("login");
+    int m_wheelStepPx = 0;
     bool m_lastPlaybackActive = false;
 };
 

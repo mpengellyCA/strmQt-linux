@@ -184,7 +184,7 @@ FocusScope {
         WheelHandler {
             orientation: Qt.Horizontal
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            onWheel: event => rail.scrollBy(-event.angleDelta.x)
+            onWheel: event => rail.scrollBy(-event.angleDelta.x / 120 * Theme.wheelStepPx)
         }
 
         // A6, part 2 (belt and braces). Flickable::wheelEvent only accepts an
@@ -313,7 +313,7 @@ FocusScope {
                 return
             }
             wheel.accepted = true
-            rail.scrollBy(-wheel.angleDelta.y)
+            rail.scrollBy(-wheel.angleDelta.y / 120 * Theme.wheelStepPx)
         }
     }
 

@@ -1,6 +1,8 @@
 #include "Application.h"
 #include "ApplicationPolicy.h"
 
+#include <QStyleHints>
+
 #include "CoverTintService.h"
 #include "EmbyImageProvider.h"
 #include "ItemActions.h"
@@ -184,7 +186,29 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     connect(m_session, &SessionController::sessionBoundaryChanged, this,
             [this] { teardownAuthenticatedSession(); });
 
+    applyWheelScrollPolicy();
+
     qCInfo(logApp) << "StrmQt" << applicationVersion() << "starting, platform:" << platformName();
+}
+
+// A desktop's wheel setting is written for text: three lines, and Qt scrolls a
+// Flickable by exactly wheelScrollLines x 24 px per notch — 72 px, measured. A
+// poster is four times that tall, so a notch moved a grid by a quarter of one
+// card and crossing a library was a wrist exercise. The multiplier is applied
+// to whatever the user chose rather than replacing it, so someone who has
+// already tuned their wheel keeps the proportion they asked for, and it is
+// clamped so an unusual setting cannot turn one notch into a page-jump.
+void Application::applyWheelScrollPolicy()
+{
+    constexpr int kWheelMultiplier = 4;
+    constexpr int kMaxWheelLines = 40;
+    constexpr int kPixelsPerLine = 24; // Qt's own figure, in QQuickFlickable
+    const int configured = qMax(1, styleHints()->wheelScrollLines());
+    const int lines = qBound(kWheelMultiplier, configured * kWheelMultiplier, kMaxWheelLines);
+    styleHints()->setWheelScrollLines(lines);
+    m_wheelStepPx = lines * kPixelsPerLine;
+    qCInfo(logApp) << "wheel scroll:" << configured << "->" << lines << "lines ("
+                   << m_wheelStepPx << "px per notch)";
 }
 
 void Application::teardownAuthenticatedSession()
