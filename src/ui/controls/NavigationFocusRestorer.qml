@@ -12,9 +12,14 @@ QtObject {
     property int currentIndex: -1
     property bool canRequestPage: false
 
-    readonly property int maximumIndex: 2147483646
+    // Library/Music paging is 100 rows per request. The measured product-scale
+    // ceiling is the 56,283-row Songs library, so 60,000 is a bounded restore
+    // surface with headroom; 600 advancing requests can reach every supported
+    // cursor. An index outside this declared contract is rejected immediately
+    // instead of starting an open-ended network walk.
+    readonly property int maximumIndex: 59999
     readonly property int scanLimit: 10000
-    readonly property int pageRequestLimit: 16
+    readonly property int pageRequestLimit: 600
     readonly property bool pending: restorer._pendingIndex >= 0
 
     property string _pendingItemId: ""

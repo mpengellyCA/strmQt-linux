@@ -42,6 +42,7 @@ StackView {
 
     readonly property int semanticControlLimit: 128
     readonly property int semanticTraversalLimit: 4096
+    readonly property int semanticIndexLimit: 59999
     readonly property int focusRetryLimit: 40
 
     readonly property int retainedRouteCount: navTrail.length + navForward.length
@@ -293,6 +294,10 @@ StackView {
     }
 
     function semanticOwner(item): Item {
+        // Virtual delegates expose hover-only/transient action buttons. Their
+        // durable keyboard location is the owning view cursor: restoring that
+        // item keeps the same card/track selected, while an overlay verb that
+        // is no longer visible is deliberately not treated as eligible focus.
         let cursor = item;
         while (cursor && cursor !== navigation.currentItem) {
             if (navigation.semanticKind(cursor).length > 0
@@ -316,7 +321,7 @@ StackView {
         const snapshot = owner["navigationFocusSnapshot"]();
         const index = snapshot ? Number(snapshot.index) : -1;
         if (!snapshot || snapshot.valid !== true || !Number.isInteger(index)
-                || index < 0 || index > 2147483646)
+                || index < 0 || index > navigation.semanticIndexLimit)
             return "";
         const itemId = navigation.boundedText(snapshot.itemId, 1024);
         return JSON.stringify(["semantic", kind, ordinal, itemId, index]);
@@ -425,7 +430,7 @@ StackView {
                 || !Number.isInteger(ordinal) || ordinal < 0
                 || ordinal >= navigation.semanticControlLimit
                 || itemId.length > 1024 || !Number.isInteger(index)
-                || index < 0 || index > 2147483646)
+                || index < 0 || index > navigation.semanticIndexLimit)
             return false;
         const controls = navigation.semanticControls(kind);
         if (ordinal >= controls.length)
