@@ -15,7 +15,7 @@ import StrmQt
 // wash (ARCHITECTURE.md).
 //
 // Navigation contract: pages do not declare navigation signals. Item verbs go
-// through `Actions` and Main.qml listens to Actions.detailsRequested once. The
+// through `Actions`, which emits one normalized route request for Main.qml. The
 // one exception is `openLibrary`, because ItemActions has no library verb.
 FocusScope {
     id: page

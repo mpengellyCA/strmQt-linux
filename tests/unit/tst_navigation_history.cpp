@@ -19,6 +19,7 @@ private slots:
     void restoresPerEntryMusicTab();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void productionRetargetOrderingRetainsDepartingScopes();
+    void itemPolicyIsCentralizedAcrossQmlSurfaces();
     void searchTrackOwnerRestoresAcrossResultLifecycle();
     void restoresVirtualFocusAcrossDelayedRefill();
     void pendingBackRestoreHonorsUserOverride();
@@ -1175,6 +1176,78 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
              QStringLiteral("songs"));
     QCOMPARE(currentItem(history)->property("controllerTabAtCreation").toString(),
              QStringLiteral("albums"));
+}
+
+void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
+{
+    const auto sourceFor = [](const QString &relativePath) {
+        QFile file(QStringLiteral(STRMQT_SOURCE_DIR "/") + relativePath);
+        if (!file.open(QIODevice::ReadOnly))
+            return QByteArray{};
+        return file.readAll();
+    };
+
+    const QByteArray menu = sourceFor(QStringLiteral("src/ui/controls/ItemMenu.qml"));
+    QVERIFY(!menu.isEmpty());
+    QVERIFY(menu.contains("Actions.itemMenuPolicy("));
+    QVERIFY(menu.contains("Actions.performItemVerb(verb, item)"));
+    QVERIFY(menu.contains("root.removeFromPlaylistRequested(item)"));
+    for (const QByteArray &removed :
+         {QByteArrayLiteral("function typeOf("), QByteArrayLiteral("function isContainer("),
+          QByteArrayLiteral("function collectionTypeFor("),
+          QByteArrayLiteral("type === \"Series\""), QByteArrayLiteral("type === \"Episode\""),
+          QByteArrayLiteral("Actions.shuffleSeries(")}) {
+        QVERIFY2(!menu.contains(removed), removed.constData());
+    }
+
+    const QByteArray main = sourceFor(QStringLiteral("src/ui/Main.qml"));
+    QVERIFY(!main.isEmpty());
+    QVERIFY(main.contains("function onRouteRequested(kind, target)"));
+    QVERIFY(main.contains("function openRoute(kind, target)"));
+    QVERIFY(main.contains("case \"playlist\": root.openPlaylist(id, name)"));
+    QVERIFY(!main.contains("function openMusic("));
+    QVERIFY(!main.contains("item.type"));
+    QVERIFY(!main.contains("onDetailsRequested"));
+    QVERIFY(!main.contains("onSeriesRequested"));
+
+    const QByteArray details = sourceFor(QStringLiteral("src/ui/pages/DetailsPage.qml"));
+    QVERIFY(details.contains("Actions.itemCapabilities(page.item)"));
+    QVERIFY(details.contains("Actions.performItemVerb(\"shuffle\", page.item)"));
+    QVERIFY(details.contains("Actions.performItemVerb(\"browseCollection\", page.item)"));
+    QVERIFY(!details.contains(".type ==="));
+    QVERIFY(!details.contains("Actions.shuffleSeries("));
+    QVERIFY(!details.contains("Actions.playAll(page.itemId"));
+
+    const QByteArray album = sourceFor(QStringLiteral("src/ui/pages/AlbumPage.qml"));
+    QVERIFY(album.contains("Actions.artistTarget(page.albumItem)"));
+    QVERIFY(album.contains("Actions.openArtist(page.albumArtistId"));
+    QVERIFY(!album.contains("\"type\": \"MusicArtist\""));
+
+    const QByteArray mini = sourceFor(QStringLiteral("src/ui/shell/MiniPlayer.qml"));
+    QVERIFY(mini.contains("Actions.openArtist(mini.artistId, mini.artistText)"));
+    QVERIFY(mini.contains("Actions.openAlbum(mini.albumId, mini.albumText)"));
+    QVERIFY(!mini.contains("artistRequested("));
+    QVERIFY(!mini.contains("albumRequested("));
+
+    const QByteArray music = sourceFor(QStringLiteral("src/ui/pages/MusicPage.qml"));
+    QVERIFY(music.contains("profile: \"musicBrowse\""));
+    QCOMPARE(music.count("musicMenu.popupForItem("), 3);
+    QVERIFY(!music.contains("musicMenu.popupFor("));
+    QVERIFY(!music.contains("property string mode: \"album\""));
+
+    const QByteArray search = sourceFor(QStringLiteral("src/ui/pages/SearchPage.qml"));
+    QVERIFY(!search.contains("function playAlbumResult("));
+    QVERIFY(search.contains("page.playResult(page.albumModel, index)"));
+
+    const QByteArray artist = sourceFor(QStringLiteral("src/ui/pages/ArtistPage.qml"));
+    QVERIFY(artist.contains("Actions.play(item)"));
+    QVERIFY(!artist.contains("MusicCtl.playAlbum("));
+    QVERIFY(music.contains("Actions.play(item)"));
+    QVERIFY(!music.contains("MusicCtl.playAlbum("));
+
+    const QByteArray playlist = sourceFor(QStringLiteral("src/ui/pages/PlaylistPage.qml"));
+    QVERIFY(
+        playlist.contains("onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)"));
 }
 
 void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()

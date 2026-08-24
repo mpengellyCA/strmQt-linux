@@ -2,6 +2,7 @@
 
 #include "app/models/MediaItemModel.h"
 #include "server/dto/ItemsQuery.h"
+#include "server/emby/RequestHandle.h"
 
 #include <QHash>
 #include <QList>
@@ -11,6 +12,8 @@
 #include <QString>
 #include <QVariant>
 #include <QVariantMap>
+
+#include <memory>
 
 namespace strmqt {
 
@@ -72,9 +75,8 @@ public:
     // A collection plays in the order the collection was curated in, so this is
     // NOT playAll() with a different parent: playAll sorts (SortName for mixed
     // types), which queues a franchise alphabetically while the grid above it
-    // shows release order. It is also non-recursive, for the same reason
-    // LibraryController::openCollection is — recursing would queue every
-    // episode of a series that happens to be in the collection.
+    // shows release order. Mixed Series/Season slots are expanded sequentially
+    // into episode leaves, so their place is retained without queuing folders.
     Q_INVOKABLE void playCollection(const QString &collectionId);
     // Every episode of a series, in a random order, starting anywhere.
     Q_INVOKABLE void shuffleSeries(const QString &seriesId);
@@ -123,8 +125,20 @@ public:
     Q_INVOKABLE void browseStudio(const QString &studioId, const QString &name);
     Q_INVOKABLE void browseCollection(const QString &collectionId, const QString &name);
 
+    // Semantic item policy. QML supplies presentation context and renders the
+    // returned presentation keys; item kinds, capability gates, action order,
+    // checked state and dispatch targets stay here.
+    Q_INVOKABLE QVariantMap itemCapabilities(const QVariant &item) const;
+    Q_INVOKABLE QVariantList itemMenuPolicy(const QVariant &item, bool allowDetails,
+                                            bool allowAddToPlaylist, bool allowRemoveFromPlaylist,
+                                            bool allowMusicNavigation,
+                                            const QString &profile = QString()) const;
+    Q_INVOKABLE void performItemVerb(const QString &verb, const QVariant &item);
+
     Q_INVOKABLE void openDetails(const QVariant &item);
     Q_INVOKABLE void openSeries(const QVariant &item);
+    Q_INVOKABLE void openAlbum(const QString &albumId, const QString &name);
+    Q_INVOKABLE void openArtist(const QString &artistId, const QString &name);
 
     // Best effort: Emby's /Items/{id}/Refresh is not on EmbyClient yet, so this
     // logs and returns false rather than pretending to have done something.
@@ -174,15 +188,30 @@ signals:
     void favoriteChanged(const QString &itemId, bool favorite);
     // Human-readable reason a verb failed; the UI surfaces it as a toast.
     void actionFailed(const QString &message);
-    void detailsRequested(const QVariantMap &item);
     // The play queue was replaced or added to — the UI confirms with a toast.
     void queueChanged();
-    void seriesRequested(const QString &seriesId, const QString &seriesName);
+    // `kind` is "details" | "series" | "album" | "artist" | "playlist".
+    // Every target has itemId/name. Direct Details, MusicAlbum, MusicArtist and
+    // Playlist routes retain the complete source payload; synthetic series,
+    // audio-album and explicit album/artist targets are minimal coherent maps.
+    void routeRequested(const QString &kind, const QVariantMap &target);
+    // MusicController owns the server-ordered, non-recursive album expansion.
+    // ItemActions still owns whether and when this semantic verb is available.
+    void orderedAlbumPlayRequested(const QString &albumId);
     // `kind` is "genre" | "person" | "studio" | "collection"; one signal rather
     // keeps Main.qml to a single handler and the routing in one place.
     void browseRequested(const QString &kind, const QString &id, const QString &name);
 
 private:
+    struct CollectionWalk
+    {
+        QList<MediaItem> members;
+        QList<MediaItem> playable;
+        int memberIndex = 0;
+        int expansionCount = 0;
+        quint64 generation = 0;
+    };
+
     // A change that has been shown to the user and is on its way to the server.
     struct InFlight
     {
@@ -205,6 +234,7 @@ private:
     // page to the player as a queue. `randomStart` picks the first item at
     // random, which is what makes a shuffle of an ordered fetch a real shuffle.
     void fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart);
+    void continueCollectionWalk(const std::shared_ptr<CollectionWalk> &walk);
     bool requireQueueTarget();
     UserState knownState(const QString &itemId) const;
     void rememberState(const QString &itemId, const UserState &state);
@@ -228,6 +258,7 @@ private:
     QHash<QString, InFlight> m_favoriteRequests;
     QSet<QString> m_admittingUserStates;
     bool m_patchingModels = false;
+    emby::RequestHandle m_collectionRequest;
     quint64 m_playbackIntentGeneration = 0;
     quint64 m_sessionGeneration = 0;
 };

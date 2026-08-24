@@ -315,67 +315,58 @@ ApplicationWindow {
         }
     }
 
-    // Music kinds get their own pages. Without this an album card opened the
-    // VIDEO details page, which has no notion of tracks.
-    function openMusic(item): bool {
-        const type = item.type !== undefined ? String(item.type) : "";
-        if (type === "MusicArtist") {
-            const key = "artist:" + item.itemId;
-            if (root.currentKey === key) {
-                root.focusCurrentPage();
-                return true;
-            }
-            MusicCtl.openArtist(item.itemId, item.name);
-            root.pushPage({ "kind": "artist", "id": item.itemId, "name": item.name,
-                            "itemType": "MusicArtist", "key": key, "title": item.name },
-                          { "artistItem": item });
-            return true;
-        }
-        if (type === "MusicAlbum") {
-            const key = "album:" + item.itemId;
-            if (root.currentKey === key) {
-                root.focusCurrentPage();
-                return true;
-            }
-            MusicCtl.openAlbum(item.itemId, item.name);
-            root.pushPage({ "kind": "album", "id": item.itemId, "name": item.name,
-                            "itemType": "MusicAlbum", "key": key, "title": item.name },
-                          { "albumItem": item });
-            return true;
-        }
-        // A track opens the album it belongs to: there is no page for one song,
-        // and the album is where its context lives.
-        if (type === "Audio" && item.albumId !== undefined
-                && String(item.albumId).length > 0) {
-            return root.openMusic({ "itemId": item.albumId,
-                                    "name": item.album !== undefined ? item.album : "",
-                                    "type": "MusicAlbum" });
-        }
-        return false;
-    }
-
     function openDetails(item): void {
-        // A playlist has a page of its own and always did — it was simply
-        // unreachable through this route, so a playlist card opened the VIDEO
-        // details page, which is built around a backdrop, a cast and a similar
-        // rail that a list of tracks has none of. The music library's Playlists
-        // tab is the first surface to hand one to this verb.
-        if (item && String(item.type) === "Playlist" && item.itemId !== undefined
-                && String(item.itemId).length > 0) {
-            root.openPlaylist(String(item.itemId),
-                              item.name !== undefined ? String(item.name) : "");
-            return;
-        }
-        // Music routes to its own pages; everything else is the details page.
-        if (item && root.openMusic(item))
-            return;
         const name = item && item.name ? String(item.name) : qsTr("Details");
         root.pushPage({ "kind": "details",
                         "id": item && item.itemId !== undefined ? String(item.itemId) : "",
                         "name": name,
-                        "itemType": item && item.type !== undefined ? String(item.type) : "",
                         "key": "details", "title": name },
                       { "item": item });
+    }
+
+    function openAlbum(item): void {
+        const id = item && item.itemId !== undefined ? String(item.itemId) : "";
+        if (id.length === 0)
+            return;
+        const name = item.name !== undefined ? String(item.name) : "";
+        const key = "album:" + id;
+        if (root.currentKey === key) {
+            root.focusCurrentPage();
+            return;
+        }
+        MusicCtl.openAlbum(id, name);
+        root.pushPage({ "kind": "album", "id": id, "name": name,
+                        "key": key, "title": name },
+                      { "albumItem": item });
+    }
+
+    function openArtist(item): void {
+        const id = item && item.itemId !== undefined ? String(item.itemId) : "";
+        if (id.length === 0)
+            return;
+        const name = item.name !== undefined ? String(item.name) : "";
+        const key = "artist:" + id;
+        if (root.currentKey === key) {
+            root.focusCurrentPage();
+            return;
+        }
+        MusicCtl.openArtist(id, name);
+        root.pushPage({ "kind": "artist", "id": id, "name": name,
+                        "key": key, "title": name },
+                      { "artistItem": item });
+    }
+
+    function openRoute(kind, target): void {
+        const id = target && target.itemId !== undefined ? String(target.itemId) : "";
+        const name = target && target.name !== undefined ? String(target.name) : "";
+        switch (kind) {
+        case "series": root.openSeries(id, name); break;
+        case "album": root.openAlbum(target); break;
+        case "artist": root.openArtist(target); break;
+        case "playlist": root.openPlaylist(id, name); break;
+        case "details": root.openDetails(target); break;
+        default: break;
+        }
     }
 
     function openSeries(seriesId, seriesName): void {
@@ -961,14 +952,6 @@ ApplicationWindow {
         onExpandRequested: {
             root.showPlayer(true)
         }
-        // The bar's subline is a pair of links (MUSIC.md §4), and a link states
-        // intent the same way a card does: the bar asks, this file routes. Both
-        // go through openMusic(), so following "Lift Yr Skinny Fists" from the
-        // bar lands on exactly the page an album card would have opened.
-        onArtistRequested: (artistId, name) =>
-            root.openMusic({ "itemId": artistId, "name": name, "type": "MusicArtist" })
-        onAlbumRequested: (albumId, name) =>
-            root.openMusic({ "itemId": albumId, "name": name, "type": "MusicAlbum" })
         onDismissed: root.focusCurrentPage()
     }
 
@@ -1289,11 +1272,8 @@ ApplicationWindow {
     Connections {
         target: Actions
 
-        function onDetailsRequested(item) {
-            root.openDetails(item);
-        }
-        function onSeriesRequested(seriesId, seriesName) {
-            root.openSeries(seriesId, seriesName);
+        function onRouteRequested(kind, target) {
+            root.openRoute(kind, target);
         }
         function onBrowseRequested(kind, id, name) {
             root.openBrowse(kind, id, name);
@@ -1421,7 +1401,7 @@ ApplicationWindow {
         function onLibraryChosen(libraryId, name, collectionType) {
             root.openLibrary(libraryId, name, collectionType);
         }
-        function onItemChosen(item) { root.openDetails(item); }
+        function onItemChosen(item) { Actions.openDetails(item); }
         function onActionChosen(actionId) {
             if (actionId === "library.search")
                 root.openSearch();

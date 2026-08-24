@@ -37,6 +37,13 @@ void MockEmbyServer::addRoute(const QString &method, const QString &path, int st
     m_routes.insert(key, Route{status, body, contentType, delayMs, false});
 }
 
+void MockEmbyServer::enqueueRoute(const QString &method, const QString &path, int status,
+                                  const QByteArray &body, const QByteArray &contentType)
+{
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    m_queuedRoutes[key].append(Route{status, body, contentType, 0, false});
+}
+
 void MockEmbyServer::addChunkedRoute(const QString &method, const QString &path, int status,
                                      const QByteArray &body, const QByteArray &contentType)
 {
@@ -127,8 +134,10 @@ void MockEmbyServer::handleConnection()
             const QString key = request.method + QLatin1Char(' ') + request.path;
             QByteArray response;
             int delayMs = 0;
-            if (m_routes.contains(key)) {
-                const Route &route = m_routes.value(key);
+            if (!m_queuedRoutes.value(key).isEmpty() || m_routes.contains(key)) {
+                const Route route = !m_queuedRoutes.value(key).isEmpty()
+                                        ? m_queuedRoutes[key].takeFirst()
+                                        : m_routes.value(key);
                 delayMs = route.delayMs;
                 response = "HTTP/1.1 " + QByteArray::number(route.status) +
                            " Status\r\nContent-Type: " + route.contentType + "\r\n";

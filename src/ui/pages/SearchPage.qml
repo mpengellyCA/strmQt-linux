@@ -39,7 +39,7 @@ import StrmQt
 // search page over this one.
 //
 // Navigation contract: no openDetails signal here — item verbs go through
-// `Actions`, and Main.qml listens to Actions.detailsRequested once.
+// `Actions`, and Main.qml consumes its normalized route request once.
 FocusScope {
     id: page
     objectName: "searchPage"
@@ -111,21 +111,6 @@ FocusScope {
             return
         page.rememberQuery()
         Actions.play(item)
-    }
-
-    // An album has no stream of its own — asking the server to play one is an
-    // HTTP 500, not an empty queue — so its ▸ queues its tracks. "music" is not
-    // decoration: without it the query falls back to {Movie, Episode, Video},
-    // which matches nothing under an album and plays nothing at all.
-    function playAlbumResult(sectionModel, index) {
-        const item = page.itemIn(sectionModel, index)
-        if (!item)
-            return
-        const id = item.itemId !== undefined ? String(item.itemId) : ""
-        if (id.length === 0)
-            return
-        page.rememberQuery()
-        Actions.playAll(id, "music")
     }
 
     // mm:ss, or h:mm:ss for the rare long track. Mono and right-aligned where
@@ -1421,7 +1406,7 @@ FocusScope {
                 KeyNavigation.down: page.sectionBelow(7)
 
                 onItemActivated: index => page.openResult(page.albumModel, index)
-                onItemPlayRequested: index => page.playAlbumResult(page.albumModel, index)
+                onItemPlayRequested: index => page.playResult(page.albumModel, index)
                 onItemPlayedToggled: index => page.togglePlayedResult(page.albumModel, index)
                 onItemFavoriteToggled: index => page.toggleFavoriteResult(page.albumModel, index)
                 onMenuRequested: (index, mx, my) => page.showMenu(page.albumModel, index, mx, my)

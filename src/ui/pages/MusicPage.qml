@@ -34,10 +34,9 @@ import StrmQt
 // new selection straight to the controller.
 //
 // Navigation contract: this page pushes nothing and declares no navigation
-// signal of its own. Opening a card is `Actions.openDetails(item)`, which
-// Main.qml routes by item type — MusicAlbum to the album page, MusicArtist to
-// the artist page, an Audio row to the album that holds it. One route, shared
-// with every other page that opens a music item.
+// signal of its own. Opening a card is `Actions.openDetails(item)`, whose
+// centralized policy emits a normalized Album, Artist or Details route. One
+// route contract is shared with every other page that opens a music item.
 FocusScope {
     id: page
 
@@ -341,17 +340,17 @@ FocusScope {
     }
 
     // ── Playing an album from the grid ─────────────────────────────────────
-    // One call, because "play this record" is a verb and lives in C++
-    // (ARCHITECTURE.md rule 3). MusicController::playAlbum() fetches the
-    // album's children into a scratch model of its own and hands ItemActions
-    // the ordered items.
+    // One call, because "play this record" is a semantic verb and lives in
+    // ItemActions (ARCHITECTURE.md rule 3). Its album policy delegates to
+    // MusicController::playAlbum(), which fetches the server's ordered children
+    // into a scratch model and hands the resulting leaves back.
     //
     // This page used to do it by calling openAlbum() and watching the shared
     // `tracks` model fill behind a pending-id guard — which meant playing an
     // album navigated controller state, and would have fought the album page
     // the moment both were live.
     function playAlbum(item) {
-        MusicCtl.playAlbum(page.idOf(item))
+        Actions.play(item)
     }
 
     function requestAlbum(item) {
@@ -684,7 +683,7 @@ FocusScope {
                     Actions.toggleFavorite(item)
             }
             onMenuRequested: (index, mx, my) =>
-                musicMenu.popupFor("album", page.albumAt(index), mx, my)
+                musicMenu.popupForItem(page.albumAt(index), mx, my)
         }
     }
 
@@ -711,7 +710,7 @@ FocusScope {
                     Actions.toggleFavorite(item)
             }
             onMenuRequested: (index, mx, my) =>
-                musicMenu.popupFor("artist", page.artistAt(index), mx, my)
+                musicMenu.popupForItem(page.artistAt(index), mx, my)
         }
     }
 
@@ -738,7 +737,7 @@ FocusScope {
                     Actions.toggleFavorite(item)
             }
             onMenuRequested: (index, mx, my) =>
-                musicMenu.popupFor("playlist", page.playlistAt(index), mx, my)
+                musicMenu.popupForItem(page.playlistAt(index), mx, my)
         }
     }
 
@@ -902,109 +901,18 @@ FocusScope {
     }
 
     // ── Context menu ───────────────────────────────────────────────────────
-    // Not ItemMenu: that list is built for playable leaves and containers it
-    // knows about (Series / Season / BoxSet), and for a MusicAlbum it would
-    // offer Play → Actions.play(albumId), which asks the player to stream a
-    // folder. An album's verbs are the album page's verbs, and an artist's are
-    // narrower still, so the list is stated here rather than widened there —
-    // ItemMenu is not this wave's file to change.
-    StrmMenu {
+    // This browse profile is intentionally narrower than the generic menu,
+    // while its kinds, order and targets remain ItemActions policy.
+    ItemMenu {
         id: musicMenu
 
-        property string mode: "album"
-        property var target: ({})
-        property var verbs: []
-
-        function popupFor(kind, item, sceneX, sceneY) {
-            if (!item || !item.itemId)
-                return
-            const id = String(item.itemId)
-            const favorite = Actions.isFavorite(id)
-            const acts = []
-            const vs = []
-            function push(action, verb) {
-                acts.push(action)
-                vs.push(verb)
-            }
-
-            if (kind === "album") {
-                push({ text: qsTr("Play"), iconName: "play" }, "play")
-                push({ text: qsTr("Shuffle"), iconName: "shuffle" }, "shuffle")
-                push({ text: qsTr("Instant mix"), iconName: "shuffle" }, "mix")
-                push({ separator: true }, "")
-                push({ text: qsTr("Open album"), iconName: "lib-music" }, "open")
-                push({ text: qsTr("Add to playlist"), iconName: "playlist" }, "playlist")
-            } else if (kind === "playlist") {
-                // Open and favourite, and deliberately nothing else. Play and
-                // Shuffle would both have to guess how to expand a playlist id
-                // into items — Actions.shuffle() asks /Items with the id as
-                // ParentId, which is a query nobody has run against a playlist
-                // on this server. The playlist page already owns every verb a
-                // list has, in the one place where its ORDER is visible, so
-                // this menu takes the user there instead of inventing a second
-                // answer. (Delete stays there too: it is irreversible and needs
-                // the confirmation that page raises.)
-                push({ text: qsTr("Open playlist"), iconName: "playlist" }, "open")
-            } else {
-                push({ text: qsTr("Instant mix"), iconName: "shuffle" }, "mix")
-                push({ text: qsTr("Open artist"), iconName: "user" }, "open")
-            }
-            push({ separator: true }, "")
-            push({ text: favorite ? qsTr("Remove from favourites")
-                                  : qsTr("Add to favourites"),
-                   iconName: favorite ? "heart-filled" : "heart",
-                   checked: favorite }, "favorite")
-
-            musicMenu.mode = kind
-            musicMenu.target = item
-            musicMenu.verbs = vs
-            musicMenu.actions = acts
-            musicMenu.popupAt(sceneX, sceneY)
-        }
-
-        onTriggered: index => {
-            const item = musicMenu.target
-            const verb = (index >= 0 && index < musicMenu.verbs.length)
-                       ? musicMenu.verbs[index] : ""
-            if (!verb || !item || !item.itemId)
-                return
-            const id = String(item.itemId)
-            switch (verb) {
-            case "play":
-                page.playAlbum(item)
-                break
-            case "shuffle":
-                // Correct for an album exactly where playAll is not: SortBy is
-                // Random, so nothing depends on the server's ordering.
-                Actions.shuffle(id, "music")
-                break
-            case "mix":
-                // The same verb for an album and an artist: one endpoint serves
-                // both (EmbyClient::instantMix), so there is one row here and
-                // not two spellings of it.
-                Actions.instantMix(item)
-                break
-            case "playlist":
-                // An album id is not what a playlist holds — its TRACKS are —
-                // and expanding one is the server's business, so the controller
-                // fetches them and reports back through onAlbumTracksCollected.
-                MusicCtl.collectAlbumTracks(id, (item.name !== undefined)
-                                                ? String(item.name) : "")
-                break
-            case "open":
-                if (musicMenu.mode === "album")
-                    page.requestAlbum(item)
-                else if (musicMenu.mode === "playlist")
-                    page.requestPlaylist(item)
-                else
-                    page.requestArtist(item)
-                break
-            case "favorite":
-                Actions.setFavorite(id, !Actions.isFavorite(id))
-                break
-            default:
-                break
-            }
+        profile: "musicBrowse"
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => {
+            const id = page.idOf(item)
+            const name = item && item.name !== undefined ? String(item.name) : ""
+            if (id.length > 0)
+                MusicCtl.collectAlbumTracks(id, name)
         }
     }
 

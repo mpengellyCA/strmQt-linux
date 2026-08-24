@@ -119,6 +119,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // into a scratch list of its own and hands the ordered items over, so that
     // playing an album never has to navigate the open-album state to do it.
     m_music->setActions(m_actions);
+    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, m_music,
+            &MusicController::playAlbum);
     // The series page's bounded, server-filtered next-unwatched query must run
     // only after the played mutation commits; the optimistic signal fires
     // before the REST request and would race the query against stale state.

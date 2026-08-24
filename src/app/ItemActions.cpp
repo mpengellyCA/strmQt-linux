@@ -21,6 +21,122 @@ namespace {
 
 const auto kItemIdKey = QStringLiteral("itemId");
 
+enum class ItemKind
+{
+    // A type the server stated and this build does not recognise: refused
+    // wherever a container would be, because an unrecognised kind may well be
+    // one. Distinct from Unspecified, which is the absence of any claim.
+    Unknown,
+    // No `type` at all. The remote-control lane addresses items by id alone —
+    // an Emby "Play on" command carries ItemIds and nothing else — and the
+    // queue row fills in when the item's own details arrive. Refusing these
+    // would take remote playback out entirely, and an absent type is not the
+    // server telling us this is a folder.
+    Unspecified,
+    Movie,
+    Episode,
+    Series,
+    Season,
+    BoxSet,
+    Audio,
+    MusicAlbum,
+    MusicArtist,
+    Playlist,
+    Video,
+    Folder,
+    Genre,
+};
+
+// The sole item taxonomy used by ItemActions. A container is not necessarily
+// playable: artists expand only through Instant Mix, while playlists must be
+// opened because their member-entry identity and order belong to PlaylistCtl.
+struct ClassifiedItem
+{
+    QVariantMap item;
+    ItemKind kind = ItemKind::Unknown;
+    QString id;
+    QString name;
+
+    bool isContainer() const
+    {
+        switch (kind) {
+        case ItemKind::Series:
+        case ItemKind::Season:
+        case ItemKind::BoxSet:
+        case ItemKind::MusicAlbum:
+        case ItemKind::MusicArtist:
+        case ItemKind::Playlist:
+        case ItemKind::Folder:
+        case ItemKind::Genre:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool isMusic() const
+    {
+        return kind == ItemKind::Audio || kind == ItemKind::MusicAlbum ||
+               kind == ItemKind::MusicArtist;
+    }
+
+    bool isLeaf() const
+    {
+        return kind == ItemKind::Movie || kind == ItemKind::Episode || kind == ItemKind::Audio ||
+               kind == ItemKind::Video || kind == ItemKind::Unspecified;
+    }
+
+    bool expandsForPlayback() const
+    {
+        return kind == ItemKind::Series || kind == ItemKind::Season || kind == ItemKind::BoxSet ||
+               kind == ItemKind::MusicAlbum;
+    }
+};
+
+ItemKind itemKindFor(const QString &type)
+{
+    if (type.isEmpty())
+        return ItemKind::Unspecified;
+    if (type.compare(QLatin1String("Movie"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Movie;
+    if (type.compare(QLatin1String("Episode"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Episode;
+    if (type.compare(QLatin1String("Series"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Series;
+    if (type.compare(QLatin1String("Season"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Season;
+    if (type.compare(QLatin1String("BoxSet"), Qt::CaseInsensitive) == 0)
+        return ItemKind::BoxSet;
+    if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Audio;
+    if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0)
+        return ItemKind::MusicAlbum;
+    if (type.compare(QLatin1String("MusicArtist"), Qt::CaseInsensitive) == 0)
+        return ItemKind::MusicArtist;
+    if (type.compare(QLatin1String("Playlist"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Playlist;
+    if (type.compare(QLatin1String("Video"), Qt::CaseInsensitive) == 0 ||
+        type.compare(QLatin1String("MusicVideo"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Video;
+    if (type.compare(QLatin1String("Folder"), Qt::CaseInsensitive) == 0 ||
+        type.compare(QLatin1String("CollectionFolder"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Folder;
+    if (type.compare(QLatin1String("Genre"), Qt::CaseInsensitive) == 0 ||
+        type.compare(QLatin1String("MusicGenre"), Qt::CaseInsensitive) == 0)
+        return ItemKind::Genre;
+    return ItemKind::Unknown;
+}
+
+ClassifiedItem classifyItem(QVariantMap item)
+{
+    ClassifiedItem classified;
+    classified.kind = itemKindFor(item.value(QStringLiteral("type")).toString());
+    classified.id = item.value(kItemIdKey).toString();
+    classified.name = item.value(QStringLiteral("name")).toString();
+    classified.item = std::move(item);
+    return classified;
+}
+
 // One shuffle or "play all" fetches at most this many items. A whole library is
 // not a queue: Emby happily returns tens of thousands of rows, and every one of
 // them would be parsed, kept in memory and shuffled for a session the user will
@@ -29,6 +145,7 @@ const auto kItemIdKey = QStringLiteral("itemId");
 // shuffle fetch is SortBy=Random — a truncated fetch is still a fair sample of
 // the whole library rather than its first 500 items alphabetically.
 constexpr int kQueueFetchLimit = 500;
+constexpr int kCollectionExpansionLimit = 64;
 
 // Which item types are actually playable in a library of this kind. Without
 // this a shuffle of a TV library queues series folders, which play nothing.
@@ -55,14 +172,11 @@ QStringList playableTypesFor(const QString &collectionType)
 // The collectionType playAll() expects, derived from the container's own kind.
 // An album plays in track order, a series in air order, and playableTypesFor()
 // needs to know which kinds of child to ask for.
-QString containerCollectionType(const QString &type)
+QString containerCollectionType(ItemKind kind)
 {
-    if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0
-        || type.compare(QLatin1String("MusicArtist"), Qt::CaseInsensitive) == 0
-        || type.compare(QLatin1String("MusicGenre"), Qt::CaseInsensitive) == 0)
+    if (kind == ItemKind::MusicAlbum || kind == ItemKind::MusicArtist || kind == ItemKind::Genre)
         return QStringLiteral("music");
-    if (type.compare(QLatin1String("Series"), Qt::CaseInsensitive) == 0
-        || type.compare(QLatin1String("Season"), Qt::CaseInsensitive) == 0)
+    if (kind == ItemKind::Series || kind == ItemKind::Season)
         return QStringLiteral("tvshows");
     return {};
 }
@@ -116,6 +230,7 @@ ItemActions::ItemActions(emby::EmbyClient *client, PlayerController *player, QOb
 void ItemActions::resetSessionState()
 {
     ++m_playbackIntentGeneration;
+    m_collectionRequest.cancel();
     ++m_sessionGeneration;
     m_state.clear();
     m_stateOrder.clear();
@@ -220,23 +335,9 @@ QVariantMap ItemActions::resolve(const QVariant &item) const
 
 bool ItemActions::isContainer(const QString &type)
 {
-    // Emby item kinds that HOLD media rather than being media. Asking the
-    // server for PlaybackInfo on one is a 500, not an empty answer:
-    //
-    //   Unable to cast object of type '…Audio.MusicAlbum'
-    //   to type '…IHasMediaSources'
-    //
-    // Measured on the live server: Series, BoxSet, MusicArtist and MusicAlbum
-    // all return HTTP 500. So "play" on any of these has to mean "play what is
-    // inside it", which is what playAll already does.
-    static const QStringList kContainers{
-        QStringLiteral("MusicAlbum"), QStringLiteral("MusicArtist"),
-        QStringLiteral("Series"),     QStringLiteral("Season"),
-        QStringLiteral("BoxSet"),     QStringLiteral("Playlist"),
-        QStringLiteral("Folder"),     QStringLiteral("CollectionFolder"),
-        QStringLiteral("MusicGenre"), QStringLiteral("Genre"),
-    };
-    return kContainers.contains(type, Qt::CaseInsensitive);
+    QVariantMap item;
+    item.insert(QStringLiteral("type"), type);
+    return classifyItem(std::move(item)).isContainer();
 }
 
 void ItemActions::startPlayback(const QVariant &item, bool fromStart)
@@ -251,13 +352,29 @@ void ItemActions::startPlayback(const QVariant &item, bool fromStart)
     // A folder cannot be played, only its contents can. Without this, pressing
     // Play on an album, a series, a collection or an artist asked the server
     // for a media source the item does not have and surfaced a raw HTTP 500.
-    const QString type = map.value(QStringLiteral("type")).toString();
-    if (isContainer(type)) {
-        if (type.compare(QLatin1String("BoxSet"), Qt::CaseInsensitive) == 0) {
+    const ClassifiedItem classified = classifyItem(map);
+    if (classified.kind == ItemKind::MusicAlbum) {
+        emit orderedAlbumPlayRequested(itemId);
+        return;
+    }
+    if (classified.expandsForPlayback()) {
+        if (classified.kind == ItemKind::BoxSet) {
             playCollection(itemId); // curated order, not SortName
             return;
         }
-        playAll(itemId, containerCollectionType(type));
+        playAll(itemId, containerCollectionType(classified.kind));
+        return;
+    }
+    if (classified.kind == ItemKind::Playlist) {
+        // Playlist order and duplicate-entry identity are owned by the playlist
+        // page. Treating its id as a leaf asks PlaybackInfo for a folder; using
+        // ParentId invents an expansion contract the server does not promise.
+        openDetails(map);
+        return;
+    }
+    if (!classified.isLeaf()) {
+        qCWarning(logApp) << "ItemActions: item kind has no direct play verb"
+                          << map.value(QStringLiteral("type")).toString();
         return;
     }
     if (!m_player) {
@@ -289,9 +406,14 @@ void ItemActions::playFromStart(const QVariant &item)
 void ItemActions::resume(const QVariant &item)
 {
     const QVariantMap map = resolve(item);
-    const QString itemId = map.value(kItemIdKey).toString();
+    const ClassifiedItem classified = classifyItem(map);
+    const QString itemId = classified.id;
     if (itemId.isEmpty()) {
         qCWarning(logApp) << "ItemActions: resume requested without an item id";
+        return;
+    }
+    if (!classified.isLeaf()) {
+        qCWarning(logApp) << "ItemActions: resume requires a playable leaf";
         return;
     }
     if (!m_player) {
@@ -322,14 +444,24 @@ bool ItemActions::requireQueueTarget()
 
 quint64 ItemActions::beginPlaybackIntent()
 {
-    return ++m_playbackIntentGeneration;
+    const quint64 generation = ++m_playbackIntentGeneration;
+    // RequestHandle cancellation may settle its future synchronously. Retire
+    // the old generation first so that completion can never surface an error
+    // or rebuild the queue for an intent the user already replaced.
+    m_collectionRequest.cancel();
+    return generation;
 }
 
 void ItemActions::playNext(const QVariant &item)
 {
     const QVariantMap map = resolve(item);
-    if (map.value(kItemIdKey).toString().isEmpty()) {
+    const ClassifiedItem classified = classifyItem(map);
+    if (classified.id.isEmpty()) {
         qCWarning(logApp) << "ItemActions: playNext without an item id";
+        return;
+    }
+    if (!classified.isLeaf()) {
+        qCWarning(logApp) << "ItemActions: playNext requires a playable leaf";
         return;
     }
     if (!requireQueueTarget())
@@ -341,8 +473,13 @@ void ItemActions::playNext(const QVariant &item)
 void ItemActions::addToQueue(const QVariant &item)
 {
     const QVariantMap map = resolve(item);
-    if (map.value(kItemIdKey).toString().isEmpty()) {
+    const ClassifiedItem classified = classifyItem(map);
+    if (classified.id.isEmpty()) {
         qCWarning(logApp) << "ItemActions: addToQueue without an item id";
+        return;
+    }
+    if (!classified.isLeaf()) {
+        qCWarning(logApp) << "ItemActions: addToQueue requires a playable leaf";
         return;
     }
     if (!requireQueueTarget())
@@ -372,13 +509,27 @@ void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex
 {
     if (!isPlaybackIntentCurrent(generation))
         return;
-    if (items.isEmpty()) {
+    QVariantList playable;
+    playable.reserve(items.size());
+    int playableBeforeStart = 0;
+    for (int index = 0; index < items.size(); ++index) {
+        const QVariantMap map = resolve(items.at(index));
+        const ClassifiedItem classified = classifyItem(map);
+        if (classified.id.isEmpty() || !classified.isLeaf())
+            continue;
+        if (index < startIndex)
+            ++playableBeforeStart;
+        playable.append(map);
+    }
+    if (playable.isEmpty()) {
         emit actionFailed(tr("There is nothing to play here."));
         return;
     }
     if (!requireQueueTarget())
         return;
-    m_player->playQueue(items, startIndex);
+    const int playableStart =
+        std::clamp(playableBeforeStart, 0, static_cast<int>(playable.size()) - 1);
+    m_player->playQueue(playable, playableStart);
     emit queueChanged();
 }
 
@@ -394,7 +545,8 @@ void ItemActions::addAllToQueue(const QVariantList &items)
     queueItems.reserve(items.size());
     for (const QVariant &entry : items) {
         const QVariantMap map = resolve(entry);
-        if (map.value(kItemIdKey).toString().isEmpty())
+        const ClassifiedItem classified = classifyItem(map);
+        if (classified.id.isEmpty() || !classified.isLeaf())
             continue;
         queueItems.append(PlayQueue::itemFromVariant(map));
     }
@@ -417,7 +569,8 @@ void ItemActions::playNextAll(const QVariantList &items)
     queueItems.reserve(items.size());
     for (const QVariant &entry : items) {
         const QVariantMap map = resolve(entry);
-        if (!map.value(kItemIdKey).toString().isEmpty())
+        const ClassifiedItem classified = classifyItem(map);
+        if (!classified.id.isEmpty() && classified.isLeaf())
             queueItems.append(PlayQueue::itemFromVariant(map));
     }
     if (m_player->queue()->playNext(queueItems) > 0)
@@ -539,15 +692,98 @@ void ItemActions::playCollection(const QString &collectionId)
         qCWarning(logApp) << "ItemActions: playCollection without an id";
         return;
     }
+    if (!requireQueueTarget())
+        return;
+    if (!m_client) {
+        qCWarning(logApp) << "ItemActions: no server client; cannot expand collection";
+        emit actionFailed(tr("Not connected to the server."));
+        return;
+    }
+
+    const quint64 generation = beginPlaybackIntent();
     ItemsQuery query;
     query.parentId = collectionId;
-    // No sortBy and no recursion: see the header. Both are deliberate and both
-    // differ from playAll().
+    // The first page is the collection's curated top-level order. Series and
+    // Season rows are expanded one at a time below, in this same slot.
     query.recursive = false;
     query.includeItemTypes = {QStringLiteral("Movie"), QStringLiteral("Series"),
-                              QStringLiteral("Episode")};
+                              QStringLiteral("Season"), QStringLiteral("Episode"),
+                              QStringLiteral("Video")};
     query.limit = kQueueFetchLimit;
-    fetchIntoQueue(query, false, false);
+    m_client->items(query, &m_collectionRequest)
+        .then(this, [this, generation](const Result<ItemsPage> &result) {
+            if (generation != m_playbackIntentGeneration)
+                return;
+            if (!result.ok()) {
+                emit actionFailed(tr("Could not build the collection queue: %1").arg(result.error));
+                return;
+            }
+            auto walk = std::make_shared<CollectionWalk>();
+            walk->members = result.value.items;
+            walk->generation = generation;
+            continueCollectionWalk(walk);
+        });
+}
+
+void ItemActions::continueCollectionWalk(const std::shared_ptr<CollectionWalk> &walk)
+{
+    if (!walk || walk->generation != m_playbackIntentGeneration)
+        return;
+
+    while (walk->memberIndex < walk->members.size()) {
+        if (walk->playable.size() >= kQueueFetchLimit) {
+            walk->memberIndex = static_cast<int>(walk->members.size());
+            break;
+        }
+        const MediaItem member = walk->members.at(walk->memberIndex++);
+        const ItemKind kind = itemKindFor(member.type);
+        if (kind == ItemKind::Movie || kind == ItemKind::Episode || kind == ItemKind::Video) {
+            walk->playable.append(member); // duplicates are distinct curated slots
+            continue;
+        }
+        if (kind != ItemKind::Series && kind != ItemKind::Season)
+            continue;
+        if (member.id.isEmpty()) {
+            emit actionFailed(tr("A collection member is missing its item id."));
+            return;
+        }
+        if (++walk->expansionCount > kCollectionExpansionLimit) {
+            emit actionFailed(tr("This collection has too many nested shows to queue safely."));
+            return;
+        }
+
+        ItemsQuery query;
+        query.parentId = member.id;
+        query.recursive = true;
+        query.includeItemTypes = {QStringLiteral("Episode")};
+        query.sortBy = QStringLiteral("PremiereDate,SortName");
+        query.limit = kQueueFetchLimit - walk->playable.size();
+        m_client->items(query, &m_collectionRequest)
+            .then(this, [this, walk](const Result<ItemsPage> &result) {
+                if (walk->generation != m_playbackIntentGeneration)
+                    return;
+                if (!result.ok()) {
+                    emit actionFailed(
+                        tr("Could not expand a collection member: %1").arg(result.error));
+                    return;
+                }
+                for (const MediaItem &child : result.value.items) {
+                    if (walk->playable.size() >= kQueueFetchLimit)
+                        break;
+                    if (itemKindFor(child.type) == ItemKind::Episode)
+                        walk->playable.append(child);
+                }
+                continueCollectionWalk(walk);
+            });
+        return;
+    }
+
+    if (walk->playable.isEmpty()) {
+        emit actionFailed(tr("There is nothing to play here."));
+        return;
+    }
+    m_player->playQueueItems(walk->playable, 0, false);
+    emit queueChanged();
 }
 
 void ItemActions::playAll(const QString &parentId, const QString &collectionType)
@@ -976,23 +1212,355 @@ void ItemActions::browseCollection(const QString &collectionId, const QString &n
     emit browseRequested(QStringLiteral("collection"), collectionId, name);
 }
 
+QVariantMap ItemActions::itemCapabilities(const QVariant &item) const
+{
+    const ClassifiedItem classified = classifyItem(resolve(item));
+    const bool valid = !classified.id.isEmpty();
+    const bool leaf = valid && classified.isLeaf();
+    const bool expandable = valid && classified.expandsForPlayback();
+    const bool artist = classified.kind == ItemKind::MusicArtist;
+    const bool playlist = classified.kind == ItemKind::Playlist;
+    const bool known = classified.kind != ItemKind::Unknown;
+    const bool passiveContainer =
+        classified.kind == ItemKind::Folder || classified.kind == ItemKind::Genre;
+    const bool markPlayed = valid && known && !artist && !playlist && !passiveContainer;
+
+    QVariantMap capabilities;
+    capabilities.insert(QStringLiteral("valid"), valid);
+    capabilities.insert(QStringLiteral("episode"), classified.kind == ItemKind::Episode);
+    capabilities.insert(QStringLiteral("series"), classified.kind == ItemKind::Series);
+    capabilities.insert(QStringLiteral("collection"), classified.kind == ItemKind::BoxSet);
+    capabilities.insert(QStringLiteral("music"), classified.isMusic());
+    capabilities.insert(QStringLiteral("leaf"), leaf);
+    capabilities.insert(QStringLiteral("expandable"), expandable);
+    capabilities.insert(QStringLiteral("play"), leaf || expandable);
+    capabilities.insert(QStringLiteral("resume"),
+                        leaf && classified.item.value(QStringLiteral("resumable")).toBool());
+    capabilities.insert(QStringLiteral("queue"), leaf);
+    capabilities.insert(
+        QStringLiteral("shuffle"),
+        valid && (classified.kind == ItemKind::Series || classified.kind == ItemKind::Season ||
+                  classified.kind == ItemKind::BoxSet || classified.kind == ItemKind::MusicAlbum));
+    capabilities.insert(QStringLiteral("instantMix"),
+                        valid && (artist || classified.kind == ItemKind::MusicAlbum ||
+                                  classified.kind == ItemKind::Audio));
+    capabilities.insert(QStringLiteral("markPlayed"), markPlayed);
+    capabilities.insert(QStringLiteral("favorite"), valid && known && !passiveContainer);
+    capabilities.insert(
+        QStringLiteral("seriesNavigation"),
+        valid && (classified.kind == ItemKind::Series ||
+                  (classified.kind == ItemKind::Episode &&
+                   !classified.item.value(QStringLiteral("seriesId")).toString().isEmpty())));
+    capabilities.insert(QStringLiteral("collectionNavigation"),
+                        valid && classified.kind == ItemKind::BoxSet);
+    capabilities.insert(QStringLiteral("details"), valid);
+    capabilities.insert(QStringLiteral("addToPlaylist"),
+                        valid && (leaf || classified.kind == ItemKind::MusicAlbum));
+    capabilities.insert(
+        QStringLiteral("playlistEntry"),
+        !classified.item.value(QStringLiteral("playlistItemId")).toString().isEmpty());
+    return capabilities;
+}
+
+QVariantList ItemActions::itemMenuPolicy(const QVariant &item, bool allowDetails,
+                                         bool allowAddToPlaylist, bool allowRemoveFromPlaylist,
+                                         bool allowMusicNavigation, const QString &profile) const
+{
+    const ClassifiedItem classified = classifyItem(resolve(item));
+    if (classified.id.isEmpty())
+        return {};
+
+    const QVariantMap capabilities = itemCapabilities(classified.item);
+    const bool played = isPlayed(classified.id);
+    const bool favorite = isFavorite(classified.id);
+    QVariantList descriptors;
+
+    const auto append = [&descriptors](const QString &verb, const QString &presentation,
+                                       const QVariantMap &target = QVariantMap{},
+                                       const QString &routeKind = QString(), bool checked = false,
+                                       bool destructive = false) {
+        QVariantMap descriptor;
+        descriptor.insert(QStringLiteral("verb"), verb);
+        descriptor.insert(QStringLiteral("presentation"), presentation);
+        descriptor.insert(QStringLiteral("checked"), checked);
+        descriptor.insert(QStringLiteral("destructive"), destructive);
+        if (!target.isEmpty())
+            descriptor.insert(QStringLiteral("target"), target);
+        if (!routeKind.isEmpty())
+            descriptor.insert(QStringLiteral("routeKind"), routeKind);
+        descriptors.append(descriptor);
+    };
+    const auto separator = [&descriptors] {
+        if (descriptors.isEmpty() ||
+            descriptors.constLast().toMap().value(QStringLiteral("separator")).toBool())
+            return;
+        descriptors.append(QVariantMap{{QStringLiteral("separator"), true}});
+    };
+    const auto itemTarget = [&classified] {
+        return QVariantMap{{kItemIdKey, classified.id}, {QStringLiteral("name"), classified.name}};
+    };
+    const auto appendFavorite = [&] {
+        append(QStringLiteral("favorite"),
+               favorite ? QStringLiteral("removeFavorite") : QStringLiteral("addFavorite"),
+               itemTarget(), {}, favorite);
+    };
+
+    // Music's browse grids deliberately have a narrower menu and a distinct
+    // order. The semantic descriptors still come from the same classifier;
+    // only their presentation profile differs.
+    if (profile == QLatin1String("musicBrowse")) {
+        if (classified.kind == ItemKind::MusicAlbum) {
+            append(QStringLiteral("play"), QStringLiteral("play"), itemTarget());
+            append(QStringLiteral("shuffle"), QStringLiteral("shuffleAlbum"), itemTarget());
+            append(QStringLiteral("instantMix"), QStringLiteral("instantMix"), itemTarget());
+            if (allowDetails) {
+                separator();
+                append(QStringLiteral("details"), QStringLiteral("openAlbum"), classified.item,
+                       QStringLiteral("album"));
+            }
+            if (allowAddToPlaylist) {
+                append(QStringLiteral("addToPlaylist"), QStringLiteral("addToPlaylist"),
+                       itemTarget());
+            }
+        } else if (classified.kind == ItemKind::MusicArtist) {
+            append(QStringLiteral("instantMix"), QStringLiteral("instantMix"), itemTarget());
+            if (allowDetails) {
+                append(QStringLiteral("details"), QStringLiteral("openArtist"), classified.item,
+                       QStringLiteral("artist"));
+            }
+        } else if (classified.kind == ItemKind::Playlist) {
+            if (allowDetails) {
+                append(QStringLiteral("details"), QStringLiteral("openPlaylist"), classified.item,
+                       QStringLiteral("playlist"));
+            }
+        } else {
+            return itemMenuPolicy(classified.item, allowDetails, allowAddToPlaylist,
+                                  allowRemoveFromPlaylist, allowMusicNavigation, {});
+        }
+        separator();
+        appendFavorite();
+        const QString entryId =
+            classified.item.value(QStringLiteral("playlistItemId")).toString();
+        if (allowRemoveFromPlaylist && !entryId.isEmpty()) {
+            separator();
+            append(QStringLiteral("removeFromPlaylist"), QStringLiteral("removeFromPlaylist"),
+                   QVariantMap{{QStringLiteral("playlistItemId"), entryId}}, {}, false, true);
+        }
+        return descriptors;
+    }
+
+    // Playlists are opened, never guessed into a ParentId query or queued as a
+    // leaf. Keep the compact policy used by the dedicated music grid too.
+    if (classified.kind == ItemKind::Playlist) {
+        if (allowDetails) {
+            append(QStringLiteral("details"), QStringLiteral("openPlaylist"), classified.item,
+                   QStringLiteral("playlist"));
+        }
+        separator();
+        appendFavorite();
+        const QString entryId =
+            classified.item.value(QStringLiteral("playlistItemId")).toString();
+        if (allowRemoveFromPlaylist && !entryId.isEmpty()) {
+            separator();
+            append(QStringLiteral("removeFromPlaylist"), QStringLiteral("removeFromPlaylist"),
+                   QVariantMap{{QStringLiteral("playlistItemId"), entryId}}, {}, false, true);
+        }
+        return descriptors;
+    }
+
+    if (classified.kind == ItemKind::MusicArtist) {
+        // The generic menu deliberately has no primary artist verb. Search's
+        // card activation opens the artist, while Music's browse profile uses
+        // Instant Mix + Open Artist. Adding either here would silently change
+        // every Home/Library/Search context menu into one of those profiles.
+    } else if (classified.kind == ItemKind::MusicAlbum) {
+        append(QStringLiteral("play"), QStringLiteral("playAlbum"), itemTarget());
+        append(QStringLiteral("shuffle"), QStringLiteral("shuffleAlbum"), itemTarget());
+    } else if (capabilities.value(QStringLiteral("expandable")).toBool()) {
+        append(QStringLiteral("play"), QStringLiteral("playAll"), itemTarget());
+        append(QStringLiteral("shuffle"), QStringLiteral("shuffle"), itemTarget());
+        if (classified.kind == ItemKind::Series) {
+            separator();
+            append(QStringLiteral("series"), QStringLiteral("episodes"), itemTarget(),
+                   QStringLiteral("series"));
+        }
+    } else if (capabilities.value(QStringLiteral("resume")).toBool()) {
+        append(QStringLiteral("resume"), QStringLiteral("resume"), itemTarget());
+        append(QStringLiteral("playFromStart"), QStringLiteral("playFromStart"), itemTarget());
+    } else if (capabilities.value(QStringLiteral("play")).toBool()) {
+        append(QStringLiteral("play"), QStringLiteral("play"), itemTarget());
+    }
+
+    if (capabilities.value(QStringLiteral("queue")).toBool()) {
+        separator();
+        append(QStringLiteral("playNext"), QStringLiteral("playNext"), itemTarget());
+        append(QStringLiteral("addToQueue"), QStringLiteral("addToQueue"), itemTarget());
+    }
+
+    if (capabilities.value(QStringLiteral("markPlayed")).toBool() ||
+        capabilities.value(QStringLiteral("favorite")).toBool()) {
+        separator();
+    }
+    if (capabilities.value(QStringLiteral("markPlayed")).toBool()) {
+        const QString presentation =
+            classified.isMusic()
+                ? (played ? QStringLiteral("markUnplayed") : QStringLiteral("markPlayed"))
+                : (played ? QStringLiteral("markUnwatched") : QStringLiteral("markWatched"));
+        append(QStringLiteral("played"), presentation, itemTarget(), {}, played);
+    }
+    if (capabilities.value(QStringLiteral("favorite")).toBool())
+        appendFavorite();
+
+    const QString playlistEntryId =
+        classified.item.value(QStringLiteral("playlistItemId")).toString();
+    const bool canAdd =
+        allowAddToPlaylist && capabilities.value(QStringLiteral("addToPlaylist")).toBool();
+    const bool canRemove = allowRemoveFromPlaylist && !playlistEntryId.isEmpty();
+    if (canAdd || canRemove)
+        separator();
+    if (canAdd)
+        append(QStringLiteral("addToPlaylist"), QStringLiteral("addToPlaylist"), itemTarget());
+    if (canRemove) {
+        append(QStringLiteral("removeFromPlaylist"), QStringLiteral("removeFromPlaylist"),
+               QVariantMap{{QStringLiteral("playlistItemId"), playlistEntryId}}, {}, false, true);
+    }
+
+    separator();
+    if (capabilities.value(QStringLiteral("seriesNavigation")).toBool() &&
+        classified.kind == ItemKind::Episode) {
+        QVariantMap target;
+        target.insert(kItemIdKey, classified.item.value(QStringLiteral("seriesId")));
+        target.insert(QStringLiteral("name"), classified.item.value(QStringLiteral("seriesName")));
+        target.insert(QStringLiteral("type"), QStringLiteral("Series"));
+        append(QStringLiteral("series"), QStringLiteral("goToSeries"), target,
+               QStringLiteral("series"));
+    }
+    if (allowMusicNavigation && classified.kind == ItemKind::Audio) {
+        const QString albumId = classified.item.value(QStringLiteral("albumId")).toString();
+        if (!albumId.isEmpty()) {
+            const QVariantMap target{
+                {kItemIdKey, albumId},
+                {QStringLiteral("name"), classified.item.value(QStringLiteral("album"))},
+                {QStringLiteral("type"), QStringLiteral("MusicAlbum")}};
+            append(QStringLiteral("album"), QStringLiteral("goToAlbum"), target,
+                   QStringLiteral("album"));
+        }
+    }
+    if (allowMusicNavigation &&
+        (classified.kind == ItemKind::Audio || classified.kind == ItemKind::MusicAlbum)) {
+        const QVariantMap target = artistTarget(classified.item);
+        if (!target.value(kItemIdKey).toString().isEmpty()) {
+            append(QStringLiteral("artist"), QStringLiteral("goToArtist"), target,
+                   QStringLiteral("artist"));
+        }
+    }
+    if (allowDetails && !classified.isMusic()) {
+        append(QStringLiteral("details"), QStringLiteral("details"), classified.item,
+               QStringLiteral("details"));
+    }
+    append(QStringLiteral("refresh"), QStringLiteral("refreshMetadata"), itemTarget());
+    return descriptors;
+}
+
+void ItemActions::performItemVerb(const QString &verb, const QVariant &item)
+{
+    const QVariantMap map = resolve(item);
+    const ClassifiedItem classified = classifyItem(map);
+    if (classified.id.isEmpty()) {
+        qCWarning(logApp) << "ItemActions: verb requested without an item id" << verb;
+        return;
+    }
+    const QVariantMap capabilities = itemCapabilities(map);
+
+    if (verb == QLatin1String("play")) {
+        if (capabilities.value(QStringLiteral("play")).toBool())
+            play(map);
+    } else if (verb == QLatin1String("resume")) {
+        if (capabilities.value(QStringLiteral("resume")).toBool())
+            resume(map);
+    } else if (verb == QLatin1String("playFromStart")) {
+        if (capabilities.value(QStringLiteral("leaf")).toBool())
+            playFromStart(map);
+    } else if (verb == QLatin1String("playNext")) {
+        if (capabilities.value(QStringLiteral("queue")).toBool())
+            playNext(map);
+    } else if (verb == QLatin1String("addToQueue")) {
+        if (capabilities.value(QStringLiteral("queue")).toBool())
+            addToQueue(map);
+    } else if (verb == QLatin1String("shuffle")) {
+        if (!capabilities.value(QStringLiteral("shuffle")).toBool())
+            return;
+        if (classified.kind == ItemKind::Series)
+            shuffleSeries(classified.id);
+        else
+            shuffle(classified.id, containerCollectionType(classified.kind));
+    } else if (verb == QLatin1String("instantMix")) {
+        if (capabilities.value(QStringLiteral("instantMix")).toBool())
+            instantMix(map);
+    } else if (verb == QLatin1String("played")) {
+        if (capabilities.value(QStringLiteral("markPlayed")).toBool())
+            setPlayed(classified.id, !isPlayed(classified.id));
+    } else if (verb == QLatin1String("favorite")) {
+        if (capabilities.value(QStringLiteral("favorite")).toBool())
+            setFavorite(classified.id, !isFavorite(classified.id));
+    } else if (verb == QLatin1String("series")) {
+        if (capabilities.value(QStringLiteral("seriesNavigation")).toBool())
+            openSeries(map);
+    } else if (verb == QLatin1String("album")) {
+        if (classified.kind == ItemKind::Audio) {
+            const QString albumId = map.value(QStringLiteral("albumId")).toString();
+            if (!albumId.isEmpty())
+                openAlbum(albumId, map.value(QStringLiteral("album")).toString());
+        }
+    } else if (verb == QLatin1String("artist")) {
+        if (classified.kind == ItemKind::Audio || classified.kind == ItemKind::MusicAlbum) {
+            const QVariantMap target = artistTarget(map);
+            openArtist(target.value(kItemIdKey).toString(),
+                       target.value(QStringLiteral("name")).toString());
+        }
+    } else if (verb == QLatin1String("browseCollection")) {
+        if (capabilities.value(QStringLiteral("collectionNavigation")).toBool())
+            browseCollection(classified.id, classified.name);
+    } else if (verb == QLatin1String("details")) {
+        openDetails(map);
+    } else if (verb == QLatin1String("refresh")) {
+        refreshMetadata(classified.id);
+    }
+}
+
 void ItemActions::openDetails(const QVariant &item)
 {
     const QVariantMap map = resolve(item);
-    if (map.value(kItemIdKey).toString().isEmpty()) {
+    const ClassifiedItem classified = classifyItem(map);
+    if (classified.id.isEmpty()) {
         qCWarning(logApp) << "ItemActions: openDetails without an item id";
         return;
     }
-    emit detailsRequested(map);
+    if (classified.kind == ItemKind::MusicAlbum) {
+        emit routeRequested(QStringLiteral("album"), map);
+    } else if (classified.kind == ItemKind::MusicArtist) {
+        emit routeRequested(QStringLiteral("artist"), map);
+    } else if (classified.kind == ItemKind::Audio &&
+               !map.value(QStringLiteral("albumId")).toString().isEmpty()) {
+        QVariantMap target;
+        target.insert(kItemIdKey, map.value(QStringLiteral("albumId")));
+        target.insert(QStringLiteral("name"), map.value(QStringLiteral("album")));
+        target.insert(QStringLiteral("type"), QStringLiteral("MusicAlbum"));
+        emit routeRequested(QStringLiteral("album"), target);
+    } else if (classified.kind == ItemKind::Playlist) {
+        emit routeRequested(QStringLiteral("playlist"), map);
+    } else {
+        emit routeRequested(QStringLiteral("details"), map);
+    }
 }
 
 void ItemActions::openSeries(const QVariant &item)
 {
     const QVariantMap map = resolve(item);
+    const ClassifiedItem classified = classifyItem(map);
     QString seriesId = map.value(QStringLiteral("seriesId")).toString();
     QString seriesName = map.value(QStringLiteral("seriesName")).toString();
-    if (seriesId.isEmpty() &&
-        map.value(QStringLiteral("type")).toString() == QLatin1String("Series")) {
+    if (seriesId.isEmpty() && classified.kind == ItemKind::Series) {
         seriesId = map.value(kItemIdKey).toString();
         seriesName = map.value(QStringLiteral("name")).toString();
     }
@@ -1001,7 +1569,30 @@ void ItemActions::openSeries(const QVariant &item)
                           << map.value(kItemIdKey).toString();
         return;
     }
-    emit seriesRequested(seriesId, seriesName);
+    emit routeRequested(QStringLiteral("series"),
+                        QVariantMap{{kItemIdKey, seriesId},
+                                    {QStringLiteral("name"), seriesName},
+                                    {QStringLiteral("type"), QStringLiteral("Series")}});
+}
+
+void ItemActions::openAlbum(const QString &albumId, const QString &name)
+{
+    if (albumId.isEmpty())
+        return;
+    emit routeRequested(QStringLiteral("album"),
+                        QVariantMap{{kItemIdKey, albumId},
+                                    {QStringLiteral("name"), name},
+                                    {QStringLiteral("type"), QStringLiteral("MusicAlbum")}});
+}
+
+void ItemActions::openArtist(const QString &artistId, const QString &name)
+{
+    if (artistId.isEmpty())
+        return;
+    emit routeRequested(QStringLiteral("artist"),
+                        QVariantMap{{kItemIdKey, artistId},
+                                    {QStringLiteral("name"), name},
+                                    {QStringLiteral("type"), QStringLiteral("MusicArtist")}});
 }
 
 // The ALBUM artist wins over the first credited performer whenever the item

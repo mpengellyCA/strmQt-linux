@@ -43,13 +43,12 @@ FocusScope {
     property var item: ({})
 
     readonly property string itemId: page.item && page.item.itemId ? page.item.itemId : ""
-    readonly property bool isSeries: page.item.type === "Series"
-    readonly property bool isEpisode: page.item.type === "Episode"
-    // A BoxSet is Emby's collection; it plays as a set, exactly like a series.
-    readonly property bool isCollection: page.item.type === "BoxSet"
-    // Anything with a stream of its own — a movie, an episode, a video.
-    readonly property bool isPlayable: !page.isSeries && !page.isCollection
-    readonly property bool resumable: page.item.resumable === true
+    readonly property var capabilities: Actions.itemCapabilities(page.item)
+    readonly property bool isSeries: page.capabilities.series === true
+    readonly property bool isEpisode: page.capabilities.episode === true
+    readonly property bool isCollection: page.capabilities.collection === true
+    readonly property bool isPlayable: page.capabilities.leaf === true
+    readonly property bool resumable: page.capabilities.resume === true
 
     // Cached projections of Actions' state, not a second copy of it: QML cannot
     // bind to a Q_INVOKABLE, so the value is re-read whenever Actions says it
@@ -1462,7 +1461,7 @@ FocusScope {
                                 text: qsTr("Episodes")
                                 iconName: "list"
                                 variant: "primary"
-                                onClicked: Actions.openSeries(page.item)
+                                onClicked: Actions.performItemVerb("series", page.item)
                                 KeyNavigation.right: page.verbAfter(0)
                                 KeyNavigation.down: page.heroDown
                             }
@@ -1476,7 +1475,7 @@ FocusScope {
                                 text: qsTr("Play all")
                                 iconName: "play"
                                 variant: "primary"
-                                onClicked: Actions.playAll(page.itemId, "boxsets")
+                                onClicked: Actions.performItemVerb("play", page.item)
                                 KeyNavigation.right: page.verbAfter(1)
                                 KeyNavigation.down: page.heroDown
                             }
@@ -1492,7 +1491,7 @@ FocusScope {
                                 visible: page.isCollection
                                 text: qsTr("View items")
                                 iconName: "lib-collections"
-                                onClicked: Actions.browseCollection(page.itemId, page.item.name)
+                                onClicked: Actions.performItemVerb("browseCollection", page.item)
                                 KeyNavigation.left: page.verbBefore(2)
                                 KeyNavigation.right: page.verbAfter(2)
                                 KeyNavigation.down: page.heroDown
@@ -1508,7 +1507,7 @@ FocusScope {
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: {
-                                    Actions.play(page.item)
+                                    Actions.performItemVerb("play", page.item)
                                     page.applyVersion()
                                 }
                                 KeyNavigation.right: page.verbAfter(3)
@@ -1521,7 +1520,7 @@ FocusScope {
                                 text: qsTr("Start over")
                                 iconName: "skip-previous"
                                 onClicked: {
-                                    Actions.playFromStart(page.item)
+                                    Actions.performItemVerb("playFromStart", page.item)
                                     page.applyVersion()
                                 }
                                 KeyNavigation.left: page.verbBefore(4)
@@ -1533,15 +1532,10 @@ FocusScope {
                             // two item kinds that *are* a set (ARCHITECTURE.md).
                             StrmButton {
                                 id: shuffleButton
-                                visible: page.isSeries || page.isCollection
+                                visible: page.capabilities.shuffle === true
                                 text: qsTr("Shuffle")
                                 iconName: "shuffle"
-                                onClicked: {
-                                    if (page.isSeries)
-                                        Actions.shuffleSeries(page.itemId)
-                                    else
-                                        Actions.shuffle(page.itemId, "boxsets")
-                                }
+                                onClicked: Actions.performItemVerb("shuffle", page.item)
                                 KeyNavigation.left: page.verbBefore(5)
                                 KeyNavigation.right: page.verbAfter(5)
                                 KeyNavigation.down: page.heroDown
@@ -1587,12 +1581,13 @@ FocusScope {
                             // same click.
                             StrmButton {
                                 id: playedButton
+                                visible: page.capabilities.markPlayed === true
                                 text: page.itemPlayed ? qsTr("Mark unwatched")
                                                       : qsTr("Mark watched")
                                 iconName: page.itemPlayed ? "eye-off" : "eye"
                                 // The verb, not a local flip: Actions owns the
                                 // value and tells every view about the change.
-                                onClicked: Actions.setPlayed(page.itemId, !page.itemPlayed)
+                                onClicked: Actions.performItemVerb("played", page.item)
                                 KeyNavigation.left: page.verbBefore(7)
                                 KeyNavigation.right: page.verbAfter(7)
                                 KeyNavigation.down: page.heroDown
@@ -1600,9 +1595,10 @@ FocusScope {
 
                             StrmButton {
                                 id: favoriteButton
+                                visible: page.capabilities.favorite === true
                                 text: page.itemFavorite ? qsTr("Favourite") : qsTr("Add favourite")
                                 iconName: page.itemFavorite ? "heart-filled" : "heart"
-                                onClicked: Actions.setFavorite(page.itemId, !page.itemFavorite)
+                                onClicked: Actions.performItemVerb("favorite", page.item)
                                 KeyNavigation.left: page.verbBefore(8)
                                 KeyNavigation.right: page.verbAfter(8)
                                 KeyNavigation.down: page.heroDown
@@ -1615,6 +1611,7 @@ FocusScope {
                             // feature ships and is never found.
                             StrmButton {
                                 id: playlistButton
+                                visible: page.capabilities.addToPlaylist === true
                                 text: qsTr("Add to playlist")
                                 iconName: "playlist"
                                 onClicked: playlistPicker.show(page.item)

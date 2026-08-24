@@ -49,6 +49,34 @@ MediaItem makeItem(const QString &id, const QString &name)
     return item;
 }
 
+QVariantMap itemMap(const QString &type, const QString &id = QStringLiteral("policy-id"))
+{
+    return {{QStringLiteral("itemId"), id},
+            {QStringLiteral("name"), QStringLiteral("Policy item")},
+            {QStringLiteral("type"), type}};
+}
+
+QStringList policyVerbs(const QVariantList &policy)
+{
+    QStringList verbs;
+    for (const QVariant &entry : policy) {
+        const QString verb = entry.toMap().value(QStringLiteral("verb")).toString();
+        if (!verb.isEmpty())
+            verbs.append(verb);
+    }
+    return verbs;
+}
+
+QVariantMap descriptorFor(const QVariantList &policy, const QString &verb)
+{
+    for (const QVariant &entry : policy) {
+        const QVariantMap descriptor = entry.toMap();
+        if (descriptor.value(QStringLiteral("verb")).toString() == verb)
+            return descriptor;
+    }
+    return {};
+}
+
 } // namespace
 
 class ItemActionsTest : public QObject
@@ -72,6 +100,9 @@ private slots:
     void delayedOldIdentityReplyCannotConsumeNewIdentityRequest();
     void signalsCarryTheRightItemId();
     void playResumesAndPlayFromStartDoesNot();
+    void capabilityMatrixSeparatesContainersFromPlayableItems();
+    void menuPoliciesOwnOrderFlagsAndTargets();
+    void checkedPolicyAndDispatchUseFreshState();
     void navigationVerbsEmitRequests();
     void refreshMetadataReportsThatItIsNotWired();
 
@@ -448,21 +479,182 @@ void ItemActionsTest::playResumesAndPlayFromStartDoesNot()
     m_player->stop();
 }
 
+void ItemActionsTest::capabilityMatrixSeparatesContainersFromPlayableItems()
+{
+    const auto capabilities = [this](const QString &type) {
+        return m_actions->itemCapabilities(itemMap(type));
+    };
+
+    for (const QString &type :
+         {QStringLiteral("Movie"), QStringLiteral("Episode"), QStringLiteral("Audio"),
+          QStringLiteral("Video"), QStringLiteral("MusicVideo")}) {
+        const QVariantMap caps = capabilities(type);
+        QVERIFY2(caps.value(QStringLiteral("play")).toBool(), qPrintable(type));
+        QVERIFY2(caps.value(QStringLiteral("queue")).toBool(), qPrintable(type));
+        QVERIFY2(caps.value(QStringLiteral("markPlayed")).toBool(), qPrintable(type));
+    }
+
+    for (const QString &type : {QStringLiteral("Series"), QStringLiteral("Season"),
+                                QStringLiteral("BoxSet"), QStringLiteral("MusicAlbum")}) {
+        const QVariantMap caps = capabilities(type);
+        QVERIFY2(caps.value(QStringLiteral("expandable")).toBool(), qPrintable(type));
+        QVERIFY2(caps.value(QStringLiteral("play")).toBool(), qPrintable(type));
+        QVERIFY2(caps.value(QStringLiteral("shuffle")).toBool(), qPrintable(type));
+        QVERIFY2(!caps.value(QStringLiteral("queue")).toBool(), qPrintable(type));
+    }
+
+    const QVariantMap artist = capabilities(QStringLiteral("MusicArtist"));
+    QVERIFY(!artist.value(QStringLiteral("play")).toBool());
+    QVERIFY(!artist.value(QStringLiteral("queue")).toBool());
+    QVERIFY(!artist.value(QStringLiteral("markPlayed")).toBool());
+    QVERIFY(artist.value(QStringLiteral("instantMix")).toBool());
+
+    const QVariantMap playlist = capabilities(QStringLiteral("Playlist"));
+    QVERIFY(!playlist.value(QStringLiteral("play")).toBool());
+    QVERIFY(!playlist.value(QStringLiteral("queue")).toBool());
+    QVERIFY(!playlist.value(QStringLiteral("markPlayed")).toBool());
+    QVERIFY(playlist.value(QStringLiteral("favorite")).toBool());
+
+    // An ABSENT type is not a claim that this is a folder. The remote-control
+    // lane addresses items by id alone, and the queue row fills in when the
+    // item's own details arrive. A type the server DID state and this build
+    // does not recognise ("FutureServerType" below) stays refused.
+    const QVariantMap idOnly = m_actions->itemCapabilities(
+        QVariantMap{{QStringLiteral("itemId"), QStringLiteral("id-only")}});
+    QVERIFY(idOnly.value(QStringLiteral("play")).toBool());
+    QVERIFY(idOnly.value(QStringLiteral("queue")).toBool());
+    QVERIFY(!idOnly.value(QStringLiteral("expandable")).toBool());
+    QVERIFY(!idOnly.value(QStringLiteral("shuffle")).toBool());
+
+    for (const QString &type :
+         {QStringLiteral("Folder"), QStringLiteral("CollectionFolder"), QStringLiteral("Genre"),
+          QStringLiteral("MusicGenre"), QStringLiteral("FutureServerType")}) {
+        const QVariantMap caps = capabilities(type);
+        QVERIFY2(!caps.value(QStringLiteral("play")).toBool(), qPrintable(type));
+        QVERIFY2(!caps.value(QStringLiteral("queue")).toBool(), qPrintable(type));
+        QVERIFY2(!caps.value(QStringLiteral("markPlayed")).toBool(), qPrintable(type));
+        QVERIFY2(caps.value(QStringLiteral("details")).toBool(), qPrintable(type));
+    }
+}
+
+void ItemActionsTest::menuPoliciesOwnOrderFlagsAndTargets()
+{
+    QVariantMap episode = itemMap(QStringLiteral("Episode"));
+    episode.insert(QStringLiteral("resumable"), true);
+    episode.insert(QStringLiteral("seriesId"), QStringLiteral("series-id"));
+    episode.insert(QStringLiteral("seriesName"), QStringLiteral("Series name"));
+    episode.insert(QStringLiteral("playlistItemId"), QStringLiteral("entry-2"));
+    QVariantList policy = m_actions->itemMenuPolicy(episode, true, true, true, false, {});
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("resume"), QStringLiteral("playFromStart"),
+                          QStringLiteral("playNext"), QStringLiteral("addToQueue"),
+                          QStringLiteral("played"), QStringLiteral("favorite"),
+                          QStringLiteral("addToPlaylist"), QStringLiteral("removeFromPlaylist"),
+                          QStringLiteral("series"), QStringLiteral("details"),
+                          QStringLiteral("refresh")}));
+    const QVariantMap removal = descriptorFor(policy, QStringLiteral("removeFromPlaylist"));
+    QVERIFY(removal.value(QStringLiteral("destructive")).toBool());
+    QCOMPARE(removal.value(QStringLiteral("target"))
+                 .toMap()
+                 .value(QStringLiteral("playlistItemId"))
+                 .toString(),
+             QStringLiteral("entry-2"));
+    const QVariantMap series = descriptorFor(policy, QStringLiteral("series"));
+    QCOMPARE(series.value(QStringLiteral("routeKind")).toString(), QStringLiteral("series"));
+    QCOMPARE(
+        series.value(QStringLiteral("target")).toMap().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("series-id"));
+
+    QVariantMap album = itemMap(QStringLiteral("MusicAlbum"), QStringLiteral("album-id"));
+    album.insert(QStringLiteral("artists"),
+                 QStringList{QStringLiteral("Guest"), QStringLiteral("Album Artist")});
+    album.insert(QStringLiteral("artistIds"),
+                 QStringList{QStringLiteral("guest-id"), QStringLiteral("artist-id")});
+    album.insert(QStringLiteral("albumArtist"), QStringLiteral("Album Artist"));
+    policy =
+        m_actions->itemMenuPolicy(album, true, true, false, true, QStringLiteral("musicBrowse"));
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("play"), QStringLiteral("shuffle"),
+                          QStringLiteral("instantMix"), QStringLiteral("details"),
+                          QStringLiteral("addToPlaylist"), QStringLiteral("favorite")}));
+    QCOMPARE(descriptorFor(policy, QStringLiteral("details"))
+                 .value(QStringLiteral("routeKind"))
+                 .toString(),
+             QStringLiteral("album"));
+
+    policy = m_actions->itemMenuPolicy(itemMap(QStringLiteral("MusicArtist")), true, true, false,
+                                       false, {});
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("favorite"), QStringLiteral("refresh")}));
+    policy = m_actions->itemMenuPolicy(itemMap(QStringLiteral("MusicArtist")), true, true, false,
+                                       true, {});
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("favorite"), QStringLiteral("refresh")}));
+    policy = m_actions->itemMenuPolicy(itemMap(QStringLiteral("MusicArtist")), true, true, false,
+                                       true, QStringLiteral("musicBrowse"));
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("instantMix"), QStringLiteral("details"),
+                          QStringLiteral("favorite")}));
+    policy = m_actions->itemMenuPolicy(itemMap(QStringLiteral("Playlist")), true, true, false, true,
+                                       QStringLiteral("musicBrowse"));
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("details"), QStringLiteral("favorite")}));
+
+    QVariantMap playlistEntry = itemMap(QStringLiteral("Playlist"));
+    playlistEntry.insert(QStringLiteral("playlistItemId"), QStringLiteral("nested-entry"));
+    policy = m_actions->itemMenuPolicy(playlistEntry, true, true, true, true, {});
+    QCOMPARE(policyVerbs(policy),
+             QStringList({QStringLiteral("details"), QStringLiteral("favorite"),
+                          QStringLiteral("removeFromPlaylist")}));
+    QCOMPARE(descriptorFor(policy, QStringLiteral("removeFromPlaylist"))
+                 .value(QStringLiteral("target"))
+                 .toMap()
+                 .value(QStringLiteral("playlistItemId"))
+                 .toString(),
+             QStringLiteral("nested-entry"));
+}
+
+void ItemActionsTest::checkedPolicyAndDispatchUseFreshState()
+{
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(kItemId), 204, {});
+    m_mock->addRoute(QStringLiteral("DELETE"), favoritePath(kItemId), 204, {});
+    m_mock->setRouteDelay(QStringLiteral("POST"), favoritePath(kItemId), 100);
+
+    const QVariantMap item = m_model->get(0);
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QVariantMap descriptor = descriptorFor(
+        m_actions->itemMenuPolicy(item, true, false, false, false, {}), QStringLiteral("favorite"));
+    QVERIFY(descriptor.value(QStringLiteral("checked")).toBool());
+
+    // Dispatch re-reads the optimistic state. It must not invert the stale map
+    // or the descriptor snapshot captured before the first request.
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QVERIFY(!m_actions->isFavorite(kItemId));
+    descriptor = descriptorFor(m_actions->itemMenuPolicy(item, true, false, false, false, {}),
+                               QStringLiteral("favorite"));
+    QVERIFY(!descriptor.value(QStringLiteral("checked")).toBool());
+    QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), favoritePath(kItemId)), 1);
+}
+
 void ItemActionsTest::navigationVerbsEmitRequests()
 {
-    QSignalSpy details(m_actions, &ItemActions::detailsRequested);
-    QSignalSpy series(m_actions, &ItemActions::seriesRequested);
+    QSignalSpy routes(m_actions, &ItemActions::routeRequested);
 
     m_actions->openDetails(m_model->get(0));
-    QCOMPARE(details.count(), 1);
-    QCOMPARE(details.first().at(0).toMap().value(QStringLiteral("itemId")).toString(), kItemId);
+    QCOMPARE(routes.count(), 1);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("details"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("itemId")).toString(), kItemId);
 
     // An episode map from QML carries no series id; ItemActions fills it in from
     // the registered model rather than making the page do it.
     m_actions->openSeries(m_model->get(0));
-    QCOMPARE(series.count(), 1);
-    QCOMPARE(series.first().at(0).toString(), QStringLiteral("s-9000"));
-    QCOMPARE(series.first().at(1).toString(), QStringLiteral("Fixture Series"));
+    QCOMPARE(routes.count(), 2);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("series"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("s-9000"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Fixture Series"));
 
     // A Series item is its own series.
     MediaItem show;
@@ -471,15 +663,65 @@ void ItemActionsTest::navigationVerbsEmitRequests()
     show.type = QStringLiteral("Series");
     m_model->setItems({show});
     m_actions->openSeries(m_model->get(0));
-    QCOMPARE(series.count(), 2);
-    QCOMPARE(series.last().at(0).toString(), QStringLiteral("s-1234"));
-    QCOMPARE(series.last().at(1).toString(), QStringLiteral("Standalone Show"));
+    QCOMPARE(routes.count(), 3);
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("s-1234"));
+
+    QVariantMap album = itemMap(QStringLiteral("MusicAlbum"), QStringLiteral("album-1"));
+    album.insert(QStringLiteral("year"), 1971);
+    album.insert(QStringLiteral("favorite"), true);
+    m_actions->openDetails(album);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("album"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("year")).toInt(), 1971);
+
+    QVariantMap artist = itemMap(QStringLiteral("MusicArtist"), QStringLiteral("artist-1"));
+    artist.insert(QStringLiteral("posterUrl"), QStringLiteral("image://artist"));
+    m_actions->openDetails(artist);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("artist"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("posterUrl")).toString(),
+             QStringLiteral("image://artist"));
+
+    QVariantMap track = itemMap(QStringLiteral("Audio"), QStringLiteral("track-1"));
+    track.insert(QStringLiteral("albumId"), QStringLiteral("album-2"));
+    track.insert(QStringLiteral("album"), QStringLiteral("Album two"));
+    m_actions->openDetails(track);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("album"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("type")).toString(),
+             QStringLiteral("MusicAlbum"));
+    track.remove(QStringLiteral("albumId"));
+    m_actions->openDetails(track);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("details"));
+
+    m_actions->openDetails(itemMap(QStringLiteral("Playlist"), QStringLiteral("playlist-1")));
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("playlist"));
+    m_actions->openDetails(itemMap(QStringLiteral("FutureServerType"), QStringLiteral("new-1")));
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("details"));
+
+    m_actions->openAlbum(QStringLiteral("album-3"), QStringLiteral("Third"));
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("album"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("type")).toString(),
+             QStringLiteral("MusicAlbum"));
+    m_actions->openArtist(QStringLiteral("artist-3"), QStringLiteral("Third artist"));
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("artist"));
+    QCOMPARE(routes.last().at(1).toMap().value(QStringLiteral("type")).toString(),
+             QStringLiteral("MusicArtist"));
+
+    // Descriptor verbs remain type-gated even if a caller fabricates fields
+    // from a different kind. Explicit openAlbum/openArtist above are the only
+    // APIs that intentionally construct a synthetic destination.
+    const int beforeInvalid = routes.count();
+    QVariantMap movie = itemMap(QStringLiteral("Movie"), QStringLiteral("movie-with-music"));
+    movie.insert(QStringLiteral("albumId"), QStringLiteral("wrong-album"));
+    movie.insert(QStringLiteral("album"), QStringLiteral("Wrong album"));
+    movie.insert(QStringLiteral("artists"), QStringList{QStringLiteral("Wrong artist")});
+    movie.insert(QStringLiteral("artistIds"), QStringList{QStringLiteral("wrong-artist")});
+    m_actions->performItemVerb(QStringLiteral("album"), movie);
+    m_actions->performItemVerb(QStringLiteral("artist"), movie);
 
     // Nothing to navigate to → no signal, no crash.
     m_actions->openDetails(QVariant());
     m_actions->openSeries(QVariant());
-    QCOMPARE(details.count(), 1);
-    QCOMPARE(series.count(), 2);
+    QCOMPARE(routes.count(), beforeInvalid);
 }
 
 void ItemActionsTest::refreshMetadataReportsThatItIsNotWired()

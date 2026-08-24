@@ -32,9 +32,6 @@ import StrmQt
 //                          the bar instead of jumping when it arrives.
 //       `shown`        — the visibility rule, exposed for the owner to read.
 //       `expandRequested` — the user asked for the full player back.
-//       `artistRequested` / `albumRequested` — a link in the subline was
-//                          followed. Requests, not commands: this file does not
-//                          push pages, the same way no page does.
 //       `dismissed`    — the keyboard left the bar; give focus back to the page.
 //       `focusTransport()` — the owner's way to hand the keyboard *in*.
 //
@@ -82,8 +79,6 @@ FocusScope {
     // ── Out ─────────────────────────────────────────────────────────────────
     signal expandRequested
     signal dismissed
-    signal artistRequested(string artistId, string name)
-    signal albumRequested(string albumId, string name)
 
     // Guarded the way every other PlayerCtl consumer in the tree is: a binding
     // that throws would take the whole bar — and therefore the page's bottom
@@ -254,12 +249,12 @@ FocusScope {
     // ── Navigation requests ─────────────────────────────────────────────────
     function openArtist(): void {
         if (mini.artistId.length > 0)
-            mini.artistRequested(mini.artistId, mini.artistText);
+            Actions.openArtist(mini.artistId, mini.artistText);
     }
 
     function openAlbum(): void {
         if (mini.albumId.length > 0)
-            mini.albumRequested(mini.albumId, mini.albumText);
+            Actions.openAlbum(mini.albumId, mini.albumText);
     }
 
     readonly property real positionMs: NowPlayingInfo.positionMs

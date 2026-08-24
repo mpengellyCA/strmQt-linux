@@ -75,201 +75,81 @@ StrmMenu {
     // sense for the item.
     property bool allowMusicNavigation: false
 
+    // A presentation profile changes which centrally-owned descriptors are
+    // rendered and in what order. The default is the cross-application menu;
+    // musicBrowse is the intentionally narrower album/artist/playlist grid.
+    property string profile: ""
+
     // Fired after the verb has been handed to Actions, so a page can react
     // (scroll to something, confirm a queue add) without re-deriving the click.
     signal verbTriggered(string verb, var item)
 
-    // ── Item classification ────────────────────────────────────────────────
-    // Emby item types, from MediaItemModel's `type` role.
-    function typeOf(item) {
-        return (item && item.type) ? String(item.type) : ""
-    }
-
-    // Containers are played as a set: they have no playable stream of their
-    // own, so they get Play all / Shuffle where a movie gets Play. A MusicAlbum
-    // is one of these and used not to be — asking Emby for PlaybackInfo on an
-    // album is an HTTP 500, so "Play" on an album row did nothing but log.
-    function isContainer(item) {
-        const t = root.typeOf(item)
-        return t === "Series" || t === "Season" || t === "BoxSet" || t === "MusicAlbum"
-    }
-
-    // Music item kinds, which differ from video in three places: what "played"
-    // is called, where the play verbs point, and whether "Details" — the video
-    // details page — is a destination that makes any sense.
-    function isMusic(item) {
-        const t = root.typeOf(item)
-        return t === "Audio" || t === "MusicAlbum" || t === "MusicArtist"
-    }
-
-    // What Actions.playAll()/shuffle() need to know to pick the child item
-    // types for the query. Series/Season yield episodes; a BoxSet yields
-    // whatever the collection holds; a MusicAlbum yields its tracks, and
-    // "music" is what makes the query ask for Audio rather than for the
-    // {Movie, Episode, Video} an unknown kind falls back to — which matches
-    // nothing at all on a music album.
-    function collectionTypeFor(item) {
-        const t = root.typeOf(item)
-        if (t === "Series" || t === "Season")
-            return "tvshows"
-        if (t === "BoxSet")
-            return "boxsets"
-        if (t === "MusicAlbum")
-            return "music"
-        return ""
-    }
-
-    // ── Music targets ──────────────────────────────────────────────────────
-    // Both return a synthetic item map — {itemId, name, type} — rather than a
-    // pair of strings, because that is exactly what Actions.openDetails() takes
-    // and what the shell routes on. Building the map here means the trigger
-    // handler and the row-should-exist test cannot disagree about whether the
-    // destination is reachable: no map, no row.
-
-    // A track's album. Albums are the only music container an id is carried
-    // for on the item itself (`albumId`), so this needs no lookup.
-    function albumTargetOf(item) {
-        if (!item || root.typeOf(item) !== "Audio")
-            return null
-        const id = (item.albumId !== undefined && item.albumId !== null)
-                   ? String(item.albumId) : ""
-        if (id.length === 0)
-            return null
-        const name = (item.album !== undefined && item.album !== null)
-                     ? String(item.album) : ""
-        return { itemId: id, name: name, type: "MusicAlbum" }
-    }
-
-    // A track's or an album's artist, by id — `artists` alone is a list of
-    // names and a name is not navigable. Which of them the link means is
-    // ItemActions.artistTarget()'s rule and not this menu's: the docked bar's
-    // subline follows the same link, and one verb gets one destination. What
-    // stays here is the type gate, which is about which ROW makes sense rather
-    // than about where the row would lead.
-    function artistTargetOf(item) {
-        if (!item)
-            return null
-        const type = root.typeOf(item)
-        if (type !== "Audio" && type !== "MusicAlbum")
-            return null
-        const target = Actions.artistTarget(item)
-        // No id, no row: something that looks navigable and goes nowhere is
-        // worse than no entry at all.
-        if (!target || !target.itemId || String(target.itemId).length === 0)
-            return null
-        return target
+    // ── Presentation ───────────────────────────────────────────────────────
+    // C++ returns stable semantic presentation keys. Translation and icon
+    // choice remain visual concerns, so no localized string crosses the API.
+    function presentationFor(key) {
+        switch (key) {
+        case "play":               return { text: qsTr("Play"), icon: "play" }
+        case "resume":             return { text: qsTr("Resume"), icon: "play" }
+        case "playFromStart":      return { text: qsTr("Play from start"), icon: "skip-previous" }
+        case "playAll":            return { text: qsTr("Play all"), icon: "play" }
+        case "playAlbum":          return { text: qsTr("Play album"), icon: "play" }
+        case "shuffle":            return { text: qsTr("Shuffle"), icon: "shuffle" }
+        case "shuffleAlbum":       return { text: qsTr("Shuffle album"), icon: "shuffle" }
+        case "instantMix":         return { text: qsTr("Instant mix"), icon: "shuffle" }
+        case "episodes":           return { text: qsTr("Episodes"), icon: "list" }
+        case "playNext":           return { text: qsTr("Play next"), icon: "skip-next" }
+        case "addToQueue":         return { text: qsTr("Add to queue"), icon: "queue" }
+        case "markPlayed":         return { text: qsTr("Mark played"), icon: "check" }
+        case "markUnplayed":       return { text: qsTr("Mark unplayed"), icon: "eye-off" }
+        case "markWatched":        return { text: qsTr("Mark watched"), icon: "check" }
+        case "markUnwatched":      return { text: qsTr("Mark unwatched"), icon: "eye-off" }
+        case "addFavorite":        return { text: qsTr("Add to favourites"), icon: "heart" }
+        case "removeFavorite":     return { text: qsTr("Remove from favourites"), icon: "heart-filled" }
+        case "addToPlaylist":      return { text: qsTr("Add to playlist"), icon: "playlist" }
+        case "removeFromPlaylist": return { text: qsTr("Remove from this playlist"), icon: "trash" }
+        case "goToSeries":         return { text: qsTr("Go to series"), icon: "library" }
+        case "goToAlbum":          return { text: qsTr("Go to album"), icon: "lib-music" }
+        case "goToArtist":         return { text: qsTr("Go to artist"), icon: "user" }
+        case "openAlbum":          return { text: qsTr("Open album"), icon: "lib-music" }
+        case "openArtist":         return { text: qsTr("Open artist"), icon: "user" }
+        case "openPlaylist":       return { text: qsTr("Open playlist"), icon: "playlist" }
+        case "details":            return { text: qsTr("Details"), icon: "info" }
+        case "refreshMetadata":    return { text: qsTr("Refresh metadata"), icon: "refresh" }
+        default:                    return { text: "", icon: "" }
+        }
     }
 
     // ── Building the list ──────────────────────────────────────────────────
-    // Actions and verbs are appended in lockstep; `sep()` refuses to open the
-    // list with a separator or to emit two in a row, so a shape that happens to
-    // omit a whole group (a movie has no "Go to series") cannot leave a stray
-    // rule behind.
     function buildFor(item) {
         if (!item || !item.itemId)
             return false
-
-        const id = String(item.itemId)
-        const type = root.typeOf(item)
-        const played = Actions.isPlayed(id)
-        const favorite = Actions.isFavorite(id)
+        const policy = Actions.itemMenuPolicy(item, root.allowDetails,
+                                              root.allowAddToPlaylist,
+                                              root.allowRemoveFromPlaylist,
+                                              root.allowMusicNavigation,
+                                              root.profile)
+        if (!policy || policy.length === 0)
+            return false
         const acts = []
         const vs = []
 
-        function push(action, verb) {
-            acts.push(action)
-            vs.push(verb)
-        }
-        function sep() {
-            if (acts.length === 0 || acts[acts.length - 1].separator === true)
-                return
-            acts.push({ separator: true })
-            vs.push("")
-        }
-
-        const music = root.isMusic(item)
-        const isArtist = type === "MusicArtist"
-
-        if (isArtist) {
-            // No play verbs, deliberately. Every one of them addresses a parent
-            // by ParentId, and an artist is not a folder: Emby files a track
-            // under its album, and an artist is reached through ArtistIds /
-            // AlbumArtistIds instead. Until there is an artist-scoped query,
-            // "Play artist" would be a row that logs and does nothing —
-            // reported rather than shipped. Favourite and navigation below are
-            // the verbs an artist row can honestly carry out.
-        } else if (root.isContainer(item)) {
-            push({ text: type === "MusicAlbum" ? qsTr("Play album") : qsTr("Play all"),
-                   iconName: "play" }, "playAll")
-            push({ text: type === "MusicAlbum" ? qsTr("Shuffle album") : qsTr("Shuffle"),
-                   iconName: "shuffle" }, "shuffle")
-            if (type === "Series") {
-                sep()
-                push({ text: qsTr("Episodes"), iconName: "list" }, "series")
+        for (let i = 0; i < policy.length; ++i) {
+            const descriptor = policy[i]
+            if (descriptor.separator === true) {
+                acts.push({ separator: true })
+                vs.push("")
+                continue
             }
-        } else if (item.resumable === true) {
-            push({ text: qsTr("Resume"), iconName: "play" }, "resume")
-            push({ text: qsTr("Play from start"), iconName: "skip-previous" }, "playFromStart")
-        } else {
-            push({ text: qsTr("Play"), iconName: "play" }, "play")
+            const presentation = root.presentationFor(String(descriptor.presentation || ""))
+            if (presentation.text.length === 0)
+                continue
+            acts.push({ text: presentation.text,
+                        iconName: presentation.icon,
+                        checked: descriptor.checked === true,
+                        destructive: descriptor.destructive === true })
+            vs.push(String(descriptor.verb || ""))
         }
-
-        // Queue verbs are offered for playable items only: Actions.playNext /
-        // addToQueue take one item, and "add a whole series after the current
-        // episode" is Play all's job, not theirs. An artist is neither — it has
-        // no stream of its own and no query to expand it into one.
-        if (!root.isContainer(item) && !isArtist) {
-            sep()
-            push({ text: qsTr("Play next"), iconName: "skip-next" }, "playNext")
-            push({ text: qsTr("Add to queue"), iconName: "queue" }, "addToQueue")
-        }
-
-        sep()
-        // Music is *played*, not watched, and an artist is neither: Emby keeps
-        // a play count on a track and on an album, and marking a whole artist
-        // played is not a thing anyone means by right-clicking one.
-        if (!isArtist) {
-            push({ text: music ? (played ? qsTr("Mark unplayed") : qsTr("Mark played"))
-                               : (played ? qsTr("Mark unwatched") : qsTr("Mark watched")),
-                   iconName: played ? "eye-off" : "check", checked: played }, "played")
-        }
-        push({ text: favorite ? qsTr("Remove from favourites") : qsTr("Add to favourites"),
-               iconName: favorite ? "heart-filled" : "heart", checked: favorite }, "favorite")
-
-        // Playlist membership. "Remove" is offered only when this row actually
-        // IS a playlist entry: the id is what the verb addresses, so an item
-        // that arrived from anywhere else has nothing to remove.
-        const entryId = (item.playlistItemId !== undefined && item.playlistItemId !== null)
-                        ? String(item.playlistItemId) : ""
-        if (root.allowAddToPlaylist || (root.allowRemoveFromPlaylist && entryId.length > 0))
-            sep()
-        if (root.allowAddToPlaylist)
-            push({ text: qsTr("Add to playlist"), iconName: "playlist" }, "addToPlaylist")
-        if (root.allowRemoveFromPlaylist && entryId.length > 0) {
-            push({ text: qsTr("Remove from this playlist"), iconName: "trash",
-                   destructive: true }, "removeFromPlaylist")
-        }
-
-        sep()
-        if (type === "Episode")
-            push({ text: qsTr("Go to series"), iconName: "library" }, "series")
-        // The music equivalents of "Go to series". Both are built from the item
-        // itself, so a track whose server record carries no AlbumId — or an
-        // album the query did not ask ArtistItems for — simply has no row,
-        // rather than one that opens an empty page.
-        if (root.allowMusicNavigation) {
-            if (root.albumTargetOf(item))
-                push({ text: qsTr("Go to album"), iconName: "lib-music" }, "goToAlbum")
-            if (root.artistTargetOf(item))
-                push({ text: qsTr("Go to artist"), iconName: "user" }, "goToArtist")
-        }
-        // "Details" is the *video* details page — a backdrop, a cast list and a
-        // runtime. A track and an album have their own destinations above, and
-        // for an artist the page the user wants is the one they are being
-        // offered, so music never grows this row.
-        if (root.allowDetails && !music)
-            push({ text: qsTr("Details"), iconName: "info" }, "details")
-        push({ text: qsTr("Refresh metadata"), iconName: "refresh" }, "refresh")
 
         root.target = item
         root.verbs = vs
@@ -300,56 +180,12 @@ StrmMenu {
         const verb = (index >= 0 && index < root.verbs.length) ? root.verbs[index] : ""
         if (!verb || !item || !item.itemId)
             return
-        const id = String(item.itemId)
-
-        switch (verb) {
-        case "play":          Actions.play(item); break
-        case "resume":        Actions.resume(item); break
-        case "playFromStart": Actions.playFromStart(item); break
-        case "playNext":      Actions.playNext(item); break
-        case "addToQueue":    Actions.addToQueue(item); break
-        case "playAll":       Actions.playAll(id, root.collectionTypeFor(item)); break
-        case "shuffle":
-            // A series has a dedicated verb because shuffling one means
-            // shuffling its episodes across every season, which a parentId
-            // query for a folder does not give you.
-            if (root.typeOf(item) === "Series")
-                Actions.shuffleSeries(id)
-            else
-                Actions.shuffle(id, root.collectionTypeFor(item))
-            break
-        // The setters, not the toggles: the value shown in the row is the one
-        // being inverted, so a menu built from a stale read cannot double-flip.
-        case "played":        Actions.setPlayed(id, !Actions.isPlayed(id)); break
-        case "favorite":      Actions.setFavorite(id, !Actions.isFavorite(id)); break
-        // The two verbs Actions cannot carry out: the page that opted in owns
-        // the surface they need, so the menu only reports what was chosen.
-        case "addToPlaylist":      root.addToPlaylistRequested(item); break
-        case "removeFromPlaylist": root.removeFromPlaylistRequested(item); break
-        case "series":        Actions.openSeries(item); break
-        // Navigation for music goes through the same verb the cards use, with a
-        // synthetic item map. `type` is what the shell routes on, and
-        // ItemActions.resolve() passes a caller's map through untouched, so the
-        // album/artist page is reached without a second navigation contract and
-        // without C++ learning two more verbs.
-        case "goToAlbum": {
-            const album = root.albumTargetOf(item)
-            if (!album)
-                return
-            Actions.openDetails(album)
-            break
-        }
-        case "goToArtist": {
-            const artist = root.artistTargetOf(item)
-            if (!artist)
-                return
-            Actions.openDetails(artist)
-            break
-        }
-        case "details":       Actions.openDetails(item); break
-        case "refresh":       Actions.refreshMetadata(id); break
-        default: return
-        }
+        if (verb === "addToPlaylist")
+            root.addToPlaylistRequested(item)
+        else if (verb === "removeFromPlaylist")
+            root.removeFromPlaylistRequested(item)
+        else
+            Actions.performItemVerb(verb, item)
         root.verbTriggered(verb, item)
     }
 }

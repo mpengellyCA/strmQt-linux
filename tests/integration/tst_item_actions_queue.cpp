@@ -1,4 +1,8 @@
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
+#include <QUrlQuery>
 #include <QtTest>
 
 #include "FakePlayerBackend.h"
@@ -29,6 +33,20 @@ QString itemsPath()
     return QStringLiteral("/Users/%1/Items").arg(kUserId);
 }
 
+QByteArray pageBody(const QJsonArray &items)
+{
+    return QJsonDocument(QJsonObject{{QStringLiteral("Items"), items},
+                                     {QStringLiteral("TotalRecordCount"), items.size()}})
+        .toJson(QJsonDocument::Compact);
+}
+
+QJsonObject itemObject(const QString &id, const QString &type, const QString &name = QString())
+{
+    return {{QStringLiteral("Id"), id},
+            {QStringLiteral("Name"), name.isEmpty() ? id : name},
+            {QStringLiteral("Type"), type}};
+}
+
 } // namespace
 
 // The queue verbs of ItemActions (ARCHITECTURE.md): what actually goes on the
@@ -45,11 +63,19 @@ private slots:
     void shuffleAsksTheServerForARandomOrder();
     void shuffleNarrowsATvLibraryToEpisodes();
     void shuffleSeriesQueuesEveryEpisodeFromARandomStart();
+    void seasonDispatchExpandsEpisodeChildren();
     void playAllFromQueuesTheItemsItIsGiven();
     void playNextAndAddToQueueDoNotInterrupt();
     void aFailedFetchSaysSoInsteadOfDoingNothing();
     void anEmptyResultSaysSoToo();
     void playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum();
+    void canonicalAlbumPlayUsesTheOrderedControllerExpansion();
+    void forbiddenContainerDispatchCannotReachPlaybackOrQueue();
+    void idOnlyItemsKeepEveryQueueVerb();
+    void mixedCollectionWalkIsOrderedAtomicAndTolerant();
+    void boxSetShuffleRequestsMixedPlayableLeaves();
+    void collectionWalkFailureIsAtomic();
+    void collectionWalkCapsRowsAndNestedExpansions();
     void playCarriesTheItemsTypeOntoTheSeededQueue();
     void playAndResumeRetainTaggedArtwork();
     void artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwnId();
@@ -178,7 +204,10 @@ void ItemActionsQueueTest::shuffleNarrowsATvLibraryToEpisodes()
 void ItemActionsQueueTest::shuffleSeriesQueuesEveryEpisodeFromARandomStart()
 {
     QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
-    m_actions->shuffleSeries(kSeriesId);
+    m_actions->performItemVerb(QStringLiteral("shuffle"),
+                               QVariantMap{{QStringLiteral("itemId"), kSeriesId},
+                                           {QStringLiteral("name"), QStringLiteral("Series")},
+                                           {QStringLiteral("type"), QStringLiteral("Series")}});
 
     QTRY_COMPARE(queueSpy.count(), 1);
     QCOMPARE(m_player->queue()->rowCount(), 2);
@@ -197,14 +226,33 @@ void ItemActionsQueueTest::shuffleSeriesQueuesEveryEpisodeFromARandomStart()
     QCOMPARE(m_player->queue()->current().id, playing);
 }
 
+void ItemActionsQueueTest::seasonDispatchExpandsEpisodeChildren()
+{
+    m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 200, pageBody({}));
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    m_actions->performItemVerb(QStringLiteral("play"),
+                               QVariantMap{{QStringLiteral("itemId"), QStringLiteral("season-7")},
+                                           {QStringLiteral("name"), QStringLiteral("Season 7")},
+                                           {QStringLiteral("type"), QStringLiteral("Season")}});
+    QTRY_COMPARE(failed.count(), 1);
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("season-7"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")), QStringLiteral("Episode"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("PremiereDate,SortName"));
+}
+
 void ItemActionsQueueTest::playAllFromQueuesTheItemsItIsGiven()
 {
     QVariantMap first;
     first.insert(QStringLiteral("itemId"), QStringLiteral("301002"));
     first.insert(QStringLiteral("name"), QStringLiteral("Blade Runner 2049"));
+    first.insert(QStringLiteral("type"), QStringLiteral("Movie"));
     QVariantMap second;
     second.insert(QStringLiteral("itemId"), QStringLiteral("301003"));
     second.insert(QStringLiteral("name"), QStringLiteral("Sparse"));
+    second.insert(QStringLiteral("type"), QStringLiteral("Audio"));
 
     QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
     m_actions->playAllFrom({first, second}, 1);
@@ -214,8 +262,14 @@ void ItemActionsQueueTest::playAllFromQueuesTheItemsItIsGiven()
     QCOMPARE(m_player->title(), QStringLiteral("Sparse"));
 
     QSignalSpy failedSpy(m_actions, &ItemActions::actionFailed);
-    m_actions->playAllFrom({}, 0);
+    m_actions->playAllFrom(
+        {QVariantMap{{QStringLiteral("itemId"), QStringLiteral("folder-drift")},
+                     {QStringLiteral("type"), QStringLiteral("Folder")}}},
+        0);
     QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 2);
+    m_actions->playAllFrom({}, 0);
+    QCOMPARE(failedSpy.count(), 2);
 }
 
 void ItemActionsQueueTest::playNextAndAddToQueueDoNotInterrupt()
@@ -227,9 +281,11 @@ void ItemActionsQueueTest::playNextAndAddToQueueDoNotInterrupt()
     QVariantMap next;
     next.insert(QStringLiteral("itemId"), QStringLiteral("301002"));
     next.insert(QStringLiteral("name"), QStringLiteral("Blade Runner 2049"));
+    next.insert(QStringLiteral("type"), QStringLiteral("Movie"));
     QVariantMap later;
     later.insert(QStringLiteral("itemId"), QStringLiteral("301003"));
     later.insert(QStringLiteral("name"), QStringLiteral("Sparse"));
+    later.insert(QStringLiteral("type"), QStringLiteral("Audio"));
 
     QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
     m_actions->addToQueue(later);
@@ -323,6 +379,246 @@ void ItemActionsQueueTest::playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum(
     // disc then track order, and recursing an album folder means nothing.
     QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
     QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
+}
+
+void ItemActionsQueueTest::canonicalAlbumPlayUsesTheOrderedControllerExpansion()
+{
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
+                     QByteArrayLiteral("{\"Items\":["
+                                       "{\"Id\":\"301002\",\"Name\":\"Second\",\"Type\":\"Audio\"},"
+                                       "{\"Id\":\"301001\",\"Name\":\"First\",\"Type\":\"Audio\"}],"
+                                       "\"TotalRecordCount\":2}"));
+    MusicController music(m_client, this);
+    music.setActions(m_actions);
+    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, &music,
+            &MusicController::playAlbum);
+
+    QVariantMap album{{QStringLiteral("itemId"), QStringLiteral("album-ordered")},
+                      {QStringLiteral("name"), QStringLiteral("Server order")},
+                      {QStringLiteral("type"), QStringLiteral("MusicAlbum")}};
+    QSignalSpy ordered(m_actions, &ItemActions::orderedAlbumPlayRequested);
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    m_actions->play(album);
+
+    QCOMPARE(ordered.count(), 1);
+    QTRY_COMPARE(queue.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 2);
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301002"));
+    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
+    QVERIFY2(query.contains(QStringLiteral("ParentId=album-ordered")), qPrintable(query));
+    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
+    QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
+}
+
+void ItemActionsQueueTest::forbiddenContainerDispatchCannotReachPlaybackOrQueue()
+{
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    QSignalSpy routes(m_actions, &ItemActions::routeRequested);
+    QSignalSpy ordered(m_actions, &ItemActions::orderedAlbumPlayRequested);
+    const int beforeRequests = m_mock->requestCount();
+
+    for (const QString &type : {QStringLiteral("MusicArtist"), QStringLiteral("Playlist")}) {
+        const QVariantMap item{{QStringLiteral("itemId"), QStringLiteral("forbidden-id")},
+                               {QStringLiteral("name"), QStringLiteral("Forbidden")},
+                               {QStringLiteral("type"), type}};
+        for (const QString &verb : {QStringLiteral("play"), QStringLiteral("playNext"),
+                                    QStringLiteral("addToQueue"), QStringLiteral("shuffle")}) {
+            m_actions->performItemVerb(verb, item);
+        }
+        m_actions->playNext(item);
+        m_actions->addToQueue(item);
+    }
+    QCOMPARE(queue.count(), 0);
+    QCOMPARE(ordered.count(), 0);
+    QCOMPARE(routes.count(), 0);
+    QCOMPARE(m_player->queue()->rowCount(), 0);
+    QCOMPARE(m_mock->requestCount(), beforeRequests);
+
+    // The legacy direct play surface is safe too: a playlist becomes an Open
+    // route and an artist remains a no-op, never a guessed ParentId expansion.
+    m_actions->play(QVariantMap{{QStringLiteral("itemId"), QStringLiteral("playlist-id")},
+                                {QStringLiteral("name"), QStringLiteral("Playlist")},
+                                {QStringLiteral("type"), QStringLiteral("Playlist")}});
+    QCOMPARE(routes.count(), 1);
+    QCOMPARE(routes.last().at(0).toString(), QStringLiteral("playlist"));
+    m_actions->play(QVariantMap{{QStringLiteral("itemId"), QStringLiteral("artist-id")},
+                                {QStringLiteral("name"), QStringLiteral("Artist")},
+                                {QStringLiteral("type"), QStringLiteral("MusicArtist")}});
+    QCOMPARE(routes.count(), 1);
+
+    const QVariantMap unknown{{QStringLiteral("itemId"), QStringLiteral("unknown-id")},
+                              {QStringLiteral("name"), QStringLiteral("Unknown")},
+                              {QStringLiteral("type"), QStringLiteral("FutureServerType")},
+                              {QStringLiteral("positionMs"), 20'000}};
+    m_actions->play(unknown);
+    m_actions->resume(unknown);
+    QCOMPARE(routes.count(), 1);
+    QCOMPARE(m_mock->requestCount(), beforeRequests);
+}
+
+// An Emby "Play on this client" command carries ItemIds and nothing else, so
+// RemoteControlService hands ItemActions a map with no `type` at all whenever
+// the item is not already in a registered model. An ABSENT type is not the
+// server calling this a folder — the queue row fills in when the item's own
+// details arrive — while a type the server DID state and this build does not
+// recognise stays refused by the test above. Gating the queue verbs on a stated
+// leaf kind alone silently took every remote verb out.
+void ItemActionsQueueTest::idOnlyItemsKeepEveryQueueVerb()
+{
+    const QVariantMap first{{QStringLiteral("itemId"), QStringLiteral("301001")},
+                            {QStringLiteral("name"), QString()}};
+    const QVariantMap second{{QStringLiteral("itemId"), QStringLiteral("301002")},
+                             {QStringLiteral("name"), QString()}};
+    const QVariantMap third{{QStringLiteral("itemId"), QStringLiteral("301003")},
+                            {QStringLiteral("name"), QString()}};
+
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    m_actions->playAllFrom({first}, 0);
+    QTRY_COMPARE(queue.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 1);
+
+    m_actions->playNextAll({second});
+    m_actions->addAllToQueue({third});
+    QCOMPARE(queue.count(), 3);
+    QCOMPARE(m_player->queue()->rowCount(), 3);
+    QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301002"));
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301003"));
+
+    m_actions->playNext(second);
+    m_actions->addToQueue(third);
+    QCOMPARE(queue.count(), 5);
+    QCOMPARE(m_player->queue()->rowCount(), 5);
+}
+
+void ItemActionsQueueTest::mixedCollectionWalkIsOrderedAtomicAndTolerant()
+{
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody(
+            {itemObject(QStringLiteral("301001"), QStringLiteral("Movie"), QStringLiteral("A")),
+             itemObject(QStringLiteral("series-1"), QStringLiteral("Series")),
+             itemObject(QStringLiteral("season-1"), QStringLiteral("Season")),
+             itemObject(QStringLiteral("301003"), QStringLiteral("Movie"), QStringLiteral("B"))}));
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody({itemObject(QStringLiteral("402001"), QStringLiteral("Episode")),
+                  itemObject(QStringLiteral("bad-folder"), QStringLiteral("Series")),
+                  itemObject(QStringLiteral("402002"), QStringLiteral("Episode"))}));
+    // The duplicate episode is intentional: collection slots are not media-id
+    // sets, and two occurrences must survive materialization.
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody({itemObject(QStringLiteral("402002"), QStringLiteral("Episode"))}));
+
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    m_actions->performItemVerb(QStringLiteral("play"),
+                               QVariantMap{{QStringLiteral("itemId"), QStringLiteral("box-1")},
+                                           {QStringLiteral("name"), QStringLiteral("Mixed")},
+                                           {QStringLiteral("type"), QStringLiteral("BoxSet")}});
+    QTRY_COMPARE(queue.count(), 1);
+
+    QCOMPARE(m_player->queue()->rowCount(), 5);
+    QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+    QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("402001"));
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("402002"));
+    QCOMPARE(m_player->queue()->itemAt(3).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("402002"));
+    QCOMPARE(m_player->queue()->itemAt(4).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301003"));
+
+    QList<MockEmbyServer::ReceivedRequest> itemRequests;
+    for (const auto &request : m_mock->requests()) {
+        if (request.method == QLatin1String("GET") && request.path == itemsPath())
+            itemRequests.append(request);
+    }
+    QCOMPARE(itemRequests.size(), 3);
+    const QUrlQuery rootQuery(itemRequests.at(0).query);
+    QCOMPARE(rootQuery.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("box-1"));
+    QVERIFY(rootQuery.queryItemValue(QStringLiteral("Recursive")).isEmpty());
+    QVERIFY(rootQuery.queryItemValue(QStringLiteral("SortBy")).isEmpty());
+    for (int index = 1; index < itemRequests.size(); ++index) {
+        const QUrlQuery childQuery(itemRequests.at(index).query);
+        QCOMPARE(childQuery.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+        QCOMPARE(childQuery.queryItemValue(QStringLiteral("IncludeItemTypes")),
+                 QStringLiteral("Episode"));
+        QCOMPARE(childQuery.queryItemValue(QStringLiteral("SortBy")),
+                 QStringLiteral("PremiereDate,SortName"));
+    }
+}
+
+void ItemActionsQueueTest::boxSetShuffleRequestsMixedPlayableLeaves()
+{
+    m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 200, pageBody({}));
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    m_actions->performItemVerb(
+        QStringLiteral("shuffle"),
+        QVariantMap{{QStringLiteral("itemId"), QStringLiteral("box-shuffle")},
+                    {QStringLiteral("name"), QStringLiteral("Mixed")},
+                    {QStringLiteral("type"), QStringLiteral("BoxSet")}});
+    QTRY_COMPARE(failed.count(), 1);
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("box-shuffle"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")),
+             QStringLiteral("Movie,Episode,Video"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("Random"));
+}
+
+void ItemActionsQueueTest::collectionWalkFailureIsAtomic()
+{
+    QVariantMap seed{{QStringLiteral("itemId"), QStringLiteral("301001")},
+                     {QStringLiteral("name"), QStringLiteral("Existing")},
+                     {QStringLiteral("type"), QStringLiteral("Movie")}};
+    m_actions->play(seed);
+    QCOMPARE(m_player->queue()->rowCount(), 1);
+
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody({itemObject(QStringLiteral("301003"), QStringLiteral("Movie")),
+                  itemObject(QStringLiteral("series-fail"), QStringLiteral("Series"))}));
+    m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 500, QByteArrayLiteral("{}"));
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    m_actions->playCollection(QStringLiteral("box-fail"));
+
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(queue.count(), 0);
+    QCOMPARE(m_player->queue()->rowCount(), 1);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301001"));
+}
+
+void ItemActionsQueueTest::collectionWalkCapsRowsAndNestedExpansions()
+{
+    QJsonArray duplicates;
+    for (int index = 0; index < 500; ++index)
+        duplicates.append(itemObject(QStringLiteral("301001"), QStringLiteral("Movie")));
+    m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 200, pageBody(duplicates));
+    QSignalSpy queue(m_actions, &ItemActions::queueChanged);
+    m_actions->playCollection(QStringLiteral("box-500"));
+    QTRY_COMPARE(queue.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 500);
+
+    m_player->stop();
+    m_player->queue()->clear();
+    QJsonArray nested;
+    for (int index = 0; index < 65; ++index) {
+        nested.append(itemObject(QStringLiteral("series-%1").arg(index), QStringLiteral("Series")));
+    }
+    m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 200, pageBody(nested));
+    for (int index = 0; index < 64; ++index)
+        m_mock->enqueueRoute(QStringLiteral("GET"), itemsPath(), 200, pageBody({}));
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    const int beforeRequests = m_mock->requestCount();
+    m_actions->playCollection(QStringLiteral("box-too-deep"));
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(m_mock->requestCount() - beforeRequests, 65); // root + 64 expansions
+    QCOMPARE(m_player->queue()->rowCount(), 0);
 }
 
 // A bare play seeds a one-item queue, and that seed is the first thing
@@ -613,6 +909,23 @@ void ItemActionsQueueTest::newerLeafPlayRetiresEveryAsynchronousQueueBuilder()
     QTest::qWait(240);
     QCOMPARE(m_player->queue()->current().id, QStringLiteral("301003"));
 
+    // Collection root has already completed; cancellation must own the nested
+    // request too, not merely make its eventual continuation harmless.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 0);
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody({itemObject(QStringLiteral("series-nested"), QStringLiteral("Series"))}));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
+                     pageBody({itemObject(QStringLiteral("402001"), QStringLiteral("Episode"))}));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 180);
+    const int beforeCollection = m_mock->requestCount();
+    m_actions->playCollection(QStringLiteral("box-nested"));
+    QTRY_VERIFY(m_mock->requestCount() >= beforeCollection + 2);
+    directPlay(QStringLiteral("301002"));
+    QTRY_VERIFY(m_mock->abortedResponseCount(itemsPath()) >= 1);
+    QTest::qWait(220);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301002"));
+
     // Stale completions are silent: they neither replace the queue nor toast a
     // failure/success for an intent the user has already superseded.
     QCOMPARE(queueSpy.count(), 0);
@@ -627,13 +940,20 @@ void ItemActionsQueueTest::sessionResetRetiresQueueBuildersAndClearsRegisteredMo
     model.setItems({oldItem});
     m_actions->registerModel(&model);
 
+    m_mock->enqueueRoute(
+        QStringLiteral("GET"), itemsPath(), 200,
+        pageBody({itemObject(QStringLiteral("series-reset"), QStringLiteral("Series"))}));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
+                     pageBody({itemObject(QStringLiteral("402001"), QStringLiteral("Episode"))}));
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 180);
     QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
-    m_actions->playAll(QStringLiteral("old-user-library"), QStringLiteral("movies"));
-    QTRY_VERIFY(!m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).method.isEmpty());
+    const int beforeWalk = m_mock->requestCount();
+    m_actions->playCollection(QStringLiteral("old-user-collection"));
+    QTRY_VERIFY(m_mock->requestCount() >= beforeWalk + 2);
 
     m_actions->resetSessionState();
     QCOMPARE(model.rowCount(), 0);
+    QTRY_VERIFY(m_mock->abortedResponseCount(itemsPath()) >= 1);
     QTest::qWait(240);
     QCOMPARE(queueSpy.count(), 0);
     QCOMPARE(m_player->queue()->rowCount(), 0);

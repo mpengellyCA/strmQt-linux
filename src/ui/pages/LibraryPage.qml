@@ -7,7 +7,7 @@ import StrmQt
 // and approaching the end of loaded content fetches the next page.
 //
 // Navigation contract: no openDetails signal here — item verbs go through
-// `Actions`, and Main.qml listens to Actions.detailsRequested once.
+// `Actions`, and Main.qml consumes its normalized route request once.
 //
 // The page reads only LibraryCtl.title / model / loading / errorMessage, never a
 // library id, so LibraryCtl.openFavorites() — a filter across every library,

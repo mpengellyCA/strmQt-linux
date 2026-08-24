@@ -38,6 +38,10 @@ public:
 
     void addRoute(const QString &method, const QString &path, int status, const QByteArray &body,
                   const QByteArray &contentType = "application/json");
+    // Answers successive requests for one path with successive records. Used
+    // by controller walks whose pages share a REST path and differ by query.
+    void enqueueRoute(const QString &method, const QString &path, int status,
+                      const QByteArray &body, const QByteArray &contentType = "application/json");
     // Sends Transfer-Encoding: chunked with no Content-Length, so response
     // limits are tested independently of the early metadata precheck.
     void addChunkedRoute(const QString &method, const QString &path, int status,
@@ -96,6 +100,7 @@ private:
 
     QTcpServer *m_server = nullptr;
     QHash<QString, Route> m_routes; // key: "METHOD /path"
+    QHash<QString, QList<Route>> m_queuedRoutes;
     QList<ReceivedRequest> m_requests;
     QHash<QString, int> m_abortedResponses;
 

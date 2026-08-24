@@ -168,18 +168,14 @@ FocusScope {
             Actions.openDetails(item)
     }
 
-    // The same verb the music grid's ▸ calls, not Actions.playAll(id, "music"):
-    // one implementation per verb (ARCHITECTURE.md rule 3), and the two used to
-    // disagree — playAll sorts music by IndexNumber,SortName, which interleaves
-    // the discs of a box set, while MusicCtl.playAlbum() takes the album's
-    // children in the server's own disc-then-track order.
+    // The same canonical album verb the music grid's ▸ calls, not
+    // Actions.playAll(id, "music"): one implementation per verb
+    // (ARCHITECTURE.md rule 3). ItemActions delegates MusicAlbum playback to
+    // MusicCtl's server-ordered, non-recursive expansion.
     function playAlbum(index): void {
         const item = page.albumAt(index)
-        if (!item)
-            return
-        const id = item.itemId !== undefined ? String(item.itemId) : ""
-        if (id.length > 0)
-            MusicCtl.playAlbum(id)
+        if (item)
+            Actions.play(item)
     }
 
     function showMenu(index, sceneX, sceneY): void {

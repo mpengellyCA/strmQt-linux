@@ -33,10 +33,9 @@ import StrmQt
 // pane from having to work them out again.
 //
 // Navigation contract: the page pushes nothing. Opening the album artist goes
-// through `Actions.openDetails()`, which Main.qml routes by item type — a
-// MusicArtist lands on the artist page, exactly as an album card does from the
-// music library. No page-local navigation signal, and no second route to the
-// same destination.
+// through `Actions.openArtist()`, which emits the same normalized route an
+// artist card uses from the music library. No page-local navigation signal,
+// and no second route to the same destination.
 FocusScope {
     id: page
 
@@ -65,14 +64,16 @@ FocusScope {
                                      ? Number(page.albumItem.year) : 0
     // The map's album artist, before the fallback to what the tracks say.
     readonly property string mapAlbumArtist: page.mapString("albumArtist")
-    // ArtistItems ids, in the same order as the names. Present on an album only
-    // when the server sent them; without one the credit is text, not a link,
-    // and LinkChip renders exactly that (`linked: false`) rather than a pill
-    // that looks clickable and does nothing.
-    readonly property var albumArtistIds: (page.albumItem && page.albumItem.artistIds !== undefined)
-                                          ? page.albumItem.artistIds : []
-    readonly property string albumArtistId: page.albumArtistIds.length > 0
-                                            ? String(page.albumArtistIds[0]) : ""
+    // The album artist's name and id must come from the same aligned credit.
+    // A compilation may list a guest first; ItemActions applies the same
+    // album-artist preference used by the mini player and context menus.
+    readonly property var albumArtistTarget: Actions.artistTarget(page.albumItem)
+    readonly property string albumArtistId:
+        page.albumArtistTarget && page.albumArtistTarget.itemId !== undefined
+        ? String(page.albumArtistTarget.itemId) : ""
+    readonly property string albumArtistRouteName:
+        page.albumArtistTarget && page.albumArtistTarget.name !== undefined
+        ? String(page.albumArtistTarget.name) : ""
 
     readonly property bool scopeMine: page.albumId.length > 0
                                       && MusicCtl.albumId === page.albumId
@@ -395,14 +396,8 @@ FocusScope {
                     iconName: "user"
                     linked: page.albumArtistId.length > 0
                     highlighted: artistLink.activeFocus
-                    // A synthesized map rather than a fetched one: Main.qml's
-                    // music router reads only the type, the id and the name,
-                    // and those are exactly what an album's credit carries.
-                    onActivated: Actions.openDetails({
-                        "itemId": page.albumArtistId,
-                        "name": page.albumArtistName,
-                        "type": "MusicArtist"
-                    })
+                    onActivated: Actions.openArtist(page.albumArtistId,
+                                                    page.albumArtistRouteName)
                 }
             }
 
