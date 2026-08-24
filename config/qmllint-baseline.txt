@@ -663,6 +663,7 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.noteQuer
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = ""
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = ""
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = text
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	body: SearchCtl.errorMessage
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.hasQuery && SearchCtl.genres ? SearchCtl.genres : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.hasQuery && SearchCtl.genres ? SearchCtl.genres : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const genre = SearchCtl.genres[index]
@@ -680,11 +681,13 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRef
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onActionTriggered: SearchCtl.retry()
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onCleared: SearchCtl.query = ""
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onTextEdited: SearchCtl.query = searchField.text
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	page.builtQuery = SearchCtl.query
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	people: page.hasQuery && SearchCtl.people ? SearchCtl.people : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	people: page.hasQuery && SearchCtl.people ? SearchCtl.people : []
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property bool failed: SearchCtl.errorMessage.length > 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property bool hasQuery: SearchCtl.query.length > 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property int resultCount: SearchCtl.model ? SearchCtl.model.count : 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property int resultCount: SearchCtl.model ? SearchCtl.model.count : 0
@@ -700,6 +703,7 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	target: SearchCtl.
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: !page.hasQuery && !SearchCtl.searching && page.recentChips.length === 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: SearchCtl.searching && page.resultCount === 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: page.hasQuery && !SearchCtl.searching
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: page.hasQuery && !SearchCtl.searching && page.failed
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	"itemId": SeriesCtl.seriesId,
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	"name": SeriesCtl.seriesName,
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	Actions.play(SeriesCtl.episodes.get(row))
