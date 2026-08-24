@@ -26,11 +26,49 @@ void *glProcAddress(void *, const char *name)
 
 } // namespace
 
+// Lives on the GUI thread and owned jointly by the item and its renderer.
+//
+// mpv's update callback fires from whichever thread produced the frame, and the
+// only thing that actually schedules a new pass over the FBO is marking the
+// ITEM dirty: QQuickWindow::update() alone raises a frame, but the framebuffer
+// node skips rendering unless updatePaintNode() ran, so the video freezes on
+// its last drawn frame. Posting through this bridge keeps that item update on
+// the GUI thread without ever dereferencing a QQuickItem from the render side:
+// the bridge outlives the render context (both holders keep it alive), Qt drops
+// any queued call if it is destroyed first, and the QPointer is only read on
+// the thread that can destroy the item.
+class MpvUpdateBridge : public QObject
+{
+public:
+    explicit MpvUpdateBridge(MpvVideoItem *item) : m_item(item) {}
+
+    // Any thread. Coalesces: one queued redraw request is as good as ten.
+    void requestUpdate()
+    {
+        if (m_queued.exchange(true, std::memory_order_acq_rel))
+            return;
+        QMetaObject::invokeMethod(this, [this] { deliverUpdate(); }, Qt::QueuedConnection);
+    }
+
+private:
+    void deliverUpdate()
+    {
+        m_queued.store(false, std::memory_order_release);
+        if (m_item)
+            m_item->update();
+    }
+
+    QPointer<MpvVideoItem> m_item;
+    std::atomic<bool> m_queued = false;
+};
+
 // Lives on the render thread. Creates the mpv render context lazily on first
 // render (a current GL context is guaranteed there) and frees it with the item.
 class MpvRenderer : public QQuickFramebufferObject::Renderer
 {
 public:
+    explicit MpvRenderer(std::shared_ptr<MpvUpdateBridge> bridge) : m_bridge(std::move(bridge)) {}
+
     ~MpvRenderer() override
     {
         m_window.store(nullptr, std::memory_order_release);
@@ -85,11 +123,10 @@ public:
 private:
     static void onUpdate(void *ctx)
     {
-        // QQuickWindow::update() is explicitly callable from any thread. The
-        // atomic is nulled before unregistering this callback during teardown.
-        auto *renderer = static_cast<MpvRenderer *>(ctx);
-        if (QQuickWindow *window = renderer->m_window.load(std::memory_order_acquire))
-            window->update();
+        // Called from an arbitrary mpv thread. The context is the bridge, not
+        // the renderer: the renderer holds a reference to it for exactly as
+        // long as the render context that can raise this callback exists.
+        static_cast<MpvUpdateBridge *>(ctx)->requestUpdate();
     }
 
     void ensureContext()
@@ -113,15 +150,21 @@ private:
             m_context = nullptr;
             return;
         }
-        mpv_render_context_set_update_callback(m_context, onUpdate, this);
+        mpv_render_context_set_update_callback(m_context, onUpdate, m_bridge.get());
     }
 
+    std::shared_ptr<MpvUpdateBridge> m_bridge;
     mpv_handle *m_handle = nullptr;
     std::atomic<QQuickWindow *> m_window = nullptr;
     mpv_render_context *m_context = nullptr;
 };
 
-MpvVideoItem::MpvVideoItem(QQuickItem *parent) : QQuickFramebufferObject(parent)
+MpvVideoItem::MpvVideoItem(QQuickItem *parent)
+    : QQuickFramebufferObject(parent),
+      // deleteLater(), because the renderer may drop the last reference from
+      // the render thread and a QObject must be destroyed on its own.
+      m_bridge(new MpvUpdateBridge(this),
+               [](MpvUpdateBridge *bridge) { bridge->deleteLater(); })
 {
     // mpv renders top-down into the FBO; no mirroring needed (flipY=0 in render()).
     setTextureFollowsItemSize(true);
@@ -129,7 +172,7 @@ MpvVideoItem::MpvVideoItem(QQuickItem *parent) : QQuickFramebufferObject(parent)
 
 QQuickFramebufferObject::Renderer *MpvVideoItem::createRenderer() const
 {
-    return new MpvRenderer;
+    return new MpvRenderer(m_bridge);
 }
 
 QObject *MpvVideoItem::playerObject() const
@@ -140,6 +183,11 @@ QObject *MpvVideoItem::playerObject() const
 MpvPlayer *MpvVideoItem::player() const
 {
     return m_player.data();
+}
+
+void MpvVideoItem::requestRedrawForTests()
+{
+    m_bridge->requestUpdate();
 }
 
 void MpvVideoItem::setPlayerObject(QObject *player)
