@@ -237,7 +237,7 @@ FocusScope {
             // owner at both edges of reuse so it can never describe the row
             // this cell represented before its model roles were replaced.
             ListView.onPooled: cell.setHovered(false)
-            ListView.onReused: cell.setHovered(false)
+            ListView.onReused: cell.setHovered(cardItem.hovered)
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.

@@ -253,7 +253,8 @@ FocusScope {
             // enough once GridView reuse is enabled. Never let the published
             // pointer-hover index retain the identity this cell used to have.
             GridView.onPooled: cell.setHovered(false)
-            GridView.onReused: cell.setHovered(false)
+            GridView.onReused: cell.setHovered((!grid.listMode && cardItem.hovered)
+                                               || (grid.listMode && rowHover.hovered))
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.
@@ -272,6 +273,7 @@ FocusScope {
 
             // ── Poster / wide ──────────────────────────────────────────────
             StrmCard {
+                id: cardItem
                 anchors.centerIn: parent
                 visible: !grid.listMode
                 enabled: !grid.listMode
