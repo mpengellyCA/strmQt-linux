@@ -698,8 +698,9 @@ void MpvPlayer::drainEvents()
         }
         case MPV_EVENT_LOG_MESSAGE: {
             const auto *msg = static_cast<mpv_event_log_message *>(event->data);
-            qCWarning(logPlayback).noquote() << "mpv:" << QString::fromUtf8(msg->prefix)
-                                             << QString::fromUtf8(msg->text).trimmed();
+            qCWarning(logPlayback).noquote()
+                << "mpv:" << redactSensitiveText(QString::fromUtf8(msg->prefix))
+                << redactSensitiveText(QString::fromUtf8(msg->text).trimmed());
             break;
         }
         default:

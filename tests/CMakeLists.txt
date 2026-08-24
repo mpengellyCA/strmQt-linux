@@ -9,6 +9,7 @@ function(strmqt_add_test name)
 endfunction()
 
 strmqt_add_test(tst_settings unit/tst_settings.cpp)
+strmqt_add_test(tst_log_redaction unit/tst_log_redaction.cpp)
 strmqt_add_test(tst_emby_dto unit/tst_emby_dto.cpp)
 strmqt_add_test(tst_secrets_store unit/tst_secrets_store.cpp)
 
