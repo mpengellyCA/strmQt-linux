@@ -105,6 +105,18 @@ ItemActions::ItemActions(emby::EmbyClient *client, PlayerController *player, QOb
 {
 }
 
+void ItemActions::resetSessionState()
+{
+    ++m_playbackIntentGeneration;
+    ++m_sessionGeneration;
+    m_state.clear();
+    m_playedRequests.clear();
+    m_favoriteRequests.clear();
+    m_models.removeIf([](const QPointer<MediaItemModel> &model) { return model.isNull(); });
+    for (const QPointer<MediaItemModel> &model : std::as_const(m_models))
+        model->clear();
+}
+
 void ItemActions::registerModel(MediaItemModel *model)
 {
     if (!model)
@@ -223,6 +235,7 @@ void ItemActions::startPlayback(const QVariant &item, bool fromStart)
         emit actionFailed(tr("Playback is not available."));
         return;
     }
+    beginPlaybackIntent();
     qint64 startMs = 0;
     if (!fromStart && map.value(QStringLiteral("resumable")).toBool())
         startMs = map.value(QStringLiteral("positionMs")).toLongLong();
@@ -256,6 +269,7 @@ void ItemActions::resume(const QVariant &item)
         emit actionFailed(tr("Playback is not available."));
         return;
     }
+    beginPlaybackIntent();
     // Unlike play(), an explicit resume honours a stored position even for an
     // item already marked played (which clears the "resumable" role).
     const qint64 startMs = map.value(QStringLiteral("positionMs")).toLongLong();
@@ -274,6 +288,11 @@ bool ItemActions::requireQueueTarget()
     qCWarning(logApp) << "ItemActions: no player controller; cannot touch the queue";
     emit actionFailed(tr("Playback is not available."));
     return false;
+}
+
+quint64 ItemActions::beginPlaybackIntent()
+{
+    return ++m_playbackIntentGeneration;
 }
 
 void ItemActions::playNext(const QVariant &item)
@@ -304,6 +323,25 @@ void ItemActions::addToQueue(const QVariant &item)
 
 void ItemActions::playAllFrom(const QVariantList &items, int startIndex)
 {
+    const quint64 generation = beginPlaybackIntent();
+    playAllFromIfCurrent(items, startIndex, generation);
+}
+
+quint64 ItemActions::reservePlaybackIntent()
+{
+    return beginPlaybackIntent();
+}
+
+bool ItemActions::isPlaybackIntentCurrent(quint64 generation) const
+{
+    return generation == m_playbackIntentGeneration;
+}
+
+void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex,
+                                       quint64 generation)
+{
+    if (!isPlaybackIntentCurrent(generation))
+        return;
     if (items.isEmpty()) {
         emit actionFailed(tr("There is nothing to play here."));
         return;
@@ -369,8 +407,12 @@ void ItemActions::instantMix(const QVariant &item)
         return;
     }
 
+    const quint64 generation = beginPlaybackIntent();
+
     m_client->instantMix(itemId, kQueueFetchLimit)
-        .then(this, [this](const Result<ItemsPage> &result) {
+        .then(this, [this, generation](const Result<ItemsPage> &result) {
+            if (generation != m_playbackIntentGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(tr("Could not build an instant mix: %1").arg(result.error));
                 return;
@@ -411,7 +453,12 @@ void ItemActions::fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool ra
         return;
     }
 
-    m_client->items(query).then(this, [this, shuffled, randomStart](const Result<ItemsPage> &result) {
+    const quint64 generation = beginPlaybackIntent();
+
+    m_client->items(query).then(this, [this, shuffled, randomStart,
+                                      generation](const Result<ItemsPage> &result) {
+        if (generation != m_playbackIntentGeneration)
+            return;
         if (!result.ok()) {
             // A queue that silently does not appear is the worst possible
             // outcome here: say so.
@@ -495,10 +542,14 @@ void ItemActions::shuffleSeries(const QString &seriesId)
         return;
     }
 
+    const quint64 generation = beginPlaybackIntent();
+
     // /Shows/{id}/Episodes returns every episode of the series in air order, so
     // the queue keeps a real order to restore when the user turns shuffle off —
     // and the random start index is what makes the *first* item random too.
-    m_client->episodes(seriesId, {}).then(this, [this](const Result<ItemsPage> &result) {
+    m_client->episodes(seriesId, {}).then(this, [this, generation](const Result<ItemsPage> &result) {
+        if (generation != m_playbackIntentGeneration)
+            return;
         if (!result.ok()) {
             emit actionFailed(tr("Could not shuffle this series: %1").arg(result.error));
             return;
@@ -597,22 +648,26 @@ void ItemActions::sendPlayed(const QString &itemId, bool played, bool baseline)
     request.requested = played;
     request.baseline = baseline;
     m_playedRequests.insert(itemId, request);
+    const quint64 sessionGeneration = m_sessionGeneration;
 
-    m_client->setPlayed(itemId, played).then(this, [this, itemId](const Result<bool> &result) {
-        const auto it = m_playedRequests.find(itemId);
-        if (it == m_playedRequests.end())
-            return;
-        const InFlight finished = *it;
-        m_playedRequests.erase(it);
-        if (!result.ok()) {
-            // Honest rollback: put the UI back where the server actually is.
-            applyPlayed(itemId, finished.baseline);
-            emit actionFailed(tr("Could not update the watched state: %1").arg(result.error));
-            return;
-        }
-        if (finished.hasQueued && finished.queued != finished.requested)
-            sendPlayed(itemId, finished.queued, finished.requested);
-    });
+    m_client->setPlayed(itemId, played)
+        .then(this, [this, itemId, sessionGeneration](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
+            const auto it = m_playedRequests.find(itemId);
+            if (it == m_playedRequests.end())
+                return;
+            const InFlight finished = *it;
+            m_playedRequests.erase(it);
+            if (!result.ok()) {
+                // Honest rollback: put the UI back where the server actually is.
+                applyPlayed(itemId, finished.baseline);
+                emit actionFailed(tr("Could not update the watched state: %1").arg(result.error));
+                return;
+            }
+            if (finished.hasQueued && finished.queued != finished.requested)
+                sendPlayed(itemId, finished.queued, finished.requested);
+        });
 }
 
 void ItemActions::togglePlayed(const QVariant &item)
@@ -662,21 +717,25 @@ void ItemActions::sendFavorite(const QString &itemId, bool favorite, bool baseli
     request.requested = favorite;
     request.baseline = baseline;
     m_favoriteRequests.insert(itemId, request);
+    const quint64 sessionGeneration = m_sessionGeneration;
 
-    m_client->setFavorite(itemId, favorite).then(this, [this, itemId](const Result<bool> &result) {
-        const auto it = m_favoriteRequests.find(itemId);
-        if (it == m_favoriteRequests.end())
-            return;
-        const InFlight finished = *it;
-        m_favoriteRequests.erase(it);
-        if (!result.ok()) {
-            applyFavorite(itemId, finished.baseline);
-            emit actionFailed(tr("Could not update the favourite: %1").arg(result.error));
-            return;
-        }
-        if (finished.hasQueued && finished.queued != finished.requested)
-            sendFavorite(itemId, finished.queued, finished.requested);
-    });
+    m_client->setFavorite(itemId, favorite)
+        .then(this, [this, itemId, sessionGeneration](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
+            const auto it = m_favoriteRequests.find(itemId);
+            if (it == m_favoriteRequests.end())
+                return;
+            const InFlight finished = *it;
+            m_favoriteRequests.erase(it);
+            if (!result.ok()) {
+                applyFavorite(itemId, finished.baseline);
+                emit actionFailed(tr("Could not update the favourite: %1").arg(result.error));
+                return;
+            }
+            if (finished.hasQueued && finished.queued != finished.requested)
+                sendFavorite(itemId, finished.queued, finished.requested);
+        });
 }
 
 void ItemActions::toggleFavorite(const QVariant &item)

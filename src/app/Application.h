@@ -60,6 +60,7 @@ public:
 
 private:
     void wirePlaybackIntegrations();
+    void teardownAuthenticatedSession();
     // Rebuilds the MPRIS track from the queue entry under the playhead and, when
     // the sleeve changed, kicks off the async export that gives it a file:// URI.
     void pushNowPlayingToMpris();

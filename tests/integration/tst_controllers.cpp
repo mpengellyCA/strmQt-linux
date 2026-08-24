@@ -36,6 +36,8 @@ private slots:
     void sessionLoginPersistsAndRestores();
     void sessionLoginFailureSurfaces();
     void sessionWithoutServerDoesNotRestore();
+    void logoutRetiresALateLogin();
+    void serverChangeRetiresALateLogin();
     void homeRefreshBuildsRails();
     void libraryPaging();
 
@@ -141,6 +143,51 @@ void ControllersTest::sessionLoginFailureSurfaces()
     QTRY_VERIFY(!session.busy());
     QVERIFY(!session.authenticated());
     QVERIFY(!session.errorMessage().isEmpty());
+}
+
+void ControllersTest::logoutRetiresALateLogin()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+    m_mock->setRouteDelay(QStringLiteral("POST"),
+                          QStringLiteral("/Users/AuthenticateByName"), 200);
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+    QVERIFY(session.busy());
+
+    session.logout();
+    QVERIFY(!session.busy());
+    QVERIFY(!session.authenticated());
+    QTest::qWait(260);
+    QVERIFY(!session.authenticated());
+    QVERIFY(!m_client->hasSession());
+    QVERIFY(m_secrets->readSecret(QStringLiteral("emby/accessToken")).isEmpty());
+}
+
+void ControllersTest::serverChangeRetiresALateLogin()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+    m_mock->setRouteDelay(QStringLiteral("POST"),
+                          QStringLiteral("/Users/AuthenticateByName"), 200);
+    MockEmbyServer nextServer;
+    QVERIFY(nextServer.start());
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+    session.setServerUrl(nextServer.baseUrl());
+
+    QTest::qWait(260);
+    QCOMPARE(session.serverUrl(), nextServer.baseUrl());
+    QCOMPARE(m_client->baseUrl(), nextServer.baseUrl());
+    QVERIFY(!session.authenticated());
+    QVERIFY(!m_client->hasSession());
+    QVERIFY(m_secrets->readSecret(QStringLiteral("emby/accessToken")).isEmpty());
 }
 
 void ControllersTest::homeRefreshBuildsRails()

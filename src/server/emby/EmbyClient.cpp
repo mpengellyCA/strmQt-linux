@@ -66,23 +66,43 @@ EmbyClient::EmbyClient(QObject *parent) : QObject(parent), m_nam(new QNetworkAcc
     m_nam->setAutoDeleteReplies(true);
 }
 
+void EmbyClient::setBaseUrl(const QUrl &url)
+{
+    invalidateOutstandingRequests();
+    m_baseUrl = url;
+}
+
 void EmbyClient::setSession(const QString &accessToken, const QString &userId)
 {
+    invalidateOutstandingRequests();
     m_accessToken = accessToken;
     m_userId = userId;
 }
 
-QString EmbyClient::authorizationHeader() const
+EmbyClient::RequestContext EmbyClient::requestContext() const
 {
-    return QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%2\", DeviceId=\"%3\", "
-                          "Version=\"%4\"")
-        .arg(kClientName, m_deviceName.isEmpty() ? QStringLiteral("linux") : m_deviceName,
-             m_deviceId, versionString());
+    return {m_baseUrl, m_deviceId, m_deviceName, m_accessToken, m_userId, m_requestEpoch};
+}
+
+void EmbyClient::invalidateOutstandingRequests()
+{
+    ++m_requestEpoch;
+    const QList<QNetworkReply *> replies = m_nam->findChildren<QNetworkReply *>();
+    for (QNetworkReply *reply : replies) {
+        if (reply && !reply->isFinished())
+            reply->abort();
+    }
 }
 
 QUrl EmbyClient::requestUrl(const QString &path, const QUrlQuery &query) const
 {
-    QUrl url = m_baseUrl;
+    return requestUrl(path, query, requestContext());
+}
+
+QUrl EmbyClient::requestUrl(const QString &path, const QUrlQuery &query,
+                            const RequestContext &context) const
+{
+    QUrl url = context.baseUrl;
     // Preserve any reverse-proxy base path on the server URL.
     QString fullPath = url.path();
     if (fullPath.endsWith(QLatin1Char('/')))
@@ -95,23 +115,46 @@ QUrl EmbyClient::requestUrl(const QString &path, const QUrlQuery &query) const
 
 QNetworkRequest EmbyClient::baseRequest(const QUrl &url) const
 {
+    return baseRequest(url, requestContext());
+}
+
+QNetworkRequest EmbyClient::baseRequest(const QUrl &url, const RequestContext &context) const
+{
     QNetworkRequest request(url);
     request.setTransferTimeout(kTransferTimeoutMs);
     request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("X-Emby-Authorization", authorizationHeader().toUtf8());
-    if (!m_accessToken.isEmpty())
-        request.setRawHeader("X-Emby-Token", m_accessToken.toUtf8());
+    const QString authorization =
+        QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%2\", DeviceId=\"%3\", "
+                       "Version=\"%4\"")
+            .arg(kClientName,
+                 context.deviceName.isEmpty() ? QStringLiteral("linux") : context.deviceName,
+                 context.deviceId, versionString());
+    request.setRawHeader("X-Emby-Authorization", authorization.toUtf8());
+    if (!context.accessToken.isEmpty())
+        request.setRawHeader("X-Emby-Token", context.accessToken.toUtf8());
     return request;
 }
 
 QNetworkReply *EmbyClient::startGet(const QString &path, const QUrlQuery &query)
 {
-    return m_nam->get(baseRequest(requestUrl(path, query)));
+    return startGet(path, query, requestContext());
+}
+
+QNetworkReply *EmbyClient::startGet(const QString &path, const QUrlQuery &query,
+                                    const RequestContext &context)
+{
+    return m_nam->get(baseRequest(requestUrl(path, query, context), context));
 }
 
 QNetworkReply *EmbyClient::startPost(const QString &path, const QJsonObject &body)
 {
-    QNetworkRequest request = baseRequest(requestUrl(path, {}));
+    return startPost(path, body, requestContext());
+}
+
+QNetworkReply *EmbyClient::startPost(const QString &path, const QJsonObject &body,
+                                     const RequestContext &context)
+{
+    QNetworkRequest request = baseRequest(requestUrl(path, {}, context), context);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     return m_nam->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 }
@@ -133,8 +176,11 @@ QFuture<Result<bool>> EmbyClient::finishStatus(QNetworkReply *reply)
     auto promise = std::make_shared<QPromise<Result<bool>>>();
     QFuture<Result<bool>> future = promise->future();
     promise->start();
-    connect(reply, &QNetworkReply::finished, this, [reply, promise] {
-        if (reply->error() != QNetworkReply::NoError)
+    const quint64 epoch = m_requestEpoch;
+    connect(reply, &QNetworkReply::finished, this, [this, reply, promise, epoch] {
+        if (epoch != m_requestEpoch)
+            promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
+        else if (reply->error() != QNetworkReply::NoError)
             promise->addResult(Result<bool>::failure(reply->errorString()));
         else
             promise->addResult(Result<bool>::success(true));
@@ -161,7 +207,14 @@ QFuture<Result<T>> EmbyClient::finishJson(QNetworkReply *reply,
     QFuture<Result<T>> future = promise->future();
     promise->start();
 
-    connect(reply, &QNetworkReply::finished, this, [reply, promise, parse = std::move(parse)] {
+    const quint64 epoch = m_requestEpoch;
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, promise, parse = std::move(parse), epoch] {
+        if (epoch != m_requestEpoch) {
+            promise->addResult(Result<T>::failure(QStringLiteral("request canceled")));
+            promise->finish();
+            return;
+        }
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (reply->error() != QNetworkReply::NoError) {
             const QString message =
@@ -710,10 +763,12 @@ QFuture<Result<PlaybackTicket>> EmbyClient::playbackInfo(const QString &itemId,
     if (m_maxBitrateKbps > 0)
         body.insert(QLatin1String("MaxStreamingBitrate"), m_maxBitrateKbps * 1000);
 
-    QNetworkReply *reply = startPost(QStringLiteral("/Items/%1/PlaybackInfo").arg(itemId), body);
-    return finishJson<PlaybackTicket>(reply, [this, itemId](const QJsonDocument &doc) {
-        const PlaybackTicket ticket =
-            parsePlaybackTicket(doc.object(), m_baseUrl, itemId, m_accessToken, m_deviceId);
+    const RequestContext context = requestContext();
+    QNetworkReply *reply =
+        startPost(QStringLiteral("/Items/%1/PlaybackInfo").arg(itemId), body, context);
+    return finishJson<PlaybackTicket>(reply, [context, itemId](const QJsonDocument &doc) {
+        const PlaybackTicket ticket = parsePlaybackTicket(doc.object(), context.baseUrl, itemId,
+                                                          context.accessToken, context.deviceId);
         if (!ticket.isValid())
             return Result<PlaybackTicket>::failure(
                 QStringLiteral("no playable media sources for item %1").arg(itemId));
@@ -808,13 +863,20 @@ QFuture<Result<bool>> EmbyClient::renameItem(const QString &itemId, const QStrin
     auto promise = std::make_shared<QPromise<Result<bool>>>();
     QFuture<Result<bool>> future = promise->future();
     promise->start();
+    const RequestContext context = requestContext();
 
     // Read-modify-write, because UpdateItem replaces the object.
     QUrlQuery params;
-    QNetworkReply *reply =
-        startGet(QStringLiteral("/Users/%1/Items/%2").arg(m_userId, itemId), params);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, itemId, name, promise] {
+    QNetworkReply *reply = startGet(
+        QStringLiteral("/Users/%1/Items/%2").arg(context.userId, itemId), params, context);
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, itemId, name, promise, context] {
         reply->deleteLater();
+        if (context.epoch != m_requestEpoch) {
+            promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
+            promise->finish();
+            return;
+        }
         if (reply->error() != QNetworkReply::NoError) {
             promise->addResult(Result<bool>::failure(reply->errorString()));
             promise->finish();
@@ -832,10 +894,13 @@ QFuture<Result<bool>> EmbyClient::renameItem(const QString &itemId, const QStrin
         item.remove(QLatin1String("ForcedSortName"));
         item.remove(QLatin1String("SortName"));
 
-        QNetworkReply *post = startPost(QStringLiteral("/Items/%1").arg(itemId), item);
-        connect(post, &QNetworkReply::finished, this, [post, promise] {
+        QNetworkReply *post =
+            startPost(QStringLiteral("/Items/%1").arg(itemId), item, context);
+        connect(post, &QNetworkReply::finished, this, [this, post, promise, context] {
             post->deleteLater();
-            if (post->error() != QNetworkReply::NoError)
+            if (context.epoch != m_requestEpoch)
+                promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
+            else if (post->error() != QNetworkReply::NoError)
                 promise->addResult(Result<bool>::failure(post->errorString()));
             else
                 promise->addResult(Result<bool>::success(true));

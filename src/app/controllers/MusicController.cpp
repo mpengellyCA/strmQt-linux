@@ -899,23 +899,28 @@ void MusicController::playAlbum(const QString &albumId)
 {
     if (albumId.isEmpty())
         return;
+    if (!m_actions) {
+        qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
+        emit actionFailed(tr("Playback is not available."));
+        return;
+    }
 
     const int generation = ++m_playGeneration;
+    const quint64 playbackIntent = m_actions->reservePlaybackIntent();
     expandAlbum(
-        albumId, [this, generation] { return generation == m_playGeneration; },
-        [this](const QList<MediaItem> &items) {
-            if (!m_actions) {
-                qCWarning(logApp) << "music: no ItemActions; cannot queue an album";
-                emit actionFailed(tr("Playback is not available."));
-                return;
-            }
+        albumId,
+        [this, generation, playbackIntent] {
+            return generation == m_playGeneration
+                   && m_actions->isPlaybackIntentCurrent(playbackIntent);
+        },
+        [this, playbackIntent](const QList<MediaItem> &items) {
             m_playScratch->setItems(items, static_cast<int>(items.size()));
             QVariantList maps;
             maps.reserve(m_playScratch->rowCount());
             for (int row = 0; row < m_playScratch->rowCount(); ++row)
                 maps.append(m_playScratch->get(row));
             // playAllFrom() says its own piece when the list is empty.
-            m_actions->playAllFrom(maps, 0);
+            m_actions->playAllFromIfCurrent(maps, 0, playbackIntent);
         },
         tr("Could not play this album: %1"));
 }

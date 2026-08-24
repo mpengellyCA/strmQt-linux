@@ -188,8 +188,39 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_mpris = new MprisPlayer(this);
     m_mpris->registerOnBus();
     wirePlaybackIntegrations();
+    // SessionController emits this before it replaces the server or
+    // credentials. Keeping teardown here makes logout one application-level
+    // transaction instead of a navigation-only event in QML.
+    connect(m_session, &SessionController::sessionBoundaryChanged, this,
+            [this] { teardownAuthenticatedSession(); });
 
     qCInfo(logApp) << "StrmQt" << applicationVersion() << "starting, platform:" << platformName();
+}
+
+void Application::teardownAuthenticatedSession()
+{
+    // Stop all producers before clearing their presentation. The explicit
+    // engine stop also covers a resolving controller that has not yet reached
+    // its ordinary active/stop path.
+    m_live->stop();
+    m_player->stop();
+    m_engine->stop();
+    m_player->queue()->clear();
+
+    // ItemActions owns the registry of every user-facing media model. It also
+    // retires optimistic mutations and asynchronous queue builders here.
+    m_actions->resetSessionState();
+    m_search->clearRecentQueries();
+
+    // No old user's title, art, queue capabilities, or position may survive on
+    // the desktop media-control surface while the login page is visible.
+    m_mprisArtId.clear();
+    m_mprisArtUrl.clear();
+    m_mpris->setPlaybackActive(false, false);
+    m_mpris->setQueueState(false, false);
+    m_mpris->setPositionMs(0);
+    m_mpris->setNowPlaying({});
+    m_powerInhibit->release();
 }
 
 void Application::wirePlaybackIntegrations()

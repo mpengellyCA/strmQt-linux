@@ -56,6 +56,8 @@ private slots:
     void instantMixSaysSoWhenTheServerHasNoStation();
     void addAllToQueueIsOneGestureAndOneToast();
     void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
+    void newerLeafPlayRetiresEveryAsynchronousQueueBuilder();
+    void sessionResetRetiresQueueBuildersAndClearsRegisteredModels();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -530,6 +532,92 @@ void ItemActionsQueueTest::collectAlbumTracksReportsIdsWithoutTouchingThePlayer(
     music.collectAlbumTracks(QStringLiteral("al-empty"), QStringLiteral("Nothing"));
     QTRY_COMPARE(failed.count(), 1);
     QCOMPARE(collected.count(), 1);
+}
+
+void ItemActionsQueueTest::newerLeafPlayRetiresEveryAsynchronousQueueBuilder()
+{
+    const auto directPlay = [this](const QString &id) {
+        QVariantMap item;
+        item.insert(QStringLiteral("itemId"), id);
+        item.insert(QStringLiteral("name"), QStringLiteral("Newest choice"));
+        item.insert(QStringLiteral("type"), QStringLiteral("Movie"));
+        m_actions->play(item);
+        QCOMPARE(m_player->queue()->rowCount(), 1);
+        QCOMPARE(m_player->queue()->current().id, id);
+    };
+
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    QSignalSpy failedSpy(m_actions, &ItemActions::actionFailed);
+
+    // /Items backs Play All, shuffle, and curated collections.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 180);
+    m_actions->playCollection(QStringLiteral("collection-slow"));
+    QTRY_VERIFY(!m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).method.isEmpty());
+    directPlay(QStringLiteral("301003"));
+    QTest::qWait(240);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301003"));
+
+    m_mock->addRoute(
+        QStringLiteral("GET"), QStringLiteral("/Items/301001/InstantMix"), 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"301001\",\"Name\":\"Old mix\","
+                          "\"Type\":\"Audio\"}],\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Items/301001/InstantMix"), 180);
+    m_actions->instantMix(QStringLiteral("301001"));
+    QTRY_VERIFY(!m_mock
+                     ->lastRequestFor(QStringLiteral("GET"),
+                                      QStringLiteral("/Items/301001/InstantMix"))
+                     .method.isEmpty());
+    directPlay(QStringLiteral("301002"));
+    QTest::qWait(240);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301002"));
+
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Shows/%1/Episodes").arg(kSeriesId), 180);
+    m_actions->shuffleSeries(kSeriesId);
+    QTRY_VERIFY(!m_mock
+                     ->lastRequestFor(QStringLiteral("GET"),
+                                      QStringLiteral("/Shows/%1/Episodes").arg(kSeriesId))
+                     .method.isEmpty());
+    directPlay(QStringLiteral("301001"));
+    QTest::qWait(240);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301001"));
+
+    // MusicController expands an album before handing it to ItemActions, so it
+    // reserves the same global playback intent before starting that fetch.
+    MusicController music(m_client, this);
+    music.setActions(m_actions);
+    const int beforeAlbum = m_mock->requestCount();
+    music.playAlbum(QStringLiteral("album-slow"));
+    QTRY_VERIFY(m_mock->requestCount() > beforeAlbum);
+    directPlay(QStringLiteral("301003"));
+    QTest::qWait(240);
+    QCOMPARE(m_player->queue()->current().id, QStringLiteral("301003"));
+
+    // Stale completions are silent: they neither replace the queue nor toast a
+    // failure/success for an intent the user has already superseded.
+    QCOMPARE(queueSpy.count(), 0);
+    QCOMPARE(failedSpy.count(), 0);
+}
+
+void ItemActionsQueueTest::sessionResetRetiresQueueBuildersAndClearsRegisteredModels()
+{
+    MediaItemModel model;
+    MediaItem oldItem;
+    oldItem.id = QStringLiteral("old-user-item");
+    model.setItems({oldItem});
+    m_actions->registerModel(&model);
+
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 180);
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    m_actions->playAll(QStringLiteral("old-user-library"), QStringLiteral("movies"));
+    QTRY_VERIFY(!m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).method.isEmpty());
+
+    m_actions->resetSessionState();
+    QCOMPARE(model.rowCount(), 0);
+    QTest::qWait(240);
+    QCOMPARE(queueSpy.count(), 0);
+    QCOMPARE(m_player->queue()->rowCount(), 0);
 }
 
 QTEST_GUILESS_MAIN(ItemActionsQueueTest)

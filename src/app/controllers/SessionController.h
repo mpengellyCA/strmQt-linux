@@ -35,6 +35,7 @@ public:
     bool busy() const { return m_busy; }
     QString errorMessage() const { return m_errorMessage; }
     QString username() const;
+    quint64 epoch() const { return m_epoch; }
     QUrl serverUrl() const;
     void setServerUrl(const QUrl &url);
     QString playbackEngine() const;
@@ -56,6 +57,10 @@ public:
     Q_INVOKABLE void loadPublicUsers();
 
 signals:
+    // Emitted before credentials or server identity change. Consumers use this
+    // as the application-wide teardown edge; it also fires when the old state
+    // was already unauthenticated so a late login can still be retired.
+    void sessionBoundaryChanged(quint64 epoch);
     void authenticatedChanged();
     void busyChanged();
     void errorMessageChanged();
@@ -64,6 +69,8 @@ signals:
     void playbackEngineChanged();
 
 private:
+    quint64 beginSessionBoundary();
+    void clearCredentials();
     void setBusy(bool busy);
     void setError(const QString &message);
     void setAuthenticated(bool authenticated);
@@ -75,6 +82,7 @@ private:
     bool m_busy = false;
     QString m_errorMessage;
     QVariantList m_publicUsers;
+    quint64 m_epoch = 0;
 };
 
 } // namespace strmqt

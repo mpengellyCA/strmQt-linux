@@ -80,6 +80,13 @@ public:
     // Queue items the caller already has (an episode list, a search result set).
     Q_INVOKABLE void playAllFrom(const QVariantList &items, int startIndex = 0);
 
+    // A controller that must resolve a play command asynchronously reserves
+    // the same intent sequence used by the verbs above. The eventual commit is
+    // accepted only while no newer direct/container play has superseded it.
+    quint64 reservePlaybackIntent();
+    bool isPlaybackIntentCurrent(quint64 generation) const;
+    void playAllFromIfCurrent(const QVariantList &items, int startIndex, quint64 generation);
+
     // ── Batch verbs (MUSIC.md §7) ─────────────────────────────────────────
     // What a multi-selection in a track table can be done to. Both are the
     // single-item verb applied over a set, in C++ rather than as a loop in QML
@@ -138,6 +145,12 @@ public:
     // The item map for an id, or an empty map when no registered model has it.
     Q_INVOKABLE QVariantMap itemFor(const QString &itemId) const;
 
+    // Authentication is an ownership boundary for every cached item and every
+    // queue-building continuation. Application calls this before credentials
+    // are replaced or cleared; replies from the retired session then become
+    // harmless no-ops even if Qt had already queued their continuations.
+    void resetSessionState();
+
 signals:
     void playedChanged(const QString &itemId, bool played);
     void favoriteChanged(const QString &itemId, bool favorite);
@@ -169,6 +182,7 @@ private:
 
     QVariantMap resolve(const QVariant &item) const;
     void startPlayback(const QVariant &item, bool fromStart);
+    quint64 beginPlaybackIntent();
     // One fetch path for playAll()/shuffle(): runs the query, then hands the
     // page to the player as a queue. `randomStart` picks the first item at
     // random, which is what makes a shuffle of an ordered fetch a real shuffle.
@@ -187,6 +201,8 @@ private:
     QHash<QString, UserState> m_state;
     QHash<QString, InFlight> m_playedRequests;
     QHash<QString, InFlight> m_favoriteRequests;
+    quint64 m_playbackIntentGeneration = 0;
+    quint64 m_sessionGeneration = 0;
 };
 
 } // namespace strmqt

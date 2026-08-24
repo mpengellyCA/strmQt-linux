@@ -45,6 +45,8 @@ private slots:
     void unauthenticatedCallsFailFast();
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
+    void sessionChangeCancelsOutstandingRequests();
+    void renameCannotChainAWriteAcrossServers();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -306,6 +308,51 @@ void EmbyClientTest::deviceProfileCoversLosslessAudio()
             hasAudioTranscode = true;
     }
     QVERIFY(hasAudioTranscode);
+}
+
+void EmbyClientTest::sessionChangeCancelsOutstandingRequests()
+{
+    m_client->setSession(kToken, kUserId);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Views").arg(kUserId),
+                                     fixturePath(QStringLiteral("views.json"))));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Users/%1/Views").arg(kUserId), 200);
+
+    QFuture<Result<QList<Library>>> future = m_client->userViews();
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+    m_client->setSession(QStringLiteral("new-token"), QStringLiteral("new-user"));
+
+    const auto result = waitFor(std::move(future));
+    QVERIFY(!result.ok());
+    QCOMPARE(result.error, QStringLiteral("request canceled"));
+}
+
+void EmbyClientTest::renameCannotChainAWriteAcrossServers()
+{
+    m_client->setSession(kToken, kUserId);
+    const QString itemId = QStringLiteral("same-id-on-both-servers");
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/%2").arg(kUserId, itemId), 200,
+                     QByteArrayLiteral("{\"Id\":\"same-id-on-both-servers\","
+                                       "\"Name\":\"Old name\"}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Users/%1/Items/%2").arg(kUserId, itemId), 200);
+
+    MockEmbyServer nextServer;
+    QVERIFY(nextServer.start());
+    nextServer.addRoute(QStringLiteral("POST"), QStringLiteral("/Items/%1").arg(itemId), 204,
+                        {});
+
+    QFuture<Result<bool>> future = m_client->renameItem(itemId, QStringLiteral("New name"));
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+    m_client->setBaseUrl(nextServer.baseUrl());
+    m_client->setSession(QStringLiteral("new-token"), QStringLiteral("new-user"));
+
+    const auto result = waitFor(std::move(future));
+    QVERIFY(!result.ok());
+    QCOMPARE(result.error, QStringLiteral("request canceled"));
+    QCOMPARE(nextServer.requestCount(), 0);
 }
 
 QTEST_GUILESS_MAIN(EmbyClientTest)

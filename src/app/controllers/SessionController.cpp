@@ -29,6 +29,10 @@ QUrl SessionController::serverUrl() const
 
 void SessionController::setServerUrl(const QUrl &url)
 {
+    if (url == m_settings->serverUrl())
+        return;
+    beginSessionBoundary();
+    clearCredentials();
     m_settings->setServerUrl(url);
     m_client->setBaseUrl(url);
     emit serverUrlChanged();
@@ -83,12 +87,16 @@ void SessionController::login(const QString &username, const QString &password)
     }
     if (m_busy)
         return;
+    const quint64 epoch = beginSessionBoundary();
+    clearCredentials();
     setError({});
     setBusy(true);
     m_client->setBaseUrl(m_settings->serverUrl());
 
     m_client->authenticateByName(username, password)
-        .then(this, [this](const Result<SessionInfo> &result) {
+        .then(this, [this, epoch](const Result<SessionInfo> &result) {
+            if (epoch != m_epoch)
+                return;
             setBusy(false);
             if (!result.ok()) {
                 setError(result.error);
@@ -96,6 +104,7 @@ void SessionController::login(const QString &username, const QString &password)
             }
             m_settings->setUsername(result.value.user.name);
             m_settings->setUserId(result.value.user.id);
+            m_client->setSession(result.value.accessToken, result.value.user.id);
             if (!m_secrets->writeSecret(kTokenSecretKey, result.value.accessToken))
                 qCWarning(logApp) << "could not persist access token";
             setAuthenticated(true);
@@ -104,10 +113,8 @@ void SessionController::login(const QString &username, const QString &password)
 
 void SessionController::logout()
 {
-    m_secrets->removeSecret(kTokenSecretKey);
-    m_settings->setUserId({});
-    m_client->setSession({}, {});
-    setAuthenticated(false);
+    beginSessionBoundary();
+    clearCredentials();
 }
 
 void SessionController::switchUser()
@@ -121,7 +128,10 @@ void SessionController::switchUser()
 
 void SessionController::loadPublicUsers()
 {
-    m_client->publicUsers().then(this, [this](const Result<QList<MediaItem>> &result) {
+    const quint64 epoch = m_epoch;
+    m_client->publicUsers().then(this, [this, epoch](const Result<QList<MediaItem>> &result) {
+        if (epoch != m_epoch)
+            return;
         if (!result.ok()) {
             // Not an error worth showing: a server may simply advertise nobody.
             qCDebug(logApp) << "public users unavailable:" << result.error;
@@ -144,6 +154,27 @@ void SessionController::loadPublicUsers()
         m_publicUsers = users;
         emit publicUsersChanged();
     });
+}
+
+quint64 SessionController::beginSessionBoundary()
+{
+    const quint64 epoch = ++m_epoch;
+    emit sessionBoundaryChanged(epoch);
+    setBusy(false);
+    if (!m_publicUsers.isEmpty()) {
+        m_publicUsers.clear();
+        emit publicUsersChanged();
+    }
+    return epoch;
+}
+
+void SessionController::clearCredentials()
+{
+    if (!m_secrets->removeSecret(kTokenSecretKey))
+        qCWarning(logApp) << "could not remove persisted access token";
+    m_settings->setUserId({});
+    m_client->setSession({}, {});
+    setAuthenticated(false);
 }
 
 void SessionController::setBusy(bool busy)

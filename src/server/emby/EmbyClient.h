@@ -39,7 +39,9 @@ public:
     explicit EmbyClient(QObject *parent = nullptr);
 
     QUrl baseUrl() const { return m_baseUrl; }
-    void setBaseUrl(const QUrl &url) { m_baseUrl = url; }
+    // Server and credential changes are hard request boundaries: every reply
+    // launched under the prior identity is aborted and retired.
+    void setBaseUrl(const QUrl &url);
 
     // Device identity used in X-Emby-Authorization (stable per install).
     void setDeviceId(const QString &id) { m_deviceId = id; }
@@ -247,18 +249,36 @@ public:
                   const QString &tag = QString()) const;
 
 private:
+    struct RequestContext
+    {
+        QUrl baseUrl;
+        QString deviceId;
+        QString deviceName;
+        QString accessToken;
+        QString userId;
+        quint64 epoch = 0;
+    };
+
+    RequestContext requestContext() const;
+    void invalidateOutstandingRequests();
     QNetworkReply *startGet(const QString &path, const QUrlQuery &query);
+    QNetworkReply *startGet(const QString &path, const QUrlQuery &query,
+                            const RequestContext &context);
     QNetworkReply *startPost(const QString &path, const QJsonObject &body);
+    QNetworkReply *startPost(const QString &path, const QJsonObject &body,
+                             const RequestContext &context);
     // Emby's action endpoints take their arguments in the query string and an
     // empty body. Deliberately not an overload of startPost(): `startPost(p, {})`
     // would become ambiguous at every existing call site.
     QNetworkReply *startPostQuery(const QString &path, const QUrlQuery &query);
     QNetworkReply *startDelete(const QString &path);
     QNetworkRequest baseRequest(const QUrl &url) const;
+    QNetworkRequest baseRequest(const QUrl &url, const RequestContext &context) const;
     // For endpoints whose response body we ignore: ok ⇔ HTTP success.
     QFuture<Result<bool>> finishStatus(QNetworkReply *reply);
     QUrl requestUrl(const QString &path, const QUrlQuery &query) const;
-    QString authorizationHeader() const;
+    QUrl requestUrl(const QString &path, const QUrlQuery &query,
+                    const RequestContext &context) const;
 
     // Resolves the reply into Result<T> via parse(QJsonDocument) once finished.
     template<class T>
@@ -274,6 +294,7 @@ private:
     QNetworkAccessManager *m_nam = nullptr;
     int m_maxBitrateKbps = 0;
     QString m_playbackMode = QStringLiteral("auto");
+    quint64 m_requestEpoch = 0;
 };
 
 } // namespace strmqt::emby
