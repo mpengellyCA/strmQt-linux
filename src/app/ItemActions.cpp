@@ -269,11 +269,11 @@ void ItemActions::startPlayback(const QVariant &item, bool fromStart)
     qint64 startMs = 0;
     if (!fromStart && map.value(QStringLiteral("resumable")).toBool())
         startMs = map.value(QStringLiteral("positionMs")).toLongLong();
-    // The type travels with the item. A bare play seeds a one-item queue, and
-    // that seed is what PlayerController::isAudio reads first: without the type
-    // the answer waits on the network and the bar lays itself out for whatever
-    // was playing before.
-    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs), -1, type);
+    // Keep the complete card payload. In addition to making the media type
+    // available synchronously, this retains its tagged artwork instead of
+    // throwing it away and issuing a second, tagless image request.
+    m_player->playItem(PlayQueue::itemFromVariant(map), titleFor(map),
+                       std::max<qint64>(0, startMs));
 }
 
 void ItemActions::play(const QVariant &item)
@@ -303,8 +303,8 @@ void ItemActions::resume(const QVariant &item)
     // Unlike play(), an explicit resume honours a stored position even for an
     // item already marked played (which clears the "resumable" role).
     const qint64 startMs = map.value(QStringLiteral("positionMs")).toLongLong();
-    m_player->playItem(itemId, titleFor(map), std::max<qint64>(0, startMs), -1,
-                       map.value(QStringLiteral("type")).toString());
+    m_player->playItem(PlayQueue::itemFromVariant(map), titleFor(map),
+                       std::max<qint64>(0, startMs));
 }
 
 // ── Queue (ARCHITECTURE.md) ────────────────────────────────────────────────

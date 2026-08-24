@@ -51,6 +51,7 @@ private slots:
     void anEmptyResultSaysSoToo();
     void playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum();
     void playCarriesTheItemsTypeOntoTheSeededQueue();
+    void playAndResumeRetainTaggedArtwork();
     void artistTargetPrefersTheAlbumArtistAndPairsItWithItsOwnId();
     void instantMixQueuesTheServersStationAndDropsRepeats();
     void instantMixSaysSoWhenTheServerHasNoStation();
@@ -352,6 +353,24 @@ void ItemActionsQueueTest::playCarriesTheItemsTypeOntoTheSeededQueue()
     QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("type")).toString(),
              QStringLiteral("Movie"));
     QVERIFY(!m_player->isAudio());
+}
+
+void ItemActionsQueueTest::playAndResumeRetainTaggedArtwork()
+{
+    QVariantMap item;
+    item.insert(QStringLiteral("itemId"), QStringLiteral("301001"));
+    item.insert(QStringLiteral("name"), QStringLiteral("The Matrix"));
+    item.insert(QStringLiteral("type"), QStringLiteral("Movie"));
+    item.insert(QStringLiteral("posterUrl"),
+                QStringLiteral("image://emby/session/301001/Primary/poster-tag"));
+    item.insert(QStringLiteral("positionMs"), 42000);
+
+    m_actions->play(item);
+    QCOMPARE(m_player->queue()->current().primaryImageTag, QStringLiteral("poster-tag"));
+
+    m_actions->resume(item);
+    QCOMPARE(m_player->queue()->current().primaryImageTag, QStringLiteral("poster-tag"));
+    QCOMPARE(m_player->queue()->current().playbackPositionTicks, 42000 * kTicksPerMs);
 }
 
 // One rule for "go to artist", wherever it is asked from (MUSIC.md §4). The
