@@ -5,9 +5,32 @@
 #include <QCoreApplication>
 #include <QStringList>
 
+#include <atomic>
+
 struct mpv_handle;
 
 namespace strmqt {
+
+namespace mpvdetail {
+
+// mpv may call its wakeup hook repeatedly before the GUI thread services the
+// first queued invocation. This tiny gate turns that burst into one event-loop
+// task; beginDrain() reopens it before the queue is consumed so a concurrent
+// producer cannot lose the next wakeup.
+class WakeupGate
+{
+public:
+    bool requestDrain()
+    {
+        return !m_pending.exchange(true, std::memory_order_acq_rel);
+    }
+    void beginDrain() { m_pending.store(false, std::memory_order_release); }
+
+private:
+    std::atomic_bool m_pending = false;
+};
+
+} // namespace mpvdetail
 
 // Pure translation of mpv's `track-list` into the PlayerBackend track maps.
 // Header-only and mpv-free on purpose: MpvPlayer converts the mpv_node to a
@@ -157,6 +180,7 @@ public:
     mpv_handle *handle() const { return m_mpv; }
 
 private:
+    static void wakeup(void *ctx);
     Q_INVOKABLE void drainEvents();
     void setState(State state, LoadId loadId);
     void resetPerLoadState(LoadId loadId, qint64 positionMs);
@@ -187,6 +211,7 @@ private:
     qreal m_speed = 1.0;
     int m_audioDelayMs = 0;
     int m_subtitleDelayMs = 0;
+    mpvdetail::WakeupGate m_wakeupGate;
 };
 
 } // namespace strmqt

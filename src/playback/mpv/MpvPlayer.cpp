@@ -13,14 +13,6 @@
 namespace strmqt {
 
 namespace {
-
-void wakeup(void *ctx)
-{
-    // Called from mpv's internal thread — hop to the GUI thread.
-    auto *player = static_cast<MpvPlayer *>(ctx);
-    QMetaObject::invokeMethod(player, "drainEvents", Qt::QueuedConnection);
-}
-
 constexpr qint64 msFromSeconds(double seconds)
 {
     return static_cast<qint64>(seconds * 1000.0);
@@ -135,7 +127,7 @@ MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent) : PlayerBacken
     // bitrates) are read on demand by videoStats() instead of signalled.
     mpv_observe_property(m_mpv, 0, "video-params", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, 0, "frame-drop-count", MPV_FORMAT_INT64);
-    mpv_set_wakeup_callback(m_mpv, wakeup, this);
+    mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
 }
 
 MpvPlayer::~MpvPlayer()
@@ -551,8 +543,20 @@ void MpvPlayer::setState(State state, LoadId loadId)
     emit stateChanged(state, loadId);
 }
 
+void MpvPlayer::wakeup(void *ctx)
+{
+    // Called from mpv's internal thread — hop to the GUI thread. A single
+    // drain consumes the complete mpv event queue, so posting another task
+    // while one is already pending only grows Qt's queue without doing work.
+    auto *player = static_cast<MpvPlayer *>(ctx);
+    if (!player->m_wakeupGate.requestDrain())
+        return;
+    QMetaObject::invokeMethod(player, "drainEvents", Qt::QueuedConnection);
+}
+
 void MpvPlayer::drainEvents()
 {
+    m_wakeupGate.beginDrain();
     if (!m_mpv)
         return;
 

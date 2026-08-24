@@ -63,6 +63,7 @@ private slots:
     void fakeBackendSelectsTrack();
     void fakeBackendSubtitlesOff();
     void fakeBackendStatsAndScrubberFields();
+    void mpvWakeupsCoalesceUntilDrainBegins();
 };
 
 void TestPlayerTracks::buildsAudioTracksFromTrackList()
@@ -290,6 +291,19 @@ void TestPlayerTracks::fakeBackendStatsAndScrubberFields()
 
     QVERIFY(backend.screenshotToFile(QStringLiteral("/tmp/shot.png")));
     QCOMPARE(backend.screenshots, QStringList{QStringLiteral("/tmp/shot.png")});
+}
+
+void TestPlayerTracks::mpvWakeupsCoalesceUntilDrainBegins()
+{
+    mpvdetail::WakeupGate gate;
+
+    QVERIFY(gate.requestDrain());
+    for (int i = 0; i < 1000; ++i)
+        QVERIFY(!gate.requestDrain());
+
+    gate.beginDrain();
+    QVERIFY(gate.requestDrain());
+    QVERIFY(!gate.requestDrain());
 }
 
 QTEST_MAIN(TestPlayerTracks)
