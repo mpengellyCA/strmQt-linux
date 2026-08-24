@@ -16,13 +16,15 @@ public:
 
     QString engineName() const override { return QStringLiteral("fake"); }
 
-    void load(const QUrl &url, qint64 startMs, LoadId loadId) override
+    void load(const QUrl &url, qint64 startMs, LoadId loadId,
+              bool initiallyPaused = false) override
     {
         loadedUrls.append(url);
         loadedStarts.append(startMs);
         loadedIds.append(loadId);
+        loadedInitiallyPaused.append(initiallyPaused);
         m_loadId = loadId;
-        resetPerLoadState(loadId);
+        resetPerLoadState(loadId, startMs);
         m_state = State::Loading;
         emit stateChanged(m_state, loadId);
     }
@@ -38,7 +40,7 @@ public:
     {
         stopCalls++;
         m_loadId = 0;
-        resetPerLoadState(0);
+        resetPerLoadState(0, 0);
         simulateState(State::Idle, 0);
     }
 
@@ -227,6 +229,7 @@ public:
     QList<QUrl> loadedUrls;
     QList<qint64> loadedStarts;
     QList<LoadId> loadedIds;
+    QList<bool> loadedInitiallyPaused;
     QList<qint64> seeks;
     QList<int> audioTrackRequests;
     QList<int> subtitleTrackRequests;
@@ -242,11 +245,11 @@ public:
 private:
     LoadId resolvedLoadId(LoadId loadId) const { return loadId == 0 ? m_loadId : loadId; }
 
-    void resetPerLoadState(LoadId loadId)
+    void resetPerLoadState(LoadId loadId, qint64 positionMs)
     {
-        if (m_positionMs != 0) {
-            m_positionMs = 0;
-            emit positionChanged(0, loadId);
+        if (m_positionMs != positionMs) {
+            m_positionMs = positionMs;
+            emit positionChanged(positionMs, loadId);
         }
         if (m_durationMs != 0) {
             m_durationMs = 0;

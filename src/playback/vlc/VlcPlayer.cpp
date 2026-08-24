@@ -190,10 +190,10 @@ void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
     }
 }
 
-void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
+void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
 {
     m_loadId = loadId;
-    resetPerLoadState(loadId);
+    resetPerLoadState(loadId, startMs);
     if (!m_player) {
         setState(State::Error, loadId);
         emit errorOccurred(QStringLiteral("libvlc unavailable"), loadId);
@@ -208,12 +208,16 @@ void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
         return;
     }
     libvlc_media_add_option(media, ":http-user-agent=StrmQt");
+    if (initiallyPaused) {
+        libvlc_media_add_option(media, ":start-paused");
+        if (startMs > 0) {
+            const QByteArray startOption =
+                QByteArrayLiteral(":start-time=") + QByteArray::number(startMs / 1000.0, 'f', 3);
+            libvlc_media_add_option(media, startOption.constData());
+        }
+    }
 
     m_pendingStartMs = startMs;
-    if (startMs != 0) {
-        m_positionMs = startMs;
-        emit positionChanged(startMs, loadId);
-    }
     setState(State::Loading, loadId);
     libvlc_media_player_set_media(m_player, media);
     libvlc_media_release(media);
@@ -231,17 +235,17 @@ void VlcPlayer::stop()
     if (m_player)
         libvlc_media_player_stop(m_player);
     m_loadId = 0;
-    resetPerLoadState(0);
+    resetPerLoadState(0, 0);
     setState(State::Idle, 0);
 }
 
-void VlcPlayer::resetPerLoadState(LoadId loadId)
+void VlcPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
 {
     m_pendingStartMs = 0;
     m_sawFirstFrame = false;
-    if (m_positionMs != 0) {
-        m_positionMs = 0;
-        emit positionChanged(0, loadId);
+    if (m_positionMs != positionMs) {
+        m_positionMs = positionMs;
+        emit positionChanged(positionMs, loadId);
     }
     if (m_durationMs != 0) {
         m_durationMs = 0;

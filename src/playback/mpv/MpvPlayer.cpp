@@ -158,11 +158,14 @@ void MpvPlayer::command(const char *args[])
         qCWarning(logPlayback) << "mpv command" << args[0] << "failed:" << mpv_error_string(rc);
 }
 
-void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
+void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
 {
     m_loadId = loadId;
     m_pendingLoadId = loadId;
-    resetPerLoadState(loadId);
+    // Publish the requested position directly. A synthetic zero stamped with
+    // the new load id would be accepted by PlayerController and could erase
+    // the recovery point before this load produces its first time-pos event.
+    resetPerLoadState(loadId, startMs);
     if (!m_mpv) {
         setState(State::Error, loadId);
         emit errorOccurred(QStringLiteral("mpv core unavailable"), loadId);
@@ -172,13 +175,14 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
     const QByteArray start = QByteArray::number(startMs / 1000.0, 'f', 3);
     mpv_set_option_string(m_mpv, "start", startMs > 0 ? start.constData() : "0");
 
+    // Pause is persistent mpv state. Set it before loadfile so FILE_LOADED's
+    // first ready state is Paused when requested, with no Playing interval.
+    setPaused(initiallyPaused);
     m_loadInFlight = true;
     setState(State::Loading, loadId);
     const QByteArray urlUtf8 = url.toString(QUrl::FullyEncoded).toUtf8();
     const char *args[] = {"loadfile", urlUtf8.constData(), "replace", nullptr};
     command(args);
-    // Make sure a previous pause does not leak into the new file.
-    setPaused(false);
 }
 
 void MpvPlayer::setPaused(bool paused)
@@ -197,15 +201,15 @@ void MpvPlayer::stop()
     }
     m_loadId = 0;
     m_pendingLoadId = 0;
-    resetPerLoadState(0);
+    resetPerLoadState(0, 0);
     setState(State::Idle, 0);
 }
 
-void MpvPlayer::resetPerLoadState(LoadId loadId)
+void MpvPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
 {
-    if (m_positionMs != 0) {
-        m_positionMs = 0;
-        emit positionChanged(0, loadId);
+    if (m_positionMs != positionMs) {
+        m_positionMs = positionMs;
+        emit positionChanged(positionMs, loadId);
     }
     if (m_durationMs != 0) {
         m_durationMs = 0;

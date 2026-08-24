@@ -45,7 +45,7 @@ QVariantMap audioMap(const QString &id, const QString &name)
 } // namespace
 
 // Auto-advance, Up Next and prev/next where they actually live: on top of the
-// existing robustness layer (ladder, watchdog, broken-tail EOF, reporting).
+// existing robustness layer (ladder, watchdog, reasoned EOF/error, reporting).
 class QueuePlaybackTest : public QObject
 {
     Q_OBJECT
@@ -56,7 +56,7 @@ private slots:
 
     void playQueueStartsTheFirstItem();
     void cleanEndAdvancesAndOnlyExhaustionStops();
-    void brokenTailAdvancesInsteadOfStopping();
+    void errorNearTailDoesNotAdvance();
     void upNextAppearsInTheTailWindow();
     void cancelUpNextSuppressesOnlyThisItem();
     void playNextReportsStoppedAtTheRealPosition();
@@ -70,6 +70,7 @@ private slots:
     void currentChangedLeadsTheControllersTitleAndDuration();
     void isAudioFollowsTheQueuesItemType();
     void aFilmSetsTheRecordAsideAndGivesItBack();
+    void sessionBoundaryCancelsAQueuedAudioResume();
     void onlyAChosenItemAnnouncesItself();
     void aBarePlayGainsItsArtworkFromTheDetailsFetch();
     void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
@@ -221,10 +222,9 @@ void QueuePlaybackTest::cleanEndAdvancesAndOnlyExhaustionStops()
     QCOMPARE(m_backend->loadedUrls.size(), 3);
 }
 
-// The broken-tail rule (an error within the tail epsilon of EOF is a clean end)
-// has to reach the queue too, or half the auto-advances in a real library would
-// silently stop instead.
-void QueuePlaybackTest::brokenTailAdvancesInsteadOfStopping()
+// Only a backend EOF advances the queue. A network/demuxer error retains its
+// identity even if it happens close to the advertised runtime.
+void QueuePlaybackTest::errorNearTailDoesNotAdvance()
 {
     QSignalSpy stoppedSpy(m_controller, &PlayerController::stopped);
     m_controller->playQueue(threeItems(), 0);
@@ -233,11 +233,15 @@ void QueuePlaybackTest::brokenTailAdvancesInsteadOfStopping()
     m_backend->simulateDuration(8'184'000);
     m_backend->simulatePosition(8'182'000); // 2 s from EOF
 
-    m_backend->simulateError(QStringLiteral("demuxer: broken tail"));
+    m_backend->simulateError(QStringLiteral("tcp: reset near tail"));
     QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
     QCOMPARE(stoppedSpy.count(), 0);
-    QCOMPARE(m_controller->queue()->currentIndex(), 1);
-    QVERIFY(m_controller->errorMessage().isEmpty()); // still not a user-facing failure
+    QCOMPARE(m_controller->queue()->currentIndex(), 0);
+    QCOMPARE(m_backend->loadedStarts.constLast(), Q_INT64_C(8182000));
+    QCOMPARE(requestCount(QStringLiteral("POST"),
+                          QStringLiteral("/Sessions/Playing/Stopped")),
+             0);
+    QVERIFY(m_controller->errorMessage().isEmpty()); // recovery still owns the incident
 }
 
 void QueuePlaybackTest::upNextAppearsInTheTailWindow()
@@ -732,12 +736,64 @@ void QueuePlaybackTest::aFilmSetsTheRecordAsideAndGivesItBack()
     // load itself rather than reading the film's start position back.
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QCOMPARE(m_backend->loadedStarts.constLast(), Q_INT64_C(97000));
+    QVERIFY(m_backend->loadedInitiallyPaused.constLast());
     QVERIFY(m_controller->active());
 
-    // ...and waiting, not playing. Stopping a film is not a request for music,
-    // so the record comes back where it was and holds there.
-    m_backend->simulateState(PlayerBackend::State::Playing);
+    // ...and ready but waiting, not briefly Playing first. Paused is a complete
+    // startup state: busy clears, the server receives a paused start, and the
+    // watchdog remains stopped while the playhead is intentionally still.
+    m_backend->simulateState(PlayerBackend::State::Paused);
+    QTRY_VERIFY(!m_controller->busy());
     QTRY_VERIFY(m_controller->paused());
+    QTRY_VERIFY([this] {
+        const auto request =
+            m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing"));
+        const QJsonObject body = QJsonDocument::fromJson(request.body).object();
+        return body.value(QLatin1String("ItemId")).toString() == QLatin1String("301004") &&
+               body.value(QLatin1String("IsPaused")).toBool();
+    }());
+    const QJsonObject resumedStart =
+        QJsonDocument::fromJson(m_mock
+                                    ->lastRequestFor(QStringLiteral("POST"),
+                                                     QStringLiteral("/Sessions/Playing"))
+                                    .body)
+            .object();
+    QCOMPARE(resumedStart.value(QLatin1String("ItemId")).toString(), QStringLiteral("301004"));
+    QVERIFY(resumedStart.value(QLatin1String("IsPaused")).toBool());
+    const int loadCount = m_backend->loadedUrls.size();
+    const int seekCount = m_backend->seeks.size();
+    QTest::qWait(150);
+    QCOMPARE(m_backend->loadedUrls.size(), loadCount);
+    QCOMPARE(m_backend->seeks.size(), seekCount);
+}
+
+void QueuePlaybackTest::sessionBoundaryCancelsAQueuedAudioResume()
+{
+    m_controller->playQueue({audioMap(QStringLiteral("301004"), QStringLiteral("Track"))}, 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(97'000);
+
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
+                           QStringLiteral("Movie"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    // Clean end queues the zero-delay restoration. The account boundary lands
+    // before that event is delivered and must retire both the snapshot and the
+    // callback, as well as all outgoing presentation state.
+    m_backend->simulateEnd();
+    m_controller->shutdownForSessionBoundary();
+    QCOMPARE(m_controller->queue()->rowCount(), 0);
+    QVERIFY(!m_controller->active());
+    QVERIFY(!m_controller->busy());
+    QVERIFY(m_controller->title().isEmpty());
+    QCOMPARE(m_controller->sourceCount(), 0);
+
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_controller->queue()->rowCount(), 0);
 }
 
 // The shell brings a playback surface forward when the user chooses something.

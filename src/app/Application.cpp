@@ -214,12 +214,10 @@ void Application::applyWheelScrollPolicy()
 void Application::teardownAuthenticatedSession()
 {
     // Stop all producers before clearing their presentation. The explicit
-    // engine stop also covers a resolving controller that has not yet reached
-    // its ordinary active/stop path.
+    // boundary shutdown also covers a resolving controller and invalidates a
+    // deferred suspended-audio resume before old credentials disappear.
     m_live->stop();
-    m_player->stop();
-    m_engine->stop();
-    m_player->queue()->clear();
+    m_player->shutdownForSessionBoundary();
 
     // ItemActions owns the registry of every user-facing media model. It also
     // retires optimistic mutations and asynchronous queue builders here.

@@ -19,7 +19,6 @@ namespace {
 constexpr int kProgressIntervalMs = 10'000;
 constexpr int kWatchdogTickMs = 2'000;
 constexpr int kPersistIntervalMs = 5'000;
-constexpr qint64 kTailEpsilonMs = 5'000;
 constexpr int kMaxRecoverRetries = 3;
 // ARCHITECTURE.md: the Up Next card lives in the last 30 s of an item.
 constexpr qint64 kUpNextWindowMs = 30'000;
@@ -371,7 +370,7 @@ bool PlayerController::typeIsAudio(const QString &type)
 
 void PlayerController::startItem(const QString &itemId, const QString &title,
                                  qint64 startPositionMs, int preferredSourceIndex, bool fromQueue,
-                                 const QString &itemType)
+                                 const QString &itemType, bool initiallyPaused)
 {
     // Before anything is torn down, and in particular before the engine stop
     // below publishes a zeroed position: a film chosen over a playing record
@@ -460,7 +459,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     m_healthyTicks = 0;
     m_recoverRetries = 0;
     m_recovering = false;
-    m_startPaused = false;
+    m_initiallyPaused = initiallyPaused;
     ++m_recoveryToken;
     // A fresh item gets a fresh Up Next card, whatever the user did about the
     // previous one.
@@ -550,6 +549,7 @@ void PlayerController::setPreferredSource(int index)
     }
 
     qCInfo(logPlayback) << "switching to source" << index << entry->source.displayName();
+    const bool keepPaused = paused();
     // Remembered per item, by source id rather than index: the server can
     // reorder its sources between requests (ARCHITECTURE.md).
     if (m_settings && !m_itemId.isEmpty())
@@ -563,6 +563,7 @@ void PlayerController::setPreferredSource(int index)
     m_recovering = false;
     ++m_recoveryToken;
     emit streamMethodChanged();
+    m_initiallyPaused = keepPaused;
     startAttempt(m_lastPositionMs);
 }
 
@@ -615,7 +616,8 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_started = false;
     m_lastPositionMs = 0;
     m_expectedLoadId = ++m_nextLoadId;
-    m_backend->load(url, 0, m_expectedLoadId);
+    m_initiallyPaused = false;
+    m_backend->load(url, 0, m_expectedLoadId, false);
     applyVolume();
     applyReplayGain();
 }
@@ -644,7 +646,7 @@ void PlayerController::startAttempt(qint64 startMs)
     setBusy(true);
     emit streamMethodChanged();
     m_expectedLoadId = ++m_nextLoadId;
-    m_backend->load(candidate.url, startMs, m_expectedLoadId);
+    m_backend->load(candidate.url, startMs, m_expectedLoadId, m_initiallyPaused);
     // Some engines reset their audio state per media; re-assert ours.
     applyVolume();
     applyReplayGain();
@@ -656,31 +658,40 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
         return;
     emit pausedChanged();
 
-    if (state == PlayerBackend::State::Playing && !m_started) {
+    if (state != PlayerBackend::State::Playing)
+        m_watchdog.stop();
+
+    // The backend contract says an initially-paused load becomes ready as
+    // Paused. If an engine ever leaks a transient Playing state, do not open a
+    // server Playing session around it; push the intent back down and wait for
+    // the Paused acknowledgement.
+    if (!m_started && m_initiallyPaused && state == PlayerBackend::State::Playing) {
+        m_backend->setPaused(true);
+        return;
+    }
+
+    const bool ready = state == PlayerBackend::State::Playing ||
+                       state == PlayerBackend::State::Paused;
+    if (ready && !m_started) {
         m_recovering = false;
         m_started = true;
         setBusy(false);
         updateUpNext();
-        m_watchdog.start();
-        if (m_startPaused) {
-            m_startPaused = false;
-            m_backend->setPaused(true);
-        }
+        m_initiallyPaused = false;
+        if (state == PlayerBackend::State::Playing)
+            m_watchdog.start();
         if (m_reporting) {
             report(0);
             m_progressTimer.start();
             m_persistTimer.start();
             persistResume();
         }
-    } else if (state == PlayerBackend::State::Paused && m_started && m_reporting) {
-        reportProgress();
+    } else if (m_started && ready) {
+        if (state == PlayerBackend::State::Playing)
+            m_watchdog.start();
+        if (m_reporting)
+            reportProgress();
     }
-}
-
-bool PlayerController::nearEnd() const
-{
-    const qint64 duration = durationMs();
-    return duration > 0 && m_lastPositionMs >= duration - kTailEpsilonMs;
 }
 
 void PlayerController::onWatchdogTick()
@@ -876,14 +887,6 @@ void PlayerController::onBackendError(const QString &message, PlayerBackend::Loa
         return; // one delayed ticket refresh owns this recovery incident
     m_progressTimer.stop();
 
-    // Broken tail (the Emby-web-player bug class): an error at effectively the
-    // end of the file is a clean end, never a frozen failure (PLAN §3.5).
-    if (m_started && nearEnd()) {
-        qCInfo(logPlayback) << "error within tail epsilon of EOF; treating as clean end";
-        onEndReached(loadId);
-        return;
-    }
-
     // Startup failure: demote one rung, preserving position (PLAN §3.5 ladder).
     if (m_reporting && !m_started && canDemote()) {
         ++m_rung;
@@ -907,9 +910,8 @@ void PlayerController::onBackendError(const QString &message, PlayerBackend::Loa
 // A clean end is now a queue event, not the end of the session: the item is
 // reported stopped at its full runtime exactly as before, and only an exhausted
 // queue (or a cancelled Up Next card) still emits stopped(). Every caller of
-// this — the engine's endReached, and the broken-tail branch of onBackendError
-// that treats an error within the tail epsilon as a clean end — gets the
-// auto-advance for free.
+// this is only the engine's explicit endReached signal. Backend errors retain
+// their error identity even when the playhead happens to be near the runtime.
 void PlayerController::onEndReached(PlayerBackend::LoadId loadId)
 {
     // An engine that reports the end of a file *after* the session was torn
@@ -1172,16 +1174,16 @@ void PlayerController::stop()
     finishSession(TerminationReason::UserStop);
 }
 
+void PlayerController::shutdownForSessionBoundary()
+{
+    finishSession(TerminationReason::SessionBoundary);
+}
+
 void PlayerController::seekTo(qint64 positionMs)
 {
-    // Clamped at BOTH ends. The floor has always been here; the ceiling became
-    // load-bearing the moment m_lastPositionMs started adopting the target
-    // below, because that field is no longer only an observation: nearEnd()
-    // reads it to decide whether a later engine error is a clean end (stop
-    // report at full runtime, auto-advance) or a mid-stream stall to recover
-    // from. Without a ceiling, holding skip-forward past the end walks
-    // m_lastPositionMs beyond the runtime and reports a position the engine
-    // never reached.
+    // Clamped at BOTH ends. Without the ceiling, holding skip-forward past the
+    // end walks m_lastPositionMs beyond the runtime and reports a position the
+    // engine never reached.
     const qint64 duration = durationMs();
     qint64 target = qMax<qint64>(0, positionMs);
     if (duration > 0)
@@ -1450,15 +1452,21 @@ void PlayerController::resumeSuspendedAudio()
     // film interrupted it, under whatever page the user is looking at.
     const QScopedValueRollback<bool> guard(m_transportStart, true);
     startItem(resume.itemId, resume.title, resume.positionMs, -1, /*fromQueue=*/true,
-              resume.itemType);
-    // After startItem(), which clears it: the flag belongs to this load and is
-    // spent on its first frame. Engines ignore a pause before a file is open,
-    // so it is applied at the transition to Playing rather than up front.
-    m_startPaused = true;
+              resume.itemType, /*initiallyPaused=*/true);
 }
 
 void PlayerController::finishSession(TerminationReason reason)
 {
+    const bool sessionBoundary = reason == TerminationReason::SessionBoundary;
+    const bool hadPlayback = m_active || m_busy ||
+                             m_backend->state() != PlayerBackend::State::Idle;
+    if (sessionBoundary) {
+        // A queued zero-delay resume from an earlier user-stop must not cross
+        // the identity boundary even if another suspended snapshot is created
+        // before that callback eventually runs.
+        ++m_resumeToken;
+        m_suspendedAudio = {};
+    }
     if (reason == TerminationReason::Failure && m_started)
         persistResume();
     closeCurrentSession();
@@ -1490,6 +1498,7 @@ void PlayerController::finishSession(TerminationReason reason)
     m_rung = 0;
     m_preferredSourceIndex = -1;
     m_recovering = false;
+    m_initiallyPaused = false;
     ++m_recoveryToken;
     m_lastPositionMs = 0;
     if (!m_chapters.isEmpty()) {
@@ -1502,7 +1511,13 @@ void PlayerController::finishSession(TerminationReason reason)
     setBusy(false);
     clearAbLoop();
     setActive(false);
-    emit stopped();
+    if (sessionBoundary) {
+        const QScopedValueRollback<bool> guard(m_queueDriving, true);
+        m_queue->clear();
+        setError({});
+    }
+    if (!sessionBoundary || hadPlayback)
+        emit stopped();
 
     // The film is over — by its own end or because the user stopped it — so
     // the record it interrupted goes back on. Deferred by one turn so this
@@ -1510,8 +1525,14 @@ void PlayerController::finishSession(TerminationReason reason)
     // stopped(), and the resumed audio must not race that with a start.
     // A failure keeps the snapshot: the error is on screen and the user gets
     // to decide, rather than having music start under an error nobody read.
-    if (reason != TerminationReason::Failure && m_suspendedAudio.isValid())
-        QTimer::singleShot(0, this, [this] { resumeSuspendedAudio(); });
+    if (!sessionBoundary && reason != TerminationReason::Failure &&
+        m_suspendedAudio.isValid()) {
+        const int resumeToken = ++m_resumeToken;
+        QTimer::singleShot(0, this, [this, resumeToken] {
+            if (resumeToken == m_resumeToken)
+                resumeSuspendedAudio();
+        });
+    }
 }
 
 void PlayerController::persistResume()

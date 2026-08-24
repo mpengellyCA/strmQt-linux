@@ -58,7 +58,11 @@ public:
     // Every load receives an identity chosen by PlayerController. Engines echo
     // it on every item-scoped event, allowing a replacement to reject events
     // already queued by the outgoing file.
-    virtual void load(const QUrl &url, qint64 startMs, LoadId loadId) = 0;
+    // `initiallyPaused` is part of the load, not a setPaused() request made
+    // after the first Playing event. Engines must therefore open the media in
+    // that state without exposing an audible/visible playing interval first.
+    virtual void load(const QUrl &url, qint64 startMs, LoadId loadId,
+                      bool initiallyPaused = false) = 0;
     virtual void setPaused(bool paused) = 0;
     virtual void stop() = 0;
     virtual void seekTo(qint64 positionMs) = 0;

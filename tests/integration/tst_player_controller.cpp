@@ -43,7 +43,8 @@ private slots:
 
     void directPlayStartsAndReports();
     void watchdogNudgesReloadsThenDemotes();
-    void brokenTailErrorIsCleanEnd();
+    void reloadThenErrorPreservesResumePosition();
+    void errorNearTailIsNotAConfirmedEnd();
     void midStreamErrorRefetchesTicket();
     void recoveryBurstStartsOnlyOneRefresh();
     void crashResumePersistsAndClears();
@@ -445,7 +446,29 @@ void PlayerControllerTest::watchdogNudgesReloadsThenDemotes()
     QCOMPARE(m_backend->loadedUrls.size(), 3);
 }
 
-void PlayerControllerTest::brokenTailErrorIsCleanEnd()
+void PlayerControllerTest::reloadThenErrorPreservesResumePosition()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(100'000);
+
+    // Let the watchdog nudge once and then reload the current rung. The fake
+    // mirrors the engines' load contract: the new load publishes its requested
+    // position directly rather than an accepted synthetic zero.
+    QTRY_VERIFY(m_backend->seeks.contains(Q_INT64_C(101000)));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_backend->loadedStarts.at(1), Q_INT64_C(101000));
+
+    // Failure before the reloaded rung becomes ready demotes at that same
+    // position. Before the fix, MpvPlayer's new-load zero made this restart at
+    // the beginning.
+    m_backend->simulateError(QStringLiteral("reload failed before ready"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(m_backend->loadedStarts.at(2), Q_INT64_C(101000));
+}
+
+void PlayerControllerTest::errorNearTailIsNotAConfirmedEnd()
 {
     m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
     QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
@@ -454,22 +477,20 @@ void PlayerControllerTest::brokenTailErrorIsCleanEnd()
     m_backend->simulatePosition(8'182'000); // 2 s before EOF
 
     QSignalSpy stoppedSpy(m_controller, &PlayerController::stopped);
-    m_backend->simulateError(QStringLiteral("demuxer: broken tail"));
+    m_backend->simulateError(QStringLiteral("tcp: connection reset near tail"));
 
-    // Clean end: stopped emitted, NO user-facing error, played position pinned.
-    QTRY_COMPARE(stoppedSpy.count(), 1);
+    // Position is not an EOF reason. The ordinary mid-stream recovery path
+    // keeps the item and resume point alive; it neither reports the runtime as
+    // watched nor advances/ends the session.
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_backend->loadedStarts.constLast(), Q_INT64_C(8182000));
+    QCOMPARE(stoppedSpy.count(), 0);
+    QVERIFY(m_controller->active());
     QVERIFY(m_controller->errorMessage().isEmpty());
-    QTRY_VERIFY(
-        !m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"))
-             .method.isEmpty());
-    const QJsonObject body =
-        QJsonDocument::fromJson(m_mock
-                                    ->lastRequestFor(QStringLiteral("POST"),
-                                                     QStringLiteral("/Sessions/Playing/Stopped"))
-                                    .body)
-            .object();
-    QCOMPARE(static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()),
-             Q_INT64_C(8184000) * kTicksPerMs);
+    QVERIFY(m_mock
+                ->lastRequestFor(QStringLiteral("POST"),
+                                 QStringLiteral("/Sessions/Playing/Stopped"))
+                .method.isEmpty());
 }
 
 void PlayerControllerTest::midStreamErrorRefetchesTicket()

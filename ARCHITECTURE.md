@@ -125,9 +125,10 @@ Transcode.
 The ladder never mixes sources. Demoting a rung degrades *the version the user
 chose*; it does not silently swap to a different cut with a different runtime.
 
-`PlayerController` owns recovery: a watchdog for stalls, a broken-tail detector,
-playback-ticket refresh, and crash resume. Position is reported to the server on a
-timer and at start/stop so watch state survives.
+`PlayerController` owns recovery: a watchdog for stalls, playback-ticket refresh,
+and crash resume. Engines report clean EOF separately from fatal errors; the
+controller never guesses that an error is EOF from the playhead position. Position
+is reported to the server on a timer and at start/stop so watch state survives.
 
 ### Queue
 

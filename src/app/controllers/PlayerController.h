@@ -24,8 +24,8 @@ class EmbyClient;
 // stream ticket, walks the ladder (DirectPlay → DirectStream → Transcode) on
 // startup failure, reports start/progress/stop to the server, and runs the
 // robustness layer: stall watchdog (seek → reload → demote, never spin),
-// broken-tail EOF handling, mid-stream ticket refresh with backoff, and
-// crash-resume persistence.
+// reason-preserving EOF/error handling, mid-stream ticket refresh with backoff,
+// and crash-resume persistence.
 class PlayerController : public QObject
 {
     Q_OBJECT
@@ -171,6 +171,10 @@ public:
     // track that was already playing.
     Q_INVOKABLE void setPaused(bool paused);
     Q_INVOKABLE void stop();
+    // Stronger than a user stop: an account/server boundary must discard every
+    // deferred continuation and every queue/metadata reference to the outgoing
+    // identity. Application calls this before credentials are replaced.
+    void shutdownForSessionBoundary();
     Q_INVOKABLE void seekTo(qint64 positionMs);
     Q_INVOKABLE void seekRelative(qint64 deltaMs);
     Q_INVOKABLE void cycleAudioTrack();
@@ -298,6 +302,7 @@ private:
         CleanEnd,
         UserStop,
         Failure,
+        SessionBoundary,
     };
 
     // PlayerBackend::setVolume() contract; mirrored in Settings.
@@ -308,7 +313,7 @@ private:
     // reseeds the queue as a one-item queue instead).
     void startItem(const QString &itemId, const QString &title, qint64 startPositionMs,
                    int preferredSourceIndex, bool fromQueue,
-                   const QString &itemType = QString());
+                   const QString &itemType = QString(), bool initiallyPaused = false);
     // Plays whatever the queue's cursor points at. Without `force`, an item that
     // is already the running one is left alone (a re-index is not a restart).
     bool startQueueCurrent(bool force);
@@ -375,7 +380,6 @@ private:
     // Rungs available below the current one, within the current source only.
     bool canDemote() const { return m_rung + 1 < m_ticket.rungCount(m_sourceIndex); }
     void selectSource(qsizetype index);
-    bool nearEnd() const;
 
     emby::EmbyClient *m_client;
     PlayerBackend *m_backend;
@@ -426,8 +430,9 @@ private:
     // A record put back after a film does not start playing on its own: the
     // user stopped watching something, they did not ask for music. It comes
     // back where it was and waits.
-    bool m_startPaused = false;
+    bool m_initiallyPaused = false;
     SuspendedAudio m_suspendedAudio;
+    int m_resumeToken = 0;
     PlayerBackend::LoadId m_nextLoadId = 0;
     PlayerBackend::LoadId m_expectedLoadId = 0;
     QString m_errorMessage;

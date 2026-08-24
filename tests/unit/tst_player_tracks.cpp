@@ -35,7 +35,7 @@ class BareBackend : public PlayerBackend
 {
 public:
     QString engineName() const override { return QStringLiteral("bare"); }
-    void load(const QUrl &, qint64, LoadId) override {}
+    void load(const QUrl &, qint64, LoadId, bool = false) override {}
     void setPaused(bool) override {}
     void stop() override {}
     void seekTo(qint64) override {}

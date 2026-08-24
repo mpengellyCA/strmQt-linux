@@ -27,7 +27,8 @@ public:
 
     QString engineName() const override { return QStringLiteral("vlc"); }
 
-    void load(const QUrl &url, qint64 startMs, LoadId loadId) override;
+    void load(const QUrl &url, qint64 startMs, LoadId loadId,
+              bool initiallyPaused = false) override;
     void setPaused(bool paused) override;
     void stop() override;
     void seekTo(qint64 positionMs) override;
@@ -57,7 +58,7 @@ private:
     static void eventCb(const libvlc_event_t *event, void *opaque);
 
     void setState(State state, LoadId loadId);
-    void resetPerLoadState(LoadId loadId);
+    void resetPerLoadState(LoadId loadId, qint64 positionMs);
 
     libvlc_instance_t *m_vlc = nullptr;
     libvlc_media_player_t *m_player = nullptr;
