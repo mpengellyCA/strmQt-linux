@@ -407,6 +407,10 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // failed handoff cannot leave the outgoing file playing behind an inactive
     // controller.
     closeCurrentSession();
+    // Raw URLs have no server session to close, so closeCurrentSession() does
+    // not clear their ready state. Clear it at the handoff boundary before an
+    // old engine-stop notification can be rejected by the new load identity.
+    setEngineReady(false);
     m_expectedLoadId = 0;
     if (m_backend->state() != PlayerBackend::State::Idle)
         m_backend->stop();

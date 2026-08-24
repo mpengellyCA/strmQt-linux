@@ -32,6 +32,22 @@ public:
     void seekTo(qint64 positionMs) override { seeks.append(positionMs); }
 };
 
+// Real engines may publish the outgoing load id with their stop transition.
+// PlayerController must not rely on that stale event to clear new-session
+// state after it has invalidated the old load.
+class OldLoadIdStopBackend : public FakePlayerBackend
+{
+public:
+    using FakePlayerBackend::FakePlayerBackend;
+
+    void stop() override
+    {
+        ++stopCalls;
+        Q_ASSERT(!loadedIds.isEmpty());
+        simulateState(State::Idle, loadedIds.constLast());
+    }
+};
+
 } // namespace
 
 class PlayerControllerTest : public QObject
@@ -58,6 +74,7 @@ private slots:
     void failedHandoffIsIdleAndPreservesCrashResume();
     void stopWhileResolvingCancelsTheLoad();
     void engineReadyTracksAcceptedBackendState();
+    void rawUrlHandoffClearsEngineReadyWhileResolving();
     void seekAndPauseReportProgress();
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
@@ -475,6 +492,44 @@ void PlayerControllerTest::engineReadyTracksAcceptedBackendState()
     m_controller->stop();
     QVERIFY(!m_controller->engineReady());
     QCOMPARE(readyChanged.count(), 4);
+}
+
+void PlayerControllerTest::rawUrlHandoffClearsEngineReadyWhileResolving()
+{
+    OldLoadIdStopBackend backend;
+    PlayerController controller(m_client, &backend, m_settings);
+
+    controller.playUrl(QUrl(QStringLiteral("file:///tmp/raw-handoff.mkv")),
+                       QStringLiteral("Raw URL"));
+    QCOMPARE(backend.loadedUrls.size(), 1);
+    const PlayerBackend::LoadId rawLoadId = backend.loadedIds.constLast();
+    backend.simulateState(PlayerBackend::State::Playing, rawLoadId);
+    QVERIFY(controller.engineReady());
+
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/301001/PlaybackInfo"),
+                          200);
+    QSignalSpy readyChanged(&controller, &PlayerController::engineReadyChanged);
+    controller.playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+
+    QVERIFY(controller.active());
+    QVERIFY(controller.busy());
+    QVERIFY(!controller.engineReady());
+    QCOMPARE(readyChanged.count(), 1);
+    QCOMPARE(backend.stopCalls, 1);
+
+    // The old load's stop was rejected, and the delayed server ticket must not
+    // leave the controller advertising the raw URL as engine-ready.
+    QTest::qWait(100);
+    QCOMPARE(backend.loadedUrls.size(), 1);
+    QVERIFY(!controller.engineReady());
+
+    QTRY_COMPARE_WITH_TIMEOUT(backend.loadedUrls.size(), 2, 5000);
+    QVERIFY(!controller.engineReady()); // accepted engine state is still Loading
+    const PlayerBackend::LoadId serverLoadId = backend.loadedIds.constLast();
+    QVERIFY(serverLoadId != rawLoadId);
+    backend.simulateState(PlayerBackend::State::Paused, serverLoadId);
+    QVERIFY(controller.engineReady());
+    QCOMPARE(readyChanged.count(), 2);
 }
 
 void PlayerControllerTest::seekAndPauseReportProgress()
