@@ -47,9 +47,12 @@ Four rules hold this together:
 3. **One implementation per verb.** Play, shuffle, queue, mark-played and
    favourite exist once, in `ItemActions`, shared by cards, menus, the details
    page, the player and the remote-control service.
-4. **Backends are interfaces.** `PlayerBackend` has an mpv and a VLC
-   implementation; the server layer is written so a second media server can sit
-   beside Emby.
+4. **Playback engines are interfaces.** `PlayerBackend` has mpv and VLC
+   implementations. The server side is not equivalently pluggable today:
+   controllers depend on `EmbyClient`, while backend-neutral DTOs and mapping
+   keep Emby wire formats out of QML. Supporting another media service requires
+   introducing a substantive service interface and adapting the controllers;
+   it is not a drop-in backend addition.
 
 ### Threading and async
 
@@ -288,10 +291,11 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 Three things about this gate are not obvious and were each learned from a defect
 that reached a user:
 
-1. **`strmqt_qmllint` exits 0 on warnings.** The exit code is not the gate; the
-   per-category grep for `is not a type` / `was not found` / `unavailable` /
-   `incompatible-type` is. `missing-property` catches invented properties and is
-   worth reading too.
+1. **`strmqt_qmllint` exits 0 on warnings.** The exit code is not the gate. CI
+   normalizes warning locations and compares the complete warning stream with a
+   checked-in fingerprint, so a new warning fails even when qmllint succeeds.
+   Intentional warning-set changes require regenerating and reviewing that
+   baseline; type-resolution failures remain visible in the raw job log.
 2. **A plain offscreen run proves far less than it looks like.** `StackView` only
    ever constructs its `initialItem`, so a QML type error in any page reached by a
    push survives a clean startup. `STRMQT_SELFTEST=1` constructs every page and
@@ -313,9 +317,12 @@ Settings live in `QSettings` (INI under `~/.config/StrmQt/`). **There is no defa
 server address**: the artifacts are distributable, so a baked-in host would be both
 a privacy leak and wrong for every user but one. The login screen asks.
 
-The Emby access token goes to KWallet via `kwalletd6` over D-Bus, with a plaintext
-fallback when the wallet is unreachable. No credential is ever written to the repo,
-and TLS certificate errors are fatal in release builds.
+The Emby access token goes to KWallet via `kwalletd6` over D-Bus. If the wallet is
+unavailable or access is rejected, the token remains in process memory for that
+session and sign-in is required after restart. Older plaintext fallback files are
+migrated into an available wallet and deleted only after every write succeeds. No
+production path silently writes a credential to plaintext, no credential is ever
+written to the repo, and TLS certificate errors are fatal in release builds.
 
 ---
 

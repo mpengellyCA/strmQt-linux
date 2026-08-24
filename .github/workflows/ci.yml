@@ -35,16 +35,10 @@ jobs:
       - name: Test
         run: ctest --test-dir build/release --output-on-failure
 
-      # qmllint exits 0 even on warnings, so the exit code is NOT the gate.
-      # Only the categories below mean a QML type will fail to resolve at
-      # runtime — which is how a broken page can ship from a clean build.
-      - name: QML lint (type errors only)
-        run: |
-          cmake --build build/release --target strmqt_qmllint 2>&1 | tee lint.log
-          if grep -E 'is not a type|was not found|unavailable|incompatible-type' lint.log; then
-            echo "::error::qmllint found unresolvable QML types"
-            exit 1
-          fi
+      # qmllint exits 0 even on warnings. Compare every normalized warning to
+      # the reviewed baseline so warning noise cannot conceal a regression.
+      - name: QML lint warning baseline
+        run: bash scripts/check-qmllint-baseline.sh build/release
 
       # A plain offscreen run only ever constructs StackView's initialItem, so
       # it proves nothing about pages reached by a push. This constructs every
