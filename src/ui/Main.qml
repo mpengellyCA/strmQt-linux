@@ -169,13 +169,6 @@ ApplicationWindow {
     // read a property off an untyped stack item.
     property Item playerVideoSlot: null
 
-    function reseatVideoPlane(): void {
-        const slot = (root.playerOnTop && root.playerVideoSlot !== null) ? root.playerVideoSlot
-                                                                        : pipSlot;
-        if (videoPlane.parent !== slot)
-            videoPlane.parent = slot;
-    }
-
     // Leave the player WITHOUT stopping it, so playback continues under the
     // mini player. Until this existed there was no such path: Esc on the player
     // page called stop(), and canGoBack was forced false while it was on top —
@@ -529,8 +522,6 @@ ApplicationWindow {
         // restore at that depth reads a dead object and throws (masked by the
         // try/catch in restoreFocusToPage). Anything deeper than the stack is by
         // definition gone, so this is where it gets dropped.
-        onCurrentItemChanged: root.reseatVideoPlane()
-
         onDepthChanged: {
             for (const key in root.focusMemory) {
                 if (Number(key) > stack.depth)
@@ -579,6 +570,26 @@ ApplicationWindow {
                 }
                 console.log("selftest: " + (pages.length - failures) + "/" + pages.length
                             + " pages constructed");
+
+                // The video plane must follow the player page and come back
+                // out of it, because it cannot be destroyed with the page:
+                // freeing mpv's render context disables video for the loaded
+                // file for good. When this handoff broke, every film played
+                // black with a flash of picture on each transition — from one
+                // stale read in a signal handler, which nothing here would
+                // have noticed.
+                stack.push(playerComponent);
+                const seatedOnPage = root.playerVideoSlot !== null
+                                     && videoPlane.parent === root.playerVideoSlot;
+                stack.pop();
+                const seatedInPip = videoPlane.parent === pipSlot;
+                if (!seatedOnPage || !seatedInPip) {
+                    console.warn("selftest FAIL video plane handoff: onPage=" + seatedOnPage
+                                 + " backInPip=" + seatedInPip);
+                    ++failures;
+                } else {
+                    console.log("selftest ok   video plane handoff");
+                }
                 Qt.exit(failures > 0 ? 1 : 0);
             }
         }
@@ -642,7 +653,15 @@ ApplicationWindow {
     Loader {
         id: videoPlane
 
-        parent: pipSlot
+        // A BINDING, not a handler. Reseating this from onCurrentItemChanged
+        // read `root.playerOnTop` before that binding had been re-evaluated for
+        // the same change, so the plane stayed in the hidden frame while the
+        // player page was up: black video, and a flash of picture each time
+        // playerOnTop flipped through a state where the frame was on screen.
+        // A binding cannot be read too early — it re-evaluates when what it
+        // depends on changes, in whatever order that takes.
+        parent: (root.playerOnTop && root.playerVideoSlot !== null) ? root.playerVideoSlot
+                                                                    : pipSlot
         anchors.fill: parent
         Component.onCompleted: setSource(
             PlayerCtl.backend.engineName === "vlc" ? "components/VlcVideoPlane.qml"
@@ -962,15 +981,12 @@ ApplicationWindow {
     Component {
         id: playerComponent
         PlayerPage {
-            onVideoSlotReady: slot => {
-                root.playerVideoSlot = slot;
-                root.reseatVideoPlane();
-            }
-            // Before the page goes away with the plane still inside it.
-            onVideoSlotReleasing: {
-                root.playerVideoSlot = null;
-                root.reseatVideoPlane();
-            }
+            onVideoSlotReady: slot => root.playerVideoSlot = slot
+            // Before the page goes away with the plane still inside it. The
+            // binding above has usually moved it already — playerOnTop goes
+            // false when the pop starts — and this is the backstop for any
+            // route that destroys the page without that happening first.
+            onVideoSlotReleasing: root.playerVideoSlot = null
             sleeveInFlight: sleeveFlight.active
             onMinimizeRequested: root.minimizePlayer()
         }

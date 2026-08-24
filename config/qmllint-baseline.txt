@@ -51,15 +51,13 @@ src/ui/Main.qml: Unqualified access [unqualified]	initialItem: Session.authentic
 src/ui/Main.qml: Unqualified access [unqualified]	onMinimizeRequested: root.minimizePlayer()
 src/ui/Main.qml: Unqualified access [unqualified]	onPointChanged: Input.noteInput("mouse")
 src/ui/Main.qml: Unqualified access [unqualified]	onSignOutRequested: Session.logout()
+src/ui/Main.qml: Unqualified access [unqualified]	onVideoSlotReady: slot => root.playerVideoSlot = slot
+src/ui/Main.qml: Unqualified access [unqualified]	onVideoSlotReleasing: root.playerVideoSlot = null
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	root.openLibrary(libraryId, name, collectionType)
-src/ui/Main.qml: Unqualified access [unqualified]	root.playerVideoSlot = null;
-src/ui/Main.qml: Unqualified access [unqualified]	root.playerVideoSlot = slot;
 src/ui/Main.qml: Unqualified access [unqualified]	root.pushPage(playlistComponent, ({}), () => PlaylistCtl.refresh(),
-src/ui/Main.qml: Unqualified access [unqualified]	root.reseatVideoPlane();
-src/ui/Main.qml: Unqualified access [unqualified]	root.reseatVideoPlane();
 src/ui/Main.qml: Unqualified access [unqualified]	running: typeof SelfTest !== "undefined" && SelfTest
 src/ui/Main.qml: Unqualified access [unqualified]	sleeveInFlight: sleeveFlight.active
 src/ui/Main.qml: Unqualified access [unqualified]	target: Actions
