@@ -177,6 +177,7 @@ FocusScope {
         anchors.top: parent.top
         height: Math.round(page.height * 0.42)
         z: -1
+        clip: true
         // 0.18 was the hardcoded default and stays the shipped one (ARCHITECTURE.md
         // §2.8: a wash, not a wallpaper). Turning it off must also stop the
         // work, not just hide it — a blurred MultiEffect layer at opacity 0 is
@@ -187,34 +188,18 @@ FocusScope {
         Behavior on opacity {
             NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
         }
-        // Rendered through the effect rather than into a hidden source item:
-        // a hidden source renders nothing into its layer in some paint paths
-        // (see the same note in StrmPanel).
-        // Follows `visible` so switching the backdrop off actually stops the
-        // offscreen render, rather than paying for a blurred layer nobody sees.
-        layer.enabled: wash.visible
-        layer.effect: MultiEffect {
-            autoPaddingEnabled: false
-            blurEnabled: true
-            blur: 1.0
-            blurMax: 48
-            saturation: -0.55
-        }
-
         // Ken Burns (ARCHITECTURE.md): a 40 s drift, slow enough to read as
-        // depth rather than motion. Only ever a scale — a translation would
-        // expose the crop edges of a PreserveAspectCrop fill.
-        component WashLayer: Image {
-            id: layer
+        // depth rather than motion. The wrapper scales the already-blurred
+        // child texture; the static Image is the layer input, so its expensive
+        // blur is not invalidated on every animation frame.
+        component WashLayer: Item {
+            id: washLayer
 
+            property alias source: sourceImage.source
             property bool shown: false
 
             anchors.fill: parent
-            sourceSize.width: Theme.scale(960)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            opacity: (layer.shown && layer.status === Image.Ready) ? 1 : 0
+            opacity: (washLayer.shown && sourceImage.status === Image.Ready) ? 1 : 0
 
             Behavior on opacity {
                 NumberAnimation { duration: Theme.animSlow; easing.type: Theme.easeEmphasis }
@@ -224,11 +209,35 @@ FocusScope {
             // resume mid-drift at an arbitrary zoom.
             scale: 1.0
             SequentialAnimation on scale {
-                running: Prefs.backdropKenBurns && wash.visible && layer.opacity > 0.01
+                running: Prefs.backdropKenBurns && wash.visible && washLayer.opacity > 0.01
                 loops: Animation.Infinite
                 alwaysRunToEnd: false
                 NumberAnimation { from: 1.0; to: 1.08; duration: 40000; easing.type: Easing.InOutSine }
                 NumberAnimation { from: 1.08; to: 1.0; duration: 40000; easing.type: Easing.InOutSine }
+            }
+
+            Image {
+                id: sourceImage
+
+                anchors.fill: parent
+                sourceSize.width: Theme.scale(960)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                cache: true
+
+                // Rendered through the effect rather than into a hidden source
+                // item: a hidden source renders nothing in some paint paths.
+                // Keep the texture only while this crossfade side can be seen;
+                // disabling backdrops or finishing a fade releases the layer.
+                layer.enabled: wash.visible
+                               && (washLayer.shown || washLayer.opacity > 0.001)
+                layer.effect: MultiEffect {
+                    autoPaddingEnabled: false
+                    blurEnabled: true
+                    blur: 1.0
+                    blurMax: 48
+                    saturation: -0.55
+                }
             }
         }
 
