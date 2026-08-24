@@ -39,9 +39,20 @@ class MpvVideoItemTest : public QObject
     Q_OBJECT
 
 private slots:
+    void coreInitializesOnFirstLoad();
     void playerDetachSynchronizesBeforeOwnerDestruction();
     void offThreadFrameNotificationRedrawsTheItem();
 };
+
+void MpvVideoItemTest::coreInitializesOnFirstLoad()
+{
+    MpvPlayer player;
+    QVERIFY2(player.handle() == nullptr, "constructing the app initialized libmpv eagerly");
+
+    player.load(QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media")), 0, 1);
+    QVERIFY2(player.handle() != nullptr, "the first playback intent did not initialize libmpv");
+    player.stop();
+}
 
 void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
 {

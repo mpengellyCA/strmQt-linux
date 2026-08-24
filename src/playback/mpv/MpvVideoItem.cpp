@@ -195,7 +195,12 @@ void MpvVideoItem::setPlayerObject(QObject *player)
     auto *mpvPlayer = qobject_cast<MpvPlayer *>(player);
     if (mpvPlayer == m_player)
         return;
+    if (m_player)
+        disconnect(m_player, nullptr, this, nullptr);
     m_player = mpvPlayer;
+    if (m_player)
+        connect(m_player, &MpvPlayer::renderHandleChanged, this,
+                [this] { update(); });
     emit playerChanged();
     update();
 }

@@ -62,15 +62,23 @@ QVariant variantFromNode(const mpv_node &node)
 
 } // namespace
 
-MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent) : PlayerBackend(parent)
+MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent)
+    : PlayerBackend(parent), m_toneMapping(toneMapping)
 {
+}
+
+bool MpvPlayer::ensureInitialized()
+{
+    if (m_mpv)
+        return true;
+
     // libmpv refuses to create a core unless LC_NUMERIC is "C"; QGuiApplication
     // resets the locale from the environment, so pin it back here.
     std::setlocale(LC_NUMERIC, "C");
     m_mpv = mpv_create();
     if (!m_mpv) {
         qCCritical(logPlayback) << "mpv_create failed";
-        return;
+        return false;
     }
 
     mpv_set_option_string(m_mpv, "vo", "libmpv");
@@ -87,7 +95,8 @@ MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent) : PlayerBacken
     // HDR: the embedded GL path always tone-maps to the SDR scene (PLAN M6 matrix).
     // High-quality libplacebo settings; dynamic peak detection tracks scene brightness.
     mpv_set_option_string(m_mpv, "tone-mapping",
-                          toneMapping.isEmpty() ? "hable" : toneMapping.toUtf8().constData());
+                          m_toneMapping.isEmpty() ? "hable"
+                                                  : m_toneMapping.toUtf8().constData());
     mpv_set_option_string(m_mpv, "hdr-compute-peak", "yes");
     mpv_set_option_string(m_mpv, "target-colorspace-hint", "auto");
 
@@ -95,7 +104,7 @@ MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent) : PlayerBacken
         qCCritical(logPlayback) << "mpv_initialize failed";
         mpv_destroy(m_mpv);
         m_mpv = nullptr;
-        return;
+        return false;
     }
 
     mpv_request_log_messages(m_mpv, "warn");
@@ -128,6 +137,8 @@ MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent) : PlayerBacken
     mpv_observe_property(m_mpv, 0, "video-params", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, 0, "frame-drop-count", MPV_FORMAT_INT64);
     mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
+    emit renderHandleChanged();
+    return true;
 }
 
 MpvPlayer::~MpvPlayer()
@@ -159,7 +170,7 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
     // the new load id would be accepted by PlayerController and could erase
     // the recovery point before this load produces its first time-pos event.
     resetPerLoadState(loadId, startMs);
-    if (!m_mpv) {
+    if (!ensureInitialized()) {
         setState(State::Error, loadId);
         emit errorOccurred(QStringLiteral("mpv core unavailable"), loadId);
         return;

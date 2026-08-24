@@ -179,7 +179,13 @@ public:
     // For MpvVideoItem's render context; never used to bypass this wrapper.
     mpv_handle *handle() const { return m_mpv; }
 
+signals:
+    // The object exists before the expensive mpv core does. Video items use
+    // this to resynchronize their render-thread handle on first playback.
+    void renderHandleChanged();
+
 private:
+    bool ensureInitialized();
     static void wakeup(void *ctx);
     Q_INVOKABLE void drainEvents();
     void setState(State state, LoadId loadId);
@@ -190,6 +196,7 @@ private:
     void setTrackProperty(const char *name, int id);
 
     mpv_handle *m_mpv = nullptr;
+    QString m_toneMapping;
     State m_state = State::Idle;
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
