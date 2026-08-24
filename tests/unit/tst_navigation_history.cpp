@@ -17,7 +17,10 @@ private slots:
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void restoresPerEntryMusicTab();
+    void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void restoresVirtualFocusAcrossDelayedRefill();
+    void pendingBackRestoreHonorsUserOverride();
+    void progressExtendsRefillWithoutAdmittingStaleRows();
     void stableOwnersAndPlaylistIdentitySurviveReorder();
     void terminalFallbackAndUserOverride();
     void pendingRestoreIsNotResurrected();
@@ -47,12 +50,18 @@ Item {
     property string preparedAlbumId: ""
     property string searchQuery: ""
     property string musicTab: "albums"
+    property string seriesSeasonId: ""
+    property string preparedSeriesSeasonId: ""
     property int refillBatch: 0
     property int virtualNearEndCount: 0
     property bool virtualRefillActive: false
     property bool twinSwapped: false
     property bool delayTwinOwners: false
     readonly property int virtualCount: virtualRows.count
+    property bool progressRefillActive: false
+    property int progressFocusedIndex: -1
+    property int progressFallbackCount: 0
+    readonly property bool progressRestorePending: progressRestorer.pending
 
     function itemFor(id): var {
         const text = String(id);
@@ -154,6 +163,27 @@ Item {
         virtualRows.append({ "itemId": "late-row", "name": "Late row" });
     }
 
+    function beginProgressRestore(): void {
+        progressRows.clear();
+        progressRows.append({ "itemId": "target", "name": "Retained target" });
+        root.progressFocusedIndex = -1;
+        root.progressFallbackCount = 0;
+        root.progressRefillActive = true;
+        progressRestorer.restore("i:target", 0);
+    }
+
+    function appendProgressRow(id): void {
+        progressRows.append({ "itemId": String(id), "name": "Progress " + String(id) });
+    }
+
+    function replaceProgressRows(): void {
+        progressRows.clear();
+        progressRows.append({ "itemId": "other", "name": "Other" });
+        progressRows.append({ "itemId": "target", "name": "Fresh target" });
+    }
+
+    function finishProgressRestore(): void { root.progressRefillActive = false; }
+
     function focusVirtualOverride(): void {
         if (history.currentItem && history.currentItem.focusOverride)
             history.currentItem.focusOverride();
@@ -232,6 +262,15 @@ Item {
         if (history.currentItem && history.currentItem.selectedTab !== undefined)
             history.currentItem.selectedTab = root.musicTab;
     }
+    function pushSeries(seasonId): void {
+        root.seriesSeasonId = String(seasonId);
+        history.pushRoute({ "kind": "series", "id": "series-1", "name": "Series",
+                            "key": "series", "title": "Series",
+                            "seasonId": root.seriesSeasonId });
+    }
+    function setSeriesSeason(seasonId): void {
+        root.seriesSeasonId = String(seasonId);
+    }
     function goBack(): void { history.goBack(); }
     function goForward(): void { history.goForward(); }
     function goHome(): void { history.goHome(); }
@@ -257,6 +296,10 @@ Item {
             root.searchQuery = route.query;
         else if (route.kind === "music")
             root.musicTab = route.tab;
+        else if (route.kind === "series") {
+            root.seriesSeasonId = route.seasonId;
+            root.preparedSeriesSeasonId = route.seasonId;
+        }
         else if (route.kind === "library")
             root.refillVirtualRows();
     }
@@ -472,6 +515,12 @@ Item {
         focus: true
     }
 
+    component SeriesProbe: FocusScope {
+        readonly property string selectedSeasonId: root.seriesSeasonId
+        objectName: "series-" + selectedSeasonId
+        focus: true
+    }
+
     Component { id: detailsComponent; DetailsProbe {} }
     Component { id: albumComponent; AlbumProbe {} }
     Component { id: artistComponent; ArtistProbe {} }
@@ -481,11 +530,24 @@ Item {
     Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
     Component { id: musicComponent; MusicProbe {} }
+    Component { id: seriesComponent; SeriesProbe {} }
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
     Component { id: homeComponent; FocusScope { objectName: "home-base"; focus: true } }
     Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
 
     ListModel { id: virtualRows }
+    ListModel { id: progressRows }
+    NavigationFocusRestorer {
+        id: progressRestorer
+        model: progressRows
+        count: progressRows.count
+        currentIndex: -1
+        refillActive: root.progressRefillActive
+        settleInterval: 30
+        stallInterval: 120
+        onFocusRequested: index => root.progressFocusedIndex = index
+        onFallbackRequested: root.progressFallbackCount += 1
+    }
     ListModel {
         id: primaryRows
         ListElement { itemId: "primary"; name: "Primary" }
@@ -510,6 +572,7 @@ Item {
         focusItem: root.Window.window ? root.Window.window.activeFocusItem : null
         currentSearchQuery: root.searchQuery
         currentMusicTab: root.musicTab
+        currentSeriesSeasonId: root.seriesSeasonId
         initialRoute: ({
             "kind": "details", "id": "0", "name": "Item 0", "itemType": "Movie",
             "key": "details:0", "title": "Title 0",
@@ -529,6 +592,7 @@ Item {
         libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
         musicPageComponent: musicComponent
+        seriesPageComponent: seriesComponent
         loginPageComponent: loginComponent
         homePageComponent: homeComponent
         onPrepareRequested: route => root.prepareRoute(route)
@@ -837,6 +901,47 @@ void NavigationHistoryTest::restoresPerEntryMusicTab()
                  QStringLiteral("songs"));
 }
 
+void NavigationHistoryTest::restoresPerEntrySeriesSeasonAndAcceptsLaterSelection()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushSeries", QStringLiteral("season-a")));
+    QTRY_COMPARE(currentItem(history)->property("selectedSeasonId").toString(),
+                 QStringLiteral("season-a"));
+    QVERIFY(invoke(root, "setSeriesSeason", QStringLiteral("season-b")));
+    QVERIFY(invoke(root, "pushRoute", 91));
+
+    const QVariantMap retainedSeries = listProperty(history, "navTrail").at(1).toMap();
+    QCOMPARE(retainedSeries.value(QStringLiteral("seasonId")).toString(),
+             QStringLiteral("season-b"));
+
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(root->property("preparedSeriesSeasonId").toString(),
+                 QStringLiteral("season-b"));
+    QTRY_COMPARE(currentItem(history)->property("selectedSeasonId").toString(),
+                 QStringLiteral("season-b"));
+
+    // Put the route in Forward so its live graph is gone, then reconstruct it
+    // from the bounded scalar descriptor.
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_COMPARE(currentItem(history)->property("selectedSeasonId").toString(),
+                 QStringLiteral("season-b"));
+
+    // A season picked after restoration is the new route state; the restored
+    // identity is not a permanent lock on subsequent user choices.
+    QVERIFY(invoke(root, "setSeriesSeason", QStringLiteral("season-c")));
+    QVERIFY(invoke(root, "pushRoute", 92));
+    const QVariantMap updatedSeries = listProperty(history, "navTrail").at(1).toMap();
+    QCOMPARE(updatedSeries.value(QStringLiteral("seasonId")).toString(),
+             QStringLiteral("season-c"));
+}
+
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
 {
     QTemporaryDir dir;
@@ -880,6 +985,73 @@ void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
     QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
     QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
     QVERIFY(view.activeFocusItem());
+}
+
+void NavigationHistoryTest::pendingBackRestoreHonorsUserOverride()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushVirtual", QStringLiteral("override")));
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QVERIFY(invoke(root, "focusVirtual", 17));
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
+    QVERIFY(invoke(root, "pushRoute", 91));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+
+    // The semantic owner is not focused while its controller refill is live.
+    // Moving to an ordinary page control must still retire the stack-owned
+    // locator before the exact row arrives.
+    QVERIFY(invoke(root, "focusVirtualOverride"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
+    QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QTest::qWait(450);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
+}
+
+void NavigationHistoryTest::progressExtendsRefillWithoutAdmittingStaleRows()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "beginProgressRestore"));
+    QTRY_VERIFY(root->property("progressRestorePending").toBool());
+    // The retained model already contains the exact identity, but it is not a
+    // coherent answer while its controller says replacement is active.
+    QCOMPARE(root->property("progressFocusedIndex").toInt(), -1);
+
+    // Each page advances inside the short inactivity window while the complete
+    // walk takes several times longer. Total elapsed time must not retire it.
+    for (int page = 0; page < 5; ++page) {
+        QTest::qWait(80);
+        QVERIFY(invoke(root, "appendProgressRow", QStringLiteral("page-%1").arg(page)));
+        QVERIFY(root->property("progressRestorePending").toBool());
+        QCOMPARE(root->property("progressFocusedIndex").toInt(), -1);
+    }
+
+    QVERIFY(invoke(root, "replaceProgressRows"));
+    QVERIFY(root->property("progressRestorePending").toBool());
+    QCOMPARE(root->property("progressFocusedIndex").toInt(), -1);
+    QVERIFY(invoke(root, "finishProgressRestore"));
+    QTRY_COMPARE(root->property("progressFocusedIndex").toInt(), 1);
+    QTRY_VERIFY(!root->property("progressRestorePending").toBool());
+
+    // A controller that never advances and never publishes a terminal edge is
+    // still bounded by inactivity rather than hanging for the page lifetime.
+    QVERIFY(invoke(root, "beginProgressRestore"));
+    QTRY_VERIFY(root->property("progressRestorePending").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!root->property("progressRestorePending").toBool(), 1000);
+    QCOMPARE(root->property("progressFocusedIndex").toInt(), 0);
 }
 
 void NavigationHistoryTest::stableOwnersAndPlaylistIdentitySurviveReorder()

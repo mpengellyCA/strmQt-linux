@@ -28,6 +28,9 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    Q_INVOKABLE QVariantMap get(int row) const;
+    Q_INVOKABLE int indexOfNavigationIdentity(const QString &identity) const;
+
     void setLibraries(QList<Library> libraries);
     const QList<Library> &libraries() const { return m_libraries; }
 

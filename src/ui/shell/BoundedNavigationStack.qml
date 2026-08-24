@@ -20,6 +20,9 @@ StackView {
     // MusicController is process-wide while each retained music route owns the
     // tab its semantic focus key belongs to.
     property string currentMusicTab: "albums"
+    // SeriesController is likewise process-wide. History retains the stable
+    // server season id rather than a row that can move after reconstruction.
+    property string currentSeriesSeasonId: ""
 
     property Component loginPageComponent: null
     property Component homePageComponent: null
@@ -42,6 +45,13 @@ StackView {
     property int _focusRetryToken: -1
     property string _focusRetryLocator: ""
     property int _focusRetryAttempts: 0
+    // Scalar ownership for a semantic locator that has found its control but is
+    // still waiting for that control's coherent model snapshot. Keeping this in
+    // the stack closes the interval where the view itself is not focused yet and
+    // therefore cannot observe the user focusing a different page control.
+    property int _pendingSemanticToken: -1
+    property string _pendingSemanticKey: ""
+    property bool _pendingSemanticOwnerHadFocus: false
 
     readonly property int semanticControlLimit: 128
     readonly property int semanticTraversalLimit: 4096
@@ -58,6 +68,37 @@ StackView {
     signal prepareRequested(var route)
 
     onFocusItemChanged: {
+        if (navigation._pendingSemanticToken >= 0) {
+            const route = navigation.currentEntry;
+            if (!route || Number(route.token) !== navigation._pendingSemanticToken) {
+                navigation.cancelLiveFocusRestores();
+                return;
+            }
+            // restoreFocusToCurrentPage() deliberately plants focus on the page
+            // before offering a locator. That one unchanged focus location is
+            // not a user override.
+            if (navigation.focusItem === navigation.currentItem)
+                return;
+            const pendingOwner = navigation.semanticOwner(navigation.focusItem);
+            if (pendingOwner
+                    && navigation.semanticKey(pendingOwner) === navigation._pendingSemanticKey) {
+                if (pendingOwner["navigationFocusRestorePending"] === true
+                        && navigation._pendingSemanticOwnerHadFocus)
+                    return;
+                if (pendingOwner["navigationFocusRestorePending"] === true) {
+                    navigation.cancelLiveFocusRestores();
+                    return;
+                }
+                // The restorer retires its pending flag before it publishes the
+                // exact/fallback focus, so this is its own committed focus move.
+                navigation.clearPendingSemanticRestore();
+                return;
+            }
+            // Any other focus transition is the user's newer instruction. This
+            // includes entering the still-pending owner manually.
+            navigation.cancelLiveFocusRestores();
+            return;
+        }
         if (navigation._focusRetryToken < 0)
             return;
         // focusCurrentPage() runs before the retry is armed. Afterwards, a
@@ -158,6 +199,7 @@ StackView {
             "title": navigation.boundedText(route.title, 1024),
             "query": navigation.boundedText(route.query, 1024),
             "tab": navigation.boundedText(route.tab, 16),
+            "seasonId": navigation.boundedText(route.seasonId, 1024),
 
             // Strict, bounded page-header DTO. These are the complete scalar
             // fields Details/Album/Artist consume from their original model
@@ -292,6 +334,8 @@ StackView {
             route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
         else if (route.kind === "music")
             route.tab = navigation.boundedText(navigation.currentMusicTab, 16);
+        else if (route.kind === "series")
+            route.seasonId = navigation.boundedText(navigation.currentSeriesSeasonId, 1024);
     }
 
     function semanticKey(item): string {
@@ -466,7 +510,23 @@ StackView {
         const control = controls[0];
         if (!control.visible || !control.enabled)
             return false;
-        return control["restoreNavigationFocus"](identity, index) === true;
+        const accepted = control["restoreNavigationFocus"](identity, index) === true;
+        if (accepted && control["navigationFocusRestorePending"] === true) {
+            const route = navigation.currentEntry;
+            navigation._pendingSemanticToken = route ? Number(route.token) : -1;
+            navigation._pendingSemanticKey = controlKey;
+            const focusedOwner = navigation.semanticOwner(navigation.focusItem);
+            navigation._pendingSemanticOwnerHadFocus = focusedOwner === control;
+        } else if (accepted) {
+            navigation.clearPendingSemanticRestore();
+        }
+        return accepted;
+    }
+
+    function clearPendingSemanticRestore(): void {
+        navigation._pendingSemanticToken = -1;
+        navigation._pendingSemanticKey = "";
+        navigation._pendingSemanticOwnerHadFocus = false;
     }
 
     function cancelFocusRetry(): void {
@@ -482,6 +542,7 @@ StackView {
             if (typeof controls[i]["cancelNavigationFocusRestore"] === "function")
                 controls[i]["cancelNavigationFocusRestore"]();
         }
+        navigation.clearPendingSemanticRestore();
     }
 
     function armFocusRetry(token, locator): void {
@@ -526,6 +587,7 @@ StackView {
         const locator = key.length > 0 && navigation.focusMemory[key] !== undefined
                       ? String(navigation.focusMemory[key]) : "";
         navigation.cancelFocusRetry();
+        navigation.cancelLiveFocusRestores();
         navigation.focusCurrentPage();
         if (navigation.restoreFocusLocator(locator))
             return;

@@ -375,7 +375,7 @@ FocusScope {
             StrmRail {
                 id: mediaRail
 
-                navigationFocusKey: "home-" + cell.railKey
+                navigationFocusKey: cell.isLibraryRail ? "" : "home-" + cell.railKey
                 navigationFocusRefillActive: HomeCtl.busy
 
                 // No anchors: StrmRail binds its own width to parent.width, and
@@ -412,9 +412,72 @@ FocusScope {
             FocusScope {
                 id: libraryRail
 
+                readonly property string navigationFocusKind: "rail"
+                readonly property string navigationFocusKey:
+                    cell.isLibraryRail ? "home-" + cell.railKey : ""
+                readonly property bool navigationFocusRestorePending:
+                    libraryNavigationFocus.pending
+                property bool _navigationFocusWriting: false
+
                 // Published by whichever tile is current, so Return does not
                 // have to reach into ListView.currentItem for untyped roles.
                 property var currentLibrary: null
+
+                function navigationFocusSnapshot(): var {
+                    return libraryNavigationFocus.snapshot()
+                }
+                function restoreNavigationFocus(identity, index): bool {
+                    return libraryNavigationFocus.restore(identity, index)
+                }
+                function cancelNavigationFocusRestore(): void {
+                    libraryNavigationFocus.cancel()
+                }
+                function cancelNavigationFocusForUser(): void {
+                    if (!libraryRail._navigationFocusWriting)
+                        libraryNavigationFocus.cancel()
+                }
+                function applyNavigationFocus(index): void {
+                    libraryRail._navigationFocusWriting = true
+                    if (index >= 0) {
+                        libList.currentIndex = index
+                        libList.positionViewAtIndex(index, ListView.Contain)
+                    }
+                    libList.forceActiveFocus(Qt.OtherFocusReason)
+                    libraryRail._navigationFocusWriting = false
+                }
+                function applyNavigationFallback(): void {
+                    let candidate = libList
+                    for (let step = 0; step < 256; ++step) {
+                        candidate = candidate.nextItemInFocusChain(true)
+                        if (!candidate || candidate === libList)
+                            return
+                        let cursor = candidate
+                        while (cursor && cursor !== libraryRail)
+                            cursor = cursor.parent
+                        if (cursor !== libraryRail) {
+                            candidate.forceActiveFocus(Qt.OtherFocusReason)
+                            return
+                        }
+                    }
+                }
+
+                NavigationFocusRestorer {
+                    id: libraryNavigationFocus
+                    model: cell.isLibraryRail ? cell.railModel : null
+                    count: libList.count
+                    currentIndex: libList.currentIndex
+                    refillActive: HomeCtl.busy
+                    onFocusRequested: index => libraryRail.applyNavigationFocus(index)
+                    onFallbackRequested: libraryRail.applyNavigationFallback()
+                }
+
+                Connections {
+                    target: libraryRail
+                    function onActiveFocusChanged() {
+                        if (!libraryRail.activeFocus)
+                            libraryRail.cancelNavigationFocusForUser()
+                    }
+                }
 
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -520,6 +583,7 @@ FocusScope {
                             highlighted: libCell.isCurrent && libList.activeFocus
 
                             onActivated: {
+                                libraryRail.cancelNavigationFocusForUser()
                                 // A click commits the keyboard's place too, so a
                                 // later arrow key continues from where it landed.
                                 libList.currentIndex = libCell.index
@@ -533,11 +597,14 @@ FocusScope {
                     // Guard isAutoRepeat: a held/stuck Return must not
                     // machine-gun activations.
                     Keys.onReturnPressed: event => {
+                        libraryRail.cancelNavigationFocusForUser()
                         if (!event.isAutoRepeat) libraryRail.activateCurrent()
                     }
                     Keys.onEnterPressed: event => {
+                        libraryRail.cancelNavigationFocusForUser()
                         if (!event.isAutoRepeat) libraryRail.activateCurrent()
                     }
+                    Keys.onPressed: libraryRail.cancelNavigationFocusForUser()
                 }
             }
         }

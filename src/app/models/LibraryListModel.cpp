@@ -41,6 +41,30 @@ QHash<int, QByteArray> LibraryListModel::roleNames() const
     };
 }
 
+QVariantMap LibraryListModel::get(int row) const
+{
+    QVariantMap map;
+    const QModelIndex modelIndex = index(row);
+    if (!modelIndex.isValid())
+        return map;
+    const auto roles = roleNames();
+    for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+        map.insert(QString::fromLatin1(it.value()), data(modelIndex, it.key()));
+    return map;
+}
+
+int LibraryListModel::indexOfNavigationIdentity(const QString &identity) const
+{
+    if (!identity.startsWith(QLatin1String("i:")))
+        return -1;
+    const QString id = identity.sliced(2);
+    for (int row = 0; row < m_libraries.size(); ++row) {
+        if (m_libraries.at(row).id == id)
+            return row;
+    }
+    return -1;
+}
+
 void LibraryListModel::setLibraries(QList<Library> libraries)
 {
     const int oldCount = static_cast<int>(m_libraries.size());

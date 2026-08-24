@@ -109,10 +109,10 @@ FocusScope {
     Connections {
         target: Qt.isQtObject(rail.railModel) ? rail.railModel : null
         ignoreUnknownSignals: true
-        function onModelReset() { Qt.callLater(navigationFocus.retry) }
+        function onModelReset() { Qt.callLater(navigationFocus.noteProgress) }
     }
 
-    onCountChanged: navigationFocus.retry()
+    onCountChanged: navigationFocus.noteProgress()
     onRailModelChanged: navigationFocus.cancel()
 
     // A single hidden card is the one source of truth for "how big is a card of

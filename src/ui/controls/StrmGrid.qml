@@ -199,7 +199,7 @@ FocusScope {
         ignoreUnknownSignals: true
         function onModelReset() {
             grid._lastNearEndCount = -1
-            Qt.callLater(navigationFocus.retry)
+            Qt.callLater(navigationFocus.noteProgress)
         }
     }
 
@@ -221,7 +221,7 @@ FocusScope {
         }
     }
 
-    onCountChanged: navigationFocus.retry()
+    onCountChanged: navigationFocus.noteProgress()
     onGridModelChanged: navigationFocus.cancel()
 
     function _checkNearEnd() {

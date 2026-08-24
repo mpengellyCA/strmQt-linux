@@ -538,7 +538,7 @@ ListView {
     onCountChanged: {
         table.rebuildMeta()
         table._checkNearEnd()
-        navigationFocus.retry()
+        navigationFocus.noteProgress()
     }
     onModelChanged: {
         // A different list is a different paging cursor: without this the
@@ -576,7 +576,7 @@ ListView {
             // describing the rows that were just replaced. The rule the throttle
             // and the selection follow has to be the whole rule.
             table.rebuildMeta()
-            Qt.callLater(navigationFocus.retry)
+            Qt.callLater(navigationFocus.noteProgress)
         }
     }
     onCurrentIndexChanged: {

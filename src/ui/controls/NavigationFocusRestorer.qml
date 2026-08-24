@@ -14,7 +14,12 @@ QtObject {
     property int currentIndex: -1
     property bool refillActive: false
     property int settleInterval: 400
-    property int terminalInterval: 20000
+    // Longer than EmbyClient's per-request transfer deadline. This is an
+    // inactivity guard, not a total refill deadline: every model advance
+    // restarts it, so a bounded multi-page playlist walk may take as long as its
+    // pages require without leaving a genuinely wedged loading signal live
+    // forever.
+    property int stallInterval: 20000
 
     readonly property int maximumIndex: 2147483646
     readonly property int qmlScanLimit: 512
@@ -33,11 +38,11 @@ QtObject {
         onTriggered: restorer.finishWithFallback(restorer._generation)
     }
 
-    // Controller requests are bounded independently, but keep one final guard
-    // here as well. A broken loading signal must not leave a dead locator able
-    // to steal focus for the rest of the session.
-    property Timer terminalTimer: Timer {
-        interval: restorer.terminalInterval
+    // Controller requests are bounded independently, but keep one final
+    // inactivity guard here as well. It is restarted by noteProgress(), never
+    // merely by rediscovering the same locator.
+    property Timer stallTimer: Timer {
+        interval: restorer.stallInterval
         repeat: false
         onTriggered: restorer.finishWithFallback(restorer._generation)
     }
@@ -47,10 +52,20 @@ QtObject {
             return
         if (restorer.refillActive) {
             restorer.settleTimer.stop()
+            restorer.stallTimer.restart()
             return
         }
+        restorer.stallTimer.stop()
         if (!restorer.retry())
             restorer.settleTimer.restart()
+    }
+
+    onCountChanged: restorer.noteProgress()
+
+    property Connections modelProgress: Connections {
+        target: Qt.isQtObject(restorer.model) ? restorer.model : null
+        ignoreUnknownSignals: true
+        function onModelReset() { Qt.callLater(restorer.noteProgress) }
     }
 
     function boundedId(value): string {
@@ -79,6 +94,9 @@ QtObject {
         if (row.itemId !== undefined && row.itemId !== null
                 && String(row.itemId).length > 0)
             return restorer.boundedId("i:" + String(row.itemId))
+        if (row.libraryId !== undefined && row.libraryId !== null
+                && String(row.libraryId).length > 0)
+            return restorer.boundedId("i:" + String(row.libraryId))
         if (row.id !== undefined && row.id !== null && String(row.id).length > 0)
             return restorer.boundedId("i:" + String(row.id))
         return ""
@@ -117,8 +135,9 @@ QtObject {
         restorer._pendingIdentity = boundedIdentity
         restorer._pendingIndex = numericIndex
         ++restorer._generation
-        restorer.terminalTimer.restart()
-        if (!restorer.retry() && !restorer.refillActive)
+        if (restorer.refillActive)
+            restorer.stallTimer.restart()
+        else if (!restorer.retry())
             restorer.settleTimer.restart()
         return true
     }
@@ -126,9 +145,22 @@ QtObject {
     function cancel(): void {
         ++restorer._generation
         restorer.settleTimer.stop()
-        restorer.terminalTimer.stop()
+        restorer.stallTimer.stop()
         restorer._pendingIdentity = ""
         restorer._pendingIndex = -1
+    }
+
+    function noteProgress(): bool {
+        if (!restorer.pending)
+            return false
+        // Rows visible during an active replacement may belong to the previous
+        // controller snapshot. Do not certify their identity until the owner
+        // reports a coherent terminal state.
+        if (restorer.refillActive) {
+            restorer.stallTimer.restart()
+            return false
+        }
+        return restorer.retry()
     }
 
     function indexedTarget(): int {
@@ -148,7 +180,7 @@ QtObject {
     }
 
     function retry(): bool {
-        if (!restorer.pending)
+        if (!restorer.pending || restorer.refillActive)
             return false
 
         let target = -1

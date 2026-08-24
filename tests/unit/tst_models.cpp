@@ -244,6 +244,11 @@ void ModelsTest::libraryModelRoles()
              QStringLiteral("Movies"));
     QCOMPARE(model.data(model.index(0), LibraryListModel::ImageUrlRole).toString(),
              QStringLiteral("image://emby/test-session/4/Primary/imgtag"));
+    QCOMPARE(model.get(0).value(QStringLiteral("libraryId")).toString(),
+             QStringLiteral("4"));
+    QVERIFY(model.get(1).isEmpty());
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:4")), 0);
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:missing")), -1);
 }
 
 void ModelsTest::setLibrariesNotifiesOnlyChangedCount()
