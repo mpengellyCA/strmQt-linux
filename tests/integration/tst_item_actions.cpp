@@ -151,6 +151,7 @@ void ItemActionsTest::togglePlayedUpdatesOptimisticallyAndPatchesModels()
     m_mock->addRoute(QStringLiteral("POST"), playedPath(kItemId), 204, {});
 
     QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy committed(m_actions, &ItemActions::playedCommitted);
     QSignalSpy failed(m_actions, &ItemActions::actionFailed);
 
     m_actions->togglePlayed(m_model->get(0));
@@ -164,7 +165,9 @@ void ItemActionsTest::togglePlayedUpdatesOptimisticallyAndPatchesModels()
     QVERIFY(m_actions->isPlayed(kItemId));
 
     QTRY_COMPARE(requestCount(QStringLiteral("POST"), playedPath(kItemId)), 1);
-    QTest::qWait(50);
+    QTRY_COMPARE(committed.count(), 1);
+    QCOMPARE(committed.first().at(0).toString(), kItemId);
+    QCOMPARE(committed.first().at(1).toBool(), true);
     QCOMPARE(failed.count(), 0);
     QCOMPARE(played.count(), 1); // a confirmed reply is not a second change
     QCOMPARE(m_model->get(0).value(QStringLiteral("played")).toBool(), true);
@@ -174,6 +177,7 @@ void ItemActionsTest::failedTogglePlayedRollsBack()
 {
     // No route registered → the mock answers 404 → the request fails.
     QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy committed(m_actions, &ItemActions::playedCommitted);
     QSignalSpy failed(m_actions, &ItemActions::actionFailed);
 
     m_actions->setPlayed(kItemId, true);
@@ -188,6 +192,7 @@ void ItemActionsTest::failedTogglePlayedRollsBack()
     QCOMPARE(played.last().at(1).toBool(), false); // rolled back to the truth
     QCOMPARE(m_model->get(0).value(QStringLiteral("played")).toBool(), false);
     QVERIFY(!m_actions->isPlayed(kItemId));
+    QCOMPARE(committed.count(), 0);
 }
 
 void ItemActionsTest::failedToggleFavoriteRollsBack()
@@ -236,13 +241,15 @@ void ItemActionsTest::rapidTogglePairConvergesOnTheServer()
     m_mock->addRoute(QStringLiteral("DELETE"), playedPath(kItemId), 204, {});
 
     const QVariantMap item = m_model->get(0);
+    QSignalSpy committed(m_actions, &ItemActions::playedCommitted);
     m_actions->togglePlayed(item); // → true
     m_actions->togglePlayed(item); // → false
 
     QVERIFY(!m_actions->isPlayed(kItemId));
     QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), playedPath(kItemId)), 1);
     QCOMPARE(requestCount(QStringLiteral("POST"), playedPath(kItemId)), 1);
-    QTest::qWait(50);
+    QTRY_COMPARE(committed.count(), 1);
+    QCOMPARE(committed.first().at(1).toBool(), false);
     QVERIFY(!m_actions->isPlayed(kItemId));
     QCOMPARE(m_model->get(0).value(QStringLiteral("played")).toBool(), false);
 }

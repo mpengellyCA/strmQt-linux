@@ -167,6 +167,10 @@ public:
 
 signals:
     void playedChanged(const QString &itemId, bool played);
+    // Emitted only after the final coalesced played-state request succeeds.
+    // Server-filtered consumers must wait for this rather than reacting to the
+    // optimistic signal above and racing a GET ahead of the mutation.
+    void playedCommitted(const QString &itemId, bool played);
     void favoriteChanged(const QString &itemId, bool favorite);
     // Human-readable reason a verb failed; the UI surfaces it as a toast.
     void actionFailed(const QString &message);

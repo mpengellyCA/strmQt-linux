@@ -119,11 +119,10 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // into a scratch list of its own and hands the ordered items over, so that
     // playing an album never has to navigate the open-album state to do it.
     m_music->setActions(m_actions);
-    // SeriesController keeps a whole-series episode list to answer "next
-    // unwatched"; it has to hear about played toggles to stay right. Connected
-    // here rather than forwarded through QML because the dependency is a real
-    // one and the page should not have to remember to relay it.
-    connect(m_actions, &ItemActions::playedChanged, m_series, &SeriesController::notePlayed);
+    // The series page's bounded, server-filtered next-unwatched query must run
+    // only after the played mutation commits; the optimistic signal fires
+    // before the REST request and would race the query against stale state.
+    connect(m_actions, &ItemActions::playedCommitted, m_series, &SeriesController::notePlayed);
 
     // Latest rails are built lazily by HomeController::refresh(); registerModel dedupes.
     const auto registerRailModels = [this](const QVariantList &rails) {
@@ -144,6 +143,7 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_live = new LiveUpdateService(m_client, m_settings, this);
     m_home->bindLiveUpdates(m_live);
     m_library->bindLiveUpdates(m_live);
+    m_series->bindLiveUpdates(m_live);
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();

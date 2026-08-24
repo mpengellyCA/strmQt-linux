@@ -842,8 +842,11 @@ void ItemActions::sendPlayed(const QString &itemId, bool played, bool baseline)
                 emit actionFailed(tr("Could not update the watched state: %1").arg(result.error));
                 return;
             }
-            if (finished.hasQueued && finished.queued != finished.requested)
+            if (finished.hasQueued && finished.queued != finished.requested) {
                 sendPlayed(itemId, finished.queued, finished.requested);
+                return;
+            }
+            emit playedCommitted(itemId, finished.requested);
         });
 }
 
