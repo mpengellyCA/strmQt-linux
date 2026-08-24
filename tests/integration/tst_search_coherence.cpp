@@ -29,9 +29,12 @@ private slots:
     void cleanup();
 
     void delayedReplacementClearsRetainedRowsAndPublishesCommittedSuccess();
+    void primaryFailureIsCommittedBeforeTerminalAndRetryClears();
     void failureAndEmptyCancellationPublishEmptyTerminalModels();
     void supersededQueryNeverPublishesAnIntermediateTerminal();
+    void supersededFailureCannotPoisonNewerSuccess();
     void accountResetPublishesAnEmptyTerminalModel();
+    void emptyQueryAndSessionResetClearErrors();
 
 private:
     void setItemsReply(int status, const QByteArray &body, int delayMs = 0);
@@ -112,6 +115,47 @@ void SearchCoherenceTest::delayedReplacementClearsRetainedRowsAndPublishesCommit
     QCOMPARE(terminalName, QStringLiteral("new"));
 }
 
+void SearchCoherenceTest::primaryFailureIsCommittedBeforeTerminalAndRetryClears()
+{
+    setItemsReply(500, QByteArrayLiteral("{}"));
+    SearchController search(m_client);
+    QSignalSpy errors(&search, &SearchController::errorChanged);
+    QString terminalError;
+    connect(&search, &SearchController::searchingChanged, &search, [&] {
+        if (!search.searching())
+            terminalError = search.errorMessage();
+    });
+
+    search.setQuery(QStringLiteral("failure"));
+    QVERIFY(search.searching());
+    QVERIFY(search.errorMessage().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
+    QVERIFY(!search.errorMessage().isEmpty());
+    QCOMPARE(terminalError, search.errorMessage());
+    QCOMPARE(search.model()->rowCount(), 0);
+    QCOMPARE(errors.count(), 1);
+
+    // Facet lanes are optional. Their failures must not overwrite the primary
+    // lane's successful retry or turn a usable item model into a page failure.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Persons"), 500,
+                     QByteArrayLiteral("{}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 500,
+                     QByteArrayLiteral("{}"));
+    setItemsReply(200, itemPage(QStringLiteral("recovered")));
+    search.retry();
+    QVERIFY(search.searching());
+    QVERIFY(search.errorMessage().isEmpty());
+    QCOMPARE(search.model()->rowCount(), 0);
+    QCOMPARE(errors.count(), 2);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
+    QVERIFY(search.errorMessage().isEmpty());
+    QCOMPARE(terminalError, QString());
+    QCOMPARE(search.model()->rowCount(), 1);
+    QCOMPARE(search.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("recovered"));
+}
+
 void SearchCoherenceTest::failureAndEmptyCancellationPublishEmptyTerminalModels()
 {
     SearchController search(m_client);
@@ -127,6 +171,7 @@ void SearchCoherenceTest::failureAndEmptyCancellationPublishEmptyTerminalModels(
     QCOMPARE(search.model()->rowCount(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
     QCOMPARE(terminalCounts, QList<int>{0});
+    QVERIFY(!search.errorMessage().isEmpty());
 
     setItemsReply(200, itemPage(QStringLiteral("cancelled")), 1000);
     search.setQuery(QStringLiteral("cancelled"));
@@ -136,6 +181,7 @@ void SearchCoherenceTest::failureAndEmptyCancellationPublishEmptyTerminalModels(
 
     QVERIFY(!search.searching());
     QVERIFY(search.query().isEmpty());
+    QVERIFY(search.errorMessage().isEmpty());
     QCOMPARE(search.model()->rowCount(), 0);
     QCOMPARE(terminalCounts, QList<int>({0, 0}));
     QTest::qWait(1100);
@@ -172,6 +218,31 @@ void SearchCoherenceTest::supersededQueryNeverPublishesAnIntermediateTerminal()
              QStringLiteral("current"));
 }
 
+void SearchCoherenceTest::supersededFailureCannotPoisonNewerSuccess()
+{
+    setItemsReply(500, QByteArrayLiteral("{}"), 1000);
+    SearchController search(m_client);
+    QSignalSpy errors(&search, &SearchController::errorChanged);
+    search.setQuery(QStringLiteral("obsolete failure"));
+    QTRY_COMPARE_WITH_TIMEOUT(itemRequestCount(), 1, 5000);
+
+    setItemsReply(200, itemPage(QStringLiteral("current success")));
+    search.setQuery(QStringLiteral("current success"));
+    QVERIFY(search.searching());
+    QVERIFY(search.errorMessage().isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(itemRequestCount(), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
+    QCOMPARE(search.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("current success"));
+    QVERIFY(search.errorMessage().isEmpty());
+    QCOMPARE(errors.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->abortedResponseCount(m_itemsPath), 1, 5000);
+    QTest::qWait(1050);
+    QVERIFY(search.errorMessage().isEmpty());
+    QCOMPARE(search.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("current success"));
+}
+
 void SearchCoherenceTest::accountResetPublishesAnEmptyTerminalModel()
 {
     setItemsReply(200, itemPage(QStringLiteral("account-a")), 1000);
@@ -193,6 +264,28 @@ void SearchCoherenceTest::accountResetPublishesAnEmptyTerminalModel()
     QCOMPARE(terminalCount, 0);
     QTest::qWait(1100);
     QCOMPARE(search.model()->rowCount(), 0);
+}
+
+void SearchCoherenceTest::emptyQueryAndSessionResetClearErrors()
+{
+    setItemsReply(500, QByteArrayLiteral("{}"));
+    SearchController search(m_client);
+    search.setQuery(QStringLiteral("clear with query"));
+    QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
+    QVERIFY(!search.errorMessage().isEmpty());
+
+    search.setQuery(QString());
+    QVERIFY(search.query().isEmpty());
+    QVERIFY(!search.searching());
+    QVERIFY(search.errorMessage().isEmpty());
+
+    search.setQuery(QStringLiteral("clear with reset"));
+    QTRY_VERIFY_WITH_TIMEOUT(!search.searching(), 5000);
+    QVERIFY(!search.errorMessage().isEmpty());
+    search.resetSessionState();
+    QVERIFY(search.query().isEmpty());
+    QVERIFY(!search.searching());
+    QVERIFY(search.errorMessage().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(SearchCoherenceTest)

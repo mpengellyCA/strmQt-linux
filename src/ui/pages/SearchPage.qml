@@ -46,6 +46,7 @@ FocusScope {
     signal backRequested()
 
     readonly property bool hasQuery: SearchCtl.query.length > 0
+    readonly property bool failed: SearchCtl.errorMessage.length > 0
 
     // "Nothing matched" is a claim about the whole page, not about the item
     // grid: a query that finds no films but two directors has found something.
@@ -1516,6 +1517,22 @@ FocusScope {
         shape: "rails"
     }
 
+    // Empty-because-the-primary request failed is not a successful empty
+    // search. Facet requests remain optional, but without the item lane the page
+    // cannot claim that the server found nothing.
+    EmptyState {
+        anchors.fill: scroll
+        visible: page.hasQuery && !SearchCtl.searching && page.failed
+        focus: visible
+        severity: "error"
+        iconName: "info"
+        headline: qsTr("Couldn't search your library")
+        body: SearchCtl.errorMessage
+        actionText: qsTr("Retry")
+        actionIcon: "refresh"
+        onActionTriggered: SearchCtl.retry()
+    }
+
     // Nothing typed and nothing to offer. With recent searches on file the
     // strip above is the better answer, so this stands down for it.
     EmptyState {
@@ -1531,7 +1548,7 @@ FocusScope {
     EmptyState {
         anchors.fill: scroll
         visible: page.hasQuery && !SearchCtl.searching
-                 && page.resultCount === 0 && page.facetCount === 0
+                 && !page.failed && page.resultCount === 0 && page.facetCount === 0
         iconName: "search"
         headline: qsTr("No results for “%1”").arg(SearchCtl.query)
         body: qsTr("Check the spelling, or try a shorter search.")

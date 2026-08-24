@@ -78,6 +78,7 @@ void SearchController::resetSessionState()
     // crossing accounts; another account's retained rows are never a valid
     // terminal snapshot for that restore.
     m_model->clear();
+    setError({});
     const bool facetsWereSet = !m_people.isEmpty() || !m_genres.isEmpty();
     m_people.clear();
     m_genres.clear();
@@ -124,11 +125,15 @@ void SearchController::reloadRecentQueries()
 
 void SearchController::setQuery(const QString &query)
 {
-    if (m_query == query)
+    if (m_query == query) {
+        if (query.trimmed().isEmpty())
+            setError({});
         return;
+    }
     m_query = query;
     ++m_generation;
     cancelRequests();
+    setError({});
 
     const bool hasQuery = !query.trimmed().isEmpty();
     if (hasQuery && !m_searching) {
@@ -159,6 +164,31 @@ void SearchController::setQuery(const QString &query)
         return;
     }
     m_debounce.start();
+}
+
+void SearchController::retry()
+{
+    if (m_searching || m_query.trimmed().isEmpty())
+        return;
+
+    ++m_generation;
+    cancelRequests();
+    m_debounce.stop();
+    setError({});
+
+    // Match setQuery's ownership order: the replacement becomes active before
+    // any retained rows disappear, so focus restoration cannot certify them in
+    // the interval between the retry gesture and the new request.
+    m_searching = true;
+    emit searchingChanged();
+    m_model->clear();
+    const bool facetsWereSet = !m_people.isEmpty() || !m_genres.isEmpty();
+    m_people.clear();
+    m_genres.clear();
+    if (facetsWereSet)
+        emit facetsChanged();
+
+    runSearch();
 }
 
 void SearchController::runSearch()
@@ -203,10 +233,13 @@ void SearchController::runSearch()
         .then(this, [this, generation](const Result<ItemsPage> &result) {
             if (generation != m_generation)
                 return;
-            if (result.ok())
+            if (result.ok()) {
                 m_model->setItems(result.value.items, result.value.totalRecordCount);
-            else
+                setError({});
+            } else {
                 qCWarning(logApp) << "search failed:" << result.error;
+                setError(result.error.isEmpty() ? tr("Search failed.") : result.error);
+            }
             // The terminal signal is a promise that the model is coherent for
             // this query: populated on success, empty on failure. Publish it
             // only after the owner has reached that state.
@@ -220,6 +253,14 @@ void SearchController::cancelRequests()
     m_itemsRequest.cancel();
     m_peopleRequest.cancel();
     m_genresRequest.cancel();
+}
+
+void SearchController::setError(const QString &message)
+{
+    if (m_error == message)
+        return;
+    m_error = message;
+    emit errorChanged();
 }
 
 void SearchController::noteQueryUsed(const QString &query)

@@ -33,6 +33,9 @@ class SearchController : public QObject
     Q_PROPERTY(strmqt::SearchSectionModel *other READ other CONSTANT)
     Q_PROPERTY(QString query READ query WRITE setQuery NOTIFY queryChanged)
     Q_PROPERTY(bool searching READ searching NOTIFY searchingChanged)
+    // Failure of the primary item lane. People/genre facet failures are
+    // optional omissions and deliberately do not poison the whole Search page.
+    Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
     // People and genres matching the query, {id, name, imageUrl} (ARCHITECTURE.md).
     // Separate requests that land after the item search, hence their own signal.
     //
@@ -60,6 +63,7 @@ public:
     QString query() const { return m_query; }
     void setQuery(const QString &query);
     bool searching() const { return m_searching; }
+    QString errorMessage() const { return m_error; }
     QVariantList people() const { return m_people; }
     QVariantList genres() const { return m_genres; }
     QStringList recentQueries() const { return m_recentQueries; }
@@ -67,6 +71,9 @@ public:
     // query, and recording those would fill the list with prefixes.
     Q_INVOKABLE void noteQueryUsed(const QString &query);
     Q_INVOKABLE void clearRecentQueries();
+    // A same-value setQuery() is intentionally a no-op. The explicit retry verb
+    // re-runs the current primary/facet requests without editing the field.
+    Q_INVOKABLE void retry();
     // Clears only the in-memory presentation. Persisted recent queries belong
     // to their account key and are reloaded after EmbyClient changes identity.
     void resetSessionState();
@@ -74,12 +81,14 @@ public:
 signals:
     void queryChanged();
     void searchingChanged();
+    void errorChanged();
     void facetsChanged();
     void recentQueriesChanged();
 
 private:
     void runSearch();
     void cancelRequests();
+    void setError(const QString &message);
     QString recentKey() const;
     void reloadRecentQueries();
 
@@ -96,6 +105,7 @@ private:
     QTimer m_debounce;
     QString m_query;
     bool m_searching = false;
+    QString m_error;
     QVariantList m_people;
     QVariantList m_genres;
     QStringList m_recentQueries;

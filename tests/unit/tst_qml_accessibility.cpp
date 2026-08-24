@@ -71,6 +71,11 @@ void TestQmlAccessibility::searchBackUsesMainNavigationTransaction()
     QVERIFY(searchSource.contains("signal backRequested()"));
     QVERIFY(searchSource.contains("page.backRequested()"));
     QVERIFY(!searchSource.contains("StackView.view.pop()"));
+    QVERIFY(searchSource.contains("readonly property bool failed: SearchCtl.errorMessage.length > 0"));
+    QVERIFY(searchSource.contains("visible: page.hasQuery && !SearchCtl.searching && page.failed"));
+    QVERIFY(searchSource.contains("body: SearchCtl.errorMessage"));
+    QVERIFY(searchSource.contains("onActionTriggered: SearchCtl.retry()"));
+    QVERIFY(searchSource.contains("&& !page.failed && page.resultCount === 0"));
 
     QFile main(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
     QVERIFY(main.open(QIODevice::ReadOnly));
