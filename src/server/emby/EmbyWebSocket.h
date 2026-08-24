@@ -87,6 +87,7 @@ public:
     // Test seams: shrink the timers so an integration test runs in milliseconds.
     void setBackoffForTests(int baseMs, int capMs);
     void setKeepAliveIntervalForTests(int intervalMs);
+    void setHandshakeTimeoutForTests(int timeoutMs);
 
 signals:
     void connectedChanged();
@@ -126,6 +127,8 @@ private:
     int m_missedPongs = 0;
     QTimer m_keepAlive;
     QTimer m_reconnect;
+    QTimer m_handshake;
+    int m_handshakeTimeoutMs = 10'000;
 };
 
 } // namespace strmqt::emby

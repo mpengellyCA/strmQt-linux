@@ -16,6 +16,7 @@ namespace {
 
 const auto kKeepAliveFrame = QStringLiteral("{\"MessageType\":\"KeepAlive\"}");
 const auto kPingPayload = QByteArrayLiteral("strmqt");
+constexpr quint64 kMaxIncomingMessageBytes = 1024 * 1024;
 
 // An id array on the wire is normally ["123","456"], but Emby has shipped
 // object entries for some of these fields across versions. Take whatever looks
@@ -60,6 +61,15 @@ EmbyWebSocket::EmbyWebSocket(QObject *parent) : QObject(parent)
         if (m_wanted)
             openSocket();
     });
+
+    m_handshake.setSingleShot(true);
+    connect(&m_handshake, &QTimer::timeout, this, [this] {
+        if (!m_socket || m_socket->state() == QAbstractSocket::ConnectedState)
+            return;
+        qCWarning(logServer) << "websocket: handshake timed out";
+        teardownSocket();
+        scheduleReconnect();
+    });
 }
 
 EmbyWebSocket::~EmbyWebSocket()
@@ -101,8 +111,13 @@ void EmbyWebSocket::connectToServer(const QUrl &baseUrl, const QString &accessTo
 
     const bool sameSession = m_wanted && baseUrl == m_baseUrl && accessToken == m_accessToken &&
                              deviceId == m_deviceId;
-    if (sameSession)
+    if (sameSession) {
+        const bool viableSocket = m_socket && m_socket->state() != QAbstractSocket::UnconnectedState;
+        if (viableSocket || m_reconnect.isActive())
+            return;
+        openSocket();
         return;
+    }
 
     // A new token means the old socket is authenticated as somebody else.
     teardownSocket();
@@ -133,6 +148,11 @@ void EmbyWebSocket::setKeepAliveIntervalForTests(int intervalMs)
     applyKeepAliveInterval(intervalMs);
 }
 
+void EmbyWebSocket::setHandshakeTimeoutForTests(int timeoutMs)
+{
+    m_handshakeTimeoutMs = qMax(1, timeoutMs);
+}
+
 void EmbyWebSocket::applyKeepAliveInterval(int intervalMs)
 {
     m_keepAliveMs = qMax(1, intervalMs);
@@ -143,6 +163,7 @@ void EmbyWebSocket::applyKeepAliveInterval(int intervalMs)
 
 void EmbyWebSocket::teardownSocket()
 {
+    m_handshake.stop();
     m_keepAlive.stop();
     m_awaitingPong = false;
     m_missedPongs = 0;
@@ -167,6 +188,8 @@ void EmbyWebSocket::openSocket()
 
     ++m_attempts;
     m_socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
+    m_socket->setMaxAllowedIncomingFrameSize(kMaxIncomingMessageBytes);
+    m_socket->setMaxAllowedIncomingMessageSize(kMaxIncomingMessageBytes);
     connect(m_socket, &QWebSocket::connected, this, &EmbyWebSocket::onConnected);
     connect(m_socket, &QWebSocket::disconnected, this, &EmbyWebSocket::onDisconnected);
     connect(m_socket, &QWebSocket::errorOccurred, this, &EmbyWebSocket::onError);
@@ -187,11 +210,13 @@ void EmbyWebSocket::openSocket()
     // Never log the query: it carries the access token.
     qCInfo(logServer) << "websocket: connecting to" << url.toString(QUrl::RemoveQuery)
                       << "(attempt" << m_attempts << ")";
+    m_handshake.start(m_handshakeTimeoutMs);
     m_socket->open(url);
 }
 
 void EmbyWebSocket::onConnected()
 {
+    m_handshake.stop();
     m_attempts = 0;
     m_awaitingPong = false;
     m_missedPongs = 0;
@@ -203,6 +228,7 @@ void EmbyWebSocket::onConnected()
 void EmbyWebSocket::onDisconnected()
 {
     const bool wasConnected = m_connected;
+    m_handshake.stop();
     m_keepAlive.stop();
     setConnected(false);
     if (wasConnected)
@@ -214,6 +240,7 @@ void EmbyWebSocket::onError(QAbstractSocket::SocketError error)
 {
     qCWarning(logServer) << "websocket error:" << error
                          << (m_socket ? m_socket->errorString() : QString());
+    m_handshake.stop();
     m_keepAlive.stop();
     setConnected(false);
     scheduleReconnect();

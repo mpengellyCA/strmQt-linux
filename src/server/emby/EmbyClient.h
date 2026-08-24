@@ -294,6 +294,7 @@ private:
                     const RequestContext &context) const;
 
     // Resolves the reply into Result<T> via parse(QJsonDocument) once finished.
+    QFuture<Result<QJsonDocument>> finishDocument(QNetworkReply *reply);
     template<class T>
     QFuture<Result<T>> finishJson(QNetworkReply *reply,
                                   std::function<Result<T>(const QJsonDocument &)> parse);

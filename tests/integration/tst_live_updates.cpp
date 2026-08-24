@@ -72,6 +72,8 @@ private slots:
     void reconnectBacksOffWithoutSpinning();
     void socketConnectsAndDispatches();
     void socketReconnectsAfterServerDrop();
+    void webSocketHandshakeTimeoutRetries();
+    void oversizedWebSocketMessageReconnectsCleanly();
     void libraryBurstCoalescesIntoOneInvalidation();
     void suspendedUserDataBurstFallsBackToFullInvalidation();
     void pollingFallbackEngagesAndSuspends();
@@ -252,6 +254,60 @@ void LiveUpdatesTest::socketReconnectsAfterServerDrop()
     // It comes back on its own — nothing in the app has to notice.
     QTRY_VERIFY_WITH_TIMEOUT(socket.isConnected(), 5000);
 
+    socket.disconnectFromServer();
+}
+
+void LiveUpdatesTest::webSocketHandshakeTimeoutRetries()
+{
+    // Accept TCP but hold the HTTP upgrade response past the application-level
+    // deadline: this is the blackholed handshake that used to wedge polling for
+    // the entire authenticated session.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/embywebsocket"), 500, {});
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/embywebsocket"), 500);
+
+    emby::EmbyWebSocket socket;
+    socket.setHandshakeTimeoutForTests(120);
+    socket.setBackoffForTests(30, 30);
+    QSignalSpy retries(&socket, &emby::EmbyWebSocket::reconnectScheduled);
+    socket.connectToServer(m_mock->baseUrl(), kToken, QStringLiteral("dev"));
+
+    // Reasserting the same tuple while an upgrade is viable must not create
+    // parallel sockets or reset its timeout.
+    for (int i = 0; i < 5; ++i)
+        socket.connectToServer(m_mock->baseUrl(), kToken, QStringLiteral("dev"));
+    QTest::qWait(40);
+    QCOMPARE(m_mock->requestCount(), 1);
+
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 2, 1000);
+    QCOMPARE(retries.size(), 1);
+    for (int i = 0; i < 5; ++i)
+        socket.connectToServer(m_mock->baseUrl(), kToken, QStringLiteral("dev"));
+    QTest::qWait(40);
+    QCOMPARE(m_mock->requestCount(), 2);
+    QCOMPARE(retries.size(), 1);
+    socket.disconnectFromServer();
+}
+
+void LiveUpdatesTest::oversizedWebSocketMessageReconnectsCleanly()
+{
+    QVERIFY(m_mock->startWebSocket());
+
+    emby::EmbyWebSocket socket;
+    socket.setBackoffForTests(200, 200);
+    socket.connectToServer(m_mock->webSocketBaseUrl(), kToken, QStringLiteral("dev"));
+    QTRY_VERIFY(socket.isConnected());
+
+    m_mock->sendWebSocketMessage(QString(1024 * 1024 + 1, QLatin1Char('x')));
+    QTRY_VERIFY_WITH_TIMEOUT(!socket.isConnected(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(socket.isConnected(), 5000);
+    QCOMPARE(m_mock->webSocketClientCount(), 1);
+
+    QSignalSpy messages(&socket, &emby::EmbyWebSocket::messageReceived);
+    m_mock->sendWebSocketMessage(QStringLiteral(
+        R"({"MessageType":"RefreshProgress","Data":{"ItemId":"healthy"}})"));
+    QTRY_COMPARE(messages.size(), 1);
+    QCOMPARE(messages.first().at(1).toJsonObject().value(QStringLiteral("ItemId")).toString(),
+             QStringLiteral("healthy"));
     socket.disconnectFromServer();
 }
 

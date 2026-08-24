@@ -34,7 +34,15 @@ void MockEmbyServer::addRoute(const QString &method, const QString &path, int st
     // Keep any delay already set for this key: tests arm the delay once and
     // then re-register the route to change its body.
     const int delayMs = m_routes.value(key).delayMs;
-    m_routes.insert(key, Route{status, body, contentType, delayMs});
+    m_routes.insert(key, Route{status, body, contentType, delayMs, false});
+}
+
+void MockEmbyServer::addChunkedRoute(const QString &method, const QString &path, int status,
+                                     const QByteArray &body, const QByteArray &contentType)
+{
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    const int delayMs = m_routes.value(key).delayMs;
+    m_routes.insert(key, Route{status, body, contentType, delayMs, true});
 }
 
 void MockEmbyServer::setRouteDelay(const QString &method, const QString &path, int ms)
@@ -115,15 +123,15 @@ void MockEmbyServer::handleConnection()
                 const Route &route = m_routes.value(key);
                 delayMs = route.delayMs;
                 response = "HTTP/1.1 " + QByteArray::number(route.status) +
-                           " Status\r\n"
-                           "Content-Type: " +
-                           route.contentType +
-                           "\r\n"
-                           "Content-Length: " +
-                           QByteArray::number(route.body.size()) +
-                           "\r\n"
-                           "Connection: close\r\n\r\n" +
-                           route.body;
+                           " Status\r\nContent-Type: " + route.contentType + "\r\n";
+                if (route.chunked) {
+                    response += "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+                                QByteArray::number(route.body.size(), 16) + "\r\n" +
+                                route.body + "\r\n0\r\n\r\n";
+                } else {
+                    response += "Content-Length: " + QByteArray::number(route.body.size()) +
+                                "\r\nConnection: close\r\n\r\n" + route.body;
+                }
             } else {
                 response = "HTTP/1.1 404 Not Found\r\n"
                            "Content-Length: 0\r\nConnection: close\r\n\r\n";

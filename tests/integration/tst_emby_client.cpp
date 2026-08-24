@@ -42,6 +42,7 @@ private slots:
     void mediaDetailFieldsStayOffListQueries();
     void httpErrorSurfaces();
     void invalidJsonSurfaces();
+    void oversizedJsonIsRejectedBeforeParsing();
     void unauthenticatedCallsFailFast();
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
@@ -248,6 +249,37 @@ void EmbyClientTest::invalidJsonSurfaces()
     const auto result = waitFor(m_client->userViews());
     QVERIFY(!result.ok());
     QVERIFY2(result.error.contains(QStringLiteral("JSON")), qPrintable(result.error));
+}
+
+void EmbyClientTest::oversizedJsonIsRejectedBeforeParsing()
+{
+    m_client->setSession(kToken, kUserId);
+    const QString path = QStringLiteral("/Users/%1/Views").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, QByteArray(8 * 1024 * 1024 + 1, 'x'));
+
+    const auto oversized = waitFor(m_client->userViews());
+    QVERIFY(!oversized.ok());
+    QCOMPARE(oversized.error, QStringLiteral("JSON response too large"));
+
+    m_mock->addChunkedRoute(QStringLiteral("GET"), path, 200,
+                            QByteArray(8 * 1024 * 1024 + 1, 'x'));
+    const auto chunkedOversized = waitFor(m_client->userViews());
+    QVERIFY(!chunkedOversized.ok());
+    QCOMPARE(chunkedOversized.error, QStringLiteral("JSON response too large"));
+
+    QByteArray exactLimit = QByteArrayLiteral("{\"Items\":[]}");
+    exactLimit.append(QByteArray(8 * 1024 * 1024 - exactLimit.size(), ' '));
+    m_mock->addChunkedRoute(QStringLiteral("GET"), path, 200, exactLimit);
+    const auto exact = waitFor(m_client->userViews());
+    QVERIFY2(exact.ok(), qPrintable(exact.error));
+
+    // Rejecting one hostile response must not poison the manager or the next
+    // ordinary request on the same authenticated session.
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"), path,
+                                     fixturePath(QStringLiteral("views.json"))));
+    const auto normal = waitFor(m_client->userViews());
+    QVERIFY2(normal.ok(), qPrintable(normal.error));
+    QVERIFY(!normal.value.isEmpty());
 }
 
 void EmbyClientTest::unauthenticatedCallsFailFast()

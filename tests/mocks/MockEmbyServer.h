@@ -38,6 +38,11 @@ public:
 
     void addRoute(const QString &method, const QString &path, int status, const QByteArray &body,
                   const QByteArray &contentType = "application/json");
+    // Sends Transfer-Encoding: chunked with no Content-Length, so response
+    // limits are tested independently of the early metadata precheck.
+    void addChunkedRoute(const QString &method, const QString &path, int status,
+                         const QByteArray &body,
+                         const QByteArray &contentType = "application/json");
     bool addRouteFromFile(const QString &method, const QString &path,
                           const QString &fixtureFilePath, int status = 200);
     // Hold a route's reply back by `ms` before writing it. The request is
@@ -75,6 +80,7 @@ private:
         QByteArray body;
         QByteArray contentType;
         int delayMs = 0;
+        bool chunked = false;
     };
 
     void handleConnection();

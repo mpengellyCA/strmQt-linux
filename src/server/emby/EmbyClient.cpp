@@ -15,6 +15,7 @@ namespace strmqt::emby {
 namespace {
 
 constexpr int kTransferTimeoutMs = 15'000;
+constexpr qint64 kMaxJsonResponseBytes = 8 * 1024 * 1024;
 const auto kClientName = QLatin1String("StrmQt");
 
 // Fields needed for one item's version picker, media-info/track surfaces, and
@@ -187,6 +188,9 @@ QFuture<Result<bool>> EmbyClient::finishStatus(QNetworkReply *reply)
     QFuture<Result<bool>> future = promise->future();
     promise->start();
     const quint64 epoch = m_requestEpoch;
+    // Status endpoints have no useful response body. Drain any bytes as they
+    // arrive so an unexpectedly verbose server cannot make Qt retain them.
+    connect(reply, &QIODevice::readyRead, reply, [reply] { reply->readAll(); });
     connect(reply, &QNetworkReply::finished, this, [this, reply, promise, epoch] {
         if (epoch != m_requestEpoch)
             promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
@@ -196,6 +200,90 @@ QFuture<Result<bool>> EmbyClient::finishStatus(QNetworkReply *reply)
             promise->addResult(Result<bool>::success(true));
         promise->finish();
     });
+    return future;
+}
+
+QFuture<Result<QJsonDocument>> EmbyClient::finishDocument(QNetworkReply *reply)
+{
+    struct ReplyState
+    {
+        QByteArray bytes;
+        bool oversized = false;
+    };
+
+    auto promise = std::make_shared<QPromise<Result<QJsonDocument>>>();
+    QFuture<Result<QJsonDocument>> future = promise->future();
+    promise->start();
+    const quint64 epoch = m_requestEpoch;
+    auto state = std::make_shared<ReplyState>();
+    state->bytes.reserve(64 * 1024);
+
+    // One byte beyond the application limit lets readyRead observe overflow
+    // while still applying network backpressure to a chunked response.
+    reply->setReadBufferSize(kMaxJsonResponseBytes + 1);
+    const auto rejectOversized = [reply, state] {
+        if (state->oversized)
+            return;
+        const QVariant header = reply->header(QNetworkRequest::ContentLengthHeader);
+        if (header.isValid() && header.toLongLong() > kMaxJsonResponseBytes) {
+            state->oversized = true;
+            reply->abort();
+        }
+    };
+    const auto drain = [reply, state] {
+        if (state->oversized)
+            return;
+        const qint64 remaining = kMaxJsonResponseBytes - state->bytes.size();
+        const QByteArray chunk = reply->read(qMin(reply->bytesAvailable(), remaining + 1));
+        state->bytes.append(chunk);
+        if (state->bytes.size() > kMaxJsonResponseBytes) {
+            state->oversized = true;
+            state->bytes.clear();
+            reply->abort();
+        }
+    };
+    // Install completion before anything that can abort the reply. A header
+    // may already be available when finishDocument() is entered.
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, promise, state, drain, epoch] {
+        drain();
+        if (epoch != m_requestEpoch) {
+            promise->addResult(
+                Result<QJsonDocument>::failure(QStringLiteral("request canceled")));
+            promise->finish();
+            return;
+        }
+        if (state->oversized) {
+            promise->addResult(
+                Result<QJsonDocument>::failure(QStringLiteral("JSON response too large")));
+            promise->finish();
+            return;
+        }
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (reply->error() != QNetworkReply::NoError) {
+            const QString message =
+                status > 0 ? QStringLiteral("HTTP %1: %2").arg(status).arg(reply->errorString())
+                           : reply->errorString();
+            qCWarning(logServer) << "request failed:" << reply->url().path() << message;
+            promise->addResult(Result<QJsonDocument>::failure(message));
+            promise->finish();
+            return;
+        }
+
+        QJsonParseError parseError{};
+        const QJsonDocument doc = QJsonDocument::fromJson(state->bytes, &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            promise->addResult(Result<QJsonDocument>::failure(
+                QStringLiteral("invalid JSON: %1").arg(parseError.errorString())));
+            promise->finish();
+            return;
+        }
+        promise->addResult(Result<QJsonDocument>::success(doc));
+        promise->finish();
+    });
+    connect(reply, &QNetworkReply::metaDataChanged, reply, rejectOversized);
+    connect(reply, &QIODevice::readyRead, reply, drain);
+    rejectOversized();
     return future;
 }
 
@@ -213,43 +301,12 @@ template<class T>
 QFuture<Result<T>> EmbyClient::finishJson(QNetworkReply *reply,
                                           std::function<Result<T>(const QJsonDocument &)> parse)
 {
-    auto promise = std::make_shared<QPromise<Result<T>>>();
-    QFuture<Result<T>> future = promise->future();
-    promise->start();
-
-    const quint64 epoch = m_requestEpoch;
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, promise, parse = std::move(parse), epoch] {
-        if (epoch != m_requestEpoch) {
-            promise->addResult(Result<T>::failure(QStringLiteral("request canceled")));
-            promise->finish();
-            return;
-        }
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (reply->error() != QNetworkReply::NoError) {
-            const QString message =
-                status > 0 ? QStringLiteral("HTTP %1: %2").arg(status).arg(reply->errorString())
-                           : reply->errorString();
-            qCWarning(logServer) << "request failed:" << reply->url().path() << message;
-            promise->addResult(Result<T>::failure(message));
-            promise->finish();
-            return;
-        }
-
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
-        if (parseError.error != QJsonParseError::NoError) {
-            promise->addResult(Result<T>::failure(
-                QStringLiteral("invalid JSON: %1").arg(parseError.errorString())));
-            promise->finish();
-            return;
-        }
-
-        promise->addResult(parse(doc));
-        promise->finish();
+    return finishDocument(reply).then(
+        this, [parse = std::move(parse)](const Result<QJsonDocument> &result) {
+        if (!result.ok())
+            return Result<T>::failure(result.error);
+        return parse(result.value);
     });
-
-    return future;
 }
 
 QFuture<Result<ServerInfo>> EmbyClient::publicSystemInfo()
@@ -874,20 +931,14 @@ QFuture<Result<bool>> EmbyClient::renameItem(const QString &itemId, const QStrin
     QUrlQuery params;
     QNetworkReply *reply = startGet(
         QStringLiteral("/Users/%1/Items/%2").arg(context.userId, itemId), params, context);
-    connect(reply, &QNetworkReply::finished, this,
-            [this, reply, itemId, name, promise, context] {
-        reply->deleteLater();
-        if (context.epoch != m_requestEpoch) {
-            promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
+    finishDocument(reply).then(
+        this, [this, itemId, name, promise, context](const Result<QJsonDocument> &result) {
+        if (!result.ok()) {
+            promise->addResult(Result<bool>::failure(result.error));
             promise->finish();
             return;
         }
-        if (reply->error() != QNetworkReply::NoError) {
-            promise->addResult(Result<bool>::failure(reply->errorString()));
-            promise->finish();
-            return;
-        }
-        QJsonObject item = QJsonDocument::fromJson(reply->readAll()).object();
+        QJsonObject item = result.value.object();
         if (item.isEmpty()) {
             promise->addResult(Result<bool>::failure(QStringLiteral("item not found")));
             promise->finish();
@@ -899,16 +950,18 @@ QFuture<Result<bool>> EmbyClient::renameItem(const QString &itemId, const QStrin
         item.remove(QLatin1String("ForcedSortName"));
         item.remove(QLatin1String("SortName"));
 
+        // The continuation is queued on this object. Identity can change after
+        // the GET resolves but before this lambda is dispatched, so re-check at
+        // the read-to-write boundary before using its captured context.
+        if (context.epoch != m_requestEpoch) {
+            promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
+            promise->finish();
+            return;
+        }
         QNetworkReply *post =
             startPost(QStringLiteral("/Items/%1").arg(itemId), item, context);
-        connect(post, &QNetworkReply::finished, this, [this, post, promise, context] {
-            post->deleteLater();
-            if (context.epoch != m_requestEpoch)
-                promise->addResult(Result<bool>::failure(QStringLiteral("request canceled")));
-            else if (post->error() != QNetworkReply::NoError)
-                promise->addResult(Result<bool>::failure(post->errorString()));
-            else
-                promise->addResult(Result<bool>::success(true));
+        finishStatus(post).then(this, [promise](const Result<bool> &postResult) {
+            promise->addResult(postResult);
             promise->finish();
         });
     });
