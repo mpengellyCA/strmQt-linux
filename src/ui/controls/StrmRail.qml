@@ -18,6 +18,7 @@ FocusScope {
     property string cardVariant: "poster"
     property bool showMore: false
     property string emptyText: qsTr("Nothing here yet")
+    property string navigationFocusKey: ""
 
     signal itemActivated(int index)
     signal itemPlayRequested(int index)
@@ -31,12 +32,26 @@ FocusScope {
     readonly property alias currentIndex: list.currentIndex
     readonly property string navigationFocusKind: "rail"
     readonly property bool navigationFocusRestorePending: navigationFocus.pending
+    property bool _navigationFocusWriting: false
 
     function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
-    function restoreNavigationFocus(itemId, index): bool {
-        return navigationFocus.restore(itemId, index)
+    function restoreNavigationFocus(identity, index): bool {
+        return navigationFocus.restore(identity, index)
     }
     function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
+    function _cancelNavigationFocusForUser(): void {
+        if (!rail._navigationFocusWriting)
+            navigationFocus.cancel()
+    }
+    function _applyNavigationFocus(index): void {
+        rail._navigationFocusWriting = true
+        if (index >= 0) {
+            list.currentIndex = index
+            list.positionViewAtIndex(index, ListView.Contain)
+        }
+        list.forceActiveFocus(Qt.OtherFocusReason)
+        rail._navigationFocusWriting = false
+    }
 
     // Which card the pointer is over, or -1. Published separately from
     // currentIndex because hover and focus are separate states: a page driving
@@ -55,12 +70,14 @@ FocusScope {
         model: rail.railModel
         count: list.count
         currentIndex: list.currentIndex
-        onFocusRequested: index => {
-            if (index >= 0) {
-                list.currentIndex = index
-                list.positionViewAtIndex(index, ListView.Contain)
-            }
-            list.forceActiveFocus(Qt.OtherFocusReason)
+        onFocusRequested: index => rail._applyNavigationFocus(index)
+    }
+
+    Connections {
+        target: rail
+        function onActiveFocusChanged() {
+            if (!rail.activeFocus)
+                rail._cancelNavigationFocusForUser()
         }
     }
 
@@ -127,6 +144,7 @@ FocusScope {
     }
 
     function activateCurrent() {
+        rail._cancelNavigationFocusForUser()
         if (list.currentIndex >= 0)
             rail.itemActivated(list.currentIndex)
     }
@@ -243,8 +261,11 @@ FocusScope {
             // page's own vertical cursor, which follows this one, stayed on the
             // wrong rail. Focus only: hover still never moves the cursor.
             onActiveFocusChanged: {
-                if (cell.activeFocus)
+                if (cell.activeFocus) {
+                    if (cell.index !== list.currentIndex)
+                        rail._cancelNavigationFocusForUser()
                     list.currentIndex = cell.index
+                }
             }
 
             // Hover ownership is the delegate itself, not its index: `index` is
@@ -309,6 +330,7 @@ FocusScope {
                 onHoveredChanged: cell.setHovered(hovered)
 
                 onActivated: {
+                    rail._cancelNavigationFocusForUser()
                     // A click makes this card the keyboard's place too, so a
                     // subsequent arrow key continues from where the user
                     // clicked. This is a *commit*, not a hover.
@@ -326,6 +348,7 @@ FocusScope {
         // Guard isAutoRepeat: a held/stuck Return must not machine-gun activations.
         Keys.onReturnPressed: event => { if (!event.isAutoRepeat) rail.activateCurrent() }
         Keys.onEnterPressed: event => { if (!event.isAutoRepeat) rail.activateCurrent() }
+        Keys.onPressed: event => rail._cancelNavigationFocusForUser()
     }
 
     // A6, part 3. The vertical axis cannot be filtered statically the way the

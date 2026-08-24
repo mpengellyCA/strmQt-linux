@@ -42,7 +42,7 @@ StackView {
 
     readonly property int semanticControlLimit: 128
     readonly property int semanticTraversalLimit: 4096
-    readonly property int semanticIndexLimit: 59999
+    readonly property int semanticIndexLimit: 2147483646
     readonly property int focusRetryLimit: 40
 
     readonly property int retainedRouteCount: navTrail.length + navForward.length
@@ -53,6 +53,32 @@ StackView {
     readonly property bool canGoForward: navForward.length > 0
 
     signal prepareRequested(var route)
+
+    onFocusItemChanged: {
+        if (navigation._focusRetryToken < 0)
+            return;
+        // focusCurrentPage() runs before the retry is armed. Afterwards, a
+        // change away from the page is a user override and must retire the old
+        // locator. The one exception is the requested Loader finally creating
+        // and focusing its semantic owner; restore it immediately.
+        if (navigation.focusItem === navigation.currentItem)
+            return;
+        let parts = null;
+        try {
+            parts = JSON.parse(navigation._focusRetryLocator);
+        } catch (error) {
+            navigation.cancelFocusRetry();
+            return;
+        }
+        const owner = navigation.semanticOwner(navigation.focusItem);
+        if (Array.isArray(parts) && parts.length === 4 && parts[0] === "semantic"
+                && owner && navigation.semanticKey(owner) === String(parts[1])
+                && navigation.restoreFocusLocator(navigation._focusRetryLocator)) {
+            navigation.cancelFocusRetry();
+            return;
+        }
+        navigation.cancelFocusRetry();
+    }
 
     function scalar(value): string {
         return value === undefined || value === null ? "" : String(value)
@@ -259,15 +285,15 @@ StackView {
         route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
     }
 
-    function semanticKind(item): string {
+    function semanticKey(item): string {
         if (!item)
             return "";
-        const value = item["navigationFocusKind"];
+        const value = item["navigationFocusKey"];
         return value === undefined || value === null
-                ? "" : navigation.boundedText(value, 32);
+                ? "" : navigation.boundedText(value, 128);
     }
 
-    function semanticControls(kind): var {
+    function semanticControls(key): var {
         const result = [];
         if (!navigation.currentItem)
             return result;
@@ -278,8 +304,8 @@ StackView {
                 && result.length < navigation.semanticControlLimit) {
             const item = queue[cursor++];
             ++visited;
-            const itemKind = navigation.semanticKind(item);
-            if (itemKind.length > 0 && (kind.length === 0 || itemKind === kind)
+            const itemKey = navigation.semanticKey(item);
+            if (itemKey.length > 0 && (key.length === 0 || itemKey === key)
                     && typeof item["navigationFocusSnapshot"] === "function"
                     && typeof item["restoreNavigationFocus"] === "function")
                 result.push(item);
@@ -300,7 +326,7 @@ StackView {
         // is no longer visible is deliberately not treated as eligible focus.
         let cursor = item;
         while (cursor && cursor !== navigation.currentItem) {
-            if (navigation.semanticKind(cursor).length > 0
+            if (navigation.semanticKey(cursor).length > 0
                     && typeof cursor["navigationFocusSnapshot"] === "function")
                 return cursor;
             cursor = cursor.parent;
@@ -311,20 +337,21 @@ StackView {
     function semanticLocator(owner): string {
         if (!owner)
             return "";
-        const kind = navigation.semanticKind(owner);
-        if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind))
+        const key = navigation.semanticKey(owner);
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.:\/-]{0,127}$/.test(key))
             return "";
-        const controls = navigation.semanticControls(kind);
-        const ordinal = controls.indexOf(owner);
-        if (ordinal < 0 || ordinal >= navigation.semanticControlLimit)
+        const controls = navigation.semanticControls(key);
+        // A duplicate key is not stable. Refuse to remember one rather than
+        // silently depending on transient object-tree order.
+        if (controls.length !== 1 || controls[0] !== owner)
             return "";
         const snapshot = owner["navigationFocusSnapshot"]();
         const index = snapshot ? Number(snapshot.index) : -1;
         if (!snapshot || snapshot.valid !== true || !Number.isInteger(index)
                 || index < 0 || index > navigation.semanticIndexLimit)
             return "";
-        const itemId = navigation.boundedText(snapshot.itemId, 1024);
-        return JSON.stringify(["semantic", kind, ordinal, itemId, index]);
+        const identity = navigation.boundedText(snapshot.identity, 1024);
+        return JSON.stringify(["semantic", key, identity, index]);
     }
 
     function focusLocator(item): string {
@@ -332,21 +359,11 @@ StackView {
             return "";
 
         const owner = navigation.semanticOwner(item);
+        if (owner && owner["navigationFocusRestorePending"] === true)
+            return "";
         const owned = navigation.semanticLocator(owner);
         if (owned.length > 0)
             return owned;
-
-        // A refill may not have made the exact row eligible yet. Preserve the
-        // restorer's target instead of replacing it with the view's temporary
-        // default cursor if the user navigates again meanwhile.
-        const controls = navigation.semanticControls("");
-        for (let i = 0; i < controls.length; ++i) {
-            if (controls[i]["navigationFocusRestorePending"] === true) {
-                const pending = navigation.semanticLocator(controls[i]);
-                if (pending.length > 0)
-                    return pending;
-            }
-        }
 
         if (!item)
             return "";
@@ -405,7 +422,7 @@ StackView {
         } catch (error) {
             return false;
         }
-        if (!Array.isArray(parts) || parts.length !== 2 && parts.length !== 5)
+        if (!Array.isArray(parts) || parts.length !== 2 && parts.length !== 4)
             return false;
 
         if (parts[0] === "path" && parts.length === 2) {
@@ -420,25 +437,22 @@ StackView {
             return false;
         }
 
-        if (parts[0] !== "semantic" || parts.length !== 5)
+        if (parts[0] !== "semantic" || parts.length !== 4)
             return false;
-        const kind = String(parts[1]);
-        const ordinal = Number(parts[2]);
-        const itemId = String(parts[3]);
-        const index = Number(parts[4]);
-        if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)
-                || !Number.isInteger(ordinal) || ordinal < 0
-                || ordinal >= navigation.semanticControlLimit
-                || itemId.length > 1024 || !Number.isInteger(index)
+        const controlKey = String(parts[1]);
+        const identity = String(parts[2]);
+        const index = Number(parts[3]);
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.:\/-]{0,127}$/.test(controlKey)
+                || identity.length > 1024 || !Number.isInteger(index)
                 || index < 0 || index > navigation.semanticIndexLimit)
             return false;
-        const controls = navigation.semanticControls(kind);
-        if (ordinal >= controls.length)
+        const controls = navigation.semanticControls(controlKey);
+        if (controls.length !== 1)
             return false;
-        const control = controls[ordinal];
+        const control = controls[0];
         if (!control.visible || !control.enabled)
             return false;
-        return control["restoreNavigationFocus"](itemId, index) === true;
+        return control["restoreNavigationFocus"](identity, index) === true;
     }
 
     function cancelFocusRetry(): void {

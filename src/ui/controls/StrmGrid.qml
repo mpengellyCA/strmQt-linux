@@ -36,6 +36,9 @@ FocusScope {
     // 0 derives the column count from the available width.
     property int cellsAcross: 0
     property string emptyText: qsTr("Nothing here yet")
+    // Route-stable owner id used by bounded navigation history. Page call
+    // sites provide it; visual/BFS order is deliberately irrelevant.
+    property string navigationFocusKey: ""
     // How close to the end of loaded content counts as "near", in items.
     property int prefetchThreshold: 30
 
@@ -51,12 +54,29 @@ FocusScope {
     readonly property alias currentIndex: view.currentIndex
     readonly property string navigationFocusKind: "grid"
     readonly property bool navigationFocusRestorePending: navigationFocus.pending
+    property bool _navigationFocusWriting: false
+    property bool _navigationFocusPrefetchSuppressed: false
 
     function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
-    function restoreNavigationFocus(itemId, index): bool {
-        return navigationFocus.restore(itemId, index)
+    function restoreNavigationFocus(identity, index): bool {
+        return navigationFocus.restore(identity, index)
     }
     function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
+    function _cancelNavigationFocusForUser(): void {
+        if (!grid._navigationFocusWriting)
+            navigationFocus.cancel()
+    }
+    function _applyNavigationFocus(index): void {
+        grid._navigationFocusWriting = true
+        grid._navigationFocusPrefetchSuppressed = true
+        if (index >= 0) {
+            view.currentIndex = index
+            view.positionViewAtIndex(index, GridView.Contain)
+        }
+        view.forceActiveFocus(Qt.OtherFocusReason)
+        grid._navigationFocusWriting = false
+        Qt.callLater(() => { grid._navigationFocusPrefetchSuppressed = false })
+    }
 
     // See StrmRail.hoveredIndex: hover is published separately from focus, and
     // its owner is the delegate object rather than an index.
@@ -89,6 +109,7 @@ FocusScope {
            : Math.max(1, Math.floor(view.width / (cardWidth + Theme.spacingValue))))
 
     function activateCurrent() {
+        grid._cancelNavigationFocusForUser()
         if (view.currentIndex >= 0)
             grid.itemActivated(view.currentIndex)
     }
@@ -157,22 +178,23 @@ FocusScope {
         model: grid.gridModel
         count: view.count
         currentIndex: view.currentIndex
-        canRequestPage: grid.prefetchThreshold > 0
-        onFocusRequested: index => {
-            if (index >= 0) {
-                view.currentIndex = index
-                view.positionViewAtIndex(index, GridView.Contain)
-            }
-            view.forceActiveFocus(Qt.OtherFocusReason)
+        onFocusRequested: index => grid._applyNavigationFocus(index)
+    }
+
+    Connections {
+        target: grid
+        function onActiveFocusChanged() {
+            if (!grid.activeFocus)
+                grid._cancelNavigationFocusForUser()
         }
-        onPageRequested: grid.nearEnd()
     }
 
     onCountChanged: navigationFocus.retry()
     onGridModelChanged: navigationFocus.cancel()
 
     function _checkNearEnd() {
-        if (view.count <= 0 || view.count === grid._lastNearEndCount)
+        if (grid._navigationFocusPrefetchSuppressed || view.count <= 0
+                || view.count === grid._lastNearEndCount)
             return
         const cursorNear = view.currentIndex >= 0
                            && view.count - view.currentIndex < grid.prefetchThreshold
@@ -232,8 +254,11 @@ FocusScope {
             height: view.cellHeight
 
             onActiveFocusChanged: {
-                if (cell.activeFocus)
+                if (cell.activeFocus) {
+                    if (cell.index !== view.currentIndex)
+                        grid._cancelNavigationFocusForUser()
                     view.currentIndex = cell.index
+                }
             }
 
             readonly property bool current: cell.GridView.isCurrentItem && view.activeFocus
@@ -296,6 +321,7 @@ FocusScope {
             // Click and Return both mean "open", and both take the keyboard
             // cursor with them so the two input models stay in agreement.
             function open() {
+                grid._cancelNavigationFocusForUser()
                 view.currentIndex = cell.index
                 view.forceActiveFocus(Qt.MouseFocusReason)
                 grid.itemActivated(cell.index)
@@ -596,6 +622,7 @@ FocusScope {
         }
 
         Keys.onPressed: event => {
+            grid._cancelNavigationFocusForUser()
             if (view.count === 0)
                 return;
             if (event.key === Qt.Key_PageDown) {

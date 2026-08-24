@@ -788,6 +788,52 @@ FocusScope {
     GridView {
         id: episodeGrid
 
+        readonly property string navigationFocusKind: "grid"
+        readonly property string navigationFocusKey: "series-episodes"
+        readonly property bool navigationFocusRestorePending: episodeNavigationFocus.pending
+        property bool _navigationFocusWriting: false
+
+        function navigationFocusSnapshot(): var { return episodeNavigationFocus.snapshot() }
+        function restoreNavigationFocus(identity, index): bool {
+            return episodeNavigationFocus.restore(identity, index)
+        }
+        function cancelNavigationFocusRestore(): void { episodeNavigationFocus.cancel() }
+        function cancelNavigationFocusForUser(): void {
+            if (!episodeGrid._navigationFocusWriting)
+                episodeNavigationFocus.cancel()
+        }
+        function applyNavigationFocus(index): void {
+            episodeGrid._navigationFocusWriting = true
+            if (index >= 0) {
+                episodeGrid.currentIndex = index
+                episodeGrid.positionViewAtIndex(index, GridView.Contain)
+            }
+            episodeGrid.forceActiveFocus(Qt.OtherFocusReason)
+            episodeGrid._navigationFocusWriting = false
+        }
+
+        NavigationFocusRestorer {
+            id: episodeNavigationFocus
+            model: SeriesCtl.episodes
+            count: episodeGrid.count
+            currentIndex: episodeGrid.currentIndex
+            onFocusRequested: index => episodeGrid.applyNavigationFocus(index)
+        }
+
+        Connections {
+            target: SeriesCtl.episodes
+            function onModelReset() { Qt.callLater(episodeNavigationFocus.retry) }
+        }
+
+        Connections {
+            target: episodeGrid
+            function onActiveFocusChanged() {
+                if (!episodeGrid.activeFocus)
+                    episodeGrid.cancelNavigationFocusForUser()
+            }
+            function onCountChanged() { episodeNavigationFocus.retry() }
+        }
+
         anchors.top: seasonScroll.visible ? seasonScroll.bottom : heroBox.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
@@ -843,7 +889,10 @@ FocusScope {
                 page.heroCollapsed = false
         }
 
-        function playCurrent() { page.playRow(episodeGrid.currentIndex) }
+        function playCurrent() {
+            episodeGrid.cancelNavigationFocusForUser()
+            page.playRow(episodeGrid.currentIndex)
+        }
 
         // Guard isAutoRepeat: a held Return must not launch playback twice.
         Keys.onReturnPressed: event => { if (!event.isAutoRepeat) episodeGrid.playCurrent() }
@@ -873,6 +922,7 @@ FocusScope {
         }
 
         Keys.onPressed: event => {
+            episodeGrid.cancelNavigationFocusForUser()
             if (episodeGrid.count === 0)
                 return
             if (event.key === Qt.Key_PageDown) {
@@ -893,7 +943,7 @@ FocusScope {
             }
         }
 
-        delegate: Item {
+        delegate: FocusScope {
             id: cell
 
             required property int index
@@ -901,6 +951,13 @@ FocusScope {
 
             width: episodeGrid.cellWidth
             height: episodeGrid.cellHeight
+
+            onActiveFocusChanged: {
+                if (cell.activeFocus) {
+                    episodeGrid.cancelNavigationFocusForUser()
+                    episodeGrid.currentIndex = cell.index
+                }
+            }
 
             readonly property bool current: cell.GridView.isCurrentItem && episodeGrid.activeFocus
             // The one card most visits to this page came for.
@@ -968,6 +1025,7 @@ FocusScope {
                 // Hover never does — that is StrmCard's own contract and it is
                 // not overridden anywhere on this page.
                 onActivated: {
+                    episodeGrid.cancelNavigationFocusForUser()
                     episodeGrid.currentIndex = cell.index
                     episodeGrid.forceActiveFocus(Qt.MouseFocusReason)
                     page.playRow(cell.index)

@@ -638,6 +638,8 @@ FocusScope {
     TrackTable {
         id: topTracks
 
+        navigationFocusKey: "artist-top-tracks"
+
         anchors.top: topSelection.bottom
         anchors.left: parent.left
         anchors.right: parent.right
@@ -764,6 +766,8 @@ FocusScope {
 
     StrmGrid {
         id: albumGrid
+
+        navigationFocusKey: "artist-albums"
 
         anchors.top: albumHeading.bottom
         anchors.topMargin: Theme.spacingValue

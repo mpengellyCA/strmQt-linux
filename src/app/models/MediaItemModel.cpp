@@ -113,6 +113,15 @@ double progressOf(const MediaItem &item)
     return 0.0;
 }
 
+QString navigationIdentity(const MediaItem &item)
+{
+    if (!item.playlistItemId.isEmpty())
+        return QStringLiteral("p:%1").arg(item.playlistItemId);
+    if (!item.id.isEmpty())
+        return QStringLiteral("i:%1").arg(item.id);
+    return {};
+}
+
 } // namespace
 
 MediaItemModel::MediaItemModel(QObject *parent) : QAbstractListModel(parent) {}
@@ -261,8 +270,14 @@ void MediaItemModel::rebuildItemIndex()
 {
     m_rowsByItemId.clear();
     m_rowsByItemId.reserve(m_items.size());
-    for (int row = 0; row < m_items.size(); ++row)
+    m_rowByNavigationIdentity.clear();
+    m_rowByNavigationIdentity.reserve(m_items.size());
+    for (int row = 0; row < m_items.size(); ++row) {
         m_rowsByItemId[m_items.at(row).id].append(row);
+        const QString identity = navigationIdentity(m_items.at(row));
+        if (!identity.isEmpty() && !m_rowByNavigationIdentity.contains(identity))
+            m_rowByNavigationIdentity.insert(identity, row);
+    }
 }
 
 void MediaItemModel::setItems(QList<MediaItem> items, int totalRecordCount)
@@ -290,8 +305,12 @@ void MediaItemModel::appendItems(const QList<MediaItem> &items, int totalRecordC
     const int first = static_cast<int>(m_items.size());
     beginInsertRows(QModelIndex(), first, first + static_cast<int>(items.size()) - 1);
     m_items.append(items);
-    for (int row = first; row < m_items.size(); ++row)
+    for (int row = first; row < m_items.size(); ++row) {
         m_rowsByItemId[m_items.at(row).id].append(row);
+        const QString identity = navigationIdentity(m_items.at(row));
+        if (!identity.isEmpty() && !m_rowByNavigationIdentity.contains(identity))
+            m_rowByNavigationIdentity.insert(identity, row);
+    }
     endInsertRows();
 
     // Keep the total coherent with the rows: see the header for why a stale
@@ -320,6 +339,11 @@ QVariantMap MediaItemModel::get(int row) const
     for (auto it = roles.cbegin(); it != roles.cend(); ++it)
         map.insert(QString::fromLatin1(it.value()), data(index, it.key()));
     return map;
+}
+
+int MediaItemModel::indexOfNavigationIdentity(const QString &identity) const
+{
+    return m_rowByNavigationIdentity.value(identity, -1);
 }
 
 void MediaItemModel::updateUserData(const QString &itemId, bool played, bool favorite)

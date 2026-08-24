@@ -67,29 +67,47 @@ import StrmQt
 ListView {
     id: table
 
+    property string navigationFocusKey: ""
     readonly property string navigationFocusKind: "tracks"
     readonly property bool navigationFocusRestorePending: navigationFocus.pending
+    property bool _navigationFocusWriting: false
+    property bool _navigationFocusPrefetchSuppressed: false
 
     function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
-    function restoreNavigationFocus(itemId, index): bool {
-        return navigationFocus.restore(itemId, index)
+    function restoreNavigationFocus(identity, index): bool {
+        return navigationFocus.restore(identity, index)
     }
     function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
+    function _cancelNavigationFocusForUser(): void {
+        if (!table._navigationFocusWriting)
+            navigationFocus.cancel()
+    }
+    function _applyNavigationFocus(index): void {
+        table._navigationFocusWriting = true
+        table._navigationFocusPrefetchSuppressed = true
+        if (index >= 0) {
+            table.currentIndex = index
+            table.positionViewAtIndex(index, ListView.Contain)
+        }
+        table.forceActiveFocus(Qt.OtherFocusReason)
+        table._navigationFocusWriting = false
+        Qt.callLater(() => { table._navigationFocusPrefetchSuppressed = false })
+    }
 
     NavigationFocusRestorer {
         id: navigationFocus
         model: table.model
         count: table.count
         currentIndex: table.currentIndex
-        canRequestPage: table.prefetchThreshold > 0
-        onFocusRequested: index => {
-            if (index >= 0) {
-                table.currentIndex = index
-                table.positionViewAtIndex(index, ListView.Contain)
-            }
-            table.forceActiveFocus(Qt.OtherFocusReason)
+        onFocusRequested: index => table._applyNavigationFocus(index)
+    }
+
+    Connections {
+        target: table
+        function onActiveFocusChanged() {
+            if (!table.activeFocus)
+                table._cancelNavigationFocusForUser()
         }
-        onPageRequested: table.nearEnd()
     }
 
     // ── Table-level rules ──────────────────────────────────────────────────
@@ -253,7 +271,8 @@ ListView {
     property int _lastNearEndCount: -1
 
     function _checkNearEnd(): void {
-        if (table.prefetchThreshold <= 0 || table.count <= 0
+        if (table._navigationFocusPrefetchSuppressed || table.prefetchThreshold <= 0
+                || table.count <= 0
                 || table.count === table._lastNearEndCount)
             return
         const cursorNear = table.currentIndex >= 0
@@ -567,15 +586,18 @@ ListView {
     }
 
     Keys.onReturnPressed: event => {
+        table._cancelNavigationFocusForUser()
         if (!event.isAutoRepeat)
             table.activateAt(table.currentIndex, event.modifiers)
     }
     Keys.onEnterPressed: event => {
+        table._cancelNavigationFocusForUser()
         if (!event.isAutoRepeat)
             table.activateAt(table.currentIndex, event.modifiers)
     }
 
     Keys.onPressed: event => {
+        table._cancelNavigationFocusForUser()
         // The page's own keys first, so a table verb can claim a key before the
         // navigation below sees it.
         table.keyPressed(event)

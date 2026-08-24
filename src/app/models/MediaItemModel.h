@@ -99,6 +99,13 @@ public:
     // Convenience for pushing a whole item into a Details page.
     Q_INVOKABLE QVariantMap get(int row) const;
 
+    // Stable identity used by navigation focus restoration. Playlist entries
+    // prefer their entry id so two occurrences of the same media item remain
+    // distinguishable; ordinary rows use the media item id. The lookup is
+    // maintained with the model and never walks a large library on the UI
+    // thread.
+    Q_INVOKABLE int indexOfNavigationIdentity(const QString &identity) const;
+
     // In-place user-data update after a played/favorite toggle; no-op when the
     // item is not in this model.
     void updateUserData(const QString &itemId, bool played, bool favorite);
@@ -122,6 +129,7 @@ private:
 
     QList<MediaItem> m_items;
     QHash<QString, QList<int>> m_rowsByItemId;
+    QHash<QString, int> m_rowByNavigationIdentity;
     int m_totalRecordCount = 0;
 };
 

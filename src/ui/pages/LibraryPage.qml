@@ -433,6 +433,8 @@ FocusScope {
     StrmGrid {
         id: grid
 
+        navigationFocusKey: "library-items"
+
         anchors.top: viewBar.bottom
         anchors.topMargin: Theme.spacingTight
         anchors.bottom: parent.bottom

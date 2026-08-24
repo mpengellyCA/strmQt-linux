@@ -1838,6 +1838,7 @@ FocusScope {
             // The rail supplies its own page margins, so it spans full width.
             StrmRail {
                 id: similarRail
+                navigationFocusKey: "details-similar"
                 visible: DetailsCtl.similar.count > 0
                 title: qsTr("More like this")
                 railModel: DetailsCtl.similar

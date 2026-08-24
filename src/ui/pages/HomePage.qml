@@ -296,6 +296,7 @@ FocusScope {
             id: cell
 
             required property int index
+            required property string railKey
             required property string title
             required property var railModel
             required property bool library
@@ -355,6 +356,8 @@ FocusScope {
 
             StrmRail {
                 id: mediaRail
+
+                navigationFocusKey: "home-" + cell.railKey
 
                 // No anchors: StrmRail binds its own width to parent.width, and
                 // anchoring left/right from here would override that binding.

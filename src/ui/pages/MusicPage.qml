@@ -550,6 +550,8 @@ FocusScope {
     StrmGrid {
         id: albumsGrid
 
+        navigationFocusKey: "music-albums"
+
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
         anchors.bottom: parent.bottom
@@ -586,6 +588,8 @@ FocusScope {
 
     StrmGrid {
         id: artistsGrid
+
+        navigationFocusKey: "music-artists"
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -635,6 +639,8 @@ FocusScope {
     // a mosaic of its records, which is a sleeve.
     StrmGrid {
         id: playlistsGrid
+
+        navigationFocusKey: "music-playlists"
 
         anchors.top: filterBar.bottom
         anchors.topMargin: Theme.spacingTight
@@ -724,6 +730,8 @@ FocusScope {
 
     TrackTable {
         id: songsTable
+
+        navigationFocusKey: "music-songs"
 
         anchors.top: songSelection.bottom
         anchors.topMargin: Theme.spacingTight

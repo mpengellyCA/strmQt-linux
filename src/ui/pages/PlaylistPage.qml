@@ -779,6 +779,8 @@ FocusScope {
         TrackTable {
             id: memberList
 
+            navigationFocusKey: "playlist-members"
+
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: memberSelection.bottom

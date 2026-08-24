@@ -17,6 +17,8 @@ private slots:
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void restoresVirtualFocusAcrossDelayedRefill();
+    void stableOwnersAndPlaylistIdentitySurviveReorder();
+    void terminalFallbackAndUserOverride();
     void preservesFavoriteStateAcrossReconstruction();
     void preservesBaseAndKeepsTransientPagesOutOfHistory();
 };
@@ -43,6 +45,8 @@ Item {
     property string preparedAlbumId: ""
     property string searchQuery: ""
     property int refillBatch: 0
+    property int virtualNearEndCount: 0
+    property bool twinSwapped: false
     readonly property int virtualCount: virtualRows.count
 
     function itemFor(id): var {
@@ -123,6 +127,49 @@ Item {
     function focusVirtual(index): void {
         if (history.currentItem && history.currentItem.focusRow)
             history.currentItem.focusRow(Number(index));
+    }
+
+    function restoreMissingVirtual(index): void {
+        if (history.currentItem && history.currentItem.restoreMissing)
+            history.currentItem.restoreMissing(Number(index));
+    }
+
+    function clearVirtualWithoutRefill(): void {
+        refillTimer.stop();
+        virtualRows.clear();
+    }
+
+    function appendVirtualRows(count): void {
+        for (let i = 0; i < Number(count); ++i)
+            virtualRows.append({ "itemId": "fallback-" + i, "name": "Fallback " + i });
+    }
+
+    function appendLateVirtual(): void {
+        virtualRows.append({ "itemId": "late-row", "name": "Late row" });
+    }
+
+    function focusVirtualOverride(): void {
+        if (history.currentItem && history.currentItem.focusOverride)
+            history.currentItem.focusOverride();
+    }
+
+    function pushTwin(): void {
+        history.pushRoute({ "kind": "person", "id": "twins", "name": "Twins",
+                            "key": "person:twins", "title": "Twins" });
+    }
+
+    function focusTwinDuplicate(): void {
+        if (history.currentItem && history.currentItem.focusDuplicate)
+            history.currentItem.focusDuplicate();
+    }
+
+    function swapTwinOwnersAndRows(): void {
+        root.twinSwapped = true;
+        duplicateRows.clear();
+        duplicateRows.append({ "playlistItemId": "entry-b", "itemId": "same-media",
+                               "name": "Second occurrence" });
+        duplicateRows.append({ "playlistItemId": "entry-a", "itemId": "same-media",
+                               "name": "First occurrence" });
     }
 
     function refillVirtualRows(): void {
@@ -254,20 +301,90 @@ Item {
 
     component VirtualProbe: FocusScope {
         readonly property int focusedIndex: virtualGrid.currentIndex
+        readonly property bool restorePending: virtualGrid.navigationFocusRestorePending
         objectName: "virtual-page"
         focus: true
 
         function focusRow(index): void {
-            virtualGrid.restoreNavigationFocus("row-" + index, index);
+            virtualGrid.restoreNavigationFocus("i:row-" + index, index);
         }
+        function restoreMissing(index): void {
+            virtualGrid.restoreNavigationFocus("i:missing-row", index);
+        }
+        function focusOverride(): void { virtualOverride.forceActiveFocus(Qt.OtherFocusReason); }
 
         StrmGrid {
             id: virtualGrid
+            navigationFocusKey: "virtual-primary"
             width: 220
             height: 90
             gridModel: virtualRows
             cellsAcross: 1
             prefetchThreshold: 0
+            onNearEnd: root.virtualNearEndCount += 1
+        }
+        TextInput {
+            id: virtualOverride
+            objectName: "virtual-override"
+            anchors.top: virtualGrid.bottom
+            text: "Override"
+        }
+    }
+
+    component TwinOwnerA: StrmGrid {
+        navigationFocusKey: "twin-a"
+        width: 220
+        height: 90
+        gridModel: primaryRows
+        cellsAcross: 1
+        prefetchThreshold: 0
+    }
+
+    component TwinOwnerB: StrmGrid {
+        navigationFocusKey: "twin-b"
+        width: 220
+        height: 90
+        gridModel: duplicateRows
+        cellsAcross: 1
+        prefetchThreshold: 0
+    }
+
+    component TwinProbe: FocusScope {
+        property string personId: ""
+        property string personName: ""
+        readonly property string focusedOwnerKey: first.item && first.item.activeFocus
+                                                   ? first.item.navigationFocusKey
+                                                   : second.item && second.item.activeFocus
+                                                     ? second.item.navigationFocusKey : ""
+        readonly property int focusedIndex: first.item && first.item.activeFocus
+                                            ? first.item.currentIndex
+                                            : second.item && second.item.activeFocus
+                                              ? second.item.currentIndex : -1
+        objectName: "twin-page"
+        focus: true
+
+        function owner(key): var {
+            if (first.item && first.item.navigationFocusKey === key)
+                return first.item;
+            if (second.item && second.item.navigationFocusKey === key)
+                return second.item;
+            return null;
+        }
+        function focusDuplicate(): void {
+            const target = owner("twin-b");
+            if (target)
+                target.restoreNavigationFocus("p:entry-b", 1);
+        }
+
+        Row {
+            Loader {
+                id: first
+                sourceComponent: root.twinSwapped ? twinOwnerBComponent : twinOwnerAComponent
+            }
+            Loader {
+                id: second
+                sourceComponent: root.twinSwapped ? twinOwnerAComponent : twinOwnerBComponent
+            }
         }
     }
 
@@ -297,6 +414,9 @@ Item {
     Component { id: detailsComponent; DetailsProbe {} }
     Component { id: albumComponent; AlbumProbe {} }
     Component { id: artistComponent; ArtistProbe {} }
+    Component { id: twinOwnerAComponent; TwinOwnerA {} }
+    Component { id: twinOwnerBComponent; TwinOwnerB {} }
+    Component { id: personComponent; TwinProbe {} }
     Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
@@ -304,6 +424,15 @@ Item {
     Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
 
     ListModel { id: virtualRows }
+    ListModel {
+        id: primaryRows
+        ListElement { itemId: "primary"; name: "Primary" }
+    }
+    ListModel {
+        id: duplicateRows
+        ListElement { playlistItemId: "entry-a"; itemId: "same-media"; name: "First occurrence" }
+        ListElement { playlistItemId: "entry-b"; itemId: "same-media"; name: "Second occurrence" }
+    }
     Timer {
         id: refillTimer
         interval: 15
@@ -333,6 +462,7 @@ Item {
         detailsPageComponent: detailsComponent
         albumPageComponent: albumComponent
         artistPageComponent: artistComponent
+        personPageComponent: personComponent
         libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
         loginPageComponent: loginComponent
@@ -638,7 +768,8 @@ void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
             .toMap()
             .value(QString::number(virtualRoute.value(QStringLiteral("token")).toInt()))
             .toString();
-    QVERIFY(virtualLocator.startsWith(QStringLiteral("[\"semantic\",\"grid\",")));
+    QVERIFY(virtualLocator.startsWith(
+        QStringLiteral("[\"semantic\",\"virtual-primary\",\"i:row-17\",")));
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
     QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
@@ -651,6 +782,81 @@ void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
     QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
     QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
     QVERIFY(view.activeFocusItem());
+}
+
+void NavigationHistoryTest::stableOwnersAndPlaylistIdentitySurviveReorder()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushTwin"));
+    QVERIFY(invoke(root, "focusTwinDuplicate"));
+    QTRY_COMPARE(currentItem(history)->property("focusedOwnerKey").toString(),
+                 QStringLiteral("twin-b"));
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 1);
+
+    QVERIFY(invoke(root, "pushRoute", 91));
+    const QVariantMap twinRoute = listProperty(history, "navTrail").at(1).toMap();
+    const QString locator = history->property("focusMemory")
+                                .toMap()
+                                .value(QString::number(twinRoute.value(QStringLiteral("token")).toInt()))
+                                .toString();
+    QVERIFY(locator.contains(QStringLiteral("\"twin-b\"")));
+    QVERIFY(locator.contains(QStringLiteral("\"p:entry-b\"")));
+
+    // Visit it once while still instantiated, then pop it into Forward so its
+    // graph is destroyed. Reorder both same-kind owners and the duplicate media
+    // entries before reconstruction.
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("focusedOwnerKey").toString(),
+                 QStringLiteral("twin-b"));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "swapTwinOwnersAndRows"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_COMPARE(currentItem(history)->property("focusedOwnerKey").toString(),
+                 QStringLiteral("twin-b"));
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 0);
+}
+
+void NavigationHistoryTest::terminalFallbackAndUserOverride()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushVirtual", QStringLiteral("terminal")));
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QVERIFY(invoke(root, "clearVirtualWithoutRefill"));
+    QVERIFY(invoke(root, "appendVirtualRows", 5));
+    const int nearEndBeforeRestore = root->property("virtualNearEndCount").toInt();
+    QVERIFY(invoke(root, "restoreMissingVirtual", 17));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+
+    // Rediscovering the same target must not restart its bounded settle timer.
+    for (int repeat = 0; repeat < 4; ++repeat) {
+        QTest::qWait(70);
+        QVERIFY(invoke(root, "restoreMissingVirtual", 17));
+    }
+    QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
+    QCOMPARE(currentItem(history)->property("focusedIndex").toInt(), 4);
+    QCOMPARE(root->property("virtualNearEndCount").toInt(), nearEndBeforeRestore);
+
+    QVERIFY(invoke(root, "clearVirtualWithoutRefill"));
+    QVERIFY(invoke(root, "restoreMissingVirtual", 3));
+    QTRY_VERIFY(currentItem(history)->property("restorePending").toBool());
+    QVERIFY(invoke(root, "focusVirtualOverride"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
+    QTRY_VERIFY(!currentItem(history)->property("restorePending").toBool());
+    QVERIFY(invoke(root, "appendLateVirtual"));
+    QTest::qWait(450);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("virtual-override"));
 }
 
 void NavigationHistoryTest::preservesFavoriteStateAcrossReconstruction()

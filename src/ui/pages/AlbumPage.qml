@@ -646,6 +646,8 @@ FocusScope {
     TrackTable {
         id: trackList
 
+        navigationFocusKey: "album-tracks"
+
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: selectionBar.bottom

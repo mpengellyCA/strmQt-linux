@@ -1366,6 +1366,7 @@ FocusScope {
             // ── Movies ─────────────────────────────────────────────────────
             StrmRail {
                 id: movieRail
+                navigationFocusKey: "search-movies"
                 visible: movieModel.count > 0
                 title: qsTr("Movies")
                 railModel: movieModel
@@ -1386,6 +1387,7 @@ FocusScope {
             // ── Series ─────────────────────────────────────────────────────
             StrmRail {
                 id: seriesRail
+                navigationFocusKey: "search-series"
                 visible: seriesModel.count > 0
                 title: qsTr("Series")
                 railModel: seriesModel
@@ -1409,6 +1411,7 @@ FocusScope {
             // card falls back to the poster on its own when there is no still.
             StrmRail {
                 id: episodeRail
+                navigationFocusKey: "search-episodes"
                 visible: episodeModel.count > 0
                 title: qsTr("Episodes")
                 railModel: episodeModel
@@ -1434,6 +1437,7 @@ FocusScope {
             // IncludeItemTypes; absent, and costing nothing, until it does.
             StrmRail {
                 id: collectionRail
+                navigationFocusKey: "search-collections"
                 visible: collectionModel.count > 0
                 title: qsTr("Collections")
                 railModel: collectionModel
@@ -1460,6 +1464,7 @@ FocusScope {
             // it to a slice of a face.
             StrmRail {
                 id: artistRail
+                navigationFocusKey: "search-artists"
                 visible: artistModel.count > 0
                 title: qsTr("Artists")
                 railModel: artistModel
@@ -1485,6 +1490,7 @@ FocusScope {
             // ── Albums ─────────────────────────────────────────────────────
             StrmRail {
                 id: albumRail
+                navigationFocusKey: "search-albums"
                 visible: albumModel.count > 0
                 title: qsTr("Albums")
                 railModel: albumModel
@@ -1523,6 +1529,7 @@ FocusScope {
             // ── Anything else the server sent ──────────────────────────────
             StrmRail {
                 id: otherRail
+                navigationFocusKey: "search-other"
                 visible: otherModel.count > 0
                 title: qsTr("Other results")
                 railModel: otherModel

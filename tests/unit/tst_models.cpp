@@ -38,6 +38,7 @@ private slots:
     void getReturnsAllRoles();
     void userDataUpdateEmitsDataChanged();
     void userDataUpdateUsesMaintainedIndex();
+    void navigationIdentityIndexTracksPlaylistDuplicates();
     void libraryModelRoles();
     void setLibrariesNotifiesOnlyChangedCount();
     void homeRailDescriptorsAreIncremental();
@@ -148,6 +149,38 @@ void ModelsTest::getReturnsAllRoles()
     QVERIFY(map.contains(QStringLiteral("posterUrl")));
     QVERIFY(map.contains(QStringLiteral("overview")));
     QVERIFY(model.get(99).isEmpty());
+}
+
+void ModelsTest::navigationIdentityIndexTracksPlaylistDuplicates()
+{
+    MediaItem first = makeEpisode();
+    first.id = QStringLiteral("duplicate-media");
+    first.playlistItemId = QStringLiteral("entry-a");
+    MediaItem second = first;
+    second.playlistItemId = QStringLiteral("entry-b");
+    MediaItem ordinary = makeEpisode();
+    ordinary.id = QStringLiteral("ordinary-media");
+
+    MediaItemModel model;
+    model.setItems({first, second, ordinary});
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("p:entry-a")), 0);
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("p:entry-b")), 1);
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:ordinary-media")), 2);
+    // Playlist rows are entry-addressed; their duplicated media id must not
+    // collapse the two occurrences into one navigation identity.
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:duplicate-media")), -1);
+
+    model.setItems({second, ordinary, first});
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("p:entry-a")), 2);
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("p:entry-b")), 0);
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:ordinary-media")), 1);
+
+    MediaItem appended = makeEpisode();
+    appended.id = QStringLiteral("appended-media");
+    model.appendItems({appended});
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:appended-media")), 3);
+    model.clear();
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("p:entry-a")), -1);
 }
 
 void ModelsTest::userDataUpdateEmitsDataChanged()

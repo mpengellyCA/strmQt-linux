@@ -572,6 +572,8 @@ FocusScope {
     StrmGrid {
         id: filmGrid
 
+        navigationFocusKey: "person-films"
+
         anchors.top: filmHeading.bottom
         anchors.topMargin: Theme.spacingValue
         anchors.left: parent.left
