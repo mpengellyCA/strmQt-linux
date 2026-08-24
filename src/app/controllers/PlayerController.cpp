@@ -808,6 +808,12 @@ void PlayerController::fetchChapters(const QString &itemId, int generation)
         // costs no extra request.
         m_currentSeriesId = result.value.item.seriesId;
         m_currentItemType = result.value.item.type;
+        // ...and the artwork, which a queue seeded from a bare play does not
+        // have. Every now-playing surface reads the queue entry, so this is
+        // what puts a cover on the docked bar, the lock screen and the
+        // picture-in-picture label for a film played straight from a card.
+        m_queue->enrichEntry(result.value.item);
+        updateIsAudio();
 
         QVariantList list;
         list.reserve(result.value.chapters.size());

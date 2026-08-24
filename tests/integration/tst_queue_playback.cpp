@@ -71,6 +71,7 @@ private slots:
     void isAudioFollowsTheQueuesItemType();
     void aFilmSetsTheRecordAsideAndGivesItBack();
     void onlyAChosenItemAnnouncesItself();
+    void aBarePlayGainsItsArtworkFromTheDetailsFetch();
     void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
     void isAudioDoesNotLingerFromTheOutgoingItemsTicket();
 
@@ -658,6 +659,34 @@ void QueuePlaybackTest::isAudioDoesNotLingerFromTheOutgoingItemsTicket()
     QVERIFY(m_controller->isAudio());
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QVERIFY(m_controller->isAudio());
+}
+
+// A bare play seeds the queue from a click: an id, a title and a type. Every
+// now-playing surface reads the queue entry, so a film played straight from a
+// card had no cover anywhere — on the docked bar, the lock screen, or the
+// floating frame's label — while music, which arrives as a queue of complete
+// items, looked right. The details request that fetches chapters already
+// carries the artwork.
+void QueuePlaybackTest::aBarePlayGainsItsArtworkFromTheDetailsFetch()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+        fixturePath(QStringLiteral("item_details.json"))));
+
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
+                           QStringLiteral("Movie"));
+    QCOMPARE(m_controller->queue()->rowCount(), 1);
+    // Seeded from the click: nothing to draw yet.
+    QVERIFY(m_controller->queue()->currentItem()
+                .value(QStringLiteral("posterUrl")).toString().isEmpty());
+
+    QTRY_VERIFY(!m_controller->queue()->currentItem()
+                     .value(QStringLiteral("posterUrl")).toString().isEmpty());
+    const QVariantMap entry = m_controller->queue()->currentItem();
+    // The id it was seeded with, not whatever the reply happened to carry.
+    QCOMPARE(entry.value(QStringLiteral("itemId")).toString(), QStringLiteral("301001"));
+    QCOMPARE(entry.value(QStringLiteral("name")).toString(), QStringLiteral("The Matrix"));
+    QVERIFY(entry.value(QStringLiteral("posterUrl")).toString().contains(QStringLiteral("aaa111")));
 }
 
 // Choosing a film while a record is playing used to replace the session

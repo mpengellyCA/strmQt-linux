@@ -84,6 +84,13 @@ public:
     Snapshot snapshot() const;
     void restore(const Snapshot &snapshot);
 
+    // The server's full record for an entry that was seeded from a click. A
+    // bare play knows an id, a title and a type — not the artwork, the series
+    // or the episode number — so every now-playing surface had nothing to draw
+    // for anything played straight from a card, while music (which arrives as
+    // a queue of complete items) looked right. Matched by id, never by row.
+    void enrichEntry(const MediaItem &item);
+
     // Derived from what the queue HOLDS, not remembered from the verb that
     // filled it. A label carried in from a click can outlive the queue it
     // described — play an album, then queue three more things onto it, and the

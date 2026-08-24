@@ -339,6 +339,30 @@ void PlayQueue::restore(const Snapshot &snapshot)
     notifyCursor();
 }
 
+void PlayQueue::enrichEntry(const MediaItem &item)
+{
+    if (item.id.isEmpty())
+        return;
+    for (int row = 0; row < m_entries.size(); ++row) {
+        if (m_entries.at(row).item.id != item.id)
+            continue;
+        // The identity survives: shuffling and re-ordering track the key, not
+        // the payload, so replacing what an entry HOLDS must not disturb where
+        // it sits or what it is.
+        m_entries[row].item = item;
+        syncView();
+        const QModelIndex idx = index(row);
+        emit dataChanged(idx, idx);
+        if (row == m_currentIndex)
+            emit currentItemChanged();
+        // What the surfaces bind through: they read itemAt(currentIndex), so a
+        // changed payload has to announce itself as a queue change or nothing
+        // re-reads it.
+        emit queueChanged();
+        return;
+    }
+}
+
 int PlayQueue::originalPositionOf(quint64 key) const
 {
     return static_cast<int>(m_originalKeys.indexOf(key));
