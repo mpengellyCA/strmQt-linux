@@ -112,7 +112,6 @@ void MusicController::resetSessionState()
     m_playlistSortDescending = false;
     m_nameStartsWith.clear();
     m_genreIds.clear();
-    m_yearFilters.clear();
     m_favoritesOnly = false;
     m_genreOptions.clear();
     m_genreNextIndex = 0;
@@ -243,8 +242,7 @@ QVariantList MusicController::availableSorts() const
 
 bool MusicController::filtered() const
 {
-    return !m_nameStartsWith.isEmpty() || !m_genreIds.isEmpty() || !m_yearFilters.isEmpty()
-           || m_favoritesOnly;
+    return !m_nameStartsWith.isEmpty() || !m_genreIds.isEmpty() || m_favoritesOnly;
 }
 
 void MusicController::setTab(const QString &tab)
@@ -331,16 +329,6 @@ void MusicController::setGenreIds(const QStringList &genreIds)
     applyQueryChange();
 }
 
-void MusicController::setYearFilters(const QStringList &years)
-{
-    QStringList wanted = years;
-    wanted.removeAll(QString());
-    if (m_yearFilters == wanted)
-        return;
-    m_yearFilters = wanted;
-    applyQueryChange();
-}
-
 void MusicController::setFavoritesOnly(bool favoritesOnly)
 {
     if (m_favoritesOnly == favoritesOnly)
@@ -355,7 +343,6 @@ void MusicController::clearFilters()
         return;
     m_nameStartsWith.clear();
     m_genreIds.clear();
-    m_yearFilters.clear();
     m_favoritesOnly = false;
     applyQueryChange();
 }
@@ -364,7 +351,6 @@ void MusicController::applyFilters(ItemsQuery &query) const
 {
     query.nameStartsWith = m_nameStartsWith;
     query.genreIds = m_genreIds;
-    query.yearFilters = m_yearFilters;
     if (m_favoritesOnly)
         query.filters.append(QStringLiteral("IsFavorite"));
 }
@@ -536,14 +522,13 @@ void MusicController::setLibrary(const QString &libraryId)
     // and the Genre select reads "1 selected" with no way to see WHICH, because
     // that id is not in the new options list at all.
     //
-    // The other three go with it rather than being kept "because a letter is a
+    // The other filters go with it rather than being kept "because a letter is a
     // letter": one rule ("filters belong to the scope") is what keeps the Clear
     // button, the alphabet strip, filtered() and the empty state telling the
     // same story. The per-tab SORTS are library-neutral and do survive.
     if (filtered()) {
         m_nameStartsWith.clear();
         m_genreIds.clear();
-        m_yearFilters.clear();
         m_favoritesOnly = false;
         emit queryChanged();
     }
@@ -626,11 +611,6 @@ void MusicController::fetchArtists(int startIndex)
     query.startIndex = startIndex;
     query.limit = kPageSize;
     applyFilters(query);
-    // Years is not among the axes the artist endpoints honour (measured: it
-    // returns nothing rather than everything), and a release year is not a
-    // property of a person anyway — so a year filter narrows albums and songs
-    // and leaves the artist list alone rather than silently emptying it.
-    query.yearFilters.clear();
 
     // /Artists and /Artists/AlbumArtists are different endpoints, not a filter
     // on one: on the target server they return 3,789 and 2,394 respectively.
@@ -782,12 +762,7 @@ void MusicController::fetchPlaylists(int startIndex)
     query.startIndex = startIndex;
     query.limit = kPageSize;
     applyFilters(query);
-    // Years is not an axis a playlist has: it carries no ProductionYear, and a
-    // year-filtered playlist query answers with nothing rather than everything
-    // (measured) — so the year filter narrows albums and songs and leaves this
-    // list alone, exactly as it does for artists.
-    //
-    // GENRES ARE NOT THE SAME CASE, and review has now asked twice. Measured on
+    // GENRES ARE A WORKING AXIS. Measured on
     // 4.9.5.0 against this library: a playlist DOES carry genres — Emby
     // aggregates them from its members and publishes both `Genres` and
     // `GenreItems` on the list payload — and GenreIds narrows the tab the way it
@@ -795,8 +770,6 @@ void MusicController::fetchPlaylists(int startIndex)
     // 627). It is a working axis, not a filter that empties the grid, so it
     // stays. `Genres` by NAME answers differently again (299) and is not what
     // this sends.
-    query.yearFilters.clear();
-
     m_client->items(query).then(
         this, [this, generation, startIndex](const Result<ItemsPage> &result) {
             if (generation != m_playlistGeneration)

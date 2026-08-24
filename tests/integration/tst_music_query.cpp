@@ -263,10 +263,6 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
 
-    m_music->setYearFilters({QStringLiteral("1994")});
-    settle();
-    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Years")), QStringLiteral("1994"));
-
     // The tabs the user is not looking at were emptied, so the same narrowing
     // is what they refill with when they are next opened.
     QCOMPARE(m_music->songs()->rowCount(), 0);
@@ -282,7 +278,6 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     QVERIFY(!m_music->filtered());
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("GenreIds")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("Filters")));
-    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("Years")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
 }
 
@@ -327,15 +322,12 @@ void MusicQueryTest::songsAreTheirOwnModelWithTheirOwnQuery()
 }
 
 // /Artists and /Artists/AlbumArtists are separate endpoints and take the
-// narrowing axes as query parameters, measured live. Years is deliberately not
-// among them: a release year is not a property of a person, and this server
-// answers a year-filtered artist query with nothing at all.
+// narrowing axes as query parameters, measured live.
 void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
 {
     m_music->setTab(QStringLiteral("artists"));
     m_music->setNameStartsWith(QStringLiteral("T"));
     m_music->setGenreIds({QStringLiteral("1937444")});
-    m_music->setYearFilters({QStringLiteral("1994")});
     m_music->loadArtists();
     settle();
 
@@ -344,7 +336,6 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
     QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("T"));
     QCOMPARE(query.queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("1937444"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("SortName"));
-    QVERIFY(!query.hasQueryItem(QStringLiteral("Years")));
 
     m_music->setSort(QStringLiteral("PlayCount"), true);
     settle();
@@ -359,8 +350,8 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
     QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("T"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("PlayCount"));
 
-    // Filters IS forwarded, unlike Years — and unlike every other axis above it
-    // is *unmeasured*: this account has no music favourites, so 0 rows back
+    // Filters is forwarded, but unlike every other axis above it is
+    // *unmeasured*: this account has no music favourites, so 0 rows back
     // cannot be told apart from the parameter being ignored, and settling it
     // would mean writing a favourite into somebody's library. The header says
     // so; this pins the behaviour the header describes, so the two cannot drift
@@ -369,7 +360,6 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
     settle();
     query = lastQueryFor(QStringLiteral("/Artists"));
     QCOMPARE(query.queryItemValue(QStringLiteral("Filters")), QStringLiteral("IsFavorite"));
-    QVERIFY(!query.hasQueryItem(QStringLiteral("Years")));
 }
 
 // ARCHITECTURE.md §2: this family of endpoints reports TotalRecordCount = 0
@@ -491,7 +481,6 @@ void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
     m_music->setSort(QStringLiteral("DateCreated"), true);
     m_music->setGenreIds({QStringLiteral("1937444")});
     m_music->setNameStartsWith(QStringLiteral("T"));
-    m_music->setYearFilters({QStringLiteral("1994")});
     m_music->setFavoritesOnly(true);
     settle();
     QVERIFY(m_music->filtered());
@@ -507,7 +496,6 @@ void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
     QVERIFY(!m_music->filtered());
     QVERIFY(m_music->genreIds().isEmpty());
     QVERIFY(m_music->nameStartsWith().isEmpty());
-    QVERIFY(m_music->yearFilters().isEmpty());
     QVERIFY(!m_music->favoritesOnly());
     // One notification, so the Clear button, the alphabet strip and the empty
     // state all move together.
@@ -525,7 +513,6 @@ void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
     QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("2000001"));
     QVERIFY(!query.hasQueryItem(QStringLiteral("GenreIds")));
     QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWith")));
-    QVERIFY(!query.hasQueryItem(QStringLiteral("Years")));
     QVERIFY(!query.hasQueryItem(QStringLiteral("Filters")));
 
     // The genre walk restarts for the new scope rather than being turned away by
@@ -794,25 +781,18 @@ void MusicQueryTest::playlistsAreScopedToTheLibraryNotProbedOneByOne()
     QVERIFY(keys.contains(QStringLiteral("Runtime")));
     QVERIFY(!keys.contains(QStringLiteral("ProductionYear")));
 
-    // Shared filters reach it; the year filter deliberately does not. A
-    // playlist carries no ProductionYear and a year-filtered playlist query
-    // answers with nothing at all, which would read as a broken tab rather than
-    // as an axis that does not apply — the same call the artists tab makes.
-    //
-    // GenreIds is the opposite case and is asserted here on purpose, because a
-    // reviewer read the two as the same axis. Measured on the live server: Emby
+    // Shared filters reach it. GenreIds is asserted here on purpose: measured
+    // on the live server, Emby
     // aggregates a playlist's genres from its members and publishes them, and
     // GenreIds narrows this query the way it narrows albums — 191 of 1,564
     // playlists for the Rock id, against 627 of 5,037 albums. Dropping it would
     // make a lit genre chip silently mean nothing on this one tab.
     m_music->setNameStartsWith(QStringLiteral("W"));
     m_music->setGenreIds({QStringLiteral("1932975")});
-    m_music->setYearFilters({QStringLiteral("1999")});
     settle();
     const QUrlQuery filtered = lastItemsQuery();
     QCOMPARE(filtered.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("W"));
     QCOMPARE(filtered.queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("1932975"));
-    QVERIFY(!filtered.hasQueryItem(QStringLiteral("Years")));
 
     m_music->setFavoritesOnly(true);
     settle();
@@ -989,7 +969,6 @@ void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
     m_music->setArtistMode(QStringLiteral("artists"));
     m_music->setNameStartsWith(QStringLiteral("A"));
     m_music->setGenreIds({QStringLiteral("genre-a")});
-    m_music->setYearFilters({QStringLiteral("2020")});
     m_music->setFavoritesOnly(true);
     m_music->setTab(QStringLiteral("songs"));
     m_music->loadSongs();
@@ -1011,7 +990,6 @@ void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
     QVERIFY(!m_music->sortDescending());
     QVERIFY(m_music->nameStartsWith().isEmpty());
     QVERIFY(m_music->genreIds().isEmpty());
-    QVERIFY(m_music->yearFilters().isEmpty());
     QVERIFY(!m_music->favoritesOnly());
     QVERIFY(m_music->genreOptions().isEmpty());
     QCOMPARE(m_music->albums()->rowCount(), 0);

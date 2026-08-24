@@ -106,7 +106,6 @@ class MusicController : public QObject
     // MusicGenre ids. A music library has hundreds of genres (289 measured), so
     // this is a multi-select, never a row of chips.
     Q_PROPERTY(QStringList genreIds READ genreIds NOTIFY queryChanged)
-    Q_PROPERTY(QStringList yearFilters READ yearFilters NOTIFY queryChanged)
     Q_PROPERTY(bool favoritesOnly READ favoritesOnly NOTIFY queryChanged)
     // True when anything narrows the view, so the UI can offer one "clear".
     Q_PROPERTY(bool filtered READ filtered NOTIFY queryChanged)
@@ -150,7 +149,6 @@ public:
     QVariantList availableSorts() const;
     QString nameStartsWith() const { return m_nameStartsWith; }
     QStringList genreIds() const { return m_genreIds; }
-    QStringList yearFilters() const { return m_yearFilters; }
     bool favoritesOnly() const { return m_favoritesOnly; }
     bool filtered() const;
     QVariantList genreOptions() const { return m_genreOptions; }
@@ -165,7 +163,6 @@ public:
     Q_INVOKABLE void setSort(const QString &key, bool descending);
     Q_INVOKABLE void setNameStartsWith(const QString &letter);
     Q_INVOKABLE void setGenreIds(const QStringList &genreIds);
-    Q_INVOKABLE void setYearFilters(const QStringList &years);
     Q_INVOKABLE void setFavoritesOnly(bool favoritesOnly);
     Q_INVOKABLE void clearFilters();
 
@@ -183,7 +180,7 @@ public:
     //
     // Filters do not survive it: a genre id is a ParentId-scoped MusicGenre row,
     // so carrying it into another library queries an id that does not exist
-    // there. See setLibrary() for why the other three axes go with it. The
+    // there. See setLibrary() for why the other narrowing axes go with it. The
     // per-tab sorts, which are library-neutral, do survive.
     Q_INVOKABLE void setLibrary(const QString &libraryId);
 
@@ -369,7 +366,6 @@ private:
 
     QString m_nameStartsWith;
     QStringList m_genreIds;
-    QStringList m_yearFilters;
     bool m_favoritesOnly = false;
     QVariantList m_genreOptions;
     // The genre walk's own state, so a walk that broke in the middle can be told
