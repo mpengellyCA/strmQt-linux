@@ -162,7 +162,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             emit bufferingChanged();
     });
     connect(m_backend, &PlayerBackend::bufferedMsChanged, this,
-            &PlayerController::updateBufferedEnd);
+            [this] { updateBufferedEnd(positionMs()); });
 
     m_progressTimer.setInterval(kProgressIntervalMs);
     connect(&m_progressTimer, &QTimer::timeout, this, &PlayerController::reportProgress);
@@ -894,13 +894,15 @@ void PlayerController::updatePositionSnapshots(qint64 positionMs, bool forceInte
     m_lastInternalPositionMs = positionMs;
     updateCurrentChapter(positionMs);
     updateUpNext();
+    updateBufferedEnd(positionMs);
 }
 
-void PlayerController::updateBufferedEnd()
+void PlayerController::updateBufferedEnd(qint64 positionMs)
 {
     if (!m_active)
         return;
-    const qint64 endpoint = qMax<qint64>(0, positionMs() + m_backend->bufferedMs());
+    const qint64 bufferedAhead = m_backend->bufferedMs();
+    const qint64 endpoint = bufferedAhead > 0 ? qMax<qint64>(0, positionMs + bufferedAhead) : 0;
     if (endpoint == m_bufferedEndMs)
         return;
     m_bufferedEndMs = endpoint;

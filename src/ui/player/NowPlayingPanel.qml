@@ -418,7 +418,7 @@ FocusScope {
                             // Live whenever it can do something: with no earlier
                             // entry it still restarts the track, which is the
                             // universal convention.
-                            enabled: PlayerCtl.hasPrevious === true || panel.positionMs > 5000
+                            enabled: PlayerCtl.hasPrevious === true || panel.positionSeconds > 5
                             onClicked: PlayerCtl.playPrevious()
 
                             KeyNavigation.left: shuffleButton

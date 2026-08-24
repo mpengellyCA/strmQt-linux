@@ -376,7 +376,7 @@ private:
     void clearChapters();
     void updateCurrentChapter(qint64 positionMs);
     void updatePositionSnapshots(qint64 positionMs, bool forceInternal = false);
-    void updateBufferedEnd();
+    void updateBufferedEnd(qint64 positionMs);
     // Continue a series when nothing else is queued. Returns true when it took
     // responsibility for what happens next.
     bool tryAutoPlayNextEpisode();

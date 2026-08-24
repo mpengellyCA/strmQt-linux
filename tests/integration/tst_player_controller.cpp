@@ -213,9 +213,18 @@ void PlayerControllerTest::positionSnapshotsBoundQmlChurn()
     m_backend->simulatePosition(1200);
     QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6090));
     QCOMPARE(buffered.count(), 1);
-    m_backend->simulateBufferedMs(5000);
-    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6200));
+    // mpv suppresses bufferedMsChanged while the relative amount stays within
+    // its epsilon. The controller's coarse position sample must still advance
+    // the absolute endpoint without inventing frame-rate QML work.
+    m_backend->simulatePosition(1300);
+    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6300));
     QCOMPARE(buffered.count(), 2);
+
+    // A seek is a forced sample, including with a backend that keeps reporting
+    // the same relative buffer-ahead value.
+    m_controller->seekTo(10'000);
+    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(15'000));
+    QCOMPARE(buffered.count(), 3);
 }
 
 void PlayerControllerTest::directPlayStartsAndReports()
