@@ -43,6 +43,10 @@ private slots:
     void creationCarriesTheMediaTypeItWasGiven();
     void playlistMembersPageToTheEnd_data();
     void playlistMembersPageToTheEnd();
+    void repeatedPlaylistMemberPageStopsTheWalk_data();
+    void repeatedPlaylistMemberPageStopsTheWalk();
+    void playlistMemberProgressUsesEntryIds();
+    void playlistMemberWalkStopsAtTheSafetyLimit();
     void musicRetargetDropsTheInFlightPage();
     void thePlaylistListPagesToTheEnd();
     void aPlaylistWalkThatStoppedHalfwayIsRetried();
@@ -63,13 +67,31 @@ private:
         page += QStringLiteral("],\"TotalRecordCount\":%1}").arg(total).toUtf8();
         return page;
     }
-    static QByteArray playlistMemberPage(int from, int count, int total)
+    static QByteArray playlistMemberPage(int from, int count, int total,
+                                         bool includeEntryIds = true)
     {
         QByteArray page = QByteArrayLiteral("{\"Items\":[");
         for (int i = 0; i < count; ++i) {
             if (i > 0)
                 page += ',';
             page += QStringLiteral("{\"Id\":\"track%1\",\"Name\":\"Track %1\","
+                                   "\"Type\":\"Audio\"%2}")
+                        .arg(from + i)
+                        .arg(includeEntryIds
+                                 ? QStringLiteral(",\"PlaylistItemId\":\"entry%1\"").arg(from + i)
+                                 : QString())
+                        .toUtf8();
+        }
+        page += QStringLiteral("],\"TotalRecordCount\":%1}").arg(total).toUtf8();
+        return page;
+    }
+    static QByteArray duplicateItemMemberPage(int from, int count, int total)
+    {
+        QByteArray page = QByteArrayLiteral("{\"Items\":[");
+        for (int i = 0; i < count; ++i) {
+            if (i > 0)
+                page += ',';
+            page += QStringLiteral("{\"Id\":\"same-track\",\"Name\":\"Encore\","
                                    "\"Type\":\"Audio\",\"PlaylistItemId\":\"entry%1\"}")
                         .arg(from + i)
                         .toUtf8();
@@ -511,6 +533,99 @@ void ContentControllersTest::playlistMembersPageToTheEnd()
                  .value(QStringLiteral("playlistItemId"))
                  .toString(),
              QStringLiteral("entry%1").arg(total - 1));
+}
+
+void ContentControllersTest::repeatedPlaylistMemberPageStopsTheWalk_data()
+{
+    QTest::addColumn<bool>("includeEntryIds");
+    QTest::newRow("playlist-entry-ids") << true;
+    QTest::newRow("malformed-rows-use-fallback") << false;
+}
+
+void ContentControllersTest::repeatedPlaylistMemberPageStopsTheWalk()
+{
+    QFETCH(bool, includeEntryIds);
+    const QString path = QStringLiteral("/Playlists/pl1/Items");
+    // The mock keeps serving this route, exactly like a server that ignores
+    // StartIndex. TotalRecordCount=0 removes the ordinary advertised-total end.
+    m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                     playlistMemberPage(0, 500, 0, includeEntryIds));
+
+    PlaylistController playlists(m_client);
+    QSignalSpy surfaced(&playlists, &PlaylistController::actionFailed);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Looping playlist"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(requestsFor(path), 2);
+    QCOMPARE(playlists.items()->rowCount(), 500);
+    QVERIFY(playlists.errorMessage().contains(QStringLiteral("did not advance")));
+    QVERIFY(playlists.errorMessage().contains(QStringLiteral("Reload")));
+    QCOMPARE(surfaced.count(), 1);
+    QCOMPARE(surfaced.first().first().toString(), playlists.errorMessage());
+
+    // A manual retry is a new walk: neither the repeated-page signature nor
+    // the error from the retired walk may poison it.
+    m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                     playlistMemberPage(2000, 1, 1, includeEntryIds));
+    playlists.reload();
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(playlists.items()->rowCount(), 1);
+    QVERIFY(playlists.errorMessage().isEmpty());
+    QCOMPARE(requestsFor(path), 3);
+}
+
+void ContentControllersTest::playlistMemberProgressUsesEntryIds()
+{
+    const QString path = QStringLiteral("/Playlists/pl1/Items");
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, duplicateItemMemberPage(0, 500, 501));
+
+    PlaylistController playlists(m_client);
+    connect(playlists.items(), &QAbstractItemModel::modelReset, &playlists,
+            [this, path, &playlists] {
+                if (playlists.items()->rowCount() == 500)
+                    m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                                     duplicateItemMemberPage(500, 1, 501));
+            });
+
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Encore twice"));
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(playlists.items()->rowCount(), 501);
+    QVERIFY(playlists.errorMessage().isEmpty());
+    QCOMPARE(requestsFor(path), 2);
+    QCOMPARE(playlists.items()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("same-track"));
+    QCOMPARE(playlists.items()->get(500).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("same-track"));
+    QCOMPARE(playlists.items()->get(500).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry500"));
+}
+
+void ContentControllersTest::playlistMemberWalkStopsAtTheSafetyLimit()
+{
+    const QString path = QStringLiteral("/Playlists/pl1/Items");
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, playlistMemberPage(0, 500, 0));
+
+    PlaylistController playlists(m_client);
+    QSignalSpy surfaced(&playlists, &PlaylistController::actionFailed);
+    int armedAt = 500;
+    const auto armNextPage = [this, path, &playlists, &armedAt] {
+        const int held = playlists.items()->rowCount();
+        if (held != armedAt || held >= 10'000)
+            return;
+        m_mock->addRoute(QStringLiteral("GET"), path, 200,
+                         playlistMemberPage(held, 500, 0));
+        armedAt += 500;
+    };
+    connect(playlists.items(), &QAbstractItemModel::modelReset, &playlists, armNextPage);
+    connect(playlists.items(), &QAbstractItemModel::rowsInserted, &playlists, armNextPage);
+
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Huge playlist"));
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 10'000);
+    QCOMPARE(playlists.items()->rowCount(), 10'000);
+    QCOMPARE(requestsFor(path), 20);
+    QVERIFY(playlists.errorMessage().contains(QStringLiteral("safety limit")));
+    QVERIFY(playlists.errorMessage().contains(QStringLiteral("incomplete")));
+    QCOMPARE(surfaced.count(), 1);
 }
 
 // Re-targeting the music scope is a supersede like any other (ARCHITECTURE.md):

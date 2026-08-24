@@ -2,7 +2,9 @@
 
 #include "app/models/MediaItemModel.h"
 
+#include <QByteArray>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantList>
 
@@ -112,6 +114,8 @@ signals:
 private:
     void fetchPlaylistPage(int startIndex);
     void fetchMemberPage(const QString &playlistId, int startIndex, int generation);
+    void resetMemberWalk();
+    void stopMemberWalk(const QString &message);
     void setLoading(bool loading);
     void setError(const QString &message);
 
@@ -139,6 +143,13 @@ private:
     int m_listNextIndex = 0;
     bool m_listComplete = false;
     bool m_listWalkActive = false;
+    // Per-reload progress guard for the eager member walk. Playlist entry ids,
+    // not media item ids, distinguish a track deliberately added more than
+    // once. Page signatures catch an exact replay; entry signatures also catch
+    // the same rows returned in a different order.
+    QSet<QByteArray> m_memberPageSignatures;
+    QSet<QByteArray> m_memberEntrySignatures;
+    int m_memberPagesLoaded = 0;
 };
 
 } // namespace strmqt

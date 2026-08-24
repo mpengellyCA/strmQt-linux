@@ -4,10 +4,19 @@
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
 
+#include <QCryptographicHash>
+#include <QHash>
+
 namespace strmqt {
 
 namespace {
 constexpr int kMemberPageSize = 500;
+// PlaylistPage's member view is intentionally able to hold 10,000 rows. Keep
+// eager loading for shuffle/reorder correctness, but never retain or request
+// beyond that UI-scale ceiling when a server reports no usable total or keeps
+// manufacturing full pages.
+constexpr int kMemberPageLimit = 20;
+constexpr int kMemberRowLimit = kMemberPageSize * kMemberPageLimit;
 // One page of the playlist LIST. The walk in fetchPlaylistPage() covers the
 // measured 1,564 in four round trips.
 constexpr int kListPageSize = 500;
@@ -15,6 +24,57 @@ constexpr int kListPageSize = 500;
 // a server that answers a full page forever must not spin this loop. 20 pages is
 // 10,000 playlists — an order of magnitude past the measured library.
 constexpr int kListPageLimit = 20;
+
+void appendSignatureField(QByteArray *signature, const QByteArray &field)
+{
+    signature->append(QByteArray::number(field.size()));
+    signature->append(':');
+    signature->append(field);
+}
+
+QByteArray memberIdentityBase(const MediaItem &item)
+{
+    QByteArray identity;
+    if (!item.playlistItemId.isEmpty()) {
+        appendSignatureField(&identity, QByteArrayLiteral("entry"));
+        appendSignatureField(&identity, item.playlistItemId.toUtf8());
+        return QCryptographicHash::hash(identity, QCryptographicHash::Sha256);
+    }
+
+    // A missing PlaylistItemId is malformed for a member row, but tolerant DTO
+    // parsing deliberately permits it. Use several stable fields rather than
+    // item id alone, which would reject a valid playlist containing the same
+    // media item more than once. Per-page occurrence ordinals are added below
+    // so repeated identical malformed rows retain their multiplicity.
+    appendSignatureField(&identity, QByteArrayLiteral("fallback"));
+    appendSignatureField(&identity, item.id.toUtf8());
+    appendSignatureField(&identity, item.name.toUtf8());
+    appendSignatureField(&identity, item.type.toUtf8());
+    appendSignatureField(&identity, item.albumId.toUtf8());
+    appendSignatureField(&identity, item.seriesId.toUtf8());
+    appendSignatureField(&identity, item.seasonId.toUtf8());
+    appendSignatureField(&identity, QByteArray::number(item.indexNumber));
+    appendSignatureField(&identity, QByteArray::number(item.parentIndexNumber));
+    appendSignatureField(&identity, QByteArray::number(item.runtimeTicks));
+    return QCryptographicHash::hash(identity, QCryptographicHash::Sha256);
+}
+
+QByteArray memberPageSignature(const QList<MediaItem> &items, QList<QByteArray> *entrySignatures)
+{
+    QHash<QByteArray, int> occurrences;
+    QByteArray page;
+    entrySignatures->reserve(items.size());
+    for (const MediaItem &item : items) {
+        const QByteArray base = memberIdentityBase(item);
+        const int occurrence = ++occurrences[base];
+        QByteArray entry = base;
+        appendSignatureField(&entry, QByteArray::number(occurrence));
+        entry = QCryptographicHash::hash(entry, QCryptographicHash::Sha256);
+        entrySignatures->append(entry);
+        appendSignatureField(&page, entry);
+    }
+    return QCryptographicHash::hash(page, QCryptographicHash::Sha256);
+}
 } // namespace
 
 PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent)
@@ -110,6 +170,8 @@ void PlaylistController::reload()
     if (m_currentId.isEmpty())
         return;
     const int generation = ++m_itemsGeneration;
+    resetMemberWalk();
+    setError(QString());
     setLoading(true);
     fetchMemberPage(m_currentId, 0, generation);
 }
@@ -124,17 +186,45 @@ void PlaylistController::fetchMemberPage(const QString &playlistId, int startInd
             if (generation != m_itemsGeneration || playlistId != m_currentId)
                 return;
             if (!result.ok()) {
+                resetMemberWalk();
                 setLoading(false);
                 setError(result.error);
                 return;
             }
 
-            if (startIndex == 0)
-                m_items->setItems(result.value.items, result.value.totalRecordCount);
-            else
-                m_items->appendItems(result.value.items, result.value.totalRecordCount);
-
             const int received = static_cast<int>(result.value.items.size());
+            if (received > 0) {
+                QList<QByteArray> entrySignatures;
+                const QByteArray pageSignature =
+                    memberPageSignature(result.value.items, &entrySignatures);
+                bool contributesNewEntry = false;
+                for (const QByteArray &entry : entrySignatures) {
+                    if (!m_memberEntrySignatures.contains(entry)) {
+                        contributesNewEntry = true;
+                        break;
+                    }
+                }
+                if (m_memberPageSignatures.contains(pageSignature) || !contributesNewEntry) {
+                    stopMemberWalk(
+                        tr("Playlist loading stopped at %1 entries because the server repeated "
+                           "or did not advance a page. Reload to try again.")
+                            .arg(m_items->rowCount()));
+                    return;
+                }
+                m_memberPageSignatures.insert(pageSignature);
+                for (const QByteArray &entry : entrySignatures)
+                    m_memberEntrySignatures.insert(entry);
+            }
+
+            const int remaining = kMemberRowLimit - m_items->rowCount();
+            const int acceptedCount = qMin(received, qMax(0, remaining));
+            const QList<MediaItem> accepted = result.value.items.mid(0, acceptedCount);
+            if (startIndex == 0)
+                m_items->setItems(accepted, result.value.totalRecordCount);
+            else
+                m_items->appendItems(accepted, result.value.totalRecordCount);
+            ++m_memberPagesLoaded;
+
             const int nextIndex = startIndex + received;
             // Trust a positive advertised total when we have reached it, but
             // never trust zero: several Emby list endpoints return rows with a
@@ -142,14 +232,44 @@ void PlaylistController::fetchMemberPage(const QString &playlistId, int startInd
             // authoritative end marker in either case.
             const bool reachedAdvertisedTotal =
                 result.value.totalRecordCount > 0 && nextIndex >= result.value.totalRecordCount;
+            const bool hitSafetyLimit = acceptedCount < received ||
+                                        m_items->rowCount() >= kMemberRowLimit ||
+                                        m_memberPagesLoaded >= kMemberPageLimit;
+            if (acceptedCount < received ||
+                (received == kMemberPageSize && !reachedAdvertisedTotal && hitSafetyLimit)) {
+                stopMemberWalk(
+                    tr("Playlist loading stopped at the %1-entry safety limit. The playlist "
+                       "may be incomplete; reload after checking the server.")
+                        .arg(kMemberRowLimit));
+                return;
+            }
             if (received == kMemberPageSize && !reachedAdvertisedTotal) {
                 fetchMemberPage(playlistId, nextIndex, generation);
                 return;
             }
 
+            resetMemberWalk();
             setError(QString());
             setLoading(false);
         });
+}
+
+void PlaylistController::resetMemberWalk()
+{
+    m_memberPageSignatures.clear();
+    m_memberEntrySignatures.clear();
+    m_memberPagesLoaded = 0;
+}
+
+void PlaylistController::stopMemberWalk(const QString &message)
+{
+    resetMemberWalk();
+    setLoading(false);
+    setError(message);
+    // A partial model remains usable, so PlaylistPage does not replace it with
+    // its empty-error state. Raise the same toast channel as failed verbs to
+    // make the truncation visible while those retained rows stay on screen.
+    emit actionFailed(message);
 }
 
 void PlaylistController::create(const QString &name, const QStringList &itemIds,
@@ -259,6 +379,7 @@ void PlaylistController::remove(const QString &playlistId)
             m_currentId.clear();
             m_currentName.clear();
             m_items->clear();
+            resetMemberWalk();
             // Retire any reload() still in flight for this playlist. Its reply
             // does not know the playlist is gone; without bumping the counter
             // it passes the stale check and repopulates the page we just
