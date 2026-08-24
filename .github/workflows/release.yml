@@ -53,7 +53,16 @@ jobs:
 
       - name: Record immutable revision
         id: commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
+          [ "$TAG_SHA" = "$SHA" ] || {
+            echo "::error::checked-out commit $SHA is not tag $RELEASE_TAG ($TAG_SHA)"
+            exit 1
+          }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
   # ── Arch package ────────────────────────────────────────────────────────────
   arch:
@@ -93,8 +102,14 @@ jobs:
       - name: Version consistency
         env:
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           TAG="$RELEASE_TAG"
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          [ "$TAG_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::tag $TAG moved from $RELEASE_SHA to $TAG_SHA"
+            exit 1
+          }
           PKG_TAG=$(sed -n 's/^_tag=//p' packaging/arch/PKGBUILD)
           CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           echo "release tag=$TAG  PKGBUILD _tag=$PKG_TAG  CMake version=$CM_VER"
@@ -200,6 +215,22 @@ jobs:
     needs: [resolve, arch, appimage, flatpak]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify tag still names the built revision
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
+          [ "$TAG_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::tag $RELEASE_TAG moved from $RELEASE_SHA to $TAG_SHA"
+            exit 1
+          }
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
