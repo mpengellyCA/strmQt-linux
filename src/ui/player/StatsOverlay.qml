@@ -25,6 +25,11 @@ Item {
     readonly property var backend: PlayerCtl.backend
 
     readonly property var videoStats: {
+        // videoStats() performs synchronous mpv property reads. Keep that
+        // dependency out of the binding entirely while the panel is hidden;
+        // dropped-frame notifications then cost no mpv core-lock round trips.
+        if (!stats.shown)
+            return ({});
         const map = stats.backend.videoStats;
         return (map !== undefined && map !== null) ? map : ({});
     }
