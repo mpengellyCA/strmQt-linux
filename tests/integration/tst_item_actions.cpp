@@ -29,9 +29,9 @@ QString playedPath(const QString &itemId)
     return QStringLiteral("/Users/%1/PlayedItems/%2").arg(kUserId, itemId);
 }
 
-QString favoritePath(const QString &itemId)
+QString favoritePath(const QString &itemId, const QString &userId = kUserId)
 {
-    return QStringLiteral("/Users/%1/FavoriteItems/%2").arg(kUserId, itemId);
+    return QStringLiteral("/Users/%1/FavoriteItems/%2").arg(userId, itemId);
 }
 
 MediaItem makeItem(const QString &id, const QString &name)
@@ -67,7 +67,9 @@ private slots:
     void rapidTogglePairConvergesOnTheServer();
     void phoneUpdateThenSiblingTogglesPreserveFreshState();
     void userStateCacheIsBoundedAndReset();
+    void pendingUserStateAdmissionIsStrictlyBounded();
     void identityChangeClearsUserState();
+    void delayedOldIdentityReplyCannotConsumeNewIdentityRequest();
     void signalsCarryTheRightItemId();
     void playResumesAndPlayFromStartDoesNot();
     void navigationVerbsEmitRequests();
@@ -288,10 +290,9 @@ void ItemActionsTest::userStateCacheIsBoundedAndReset()
     for (const QString &id : ids) {
         m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
         m_actions->setFavorite(id, true);
-    }
-    for (const QString &id : ids)
         QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 1);
-    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+        QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    }
 
     QCOMPARE(m_actions->cachedUserStateCountForTests(), 3);
     QVERIFY(!m_actions->isFavorite(ids.first()));
@@ -300,6 +301,35 @@ void ItemActionsTest::userStateCacheIsBoundedAndReset()
     m_actions->resetSessionState();
     QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
     QVERIFY(!m_actions->isFavorite(ids.last()));
+}
+
+void ItemActionsTest::pendingUserStateAdmissionIsStrictlyBounded()
+{
+    m_actions->setUserStateCacheLimitForTests(3);
+    const QStringList ids{QStringLiteral("pending-0"), QStringLiteral("pending-1"),
+                          QStringLiteral("pending-2"), QStringLiteral("pending-rejected")};
+    for (const QString &id : ids) {
+        m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
+        m_mock->setRouteDelay(QStringLiteral("POST"), favoritePath(id), 150);
+    }
+
+    QSignalSpy changed(m_actions, &ItemActions::favoriteChanged);
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    m_actions->setFavoriteAll(ids, true);
+
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 3);
+    QCOMPARE(m_actions->pendingUserStateRequestCountForTests(), 3);
+    QCOMPARE(changed.count(), 3);
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(!failed.first().at(0).toString().isEmpty());
+    QVERIFY(!m_actions->isFavorite(ids.last()));
+
+    for (int index = 0; index < 3; ++index)
+        QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(ids.at(index))), 1);
+    QTest::qWait(200);
+    QCOMPARE(requestCount(QStringLiteral("POST"), favoritePath(ids.last())), 0);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 3);
 }
 
 void ItemActionsTest::identityChangeClearsUserState()
@@ -314,6 +344,34 @@ void ItemActionsTest::identityChangeClearsUserState()
     QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
     QCOMPARE(m_model->rowCount(), 0);
     QVERIFY(!m_actions->isFavorite(kItemId));
+}
+
+void ItemActionsTest::delayedOldIdentityReplyCannotConsumeNewIdentityRequest()
+{
+    constexpr int oldReplyDelayMs = 500;
+    const auto secondUser = QStringLiteral("second-user");
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(kItemId), 204, {});
+    m_mock->setRouteDelay(QStringLiteral("POST"), favoritePath(kItemId), oldReplyDelayMs);
+
+    m_actions->setFavorite(kItemId, true);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(kItemId)), 1);
+    QCOMPARE(m_actions->pendingUserStateRequestCountForTests(), 1);
+
+    m_client->setSession(QStringLiteral("second-token"), secondUser);
+    m_model->setItems({makeItem(kItemId, QStringLiteral("New identity item"))});
+    QSignalSpy failedAfterBoundary(m_actions, &ItemActions::actionFailed);
+
+    const QString secondPath = favoritePath(kItemId, secondUser);
+    m_mock->addRoute(QStringLiteral("POST"), secondPath, 204, {});
+    m_mock->setRouteDelay(QStringLiteral("POST"), secondPath, 150);
+    m_actions->setFavorite(kItemId, true);
+    QCOMPARE(m_actions->pendingUserStateRequestCountForTests(), 1);
+
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), secondPath), 1);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QVERIFY(m_model->get(0).value(QStringLiteral("favorite")).toBool());
+    QCOMPARE(failedAfterBoundary.count(), 0);
 }
 
 void ItemActionsTest::signalsCarryTheRightItemId()
