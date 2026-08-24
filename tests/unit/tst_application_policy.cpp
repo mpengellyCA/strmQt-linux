@@ -10,7 +10,7 @@ class ApplicationPolicyTest : public QObject
 
 private slots:
     void liveSuspensionComposesEveryCause();
-    void displayInhibitIsVideoOnly();
+    void displayInhibitRequiresReadyVideo();
 };
 
 void ApplicationPolicyTest::liveSuspensionComposesEveryCause()
@@ -22,12 +22,13 @@ void ApplicationPolicyTest::liveSuspensionComposesEveryCause()
     QVERIFY(!shouldSuspendLiveUpdates(true, false, false));
 }
 
-void ApplicationPolicyTest::displayInhibitIsVideoOnly()
+void ApplicationPolicyTest::displayInhibitRequiresReadyVideo()
 {
-    QVERIFY(shouldInhibitDisplay(true, false, false));
-    QVERIFY(!shouldInhibitDisplay(true, true, false));
-    QVERIFY(!shouldInhibitDisplay(true, false, true));
-    QVERIFY(!shouldInhibitDisplay(false, false, false));
+    QVERIFY(shouldInhibitDisplay(true, true, false, false));
+    QVERIFY(!shouldInhibitDisplay(true, false, false, false)); // still loading
+    QVERIFY(!shouldInhibitDisplay(true, true, true, false));  // ready but paused
+    QVERIFY(!shouldInhibitDisplay(true, true, false, true));  // audio
+    QVERIFY(!shouldInhibitDisplay(false, true, false, false));
 }
 
 QTEST_GUILESS_MAIN(ApplicationPolicyTest)

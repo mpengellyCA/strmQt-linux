@@ -337,17 +337,20 @@ void Application::wirePlaybackIntegrations()
     // Playback state → screensaver inhibit + MPRIS surface.
     auto syncState = [this] {
         const bool active = m_player->active();
+        const bool engineReady = m_player->engineReady();
         const bool paused = m_player->paused();
         m_mpris->setBusy(m_player->busy());
         m_mpris->setPlaybackActive(active, paused);
-        // Screen/display inhibition belongs to visible video. Audio playback
-        // should allow ordinary display blanking, even for an hours-long queue.
-        if (shouldInhibitDisplay(active, paused, m_player->isAudio()))
+        // Screen/display inhibition belongs to visible, engine-ready video.
+        // Ticket fetches and loading do not hold the display awake, and audio
+        // should allow ordinary blanking even for an hours-long queue.
+        if (shouldInhibitDisplay(active, engineReady, paused, m_player->isAudio()))
             m_powerInhibit->acquire(QStringLiteral("Playing video"));
         else
             m_powerInhibit->release();
     };
     connect(m_player, &PlayerController::activeChanged, this, syncState);
+    connect(m_player, &PlayerController::engineReadyChanged, this, syncState);
     connect(m_player, &PlayerController::pausedChanged, this, syncState);
     connect(m_player, &PlayerController::busyChanged, this, syncState);
     connect(m_player, &PlayerController::isAudioChanged, this, syncState);

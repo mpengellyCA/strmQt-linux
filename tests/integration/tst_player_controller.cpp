@@ -57,6 +57,7 @@ private slots:
     void staleEventsCannotControlAReplacement();
     void failedHandoffIsIdleAndPreservesCrashResume();
     void stopWhileResolvingCancelsTheLoad();
+    void engineReadyTracksAcceptedBackendState();
     void seekAndPauseReportProgress();
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
@@ -440,6 +441,40 @@ void PlayerControllerTest::stopWhileResolvingCancelsTheLoad()
     QCOMPARE(m_backend->state(), PlayerBackend::State::Idle);
     QTest::qWait(250);
     QCOMPARE(m_backend->loadedUrls.size(), 0);
+}
+
+void PlayerControllerTest::engineReadyTracksAcceptedBackendState()
+{
+    QSignalSpy readyChanged(m_controller, &PlayerController::engineReadyChanged);
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+
+    QVERIFY(m_controller->active());
+    QVERIFY(!m_controller->engineReady());
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QVERIFY(!m_controller->engineReady()); // engine is still Loading
+
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QVERIFY(m_controller->engineReady());
+    QCOMPARE(readyChanged.count(), 1);
+
+    // An engine error is no longer ready even while the controller keeps the
+    // active session alive to fetch a recovery ticket.
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/301001/PlaybackInfo"),
+                          200);
+    m_backend->simulateError(QStringLiteral("network stream error"));
+    QVERIFY(m_controller->active());
+    QVERIFY(!m_controller->engineReady());
+    QCOMPARE(readyChanged.count(), 2);
+
+    QTRY_COMPARE_WITH_TIMEOUT(m_backend->loadedUrls.size(), 2, 5000);
+    QVERIFY(!m_controller->engineReady());
+    m_backend->simulateState(PlayerBackend::State::Paused);
+    QVERIFY(m_controller->engineReady());
+    QCOMPARE(readyChanged.count(), 3);
+
+    m_controller->stop();
+    QVERIFY(!m_controller->engineReady());
+    QCOMPARE(readyChanged.count(), 4);
 }
 
 void PlayerControllerTest::seekAndPauseReportProgress()

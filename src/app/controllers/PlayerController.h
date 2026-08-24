@@ -33,6 +33,9 @@ class PlayerController : public QObject
     Q_OBJECT
     Q_PROPERTY(QObject *backend READ backendObject CONSTANT)
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+    // True only after the current engine load has reached Playing or Paused.
+    // Unlike `active`, this excludes ticket fetches, loading and rung recovery.
+    Q_PROPERTY(bool engineReady READ engineReady NOTIFY engineReadyChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     // Is this session music rather than a picture (MUSIC.md §4)? The docked bar
@@ -97,6 +100,7 @@ public:
 
     QObject *backendObject() const;
     bool active() const { return m_active; }
+    bool engineReady() const { return m_engineReady; }
     bool paused() const;
     bool busy() const { return m_busy; }
     bool isAudio() const { return m_isAudio; }
@@ -262,6 +266,7 @@ public:
 
 signals:
     void activeChanged();
+    void engineReadyChanged();
     void pausedChanged();
     void busyChanged();
     void isAudioChanged();
@@ -384,6 +389,7 @@ private:
     void finishSession(TerminationReason reason);
     void persistResume();
     void setActive(bool active);
+    void setEngineReady(bool ready);
     void fetchChapters(const QString &itemId, int generation);
     void clearChapters();
     void updateCurrentChapter(qint64 positionMs);
@@ -455,7 +461,8 @@ private:
     bool m_active = false;
     bool m_busy = false;
     bool m_isAudio = false;
-    bool m_started = false;   // current rung got to Playing at least once
+    bool m_engineReady = false; // current load is accepted Playing or Paused
+    bool m_started = false;   // current rung reached Playing or Paused
     // Survives rung reloads/recovery after m_started is reset. A terminal
     // failure must durably retain a real session's resume point, while a media
     // item that never reached a ready state must not replace the previous one.

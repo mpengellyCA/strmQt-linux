@@ -636,6 +636,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     updateIsAudio();
     setBusy(true);
     m_started = false;
+    setEngineReady(false);
     m_itemReachedReady = false;
     m_lastPositionMs = 0;
     updatePositionSnapshots(0, true);
@@ -663,6 +664,7 @@ void PlayerController::startAttempt(qint64 startMs)
     qCInfo(logPlayback) << "starting rung" << playMethodName(candidate.method) << "of source"
                         << m_sourceIndex << "for item" << m_itemId << "at" << startMs << "ms";
     m_started = false;
+    setEngineReady(false);
     m_tracksRestored = false;
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
@@ -684,6 +686,10 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
 {
     if (loadId != m_expectedLoadId)
         return;
+    const bool ready = state == PlayerBackend::State::Playing ||
+                       state == PlayerBackend::State::Paused;
+    if (!ready)
+        setEngineReady(false);
     emit pausedChanged();
 
     if (state != PlayerBackend::State::Playing)
@@ -698,8 +704,8 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
         return;
     }
 
-    const bool ready = state == PlayerBackend::State::Playing ||
-                       state == PlayerBackend::State::Paused;
+    if (ready)
+        setEngineReady(true);
     if (ready && !m_started) {
         m_recovering = false;
         m_started = true;
@@ -964,6 +970,10 @@ void PlayerController::onBackendError(const QString &message, PlayerBackend::Loa
     // session was torn down must not restart the ladder into a stopped player.
     if (!m_active || loadId != m_expectedLoadId)
         return;
+    // Engines normally publish State::Error first, but errorOccurred is the
+    // authoritative failure boundary. Stop presenting this load as ready even
+    // if a backend omits or delays that state notification.
+    setEngineReady(false);
     if (m_recovering && m_started)
         return; // one delayed ticket refresh owns this recovery incident
     m_progressTimer.stop();
@@ -999,6 +1009,7 @@ void PlayerController::onEndReached(PlayerBackend::LoadId loadId)
     // down (some do, on stop()) must not resurrect it into the next item.
     if (!m_active || loadId != m_expectedLoadId)
         return;
+    setEngineReady(false);
     // Report the full runtime so the server marks the item played.
     if (m_reporting)
         m_lastPositionMs = qMax(m_lastPositionMs, durationMs());
@@ -1281,6 +1292,7 @@ QFuture<Result<bool>> PlayerController::shutdownForApplicationExit()
         // m_itemReachedReady deliberately survives rung reloads where m_started
         // is temporarily false but the server session is still open.
         m_started = false;
+        setEngineReady(false);
     }
     finishSession(TerminationReason::SessionBoundary);
     if (m_settings)
@@ -1537,6 +1549,7 @@ void PlayerController::closeCurrentSession()
     // advances, so the startItem() behind the advance must not send a second
     // stop for the item it just closed.
     m_started = false;
+    setEngineReady(false);
 }
 
 void PlayerController::suspendAudioSession()
@@ -1599,6 +1612,7 @@ void PlayerController::finishSession(TerminationReason reason)
     if (reason != TerminationReason::Failure)
         clearCrashResume();
     m_started = false;
+    setEngineReady(false);
     m_itemReachedReady = false;
     m_reporting = false;
     m_ticket = {};
@@ -1683,6 +1697,14 @@ void PlayerController::setActive(bool active)
         return;
     m_active = active;
     emit activeChanged();
+}
+
+void PlayerController::setEngineReady(bool ready)
+{
+    if (m_engineReady == ready)
+        return;
+    m_engineReady = ready;
+    emit engineReadyChanged();
 }
 
 void PlayerController::setBusy(bool busy)

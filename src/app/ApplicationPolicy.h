@@ -7,9 +7,9 @@ inline bool shouldSuspendLiveUpdates(bool foreground, bool playbackActive, bool 
     return !foreground || (playbackActive && !isAudio);
 }
 
-inline bool shouldInhibitDisplay(bool playbackActive, bool paused, bool isAudio)
+inline bool shouldInhibitDisplay(bool playbackActive, bool engineReady, bool paused, bool isAudio)
 {
-    return playbackActive && !paused && !isAudio;
+    return playbackActive && engineReady && !paused && !isAudio;
 }
 
 } // namespace strmqt
