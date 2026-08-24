@@ -47,6 +47,7 @@ private slots:
     void repeatedPlaylistMemberPageStopsTheWalk();
     void playlistMemberProgressUsesEntryIds();
     void playlistMemberWalkStopsAtTheSafetyLimit();
+    void deletingOpenPlaylistEndsAnInFlightMemberLoad();
     void musicRetargetDropsTheInFlightPage();
     void thePlaylistListPagesToTheEnd();
     void aPlaylistWalkThatStoppedHalfwayIsRetried();
@@ -482,6 +483,37 @@ void ContentControllersTest::creationCarriesTheMediaTypeItWasGiven()
     created = QUrlQuery(
         m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Playlists")).query);
     QVERIFY(!created.hasQueryItem(QStringLiteral("MediaType")));
+}
+
+void ContentControllersTest::deletingOpenPlaylistEndsAnInFlightMemberLoad()
+{
+    const QString membersPath = QStringLiteral("/Playlists/pl1/Items");
+    m_mock->addRoute(QStringLiteral("GET"), membersPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"t1\",\"Name\":\"Late\","
+                                       "\"Type\":\"Audio\",\"PlaylistItemId\":\"e1\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), membersPath, 400);
+    m_mock->addRoute(QStringLiteral("DELETE"), QStringLiteral("/Items/pl1"), 204, {});
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    PlaylistController playlists(m_client);
+    QSignalSpy removed(&playlists, &PlaylistController::currentRemoved);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Road Trip"));
+    QVERIFY(playlists.loading());
+
+    playlists.remove(QStringLiteral("pl1"));
+    QTRY_COMPARE_WITH_TIMEOUT(removed.count(), 1, 5000);
+    QVERIFY(!playlists.loading());
+    QVERIFY(playlists.currentId().isEmpty());
+    QCOMPARE(playlists.items()->rowCount(), 0);
+
+    // The delayed reply was retired by the deletion and cannot re-latch the
+    // spinner or repopulate the deleted playlist.
+    QTest::qWait(500);
+    QVERIFY(!playlists.loading());
+    QCOMPARE(playlists.items()->rowCount(), 0);
 }
 
 void ContentControllersTest::playlistMembersPageToTheEnd_data()

@@ -380,6 +380,8 @@ void PlaylistController::remove(const QString &playlistId)
             m_currentName.clear();
             m_items->clear();
             resetMemberWalk();
+            setLoading(false);
+            setError(QString());
             // Retire any reload() still in flight for this playlist. Its reply
             // does not know the playlist is gone; without bumping the counter
             // it passes the stale check and repopulates the page we just
