@@ -31,7 +31,6 @@ struct ItemsQuery
     // including a self-titled one the first did not surface first.
     QStringList artistIds;
     QStringList albumArtistIds;
-    QStringList yearFilters;
     // Reverse membership lookup: with includeItemTypes={"BoxSet"} this asks
     // "which collections contain these items". Nothing on the item payload
     // exposes that, and the obvious-looking `ContainsItemId` is silently

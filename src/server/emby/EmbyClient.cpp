@@ -401,19 +401,6 @@ QFuture<Result<SessionInfo>> EmbyClient::authenticateByName(const QString &usern
     });
 }
 
-QFuture<Result<QList<MediaItem>>> EmbyClient::publicUsers()
-{
-    if (m_baseUrl.isEmpty())
-        return failedFuture<QList<MediaItem>>(QStringLiteral("no server"));
-    // Deliberately not gated on hasSession(): this is what a login screen asks
-    // for before anyone has signed in.
-    QNetworkReply *reply = startGet(QStringLiteral("/Users/Public"), {});
-    return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
-        // A bare array on the wire, not an ItemsPage.
-        return Result<QList<MediaItem>>::success(parseItemArray(doc.array()));
-    });
-}
-
 QFuture<Result<QList<Library>>> EmbyClient::userViews()
 {
     if (!hasSession())
@@ -462,8 +449,6 @@ QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHan
         params.addQueryItem(QStringLiteral("AlbumArtistIds"),
                             query.albumArtistIds.join(QLatin1Char(',')));
     }
-    if (!query.yearFilters.isEmpty())
-        params.addQueryItem(QStringLiteral("Years"), query.yearFilters.join(QLatin1Char(',')));
     if (!query.nameStartsWith.isEmpty())
         params.addQueryItem(QStringLiteral("NameStartsWith"), query.nameStartsWith);
     if (!query.listItemIds.isEmpty())

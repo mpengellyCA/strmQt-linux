@@ -70,13 +70,6 @@ public:
     QFuture<Result<SessionInfo>> authenticateByName(const QString &username,
                                                     const QString &password);
 
-    // GET /Users/Public — the users the server advertises on a login screen.
-    // No auth required. Measured on the target server: it returned ONE user,
-    // and not the one actually signed in, because Emby hides users flagged
-    // that way. So this can seed a picker but must never replace the
-    // username field — a user missing from it is normal, not an error.
-    QFuture<Result<QList<MediaItem>>> publicUsers();
-
     // GET /Users/{uid}/Views
     QFuture<Result<QList<Library>>> userViews();
     // GET /Users/{uid}/Items
@@ -130,9 +123,8 @@ public:
     // suspected. Measure it (Filters=IsFolder against Filters=IsNotFolder is a
     // decisive read-only probe — a MusicArtist is a folder) before relying on it.
     //
-    // Everything else on the query — years, parents other than ParentId, the
-    // item-type and person axes — is simply not sent. MusicController strips
-    // yearFilters for exactly that reason.
+    // Everything else on the query — parents other than ParentId, item-type and
+    // person axes — is simply not sent.
     QFuture<Result<ItemsPage>> musicArtists(const ItemsQuery &query);
     QFuture<Result<ItemsPage>> albumArtists(const ItemsQuery &query);
 
