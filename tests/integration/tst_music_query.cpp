@@ -51,6 +51,7 @@ private slots:
     void albumDetailStatusIsIsolatedFromListRequests();
     void albumDetailStatusRejectsRetiredReplies();
     void artistDetailStatusIsOwnedAndIsolated();
+    void detailOwnersCanBeReacquiredAfterCrossNavigation();
     void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
 private:
@@ -1045,7 +1046,10 @@ void MusicQueryTest::artistDetailStatusIsOwnedAndIsolated()
 
     // Retarget the artist lane while A is delayed. Neither of A's replies may
     // mutate B's empty successful state.
-    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    const QByteArray staleArtistA = QByteArrayLiteral(
+        "{\"Items\":[{\"Id\":\"stale-a\",\"Name\":\"Stale A\",\"Type\":\"Audio\"}],"
+        "\"TotalRecordCount\":1}");
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, staleArtistA);
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
     const int beforeA = requestsFor(itemsPath);
     m_music->openArtist(QStringLiteral("artist-a"), QStringLiteral("Artist A"));
@@ -1060,6 +1064,38 @@ void MusicQueryTest::artistDetailStatusIsOwnedAndIsolated()
     QTest::qWait(450);
     QCOMPARE(m_music->detailId(), QStringLiteral("artist-b"));
     QVERIFY(m_music->detailErrorMessage().isEmpty());
+    QCOMPARE(m_music->artistAlbums()->rowCount(), 0);
+    QCOMPARE(m_music->artistTracks()->rowCount(), 0);
+}
+
+void MusicQueryTest::detailOwnersCanBeReacquiredAfterCrossNavigation()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
+
+    // AlbumPage and ArtistPage share one detail lane. A covered page restores
+    // itself by issuing the same open verb when it becomes visible again; the
+    // controller must allow that A -> B -> A sequence even though its legacy
+    // albumId/artistId scalar for A was never cleared by opening B.
+    m_music->openArtist(QStringLiteral("artist-a"), QStringLiteral("Artist A"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("artist-a"));
+
+    m_music->openAlbum(QStringLiteral("album-b"), QStringLiteral("Album B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QCOMPARE(m_music->detailKind(), QStringLiteral("album"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-b"));
+
+    m_music->openArtist(QStringLiteral("artist-a"), QStringLiteral("Artist A"));
+    QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("artist-a"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+
+    m_music->openAlbum(QStringLiteral("album-b"), QStringLiteral("Album B"));
+    QCOMPARE(m_music->detailKind(), QStringLiteral("album"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-b"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
 }
 
 void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()

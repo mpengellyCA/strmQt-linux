@@ -83,6 +83,12 @@ FocusScope {
 
     readonly property bool hasTracks: page.scopeMine && MusicCtl.tracks.count > 0
 
+    function ensureScope(): void {
+        if (page.albumId.length === 0 || (page.scopeMine && page.detailMine))
+            return
+        MusicCtl.openAlbum(page.albumId, page.albumName)
+    }
+
     // ── Derived once per track load ────────────────────────────────────────
     // The one pass over the loaded tracks — running time, multi-disc, where the
     // discs start, and whether the artist column is worth a column at all —
@@ -92,7 +98,18 @@ FocusScope {
     // track says when the map carried no album artist.
     readonly property string albumArtistName: trackList.albumArtistName
 
-    Component.onCompleted: page.syncFavorite()
+    Component.onCompleted: {
+        page.syncFavorite()
+        // Main prepares restored routes synchronously. Deferring the fallback
+        // avoids a duplicate request there while keeping this page correct
+        // when it is embedded or made visible by another stack owner.
+        Qt.callLater(page.ensureScope)
+    }
+
+    // Opening the credited artist retargets MusicCtl's shared detail lane while
+    // leaving albumId intact. Reacquire both the scalar scope and the lane owner
+    // when this covered page becomes visible again.
+    onVisibleChanged: { if (page.visible) Qt.callLater(page.ensureScope) }
 
     // Likewise: an album page reused for a second album re-reads both.
     onAlbumIdChanged: page.syncFavorite()

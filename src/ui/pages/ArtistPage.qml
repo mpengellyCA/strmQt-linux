@@ -136,7 +136,7 @@ FocusScope {
 
     // ── Loading ────────────────────────────────────────────────────────────
     function ensureScope(): void {
-        if (page.artistId.length === 0 || page.scopeMine)
+        if (page.artistId.length === 0 || (page.scopeMine && page.detailMine))
             return
         MusicCtl.openArtist(page.artistId, page.artistName)
     }
@@ -244,7 +244,7 @@ FocusScope {
 
     // StackView hides a covered page and shows it again on pop. Coming back
     // from an album opened out of the discography is what this exists for.
-    onVisibleChanged: { if (page.visible) page.ensureScope() }
+    onVisibleChanged: { if (page.visible) Qt.callLater(page.ensureScope) }
 
     onArtistItemChanged: page.syncFavorite()
 
