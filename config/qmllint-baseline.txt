@@ -126,6 +126,9 @@ src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	const model = PlaylistCtl.playlists
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	readonly property bool listComplete: PlaylistCtl.playlistsComplete
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	target: PlaylistCtl
+src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowBlur: panel._shadow.blur
+src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowOpacity: panel._shadow.opacity
+src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowVerticalOffset: panel._shadow.y
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? MusicCtl.tracks.count
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? page.mapString("itemId") : MusicCtl.albumId
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? page.mapString("name") : MusicCtl.albumName

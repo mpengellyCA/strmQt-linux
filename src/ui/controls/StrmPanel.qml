@@ -14,11 +14,15 @@ import StrmQt
 //       StrmSwitch { text: qsTr("Hardware decode") }
 //   }
 //
-// The shadow is a MultiEffect over the background rectangle. It is drawn BEHIND
-// the still-visible background rather than the usual "hide the source" trick:
-// a hidden source renders nothing into its layer in some paint paths, and a
-// panel that silently disappears is a far worse failure than one extra opaque
-// draw of a rectangle that is instanced a handful of times per screen.
+// The shadow comes from the background's own layer.effect, not from a sibling
+// MultiEffect over it. A sibling effect draws its SOURCE as well as the shadow,
+// and autoPadding lands that copy offset from the original — a second rounded
+// border, inset from the real one, cutting across the panel's content. It read
+// as a broken layout in the OSD's settings sheet, which is where a translucent
+// surface let it show. Hiding the source instead is not the answer either: a
+// hidden item renders nothing into its layer, so the shadow goes with it
+// (measured). layer.effect avoids the whole question by drawing the layer
+// THROUGH the effect exactly once.
 Item {
     id: panel
 
@@ -38,27 +42,23 @@ Item {
     implicitHeight: (header.visible ? header.height + Theme.spacingValue : 0)
                     + body.implicitHeight + padding * 2
 
-    MultiEffect {
-        anchors.fill: background
-        source: background
-        autoPaddingEnabled: true
-        shadowEnabled: true
-        shadowColor: "#000000"
-        shadowBlur: panel._shadow.blur
-        shadowVerticalOffset: panel._shadow.y
-        shadowOpacity: panel._shadow.opacity
-    }
-
     Rectangle {
         id: background
         anchors.fill: parent
-        // layer.enabled makes the rectangle a texture provider so MultiEffect
-        // above can sample it.
-        layer.enabled: true
         radius: Theme.radiusPanel
         color: Theme.surfaceOverlay
         border.width: 1
         border.color: Theme.hairline
+
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            autoPaddingEnabled: true
+            shadowEnabled: true
+            shadowColor: Theme.shadowColor
+            shadowBlur: panel._shadow.blur
+            shadowVerticalOffset: panel._shadow.y
+            shadowOpacity: panel._shadow.opacity
+        }
     }
 
     Column {
