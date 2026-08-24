@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QQuickFramebufferObject>
+#include <QPointer>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 namespace strmqt {
@@ -22,13 +23,13 @@ public:
 
     QObject *playerObject() const;
     void setPlayerObject(QObject *player);
-    MpvPlayer *player() const { return m_player; }
+    MpvPlayer *player() const;
 
 signals:
     void playerChanged();
 
 private:
-    MpvPlayer *m_player = nullptr;
+    QPointer<MpvPlayer> m_player;
 };
 
 } // namespace strmqt

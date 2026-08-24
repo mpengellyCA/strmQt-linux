@@ -10,6 +10,8 @@
 #include <QOpenGLFramebufferObject>
 #include <QQuickWindow>
 
+#include <atomic>
+
 namespace strmqt {
 
 namespace {
@@ -29,12 +31,31 @@ void *glProcAddress(void *, const char *name)
 class MpvRenderer : public QQuickFramebufferObject::Renderer
 {
 public:
-    explicit MpvRenderer(MpvVideoItem *item) : m_item(item) {}
-
     ~MpvRenderer() override
     {
-        if (m_context)
+        m_window.store(nullptr, std::memory_order_release);
+        if (m_context) {
+            mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
             mpv_render_context_free(m_context);
+        }
+    }
+
+    void synchronize(QQuickFramebufferObject *item) override
+    {
+        // Qt blocks the GUI thread while synchronize() runs. This is the one
+        // supported boundary for copying QQuickItem/QObject state to the render
+        // thread; render() never dereferences either object.
+        auto *videoItem = static_cast<MpvVideoItem *>(item);
+        mpv_handle *handle = videoItem->player() ? videoItem->player()->handle() : nullptr;
+        m_window.store(videoItem->window(), std::memory_order_release);
+        if (handle == m_handle)
+            return;
+        if (m_context) {
+            mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
+            mpv_render_context_free(m_context);
+            m_context = nullptr;
+        }
+        m_handle = handle;
     }
 
     void render() override
@@ -53,7 +74,9 @@ public:
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
         // mpv issues raw GL alongside the RHI — fence it off from Qt's own state.
-        QQuickWindow *window = m_item->window();
+        QQuickWindow *window = m_window.load(std::memory_order_acquire);
+        if (!window)
+            return;
         window->beginExternalCommands();
         mpv_render_context_render(m_context, params);
         window->endExternalCommands();
@@ -62,14 +85,16 @@ public:
 private:
     static void onUpdate(void *ctx)
     {
-        // Render-thread-agnostic: schedule a scene graph update on the GUI thread.
-        auto *item = static_cast<MpvVideoItem *>(ctx);
-        QMetaObject::invokeMethod(item, "update", Qt::QueuedConnection);
+        // QQuickWindow::update() is explicitly callable from any thread. The
+        // atomic is nulled before unregistering this callback during teardown.
+        auto *renderer = static_cast<MpvRenderer *>(ctx);
+        if (QQuickWindow *window = renderer->m_window.load(std::memory_order_acquire))
+            window->update();
     }
 
     void ensureContext()
     {
-        if (m_context || !m_item->player() || !m_item->player()->handle())
+        if (m_context || !m_handle)
             return;
 
         mpv_opengl_init_params glParams{glProcAddress, nullptr};
@@ -82,16 +107,17 @@ private:
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
 
-        const int rc = mpv_render_context_create(&m_context, m_item->player()->handle(), params);
+        const int rc = mpv_render_context_create(&m_context, m_handle, params);
         if (rc < 0) {
             qCCritical(logPlayback) << "mpv render context failed:" << mpv_error_string(rc);
             m_context = nullptr;
             return;
         }
-        mpv_render_context_set_update_callback(m_context, onUpdate, m_item);
+        mpv_render_context_set_update_callback(m_context, onUpdate, this);
     }
 
-    MpvVideoItem *m_item;
+    mpv_handle *m_handle = nullptr;
+    std::atomic<QQuickWindow *> m_window = nullptr;
     mpv_render_context *m_context = nullptr;
 };
 
@@ -103,12 +129,17 @@ MpvVideoItem::MpvVideoItem(QQuickItem *parent) : QQuickFramebufferObject(parent)
 
 QQuickFramebufferObject::Renderer *MpvVideoItem::createRenderer() const
 {
-    return new MpvRenderer(const_cast<MpvVideoItem *>(this));
+    return new MpvRenderer;
 }
 
 QObject *MpvVideoItem::playerObject() const
 {
     return m_player;
+}
+
+MpvPlayer *MpvVideoItem::player() const
+{
+    return m_player.data();
 }
 
 void MpvVideoItem::setPlayerObject(QObject *player)
