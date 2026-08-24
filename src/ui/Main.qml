@@ -262,8 +262,7 @@ ApplicationWindow {
                 LibraryCtl.openPerson(route.id, route.name);
             break;
         case "series":
-            if (SeriesCtl.seriesId !== route.id)
-                SeriesCtl.open(route.id, route.name);
+            SeriesCtl.ensureOpen(route.id, route.name, route.seasonId);
             break;
         case "playlist":
             if (PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
@@ -537,6 +536,7 @@ ApplicationWindow {
         focusItem: root.activeFocusItem
         currentSearchQuery: SearchCtl.query
         currentMusicTab: MusicCtl.tab
+        currentSeriesSeasonId: SeriesCtl.currentSeasonId
         initialRoute: Session.authenticated
                       ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
                       : ({ "kind": "login", "key": "login", "title": qsTr("Sign in") })

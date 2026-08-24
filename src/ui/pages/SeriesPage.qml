@@ -309,8 +309,12 @@ FocusScope {
         // next-unwatched default. The controller may report completion before
         // its model-reset notification is delivered, so remember that a
         // locator claimed this visit even after its exact row has landed.
-        if (episodeGrid.navigationFocusClaimed)
+        if (episodeGrid.navigationFocusClaimed) {
+            // Suppress exactly this automatic placement. A later deliberate
+            // season choice must regain the ordinary first/next focus policy.
+            episodeGrid.navigationFocusClaimed = false
             return
+        }
         let target = 0
         if (page.nextId.length > 0) {
             for (let i = 0; i < SeriesCtl.episodes.count; ++i) {
@@ -325,6 +329,14 @@ FocusScope {
             episodeGrid.positionViewAtIndex(target, GridView.Contain)
         else
             episodeGrid.positionViewAtBeginning()
+    }
+
+    function selectSeason(row) {
+        // An immediate restore may not have a loading transition on which to
+        // consume the claim. A user season choice is a newer instruction and
+        // must never inherit that stale suppression.
+        episodeGrid.navigationFocusClaimed = false
+        SeriesCtl.selectSeason(row)
     }
 
     // ── Vertical navigation ────────────────────────────────────────────────
@@ -772,7 +784,7 @@ FocusScope {
             tabs: page.seasonTabs
             // Selection IS the switch: no Return required, and hover only
             // previews (StrmTabBar draws that line, it is not redrawn here).
-            onTabSelected: index => SeriesCtl.selectSeason(index)
+            onTabSelected: index => page.selectSeason(index)
 
             KeyNavigation.up: page.heroButton
             KeyNavigation.down: page.sectionBelow(1)
@@ -781,11 +793,11 @@ FocusScope {
             // still works; selectSeason() on the loaded season just reloads it.
             Keys.onReturnPressed: event => {
                 if (!event.isAutoRepeat)
-                    SeriesCtl.selectSeason(seasonBar.currentIndex)
+                    page.selectSeason(seasonBar.currentIndex)
             }
             Keys.onEnterPressed: event => {
                 if (!event.isAutoRepeat)
-                    SeriesCtl.selectSeason(seasonBar.currentIndex)
+                    page.selectSeason(seasonBar.currentIndex)
             }
         }
     }
@@ -1106,7 +1118,7 @@ FocusScope {
         // no-op in the controller, and a button that does nothing is worse than
         // no button.
         actionText: page.hasSeasons ? qsTr("Reload") : ""
-        onActionTriggered: SeriesCtl.selectSeason(SeriesCtl.currentSeason)
+        onActionTriggered: page.selectSeason(SeriesCtl.currentSeason)
     }
 
     // ── Context menu ───────────────────────────────────────────────────────

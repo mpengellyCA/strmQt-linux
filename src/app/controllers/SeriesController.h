@@ -38,6 +38,9 @@ class SeriesController : public QObject
     // page, not an edge case.
     Q_PROPERTY(QVariantMap series READ series NOTIFY seriesMetadataChanged)
     Q_PROPERTY(int currentSeason READ currentSeason NOTIFY currentSeasonChanged)
+    // Stable season identity for bounded browser history. Row numbers are a
+    // presentation detail and can move when the server's season list changes.
+    Q_PROPERTY(QString currentSeasonId READ currentSeasonId NOTIFY currentSeasonChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     // First unplayed episode across the WHOLE series, in the item-map shape
     // MediaItemModel::get() produces, so it hands straight to ItemActions.
@@ -53,6 +56,7 @@ public:
     QString seriesName() const { return m_seriesName; }
     QString seriesId() const { return m_seriesId; }
     int currentSeason() const { return m_currentSeason; }
+    QString currentSeasonId() const;
     bool loading() const { return m_loading; }
     QVariantMap nextUnwatched() const { return m_nextUnwatched; }
     bool hasNextUnwatched() const { return !m_nextUnwatched.isEmpty(); }
@@ -63,6 +67,11 @@ public:
     void resetSessionState();
 
     Q_INVOKABLE void open(const QString &seriesId, const QString &seriesName);
+    // Reuses a live or successfully-settled scope and restores the requested
+    // season by identity. A failed seasons request is deliberately not usable,
+    // so preparing the same history route retries it.
+    Q_INVOKABLE void ensureOpen(const QString &seriesId, const QString &seriesName,
+                                const QString &seasonId);
     Q_INVOKABLE void selectSeason(int row);
 
     // Watched state changed somewhere else in the app (a row's ⋯, the context
@@ -81,6 +90,9 @@ signals:
     void nextUnwatchedChanged();
 
 private:
+    void startOpen(const QString &seriesId, const QString &seriesName,
+                   const QString &preferredSeasonId);
+    bool selectSeasonById(const QString &seasonId);
     void setLoading(bool loading);
     void refreshNextUnwatched();
     void setNextUnwatched(QVariantMap next);
@@ -94,6 +106,8 @@ private:
     QVariantMap m_nextUnwatched;
     int m_currentSeason = -1;
     bool m_loading = false;
+    bool m_scopeUsable = false;
+    QString m_preferredSeasonId;
     // Invalidates in-flight season/episode replies across open()/selectSeason().
     int m_generation = 0;
     // Separate counters for requests that must survive the selectSeason() that

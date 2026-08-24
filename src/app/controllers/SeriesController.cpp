@@ -40,6 +40,8 @@ void SeriesController::resetSessionState()
     m_series.clear();
     m_nextUnwatched.clear();
     m_currentSeason = -1;
+    m_scopeUsable = false;
+    m_preferredSeasonId.clear();
     setLoading(false);
     emit seriesChanged();
     emit seriesMetadataChanged();
@@ -47,12 +49,54 @@ void SeriesController::resetSessionState()
     emit nextUnwatchedChanged();
 }
 
+QString SeriesController::currentSeasonId() const
+{
+    if (m_currentSeason < 0 || m_currentSeason >= m_seasons->rowCount())
+        return {};
+    return m_seasons->items()[m_currentSeason].id;
+}
+
 void SeriesController::open(const QString &seriesId, const QString &seriesName)
+{
+    startOpen(seriesId, seriesName, {});
+}
+
+void SeriesController::ensureOpen(const QString &seriesId, const QString &seriesName,
+                                  const QString &seasonId)
+{
+    if (seriesId.isEmpty()) {
+        if (!m_seriesId.isEmpty())
+            startOpen({}, {}, {});
+        return;
+    }
+
+    if (m_seriesId != seriesId || (!m_scopeUsable && !m_loading)) {
+        startOpen(seriesId, seriesName, seasonId);
+        return;
+    }
+
+    // The matching seasons request is still live. Remember the history
+    // route's stable identity so its eventual response chooses that season
+    // instead of the default first-unwatched row.
+    if (!m_scopeUsable) {
+        if (!seasonId.isEmpty())
+            m_preferredSeasonId = seasonId;
+        return;
+    }
+
+    if (!seasonId.isEmpty() && currentSeasonId() != seasonId)
+        selectSeasonById(seasonId);
+}
+
+void SeriesController::startOpen(const QString &seriesId, const QString &seriesName,
+                                 const QString &preferredSeasonId)
 {
     const int generation = ++m_generation;
     const int seriesGeneration = ++m_seriesGeneration;
     m_seriesId = seriesId;
     m_seriesName = seriesName;
+    m_scopeUsable = false;
+    m_preferredSeasonId = preferredSeasonId;
     emit seriesChanged();
     m_seasons->clear();
     m_episodes->clear();
@@ -72,6 +116,7 @@ void SeriesController::open(const QString &seriesId, const QString &seriesName)
     // logged as a load failure. Nothing is requested here, so nothing is
     // loading either.
     if (seriesId.isEmpty()) {
+        m_preferredSeasonId.clear();
         setLoading(false);
         return;
     }
@@ -100,24 +145,54 @@ void SeriesController::open(const QString &seriesId, const QString &seriesName)
         if (generation != m_generation)
             return;
         if (!result.ok()) {
+            m_preferredSeasonId.clear();
             setLoading(false);
             qCWarning(logApp) << "seasons load failed:" << result.error;
             return;
         }
         m_seasons->setItems(result.value.items, result.value.totalRecordCount);
+        m_scopeUsable = true;
+
+        if (m_seasons->rowCount() == 0) {
+            m_preferredSeasonId.clear();
+            setLoading(false);
+            return;
+        }
 
         // Emby-web behavior: land on the first season that still has something
         // unwatched; fall back to the first season.
         int startRow = 0;
         const auto &seasons = m_seasons->items();
-        for (int row = 0; row < seasons.size(); ++row) {
-            if (seasons[row].unplayedItemCount > 0) {
-                startRow = row;
-                break;
+        if (!m_preferredSeasonId.isEmpty()) {
+            for (int row = 0; row < seasons.size(); ++row) {
+                if (seasons[row].id == m_preferredSeasonId) {
+                    startRow = row;
+                    break;
+                }
+            }
+        } else {
+            for (int row = 0; row < seasons.size(); ++row) {
+                if (seasons[row].unplayedItemCount > 0) {
+                    startRow = row;
+                    break;
+                }
             }
         }
+        m_preferredSeasonId.clear();
         selectSeason(startRow);
     });
+}
+
+bool SeriesController::selectSeasonById(const QString &seasonId)
+{
+    const auto &seasons = m_seasons->items();
+    for (int row = 0; row < seasons.size(); ++row) {
+        if (seasons[row].id == seasonId) {
+            selectSeason(row);
+            return true;
+        }
+    }
+    return false;
 }
 
 void SeriesController::selectSeason(int row)
@@ -127,6 +202,9 @@ void SeriesController::selectSeason(int row)
     const int generation = ++m_generation;
     m_currentSeason = row;
     emit currentSeasonChanged();
+    // A failed replacement must not expose the previous season's episodes
+    // under the newly-selected tab once the loading overlay disappears.
+    m_episodes->clear();
     setLoading(true);
 
     const QString seasonId = m_seasons->items()[row].id;
@@ -134,11 +212,11 @@ void SeriesController::selectSeason(int row)
         .then(this, [this, generation](const Result<ItemsPage> &result) {
             if (generation != m_generation)
                 return;
-            setLoading(false);
             if (result.ok())
                 m_episodes->setItems(result.value.items, result.value.totalRecordCount);
             else
                 qCWarning(logApp) << "episodes load failed:" << result.error;
+            setLoading(false);
         });
 }
 

@@ -47,6 +47,9 @@ private slots:
     void seriesNextUnwatchedQueryIsBounded();
     void seriesNextUnwatchedRefetchesAfterPlayedChanges();
     void seriesIgnoresAnEmptyId();
+    void seriesEmptySeasonsSettleAndRemainReusable();
+    void seriesFailedSeasonsRetryTheSameScope();
+    void seriesRestoresASeasonByStableIdentity();
     void sessionResetRetiresSearchDetailsAndSeriesReplies();
     void searchResetPreservesPerAccountHistory();
     void playlistFetchesDoNotStrandEachOther();
@@ -766,6 +769,120 @@ void ContentControllersTest::seriesIgnoresAnEmptyId()
     QCOMPARE(m_mock->requestCount(), 0);
     QVERIFY(series.series().isEmpty());
     QCOMPARE(series.seasons()->rowCount(), 0);
+}
+
+void ContentControllersTest::seriesEmptySeasonsSettleAndRemainReusable()
+{
+    const QString seasonsPath = QStringLiteral("/Shows/empty/Seasons");
+    const QString detailsPath = QStringLiteral("/Users/%1/Items/empty").arg(kUserId);
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), detailsPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"empty\",\"Name\":\"Empty\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    SeriesController series(m_client);
+    series.ensureOpen(QStringLiteral("empty"), QStringLiteral("Empty"), {});
+    QVERIFY(series.loading());
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    QCOMPARE(series.seriesId(), QStringLiteral("empty"));
+    QCOMPARE(series.seasons()->rowCount(), 0);
+    QCOMPARE(series.currentSeason(), -1);
+    QVERIFY(series.currentSeasonId().isEmpty());
+
+    // A successful empty list is a terminal, usable scope rather than a
+    // failure sentinel. Reconstructing the same history route must not loop.
+    series.ensureOpen(QStringLiteral("empty"), QStringLiteral("Empty"), {});
+    QTest::qWait(100);
+    QCOMPARE(requestsFor(seasonsPath), 1);
+    QVERIFY(!series.loading());
+}
+
+void ContentControllersTest::seriesFailedSeasonsRetryTheSameScope()
+{
+    const QString seasonsPath = QStringLiteral("/Shows/retry/Seasons");
+    const QString episodesPath = QStringLiteral("/Shows/retry/Episodes");
+    const QString detailsPath = QStringLiteral("/Users/%1/Items/retry").arg(kUserId);
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->addRoute(QStringLiteral("GET"), detailsPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"retry\",\"Name\":\"Retry\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    SeriesController series(m_client);
+    series.ensureOpen(QStringLiteral("retry"), QStringLiteral("Retry"),
+                      QStringLiteral("season-b"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    // The display identity may remain, but it cannot certify the failed scope
+    // as reusable: ensureOpen owns that distinction and retries the same id.
+    QCOMPARE(series.seriesId(), QStringLiteral("retry"));
+    QCOMPARE(series.seasons()->rowCount(), 0);
+
+    m_mock->addRoute(
+        QStringLiteral("GET"), seasonsPath, 200,
+        QByteArrayLiteral("{\"Items\":["
+                          "{\"Id\":\"season-a\",\"Name\":\"Season A\",\"Type\":\"Season\"},"
+                          "{\"Id\":\"season-b\",\"Name\":\"Season B\",\"Type\":\"Season\"}],"
+                          "\"TotalRecordCount\":2}"));
+    m_mock->addRoute(QStringLiteral("GET"), episodesPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"episode-b\","
+                                       "\"Name\":\"Episode B\",\"Type\":\"Episode\"}],"
+                                       "\"TotalRecordCount\":1}"));
+
+    series.ensureOpen(QStringLiteral("retry"), QStringLiteral("Retry"),
+                      QStringLiteral("season-b"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(series.currentSeasonId(), QStringLiteral("season-b"), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(series.episodes()->rowCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), episodesPath).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("SeasonId")), QStringLiteral("season-b"));
+}
+
+void ContentControllersTest::seriesRestoresASeasonByStableIdentity()
+{
+    const QString seasonsPath = QStringLiteral("/Shows/stable/Seasons");
+    const QString episodesPath = QStringLiteral("/Shows/stable/Episodes");
+    const QString detailsPath = QStringLiteral("/Users/%1/Items/stable").arg(kUserId);
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(
+        QStringLiteral("GET"), seasonsPath, 200,
+        QByteArrayLiteral("{\"Items\":["
+                          "{\"Id\":\"season-a\",\"Name\":\"Season A\",\"Type\":\"Season\"},"
+                          "{\"Id\":\"season-b\",\"Name\":\"Season B\",\"Type\":\"Season\"}],"
+                          "\"TotalRecordCount\":2}"));
+    m_mock->addRoute(QStringLiteral("GET"), episodesPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), detailsPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"stable\",\"Name\":\"Stable\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    SeriesController series(m_client);
+    series.open(QStringLiteral("stable"), QStringLiteral("Stable"));
+    QTRY_COMPARE_WITH_TIMEOUT(series.currentSeasonId(), QStringLiteral("season-a"), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    QCOMPARE(requestsFor(seasonsPath), 1);
+    QCOMPARE(requestsFor(episodesPath), 1);
+
+    // Reconstructing another history entry for the same series selects the
+    // stable server id without discarding and re-fetching the seasons scope.
+    series.ensureOpen(QStringLiteral("stable"), QStringLiteral("Stable"),
+                      QStringLiteral("season-b"));
+    QTRY_COMPARE_WITH_TIMEOUT(series.currentSeasonId(), QStringLiteral("season-b"), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    QCOMPARE(requestsFor(seasonsPath), 1);
+    QCOMPARE(requestsFor(episodesPath), 2);
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), episodesPath).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("SeasonId")), QStringLiteral("season-b"));
 }
 
 void ContentControllersTest::sessionResetRetiresSearchDetailsAndSeriesReplies()
