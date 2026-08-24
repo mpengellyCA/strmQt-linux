@@ -1257,6 +1257,13 @@ ApplicationWindow {
         function onBrowseRequested(kind, id, name) {
             root.openBrowse(kind, id, name);
         }
+        function onFavoriteChanged(itemId, favorite) {
+            // Album/Artist pages are reconstructed from bounded scalar route
+            // snapshots after Back/Forward. Keep that one user-state scalar in
+            // step with ItemActions so a signal emitted before reconstruction
+            // is not lost with the destroyed page graph.
+            stack.updateFavorite(itemId, favorite);
+        }
         function onActionFailed(message) {
             toasts.show(message, "error");
         }

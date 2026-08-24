@@ -49,6 +49,14 @@ FocusScope {
     signal nearEnd()
 
     readonly property alias currentIndex: view.currentIndex
+    readonly property string navigationFocusKind: "grid"
+    readonly property bool navigationFocusRestorePending: navigationFocus.pending
+
+    function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
+    function restoreNavigationFocus(itemId, index): bool {
+        return navigationFocus.restore(itemId, index)
+    }
+    function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
 
     // See StrmRail.hoveredIndex: hover is published separately from focus, and
     // its owner is the delegate object rather than an index.
@@ -138,8 +146,30 @@ FocusScope {
     Connections {
         target: Qt.isQtObject(grid.gridModel) ? grid.gridModel : null
         ignoreUnknownSignals: true
-        function onModelReset() { grid._lastNearEndCount = -1 }
+        function onModelReset() {
+            grid._lastNearEndCount = -1
+            Qt.callLater(navigationFocus.retry)
+        }
     }
+
+    NavigationFocusRestorer {
+        id: navigationFocus
+        model: grid.gridModel
+        count: view.count
+        currentIndex: view.currentIndex
+        canRequestPage: grid.prefetchThreshold > 0
+        onFocusRequested: index => {
+            if (index >= 0) {
+                view.currentIndex = index
+                view.positionViewAtIndex(index, GridView.Contain)
+            }
+            view.forceActiveFocus(Qt.OtherFocusReason)
+        }
+        onPageRequested: grid.nearEnd()
+    }
+
+    onCountChanged: navigationFocus.retry()
+    onGridModelChanged: navigationFocus.cancel()
 
     function _checkNearEnd() {
         if (view.count <= 0 || view.count === grid._lastNearEndCount)

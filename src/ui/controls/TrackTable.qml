@@ -67,6 +67,31 @@ import StrmQt
 ListView {
     id: table
 
+    readonly property string navigationFocusKind: "tracks"
+    readonly property bool navigationFocusRestorePending: navigationFocus.pending
+
+    function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
+    function restoreNavigationFocus(itemId, index): bool {
+        return navigationFocus.restore(itemId, index)
+    }
+    function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
+
+    NavigationFocusRestorer {
+        id: navigationFocus
+        model: table.model
+        count: table.count
+        currentIndex: table.currentIndex
+        canRequestPage: table.prefetchThreshold > 0
+        onFocusRequested: index => {
+            if (index >= 0) {
+                table.currentIndex = index
+                table.positionViewAtIndex(index, ListView.Contain)
+            }
+            table.forceActiveFocus(Qt.OtherFocusReason)
+        }
+        onPageRequested: table.nearEnd()
+    }
+
     // ── Table-level rules ──────────────────────────────────────────────────
     // Walk the model for disc boundaries. Off by default: only an album has
     // discs, and the pass is not free on a 500-row playlist.
@@ -462,12 +487,14 @@ ListView {
     onCountChanged: {
         table.rebuildMeta()
         table._checkNearEnd()
+        navigationFocus.retry()
     }
     onModelChanged: {
         // A different list is a different paging cursor: without this the
         // throttle still holds the previous model's count and the first page of
         // the new one never asks for a second.
         table._lastNearEndCount = -1
+        navigationFocus.cancel()
         table.clearSelection()
         table.rebuildMeta()
     }
@@ -498,6 +525,7 @@ ListView {
             // describing the rows that were just replaced. The rule the throttle
             // and the selection follow has to be the whole rule.
             table.rebuildMeta()
+            Qt.callLater(navigationFocus.retry)
         }
     }
     onCurrentIndexChanged: {

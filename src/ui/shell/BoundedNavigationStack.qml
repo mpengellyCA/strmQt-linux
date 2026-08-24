@@ -5,7 +5,8 @@ import QtQuick.Controls.Basic
 // deliberately scalar route descriptors: covered pages may retain rich input
 // while instantiated, but a popped or evicted page is reconstructed from a
 // strict display snapshot rather than an arbitrary model row or a captured
-// closure. Focus is retained as a child-index path, never a QObject reference.
+// closure. Focus is retained as a bounded scalar locator, never a QObject
+// reference.
 StackView {
     id: navigation
 
@@ -35,6 +36,13 @@ StackView {
     property var focusMemory: ({})
     property var instantiatedTokens: []
     property int nextRouteToken: 0
+    property int _focusRetryToken: -1
+    property string _focusRetryLocator: ""
+    property int _focusRetryAttempts: 0
+
+    readonly property int semanticControlLimit: 128
+    readonly property int semanticTraversalLimit: 4096
+    readonly property int focusRetryLimit: 40
 
     readonly property int retainedRouteCount: navTrail.length + navForward.length
     readonly property int focusMemoryCount: Object.keys(focusMemory).length
@@ -213,6 +221,25 @@ StackView {
         navigation.focusMemory = ({});
     }
 
+    function updateFavorite(itemId, favorite): void {
+        const id = navigation.boundedText(itemId, 1024);
+        if (id.length === 0)
+            return;
+        const rewrite = routes => {
+            const next = [];
+            for (let i = 0; i < routes.length; ++i) {
+                const route = routes[i];
+                if (route.id === id && route.favorite !== (favorite === true))
+                    next.push(Object.assign({}, route, { "favorite": favorite === true }));
+                else
+                    next.push(route);
+            }
+            return next;
+        };
+        navigation.navTrail = rewrite(navigation.navTrail);
+        navigation.navForward = rewrite(navigation.navForward);
+    }
+
     function pruneFocusMemory(): void {
         const retained = ({});
         const routes = navigation.navTrail.concat(navigation.navForward);
@@ -231,15 +258,101 @@ StackView {
         route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
     }
 
+    function semanticKind(item): string {
+        if (!item)
+            return "";
+        const value = item["navigationFocusKind"];
+        return value === undefined || value === null
+                ? "" : navigation.boundedText(value, 32);
+    }
+
+    function semanticControls(kind): var {
+        const result = [];
+        if (!navigation.currentItem)
+            return result;
+        const queue = [navigation.currentItem];
+        let cursor = 0;
+        let visited = 0;
+        while (cursor < queue.length && visited < navigation.semanticTraversalLimit
+                && result.length < navigation.semanticControlLimit) {
+            const item = queue[cursor++];
+            ++visited;
+            const itemKind = navigation.semanticKind(item);
+            if (itemKind.length > 0 && (kind.length === 0 || itemKind === kind)
+                    && typeof item["navigationFocusSnapshot"] === "function"
+                    && typeof item["restoreNavigationFocus"] === "function")
+                result.push(item);
+            const children = item.children;
+            if (children === undefined || children === null)
+                continue;
+            for (let i = 0; i < children.length
+                    && queue.length < navigation.semanticTraversalLimit; ++i)
+                queue.push(children[i]);
+        }
+        return result;
+    }
+
+    function semanticOwner(item): Item {
+        let cursor = item;
+        while (cursor && cursor !== navigation.currentItem) {
+            if (navigation.semanticKind(cursor).length > 0
+                    && typeof cursor["navigationFocusSnapshot"] === "function")
+                return cursor;
+            cursor = cursor.parent;
+        }
+        return null;
+    }
+
+    function semanticLocator(owner): string {
+        if (!owner)
+            return "";
+        const kind = navigation.semanticKind(owner);
+        if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind))
+            return "";
+        const controls = navigation.semanticControls(kind);
+        const ordinal = controls.indexOf(owner);
+        if (ordinal < 0 || ordinal >= navigation.semanticControlLimit)
+            return "";
+        const snapshot = owner["navigationFocusSnapshot"]();
+        const index = snapshot ? Number(snapshot.index) : -1;
+        if (!snapshot || snapshot.valid !== true || !Number.isInteger(index)
+                || index < 0 || index > 2147483646)
+            return "";
+        const itemId = navigation.boundedText(snapshot.itemId, 1024);
+        return JSON.stringify(["semantic", kind, ordinal, itemId, index]);
+    }
+
     function focusLocator(item): string {
-        if (!navigation.currentItem || !item)
+        if (!navigation.currentItem)
+            return "";
+
+        const owner = navigation.semanticOwner(item);
+        const owned = navigation.semanticLocator(owner);
+        if (owned.length > 0)
+            return owned;
+
+        // A refill may not have made the exact row eligible yet. Preserve the
+        // restorer's target instead of replacing it with the view's temporary
+        // default cursor if the user navigates again meanwhile.
+        const controls = navigation.semanticControls("");
+        for (let i = 0; i < controls.length; ++i) {
+            if (controls[i]["navigationFocusRestorePending"] === true) {
+                const pending = navigation.semanticLocator(controls[i]);
+                if (pending.length > 0)
+                    return pending;
+            }
+        }
+
+        if (!item)
             return "";
         if (item === navigation.currentItem)
-            return "@";
+            return JSON.stringify(["path", "@"]);
 
         const path = [];
         let cursor = item;
         while (cursor && cursor !== navigation.currentItem) {
+            if (path.length >= 256)
+                return "";
             const visualParent = cursor.parent;
             if (!visualParent || visualParent.children === undefined)
                 return "";
@@ -255,17 +368,20 @@ StackView {
             path.unshift(childIndex);
             cursor = visualParent;
         }
-        return cursor === navigation.currentItem ? path.join("/") : "";
+        return cursor === navigation.currentItem
+                ? JSON.stringify(["path", path.join("/")]) : "";
     }
 
-    function itemForFocusLocator(locator): Item {
-        if (!navigation.currentItem || locator.length === 0)
+    function itemForFocusPath(pathText): Item {
+        if (!navigation.currentItem || pathText.length === 0)
             return null;
-        if (locator === "@")
+        if (pathText === "@")
             return navigation.currentItem;
 
         let item = navigation.currentItem;
-        const path = locator.split("/");
+        const path = pathText.split("/");
+        if (path.length > 256)
+            return null;
         for (let i = 0; i < path.length; ++i) {
             const index = Number(path[i]);
             if (!Number.isInteger(index) || index < 0 || index >= item.children.length)
@@ -275,18 +391,90 @@ StackView {
         return item;
     }
 
+    function restoreFocusLocator(locator): bool {
+        if (!navigation.currentItem || locator.length === 0 || locator.length > 8192)
+            return false;
+        let parts = null;
+        try {
+            parts = JSON.parse(locator);
+        } catch (error) {
+            return false;
+        }
+        if (!Array.isArray(parts) || parts.length !== 2 && parts.length !== 5)
+            return false;
+
+        if (parts[0] === "path" && parts.length === 2) {
+            const pathText = String(parts[1]);
+            if (pathText.length > 4096)
+                return false;
+            const remembered = navigation.itemForFocusPath(pathText);
+            if (remembered && remembered.visible && remembered.enabled) {
+                remembered.forceActiveFocus(Qt.OtherFocusReason);
+                return true;
+            }
+            return false;
+        }
+
+        if (parts[0] !== "semantic" || parts.length !== 5)
+            return false;
+        const kind = String(parts[1]);
+        const ordinal = Number(parts[2]);
+        const itemId = String(parts[3]);
+        const index = Number(parts[4]);
+        if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)
+                || !Number.isInteger(ordinal) || ordinal < 0
+                || ordinal >= navigation.semanticControlLimit
+                || itemId.length > 1024 || !Number.isInteger(index)
+                || index < 0 || index > 2147483646)
+            return false;
+        const controls = navigation.semanticControls(kind);
+        if (ordinal >= controls.length)
+            return false;
+        const control = controls[ordinal];
+        if (!control.visible || !control.enabled)
+            return false;
+        return control["restoreNavigationFocus"](itemId, index) === true;
+    }
+
+    function cancelFocusRetry(): void {
+        focusRetry.stop();
+        navigation._focusRetryToken = -1;
+        navigation._focusRetryLocator = "";
+        navigation._focusRetryAttempts = 0;
+    }
+
+    function cancelLiveFocusRestores(): void {
+        const controls = navigation.semanticControls("");
+        for (let i = 0; i < controls.length; ++i) {
+            if (typeof controls[i]["cancelNavigationFocusRestore"] === "function")
+                controls[i]["cancelNavigationFocusRestore"]();
+        }
+    }
+
+    function armFocusRetry(token, locator): void {
+        navigation._focusRetryToken = Number(token);
+        navigation._focusRetryLocator = locator;
+        navigation._focusRetryAttempts = 0;
+        focusRetry.restart();
+    }
+
     function rememberFocus(): void {
         navigation.retainCurrentRouteState();
         const route = navigation.currentEntry;
         const item = navigation.focusItem;
-        if (!route || !item)
+        if (!route) {
+            navigation.cancelFocusRetry();
+            navigation.cancelLiveFocusRestores();
             return;
+        }
         const locator = navigation.focusLocator(item);
-        if (locator.length === 0)
-            return;
-        const next = Object.assign({}, navigation.focusMemory);
-        next[String(route.token)] = locator;
-        navigation.focusMemory = next;
+        if (locator.length > 0) {
+            const next = Object.assign({}, navigation.focusMemory);
+            next[String(route.token)] = locator;
+            navigation.focusMemory = next;
+        }
+        navigation.cancelFocusRetry();
+        navigation.cancelLiveFocusRestores();
     }
 
     function focusCurrentPage(): void {
@@ -299,14 +487,16 @@ StackView {
         const key = route ? String(route.token) : "";
         const locator = key.length > 0 && navigation.focusMemory[key] !== undefined
                       ? String(navigation.focusMemory[key]) : "";
-        const remembered = navigation.itemForFocusLocator(locator);
-        if (remembered) {
-            if (remembered.visible && remembered.enabled) {
-                remembered.forceActiveFocus(Qt.OtherFocusReason);
-                return;
-            }
-        }
+        navigation.cancelFocusRetry();
+        if (navigation.restoreFocusLocator(locator))
+            return;
         navigation.focusCurrentPage();
+        if (route && locator.length > 0) {
+            // Dynamic Home rails may appear only after their model arrives.
+            // Retry for two seconds; virtual controls take over their own
+            // constant-space refill wait as soon as one is found.
+            navigation.armFocusRetry(route.token, locator);
+        }
     }
 
     function pushResolved(route, initialProperties, operation): bool {
@@ -333,6 +523,8 @@ StackView {
     }
 
     function resetToRoute(route): void {
+        navigation.cancelFocusRetry();
+        navigation.cancelLiveFocusRestores();
         const entry = navigation.descriptor(route, null);
         navigation.clear(StackView.Immediate);
         navigation.navTrail = [entry];
@@ -434,4 +626,24 @@ StackView {
     }
 
     Component.onCompleted: navigation.adoptInitialRoute(navigation.initialRoute)
+
+    Timer {
+        id: focusRetry
+        interval: 50
+        repeat: true
+        onTriggered: {
+            const route = navigation.currentEntry;
+            if (!route || Number(route.token) !== navigation._focusRetryToken) {
+                navigation.cancelFocusRetry();
+                return;
+            }
+            if (navigation.restoreFocusLocator(navigation._focusRetryLocator)) {
+                navigation.cancelFocusRetry();
+                return;
+            }
+            ++navigation._focusRetryAttempts;
+            if (navigation._focusRetryAttempts >= navigation.focusRetryLimit)
+                navigation.cancelFocusRetry();
+        }
+    }
 }

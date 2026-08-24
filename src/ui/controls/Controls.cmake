@@ -15,6 +15,7 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/controls/StrmCard.qml
     ui/controls/StrmRail.qml
     ui/controls/StrmGrid.qml
+    ui/controls/NavigationFocusRestorer.qml
     ui/controls/StrmMenu.qml
     ui/controls/ItemMenu.qml
     ui/controls/StrmSelect.qml

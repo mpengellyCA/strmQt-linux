@@ -29,6 +29,14 @@ FocusScope {
     signal moreRequested()
 
     readonly property alias currentIndex: list.currentIndex
+    readonly property string navigationFocusKind: "rail"
+    readonly property bool navigationFocusRestorePending: navigationFocus.pending
+
+    function navigationFocusSnapshot(): var { return navigationFocus.snapshot() }
+    function restoreNavigationFocus(itemId, index): bool {
+        return navigationFocus.restore(itemId, index)
+    }
+    function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
 
     // Which card the pointer is over, or -1. Published separately from
     // currentIndex because hover and focus are separate states: a page driving
@@ -41,6 +49,29 @@ FocusScope {
     property Item _hoverOwner: null
     readonly property alias count: list.count
     readonly property bool hovered: railHover.hovered
+
+    NavigationFocusRestorer {
+        id: navigationFocus
+        model: rail.railModel
+        count: list.count
+        currentIndex: list.currentIndex
+        onFocusRequested: index => {
+            if (index >= 0) {
+                list.currentIndex = index
+                list.positionViewAtIndex(index, ListView.Contain)
+            }
+            list.forceActiveFocus(Qt.OtherFocusReason)
+        }
+    }
+
+    Connections {
+        target: Qt.isQtObject(rail.railModel) ? rail.railModel : null
+        ignoreUnknownSignals: true
+        function onModelReset() { Qt.callLater(navigationFocus.retry) }
+    }
+
+    onCountChanged: navigationFocus.retry()
+    onRailModelChanged: navigationFocus.cancel()
 
     // A single hidden card is the one source of truth for "how big is a card of
     // this variant", instead of a copy of the variant→size table living in the

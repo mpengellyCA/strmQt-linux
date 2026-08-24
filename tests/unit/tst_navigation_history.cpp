@@ -1,3 +1,4 @@
+#include <QDir>
 #include <QFile>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -15,6 +16,9 @@ private slots:
     void capsGraphsAndReconstructsMetadata();
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
+    void restoresVirtualFocusAcrossDelayedRefill();
+    void preservesFavoriteStateAcrossReconstruction();
+    void preservesBaseAndKeepsTransientPagesOutOfHistory();
 };
 
 namespace {
@@ -22,6 +26,7 @@ namespace {
 const char *kProbe = R"QML(
 import QtQuick
 import QtQuick.Controls.Basic
+import StrmQt
 import "."
 
 Item {
@@ -37,6 +42,8 @@ Item {
     property string preparedDetailsId: ""
     property string preparedAlbumId: ""
     property string searchQuery: ""
+    property int refillBatch: 0
+    readonly property int virtualCount: virtualRows.count
 
     function itemFor(id): var {
         const text = String(id);
@@ -64,12 +71,14 @@ Item {
     }
 
     function routeFor(kind, item): var {
-        const prefix = kind === "album" ? "album:" : "details:";
+        const prefix = kind === "album" ? "album:"
+                     : kind === "artist" ? "artist:" : "details:";
         return {
             "kind": kind,
             "id": item.itemId,
             "name": item.name,
-            "itemType": kind === "album" ? "MusicAlbum" : item.type,
+            "itemType": kind === "album" ? "MusicAlbum"
+                        : kind === "artist" ? "MusicArtist" : item.type,
             "key": prefix + item.itemId,
             "title": "Title " + item.itemId,
             // Neither field is part of the retained descriptor whitelist.
@@ -88,6 +97,59 @@ Item {
         item.type = "MusicAlbum";
         history.pushRoute(root.routeFor("album", item), { "albumItem": item });
     }
+
+    function pushAlbumUnfavorite(id): void {
+        const item = root.itemFor(id);
+        item.type = "MusicAlbum";
+        item.favorite = false;
+        history.pushRoute(root.routeFor("album", item), { "albumItem": item });
+    }
+
+    function pushArtistUnfavorite(id): void {
+        const item = root.itemFor(id);
+        item.type = "MusicArtist";
+        item.favorite = false;
+        history.pushRoute(root.routeFor("artist", item), { "artistItem": item });
+    }
+
+    function markFavorite(id): void { history.updateFavorite(String(id), true); }
+
+    function pushVirtual(id): void {
+        history.pushRoute({ "kind": "library", "id": String(id),
+                            "name": "Virtual " + id, "key": "virtual:" + id,
+                            "title": "Virtual " + id });
+    }
+
+    function focusVirtual(index): void {
+        if (history.currentItem && history.currentItem.focusRow)
+            history.currentItem.focusRow(Number(index));
+    }
+
+    function refillVirtualRows(): void {
+        virtualRows.clear();
+        root.refillBatch = 0;
+        refillTimer.restart();
+    }
+
+    function appendVirtualBatch(): void {
+        const start = root.refillBatch * 6;
+        const end = Math.min(30, start + 6);
+        for (let i = start; i < end; ++i)
+            virtualRows.append({ "itemId": "row-" + i, "name": "Row " + i });
+        ++root.refillBatch;
+        if (end >= 30)
+            refillTimer.stop();
+    }
+
+    function resetBase(kind): void {
+        history.resetToRoute({ "kind": String(kind), "key": String(kind),
+                               "title": String(kind) });
+    }
+
+    function pushTransient(): void {
+        history.push(transientComponent, {}, StackView.Immediate);
+    }
+    function popTransient(): void { history.pop(StackView.Immediate); }
 
     function pushSearch(query): void {
         root.searchQuery = String(query);
@@ -121,6 +183,8 @@ Item {
             root.preparedAlbumId = route.id;
         else if (route.kind === "search")
             root.searchQuery = route.query;
+        else if (route.kind === "library")
+            root.refillVirtualRows();
     }
 
     component DetailsProbe: FocusScope {
@@ -181,6 +245,32 @@ Item {
         }
     }
 
+    component ArtistProbe: FocusScope {
+        property var artistItem: ({})
+        readonly property string routeId: String(artistItem.itemId)
+        objectName: "artist-" + routeId
+        focus: true
+    }
+
+    component VirtualProbe: FocusScope {
+        readonly property int focusedIndex: virtualGrid.currentIndex
+        objectName: "virtual-page"
+        focus: true
+
+        function focusRow(index): void {
+            virtualGrid.restoreNavigationFocus("row-" + index, index);
+        }
+
+        StrmGrid {
+            id: virtualGrid
+            width: 220
+            height: 90
+            gridModel: virtualRows
+            cellsAcross: 1
+            prefetchThreshold: 0
+        }
+    }
+
     component SearchProbe: FocusScope {
         property string queryAtCreation: ""
         readonly property string routeId: "search:" + queryAtCreation
@@ -206,7 +296,20 @@ Item {
 
     Component { id: detailsComponent; DetailsProbe {} }
     Component { id: albumComponent; AlbumProbe {} }
+    Component { id: artistComponent; ArtistProbe {} }
+    Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
+    Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
+    Component { id: homeComponent; FocusScope { objectName: "home-base"; focus: true } }
+    Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
+
+    ListModel { id: virtualRows }
+    Timer {
+        id: refillTimer
+        interval: 15
+        repeat: true
+        onTriggered: root.appendVirtualBatch()
+    }
 
     BoundedNavigationStack {
         id: history
@@ -229,8 +332,18 @@ Item {
         initialItem: detailsComponent
         detailsPageComponent: detailsComponent
         albumPageComponent: albumComponent
+        artistPageComponent: artistComponent
+        libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
+        loginPageComponent: loginComponent
+        homePageComponent: homeComponent
         onPrepareRequested: route => root.prepareRoute(route)
+    }
+
+    Component.onCompleted: {
+        root.refillBatch = 0;
+        while (virtualRows.count < 30)
+            root.appendVirtualBatch();
     }
 }
 )QML";
@@ -242,6 +355,38 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
     const QString helperTarget = dir.filePath(QStringLiteral("BoundedNavigationStack.qml"));
     if (!QFile::copy(helperSource, helperTarget))
         return nullptr;
+
+    const QString modulePath = dir.filePath(QStringLiteral("StrmQt"));
+    if (!QDir().mkpath(modulePath))
+        return nullptr;
+    const QStringList moduleFiles = {
+        QStringLiteral("Theme.qml"),          QStringLiteral("FocusRing.qml"),
+        QStringLiteral("StrmIcon.qml"),       QStringLiteral("StrmTooltip.qml"),
+        QStringLiteral("StrmIconButton.qml"), QStringLiteral("StrmCard.qml"),
+        QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
+        QStringLiteral("StrmGrid.qml"),
+    };
+    for (const QString &name : moduleFiles) {
+        const QString sourceRoot = name == QStringLiteral("Theme.qml")
+                                       ? QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/")
+                                       : QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/controls/");
+        if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
+            return nullptr;
+    }
+    QFile qmldir(modulePath + QStringLiteral("/qmldir"));
+    if (!qmldir.open(QIODevice::WriteOnly))
+        return nullptr;
+    qmldir.write("module StrmQt\n"
+                 "singleton Theme 1.0 Theme.qml\n"
+                 "FocusRing 1.0 FocusRing.qml\n"
+                 "StrmIcon 1.0 StrmIcon.qml\n"
+                 "StrmTooltip 1.0 StrmTooltip.qml\n"
+                 "StrmIconButton 1.0 StrmIconButton.qml\n"
+                 "StrmCard 1.0 StrmCard.qml\n"
+                 "StrmScrollBar 1.0 StrmScrollBar.qml\n"
+                 "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
+                 "StrmGrid 1.0 StrmGrid.qml\n");
+    qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));
     if (!probe.open(QIODevice::WriteOnly))
@@ -295,7 +440,7 @@ void NavigationHistoryTest::capsGraphsAndReconstructsMetadata()
     QQuickView view;
     const auto [root, history] = createHistoryProbe(dir, view);
     QVERIFY2(root, qPrintable(view.errors().isEmpty() ? QStringLiteral("failed to create probe")
-                                                     : view.errors().first().toString()));
+                                                      : view.errors().first().toString()));
     QVERIFY(history);
     QTRY_COMPARE(root->property("createdCount").toInt(), 1);
 
@@ -410,9 +555,11 @@ void NavigationHistoryTest::restoresForwardFocusAndReplacesBranches()
     const QVariantList trail = listProperty(history, "navTrail");
     for (auto it = focus.cbegin(); it != focus.cend(); ++it) {
         const QString token = it.key();
-        const bool retained = std::any_of(trail.cbegin(), trail.cend(), [&token](const QVariant &route) {
-            return QString::number(route.toMap().value(QStringLiteral("token")).toInt()) == token;
-        });
+        const bool retained =
+            std::any_of(trail.cbegin(), trail.cend(), [&token](const QVariant &route) {
+                return QString::number(route.toMap().value(QStringLiteral("token")).toInt()) ==
+                       token;
+            });
         QVERIFY(retained);
     }
 
@@ -466,6 +613,116 @@ void NavigationHistoryTest::restoresPerEntrySearchAndPreparesRouteKinds()
     QVERIFY(prepared.contains(QStringLiteral("details:1")));
     QVERIFY(prepared.contains(QStringLiteral("search:alpha")));
     QVERIFY(prepared.contains(QStringLiteral("search:beta edited")));
+}
+
+void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushVirtual", QStringLiteral("library")));
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QVERIFY(invoke(root, "focusVirtual", 17));
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
+
+    // Back to the still-instantiated virtual page re-prepares its controller,
+    // which clears the model and refills it in delayed six-row batches.
+    QVERIFY(invoke(root, "pushRoute", 91));
+    const QVariantMap virtualRoute = listProperty(history, "navTrail").at(1).toMap();
+    const QString virtualLocator =
+        history->property("focusMemory")
+            .toMap()
+            .value(QString::number(virtualRoute.value(QStringLiteral("token")).toInt()))
+            .toString();
+    QVERIFY(virtualLocator.startsWith(QStringLiteral("[\"semantic\",\"grid\",")));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
+
+    // Put that page in Forward, destroying its graph, then reconstruct it while
+    // the same delayed refill is in progress. Index 17 is outside the initial
+    // viewport and does not exist until the third batch.
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_COMPARE(root->property("virtualCount").toInt(), 30);
+    QTRY_COMPARE(currentItem(history)->property("focusedIndex").toInt(), 17);
+    QVERIFY(view.activeFocusItem());
+}
+
+void NavigationHistoryTest::preservesFavoriteStateAcrossReconstruction()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushAlbumUnfavorite", 42));
+    QVERIFY(invoke(root, "markFavorite", 42));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_VERIFY(currentItem(history)
+                    ->property("albumItem")
+                    .toMap()
+                    .value(QStringLiteral("favorite"))
+                    .toBool());
+
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "pushArtistUnfavorite", 7));
+    QVERIFY(invoke(root, "markFavorite", 7));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_VERIFY(currentItem(history)
+                    ->property("artistItem")
+                    .toMap()
+                    .value(QStringLiteral("favorite"))
+                    .toBool());
+}
+
+void NavigationHistoryTest::preservesBaseAndKeepsTransientPagesOutOfHistory()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetBase", QStringLiteral("home")));
+    for (int id = 1; id <= 3; ++id)
+        QVERIFY(invoke(root, "pushRoute", id));
+    QVERIFY(invoke(root, "goHome"));
+    QCOMPARE(history->property("currentEntry").toMap().value(QStringLiteral("kind")).toString(),
+             QStringLiteral("home"));
+    QCOMPARE(listProperty(history, "navTrail").size(), 1);
+    QCOMPARE(listProperty(history, "navForward").size(), 3);
+    QCOMPARE(history->property("retainedRouteCount").toInt(), 4);
+
+    const int retained = history->property("retainedRouteCount").toInt();
+    const int graphs = history->property("pageGraphCount").toInt();
+    QVERIFY(invoke(root, "pushTransient"));
+    QCOMPARE(history->property("retainedRouteCount").toInt(), retained);
+    QCOMPARE(history->property("pageGraphCount").toInt(), graphs);
+    QCOMPARE(history->property("depth").toInt(), graphs + 1);
+    QVERIFY(invoke(root, "popTransient"));
+
+    QVERIFY(invoke(root, "resetBase", QStringLiteral("login")));
+    for (int id = 1; id <= 7; ++id)
+        QVERIFY(invoke(root, "pushRoute", id));
+    QCOMPARE(listProperty(history, "navTrail")
+                 .constFirst()
+                 .toMap()
+                 .value(QStringLiteral("kind"))
+                 .toString(),
+             QStringLiteral("login"));
+    QVERIFY(invoke(root, "goHome"));
+    QCOMPARE(history->property("currentEntry").toMap().value(QStringLiteral("kind")).toString(),
+             QStringLiteral("login"));
 }
 
 QTEST_MAIN(NavigationHistoryTest)
