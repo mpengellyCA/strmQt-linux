@@ -23,6 +23,17 @@ const auto kReducedMotionKey = QStringLiteral("appearance/reducedMotion");
 const auto kVolumeKey = QStringLiteral("playback/volume");
 const auto kMutedKey = QStringLiteral("playback/muted");
 const auto kReplayGainKey = QStringLiteral("playback/replayGain");
+const auto kAutoPlayNextEpisodeKey = QStringLiteral("playback/autoPlayNextEpisode");
+const auto kMaxBitrateKey = QStringLiteral("playback/maxBitrateKbps");
+const auto kPlaybackModeKey = QStringLiteral("playback/mode");
+const auto kBackdropKey = QStringLiteral("appearance/backdrop");
+const auto kBackdropOpacityKey = QStringLiteral("appearance/backdropOpacity");
+const auto kBackdropKenBurnsKey = QStringLiteral("appearance/backdropKenBurns");
+const auto kSubtitleFontKey = QStringLiteral("subtitles/font");
+const auto kSubtitleScaleKey = QStringLiteral("subtitles/scale");
+const auto kSubtitleColorKey = QStringLiteral("subtitles/color");
+const auto kSubtitleBackgroundKey = QStringLiteral("subtitles/background");
+const auto kSubtitlePositionKey = QStringLiteral("subtitles/position");
 const auto kLiveEnabledKey = QStringLiteral("live/enabled");
 const auto kPollIntervalKey = QStringLiteral("live/pollIntervalSeconds");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
@@ -262,20 +273,20 @@ void Settings::setVolume(int percent)
 
 bool Settings::autoPlayNextEpisode() const
 {
-    return m_store.value(QStringLiteral("playback/autoPlayNextEpisode"), true).toBool();
+    return m_store.value(kAutoPlayNextEpisodeKey, true).toBool();
 }
 
 void Settings::setAutoPlayNextEpisode(bool enabled)
 {
     if (enabled == autoPlayNextEpisode())
         return;
-    m_store.setValue(QStringLiteral("playback/autoPlayNextEpisode"), enabled);
+    m_store.setValue(kAutoPlayNextEpisodeKey, enabled);
     emit autoPlayNextEpisodeChanged();
 }
 
 int Settings::maxBitrateKbps() const
 {
-    return qMax(0, m_store.value(QStringLiteral("playback/maxBitrateKbps"), 0).toInt());
+    return qMax(0, m_store.value(kMaxBitrateKey, 0).toInt());
 }
 
 void Settings::setMaxBitrateKbps(int kbps)
@@ -283,14 +294,13 @@ void Settings::setMaxBitrateKbps(int kbps)
     const int clamped = qMax(0, kbps);
     if (clamped == maxBitrateKbps())
         return;
-    m_store.setValue(QStringLiteral("playback/maxBitrateKbps"), clamped);
+    m_store.setValue(kMaxBitrateKey, clamped);
     emit maxBitrateKbpsChanged();
 }
 
 QString Settings::playbackMode() const
 {
-    const QString stored =
-        m_store.value(QStringLiteral("playback/mode"), QStringLiteral("auto")).toString();
+    const QString stored = m_store.value(kPlaybackModeKey, QStringLiteral("auto")).toString();
     if (stored == QLatin1String("directPlay") || stored == QLatin1String("transcode"))
         return stored;
     return QStringLiteral("auto");
@@ -300,7 +310,7 @@ void Settings::setPlaybackMode(const QString &mode)
 {
     if (mode == playbackMode())
         return;
-    m_store.setValue(QStringLiteral("playback/mode"), mode);
+    m_store.setValue(kPlaybackModeKey, mode);
     emit playbackModeChanged();
 }
 
@@ -334,20 +344,20 @@ void Settings::setReplayGainMode(const QString &mode)
 
 bool Settings::backdropEnabled() const
 {
-    return m_store.value(QStringLiteral("appearance/backdrop"), true).toBool();
+    return m_store.value(kBackdropKey, true).toBool();
 }
 
 void Settings::setBackdropEnabled(bool enabled)
 {
     if (enabled == backdropEnabled())
         return;
-    m_store.setValue(QStringLiteral("appearance/backdrop"), enabled);
+    m_store.setValue(kBackdropKey, enabled);
     emit backdropChanged();
 }
 
 int Settings::backdropOpacity() const
 {
-    return qBound(0, m_store.value(QStringLiteral("appearance/backdropOpacity"), 18).toInt(), 100);
+    return qBound(0, m_store.value(kBackdropOpacityKey, 18).toInt(), 100);
 }
 
 void Settings::setBackdropOpacity(int percent)
@@ -355,39 +365,39 @@ void Settings::setBackdropOpacity(int percent)
     const int clamped = qBound(0, percent, 100);
     if (clamped == backdropOpacity())
         return;
-    m_store.setValue(QStringLiteral("appearance/backdropOpacity"), clamped);
+    m_store.setValue(kBackdropOpacityKey, clamped);
     emit backdropChanged();
 }
 
 bool Settings::backdropKenBurns() const
 {
-    return m_store.value(QStringLiteral("appearance/backdropKenBurns"), true).toBool();
+    return m_store.value(kBackdropKenBurnsKey, true).toBool();
 }
 
 void Settings::setBackdropKenBurns(bool enabled)
 {
     if (enabled == backdropKenBurns())
         return;
-    m_store.setValue(QStringLiteral("appearance/backdropKenBurns"), enabled);
+    m_store.setValue(kBackdropKenBurnsKey, enabled);
     emit backdropChanged();
 }
 
 QString Settings::subtitleFont() const
 {
-    return m_store.value(QStringLiteral("subtitles/font")).toString();
+    return m_store.value(kSubtitleFontKey).toString();
 }
 
 void Settings::setSubtitleFont(const QString &family)
 {
     if (family == subtitleFont())
         return;
-    m_store.setValue(QStringLiteral("subtitles/font"), family);
+    m_store.setValue(kSubtitleFontKey, family);
     emit subtitleStyleChanged();
 }
 
 int Settings::subtitleScale() const
 {
-    return qBound(50, m_store.value(QStringLiteral("subtitles/scale"), 100).toInt(), 300);
+    return qBound(50, m_store.value(kSubtitleScaleKey, 100).toInt(), 300);
 }
 
 void Settings::setSubtitleScale(int percent)
@@ -395,14 +405,13 @@ void Settings::setSubtitleScale(int percent)
     const int clamped = qBound(50, percent, 300);
     if (clamped == subtitleScale())
         return;
-    m_store.setValue(QStringLiteral("subtitles/scale"), clamped);
+    m_store.setValue(kSubtitleScaleKey, clamped);
     emit subtitleStyleChanged();
 }
 
 QString Settings::subtitleColor() const
 {
-    const QString stored =
-        m_store.value(QStringLiteral("subtitles/color"), QStringLiteral("#FFFFFF")).toString();
+    const QString stored = m_store.value(kSubtitleColorKey, QStringLiteral("#FFFFFF")).toString();
     // Anything that is not a plain #RRGGBB is refused rather than passed to
     // mpv, which would reject the whole property and leave subtitles unstyled.
     static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
@@ -413,13 +422,13 @@ void Settings::setSubtitleColor(const QString &color)
 {
     if (color == subtitleColor())
         return;
-    m_store.setValue(QStringLiteral("subtitles/color"), color);
+    m_store.setValue(kSubtitleColorKey, color);
     emit subtitleStyleChanged();
 }
 
 int Settings::subtitleBackground() const
 {
-    return qBound(0, m_store.value(QStringLiteral("subtitles/background"), 0).toInt(), 100);
+    return qBound(0, m_store.value(kSubtitleBackgroundKey, 0).toInt(), 100);
 }
 
 void Settings::setSubtitleBackground(int percent)
@@ -427,13 +436,13 @@ void Settings::setSubtitleBackground(int percent)
     const int clamped = qBound(0, percent, 100);
     if (clamped == subtitleBackground())
         return;
-    m_store.setValue(QStringLiteral("subtitles/background"), clamped);
+    m_store.setValue(kSubtitleBackgroundKey, clamped);
     emit subtitleStyleChanged();
 }
 
 int Settings::subtitlePosition() const
 {
-    return qBound(0, m_store.value(QStringLiteral("subtitles/position"), 100).toInt(), 150);
+    return qBound(0, m_store.value(kSubtitlePositionKey, 100).toInt(), 150);
 }
 
 void Settings::setSubtitlePosition(int position)
@@ -441,7 +450,7 @@ void Settings::setSubtitlePosition(int position)
     const int clamped = qBound(0, position, 150);
     if (clamped == subtitlePosition())
         return;
-    m_store.setValue(QStringLiteral("subtitles/position"), clamped);
+    m_store.setValue(kSubtitlePositionKey, clamped);
     emit subtitleStyleChanged();
 }
 
