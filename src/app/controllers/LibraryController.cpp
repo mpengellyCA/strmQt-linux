@@ -463,7 +463,7 @@ void LibraryController::fetchPage(int startIndex)
             if (startIndex == 0)
                 m_model->setItems(result.value.items, result.value.totalRecordCount);
             else
-                m_model->appendItems(result.value.items);
+                m_model->appendItems(result.value.items, result.value.totalRecordCount);
         });
 }
 

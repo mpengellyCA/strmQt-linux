@@ -270,9 +270,20 @@ void ControllersTest::libraryPaging()
     QVERIFY(firstRequest.query.contains(QStringLiteral("StartIndex=0")));
     QVERIFY(firstRequest.query.contains(QStringLiteral("IncludeItemTypes=Movie")));
 
+    // The server's total is a snapshot. A library can grow between pages, and
+    // a stale first-page total must not hide the newly reachable tail.
+    m_mock->addRoute(
+        QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+        QByteArrayLiteral(
+            "{\"Items\":[{\"Id\":\"1\",\"Name\":\"One\",\"Type\":\"Movie\"},"
+            "{\"Id\":\"2\",\"Name\":\"Two\",\"Type\":\"Movie\"},"
+            "{\"Id\":\"3\",\"Name\":\"Three\",\"Type\":\"Movie\"}],"
+            "\"TotalRecordCount\":250}"));
     library.loadMore();
     QTRY_VERIFY(!library.loading());
     QCOMPARE(library.model()->rowCount(), 6); // mock replays the same 3-item page
+    QCOMPARE(library.model()->totalRecordCount(), 250);
+    QVERIFY(library.canLoadMore());
 
     const auto secondRequest = m_mock->lastRequestFor(
         QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId));
