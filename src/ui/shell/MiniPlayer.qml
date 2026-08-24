@@ -312,6 +312,14 @@ FocusScope {
         }
     }
 
+    Connections {
+        target: Session
+
+        function onSessionBoundaryChanged() {
+            mini.favoriteOverrides = ({});
+        }
+    }
+
     function toggleFavorite(): void {
         if (mini.nowItemId.length > 0)
             Actions.toggleFavorite(mini.nowItem);

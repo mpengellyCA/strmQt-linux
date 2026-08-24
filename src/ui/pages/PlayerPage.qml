@@ -108,6 +108,7 @@ FocusScope {
         // shortcut added later genuinely wants a held key to keep firing; it
         // says so by setting this, rather than inheriting it by accident.
         property bool repeats: false
+        property bool available: true
 
         signal activated
 
@@ -116,7 +117,7 @@ FocusScope {
                 const bound = Input.bindings(mapped.actionId);
                 return (bound !== undefined && bound.length > 0) ? bound : mapped.fallback;
             }
-            enabled: PlayerCtl.active
+            enabled: PlayerCtl.active && mapped.available && page.visible
             autoRepeat: mapped.repeats
             onActivated: {
                 Input.noteInput("keyboard");
@@ -385,6 +386,7 @@ FocusScope {
     PlayerShortcut {
         actionId: "player.stats"
         fallback: ["Ctrl+I"]
+        available: !page.audioMode
         onActivated: osd.toggleStats()
     }
 

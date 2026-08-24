@@ -182,6 +182,19 @@ Item {
         osd.wake();
     }
 
+    // Track/chapter/source state belongs to one item. The queue panel is the
+    // exception: it describes the playback session and may deliberately stay
+    // open while its cursor advances.
+    function resetItemState(keepQueue: bool): void {
+        if (!keepQueue || osd.panelKey !== "queue")
+            osd.panelKey = "";
+        osd.panelTab = 0;
+        osd.panelOrigin = null;
+        osd.statsVisible = false;
+        osd.requested = true;
+        hideTimer.restart();
+    }
+
     // Keyboard/gamepad entry point into the controls.
     //
     // wake() first, then focus in the same call, and that ordering is load
@@ -594,6 +607,25 @@ Item {
 
         function onTrackChanged(description) {
             osd.showToast(description);
+        }
+
+        function onActiveChanged(): void {
+            if (!PlayerCtl.active)
+                osd.resetItemState(false);
+        }
+
+        function onIsAudioChanged(): void {
+            // Statistics describe a video decoder and must not remain armed
+            // behind the audio surface.
+            osd.resetItemState(false);
+        }
+    }
+
+    Connections {
+        target: PlayerCtl.queue
+
+        function onCurrentChanged(): void {
+            osd.resetItemState(true);
         }
     }
 
