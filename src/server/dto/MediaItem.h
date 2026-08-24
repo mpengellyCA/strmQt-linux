@@ -100,6 +100,13 @@ struct MediaItem
     QString parentPrimaryImageItemId;
     QString parentPrimaryImageTag;
 
+    // Client-only fallback for an item launched from a bare id (crash resume,
+    // remote control). Emby's image endpoint does not require a tag, so those
+    // paths can still probe the current Primary image while the full details
+    // request is unavailable. A successful metadata enrichment replaces this
+    // provisional record and therefore clears the probe when no image exists.
+    bool probePrimaryImage = false;
+
     qint64 runtimeMs() const { return runtimeTicks / kTicksPerMs; }
     qint64 positionMs() const { return playbackPositionTicks / kTicksPerMs; }
     bool isResumable() const { return playbackPositionTicks > 0 && !played; }

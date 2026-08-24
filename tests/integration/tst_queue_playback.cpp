@@ -73,7 +73,9 @@ private slots:
     void aFilmSetsTheRecordAsideAndGivesItBack();
     void sessionBoundaryCancelsAQueuedAudioResume();
     void onlyAChosenItemAnnouncesItself();
+    void aResolvedPlayRetainsTaggedArtworkImmediately();
     void aBarePlayGainsItsArtworkFromTheDetailsFetch();
+    void aBarePlayKeepsAnArtworkProbeWhenDetailsFail();
     void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
     void isAudioDoesNotLingerFromTheOutgoingItemsTicket();
 
@@ -682,17 +684,58 @@ void QueuePlaybackTest::aBarePlayGainsItsArtworkFromTheDetailsFetch()
     m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
                            QStringLiteral("Movie"));
     QCOMPARE(m_controller->queue()->rowCount(), 1);
-    // Seeded from the click: nothing to draw yet.
-    QVERIFY(m_controller->queue()->currentItem()
-                .value(QStringLiteral("posterUrl")).toString().isEmpty());
+    // Seeded from the click: the tag is not known yet, but artwork is no longer
+    // coupled to the details/chapters request. Emby accepts the untagged probe.
+    const QString provisional = m_controller->queue()
+                                    ->currentItem()
+                                    .value(QStringLiteral("posterUrl"))
+                                    .toString();
+    QVERIFY(provisional.endsWith(QStringLiteral("/301001/Primary/")));
 
-    QTRY_VERIFY(!m_controller->queue()->currentItem()
-                     .value(QStringLiteral("posterUrl")).toString().isEmpty());
+    QTRY_VERIFY(m_controller->queue()
+                    ->currentItem()
+                    .value(QStringLiteral("posterUrl"))
+                    .toString()
+                    .contains(QStringLiteral("aaa111")));
     const QVariantMap entry = m_controller->queue()->currentItem();
     // The id it was seeded with, not whatever the reply happened to carry.
     QCOMPARE(entry.value(QStringLiteral("itemId")).toString(), QStringLiteral("301001"));
     QCOMPARE(entry.value(QStringLiteral("name")).toString(), QStringLiteral("The Matrix"));
     QVERIFY(entry.value(QStringLiteral("posterUrl")).toString().contains(QStringLiteral("aaa111")));
+    QVERIFY(entry.value(QStringLiteral("posterUrl")).toString() != provisional);
+}
+
+void QueuePlaybackTest::aResolvedPlayRetainsTaggedArtworkImmediately()
+{
+    MediaItem item;
+    item.id = QStringLiteral("301001");
+    item.name = QStringLiteral("The Matrix");
+    item.type = QStringLiteral("Movie");
+    item.primaryImageTag = QStringLiteral("card-tag");
+
+    m_controller->playItem(item, item.name);
+    const QString poster = m_controller->queue()
+                               ->currentItem()
+                               .value(QStringLiteral("posterUrl"))
+                               .toString();
+    QVERIFY(poster.endsWith(QStringLiteral("/301001/Primary/card-tag")));
+}
+
+void QueuePlaybackTest::aBarePlayKeepsAnArtworkProbeWhenDetailsFail()
+{
+    // No details route: the mock returns 404. Artwork resolution must not
+    // disappear with chapters; the provider can fetch this tagless URL from
+    // /Items/{id}/Images/Primary independently.
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
+                           QStringLiteral("Movie"));
+    QTRY_COMPARE(requestCount(QStringLiteral("GET"),
+                              QStringLiteral("/Users/%1/Items/301001").arg(kUserId)),
+                 1);
+    const QString poster = m_controller->queue()
+                               ->currentItem()
+                               .value(QStringLiteral("posterUrl"))
+                               .toString();
+    QVERIFY(poster.endsWith(QStringLiteral("/301001/Primary/")));
 }
 
 // Choosing a film while a record is playing used to replace the session

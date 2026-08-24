@@ -384,6 +384,11 @@ void Application::wirePlaybackIntegrations()
             &Application::pushNowPlayingToMpris);
     connect(m_player->queue(), &PlayQueue::currentChanged, this,
             &Application::pushNowPlayingToMpris);
+    // enrichEntry() changes the payload under the current queue cursor without
+    // changing the cursor itself. Details/art commonly arrive after duration,
+    // so currentChanged alone can leave MPRIS permanently on the bare seed.
+    connect(m_player->queue(), &PlayQueue::currentItemChanged, this,
+            &Application::pushNowPlayingToMpris);
     connect(m_player, &PlayerController::positionChanged, this,
             [this] { m_mpris->setPositionMs(m_player->positionMs()); });
     // CanGoNext / CanGoPrevious have to be re-announced, not just answered: an
@@ -474,10 +479,15 @@ void Application::pushNowPlayingToMpris()
     // coverSource() is the square: for a track it resolves to the ALBUM's cover
     // rather than whatever the ripper embedded in the file.
     const MediaItem::ImageRef cover = item.coverSource();
-    const QString artId =
-        cover.isValid()
-            ? cover.itemId + QLatin1Char('/') + cover.imageType + QLatin1Char('/') + cover.tag
-            : QString();
+    QString artId;
+    if (cover.isValid()) {
+        artId = cover.itemId + QLatin1Char('/') + cover.imageType + QLatin1Char('/') + cover.tag;
+    } else if (item.probePrimaryImage && !item.id.isEmpty()) {
+        // Image tags are cache validators, not required endpoint arguments.
+        // This provisional URL lets crash-resume/remote launches show art even
+        // when the independent details/chapters request fails.
+        artId = item.id + QStringLiteral("/Primary/");
+    }
     if (artId != m_mprisArtId) {
         m_mprisArtId = artId;
         m_mprisArtUrl.clear();

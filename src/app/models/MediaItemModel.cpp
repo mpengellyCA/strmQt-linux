@@ -45,6 +45,15 @@ QString embyImageSource(const QString &itemId, const QString &imageType, const Q
         .arg(sourceNamespace, itemId, imageType, tag);
 }
 
+QString embyImageProbeSource(const QString &itemId, const QString &imageType)
+{
+    const QString sourceNamespace = embyImageSourceNamespace();
+    if (sourceNamespace.isEmpty() || itemId.isEmpty() || imageType.isEmpty())
+        return {};
+    return QStringLiteral("image://emby/%1/%2/%3/")
+        .arg(sourceNamespace, itemId, imageType);
+}
+
 namespace {
 
 QString displayLabel(const MediaItem &item)
@@ -160,7 +169,11 @@ QVariant MediaItemModel::dataForItem(const MediaItem &item, int role)
         // now-playing hero, queue row — so routing it through coverSource() is
         // what makes a track show its album's cover rather than a hole.
         const MediaItem::ImageRef ref = item.coverSource();
-        return ref.isValid() ? embyImageSource(ref.itemId, ref.imageType, ref.tag) : QString();
+        if (ref.isValid())
+            return embyImageSource(ref.itemId, ref.imageType, ref.tag);
+        return item.probePrimaryImage
+                   ? embyImageProbeSource(item.id, QStringLiteral("Primary"))
+                   : QString();
     }
     case BackdropUrlRole:
         return embyImageSource(item.id, QStringLiteral("Backdrop"),

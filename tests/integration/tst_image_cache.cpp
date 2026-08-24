@@ -56,6 +56,7 @@ private slots:
     void qmlPixmapCacheSeparatesIdentityNamespaces();
     void delayedCleanupCannotDeleteReactivatedPartition();
     void mprisExportsArePartitionedAndRetired();
+    void untaggedMprisArtworkProbeIsSupported();
     void startupRemovesRetiredAssetTombstones();
     void startupPrunesAnOversizedAssetPartition();
 
@@ -359,6 +360,19 @@ void ImageCacheTest::mprisExportsArePartitionedAndRetired()
     delete m_fetcher;
     m_fetcher = new EmbyImageFetcher(m_client, this);
     QVERIFY(!QFileInfo::exists(secondPath));
+}
+
+void ImageCacheTest::untaggedMprisArtworkProbeIsSupported()
+{
+    QSignalSpy exported(m_fetcher, &EmbyImageFetcher::fileExported);
+    const QString id = QStringLiteral("301001/Primary/");
+    m_fetcher->exportToFile(id, QStringLiteral("mpris"));
+    QVERIFY(exported.wait(5000));
+    QCOMPARE(exported.first().at(0).toString(), id);
+    const QString path = exported.first().at(1).toUrl().toLocalFile();
+    QVERIFY(!path.isEmpty());
+    QVERIFY(QFileInfo::exists(path));
+    QVERIFY(!QImage(path).isNull());
 }
 
 void ImageCacheTest::startupRemovesRetiredAssetTombstones()

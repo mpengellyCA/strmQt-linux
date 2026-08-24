@@ -586,8 +586,8 @@ void EmbyImageFetcher::fetch(EmbyImageResponse *response, const QString &id,
 
 void EmbyImageFetcher::exportToFile(const QString &id, const QString &subdir)
 {
-    const QStringList parts = id.split(QLatin1Char('/'));
-    if (parts.size() != 3 || parts[0].isEmpty() || parts[2].isEmpty()) {
+    const QStringList parts = id.split(QLatin1Char('/'), Qt::KeepEmptyParts);
+    if (parts.size() != 3 || parts[0].isEmpty() || parts[1].isEmpty()) {
         emit fileExported(id, {});
         return;
     }

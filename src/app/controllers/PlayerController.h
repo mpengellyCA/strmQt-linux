@@ -156,6 +156,10 @@ public:
     Q_INVOKABLE void playItem(const QString &itemId, const QString &title,
                               qint64 startPositionMs = 0, int preferredSourceIndex = -1,
                               const QString &itemType = QString());
+    // C++ action path: retain the card's complete queue payload (especially
+    // tagged artwork) instead of discarding it and immediately probing again.
+    void playItem(const MediaItem &item, const QString &title, qint64 startPositionMs = 0,
+                  int preferredSourceIndex = -1);
     // Pick a version. Applies immediately when a session is running (reloads at
     // the current position, ladder restarts at the top rung of the new source);
     // otherwise it is remembered for the next playItem() that does not override it.
@@ -338,7 +342,8 @@ private:
     // reseeds the queue as a one-item queue instead).
     void startItem(const QString &itemId, const QString &title, qint64 startPositionMs,
                    int preferredSourceIndex, bool fromQueue,
-                   const QString &itemType = QString(), bool initiallyPaused = false);
+                   const QString &itemType = QString(), bool initiallyPaused = false,
+                   const MediaItem *seedItem = nullptr);
     // Plays whatever the queue's cursor points at. Without `force`, an item that
     // is already the running one is left alone (a re-index is not a restart).
     bool startQueueCurrent(bool force);

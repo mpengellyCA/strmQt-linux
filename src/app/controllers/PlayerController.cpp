@@ -369,6 +369,13 @@ void PlayerController::playItem(const QString &itemId, const QString &title,
     startItem(itemId, title, startPositionMs, preferredSourceIndex, false, itemType);
 }
 
+void PlayerController::playItem(const MediaItem &item, const QString &title,
+                                qint64 startPositionMs, int preferredSourceIndex)
+{
+    startItem(item.id, title, startPositionMs, preferredSourceIndex, false, item.type,
+              /*initiallyPaused=*/false, &item);
+}
+
 bool PlayerController::typeIsAudio(const QString &type)
 {
     return type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
@@ -377,7 +384,8 @@ bool PlayerController::typeIsAudio(const QString &type)
 
 void PlayerController::startItem(const QString &itemId, const QString &title,
                                  qint64 startPositionMs, int preferredSourceIndex, bool fromQueue,
-                                 const QString &itemType, bool initiallyPaused)
+                                 const QString &itemType, bool initiallyPaused,
+                                 const MediaItem *seedItem)
 {
     // Before anything is torn down, and in particular before the engine stop
     // below publishes a zeroed position: a film chosen over a playing record
@@ -409,13 +417,20 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
         // A bare play verb replaces the queue with just this item, so that a
         // later "play next" lands *after* what is on screen instead of ahead of
         // it, and so a stale queue cannot auto-advance into unrelated content.
-        MediaItem seed;
+        MediaItem seed = seedItem ? *seedItem : MediaItem{};
         seed.id = itemId;
-        seed.name = title;
+        if (seed.name.isEmpty())
+            seed.name = title;
         // Carried whenever the caller has it, because the seed is what
         // computeIsAudio() reads first and the ticket that would answer for it
         // otherwise is still the OUTGOING item's until the reply below lands.
-        seed.type = itemType;
+        if (seed.type.isEmpty())
+            seed.type = itemType;
+        // A crash resume or remote-control launch may know nothing except the
+        // id. Emby permits an untagged image request, so keep artwork independent
+        // of the chapters/details request: if that request fails, now-playing
+        // surfaces can still resolve the item's current Primary image.
+        seed.probePrimaryImage = !seed.coverSource().isValid();
         const QScopedValueRollback<bool> guard(m_queueDriving, true);
         m_queue->setItems({seed}, 0);
         emit queueStateChanged();

@@ -90,7 +90,9 @@ public:
     // size there is no single width to share.
     //
     // `id` is the unnamespaced "{itemId}/{imageType}/{tag}" MPRIS metadata
-    // carries. Provider requests include an opaque namespace before it. Files
+    // carries. The tag may be empty for a provisional bare-id playback record;
+    // Emby's image endpoint explicitly permits that. Provider requests include
+    // an opaque namespace before it. Files
     // land in <CacheLocation>/<subdir>/, one per image tag: reusing a single
     // filename would be smaller, but clients cache thumbnails by URL, so the
     // panel would keep drawing the previous track's sleeve. The directory is
