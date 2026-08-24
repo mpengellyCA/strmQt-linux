@@ -8,6 +8,8 @@
 #include <QThread>
 
 #include <atomic>
+#include <mpv/client.h>
+#include <utility>
 
 using namespace strmqt;
 
@@ -40,6 +42,7 @@ class MpvVideoItemTest : public QObject
 
 private slots:
     void coreInitializesOnFirstLoad();
+    void deferredSettingsApplyOnFirstLoad();
     void playerDetachSynchronizesBeforeOwnerDestruction();
     void offThreadFrameNotificationRedrawsTheItem();
 };
@@ -54,6 +57,82 @@ void MpvVideoItemTest::coreInitializesOnFirstLoad()
     player.stop();
 }
 
+void MpvVideoItemTest::deferredSettingsApplyOnFirstLoad()
+{
+    MpvPlayer player;
+    player.setVolume(73);
+    player.setMuted(true);
+    player.setPlaybackSpeed(1.75);
+    player.setAudioDelayMs(125);
+    player.setSubtitleDelayMs(-250);
+    player.setSubtitleStyle(QStringLiteral("Noto Sans"), 135, QStringLiteral("#12abef"), 25,
+                            123);
+    player.setReplayGain(QStringLiteral("album"));
+
+    QCOMPARE(player.handle(), nullptr);
+    QCOMPARE(player.volume(), 73);
+    QCOMPARE(player.muted(), true);
+    QCOMPARE(player.playbackSpeed(), 1.75);
+    QCOMPARE(player.audioDelayMs(), 125);
+    QCOMPARE(player.subtitleDelayMs(), -250);
+
+    player.load(QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media")), 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+
+    const auto doubleProperty = [handle](const char *name) {
+        double value = 0.0;
+        const int result = mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &value);
+        return std::pair{result, value};
+    };
+    const auto intProperty = [handle](const char *name) {
+        int64_t value = 0;
+        const int result = mpv_get_property(handle, name, MPV_FORMAT_INT64, &value);
+        return std::pair{result, value};
+    };
+    const auto flagProperty = [handle](const char *name) {
+        int value = 0;
+        const int result = mpv_get_property(handle, name, MPV_FORMAT_FLAG, &value);
+        return std::pair{result, value != 0};
+    };
+    const auto stringProperty = [handle](const char *name) {
+        char *raw = mpv_get_property_string(handle, name);
+        const QString value = QString::fromUtf8(raw ? raw : "");
+        mpv_free(raw);
+        return value;
+    };
+
+    const auto volume = doubleProperty("volume");
+    QCOMPARE(volume.first, 0);
+    QCOMPARE(volume.second, 73.0);
+    const auto mute = flagProperty("mute");
+    QCOMPARE(mute.first, 0);
+    QCOMPARE(mute.second, true);
+    const auto speed = doubleProperty("speed");
+    QCOMPARE(speed.first, 0);
+    QCOMPARE(speed.second, 1.75);
+    const auto audioDelay = doubleProperty("audio-delay");
+    QCOMPARE(audioDelay.first, 0);
+    QCOMPARE(audioDelay.second, 0.125);
+    const auto subtitleDelay = doubleProperty("sub-delay");
+    QCOMPARE(subtitleDelay.first, 0);
+    QCOMPARE(subtitleDelay.second, -0.25);
+    QCOMPARE(stringProperty("sub-font"), QStringLiteral("Noto Sans"));
+    const auto subtitleScale = doubleProperty("sub-scale");
+    QCOMPARE(subtitleScale.first, 0);
+    QVERIFY(qAbs(subtitleScale.second - 1.35) < 0.000001);
+    QCOMPARE(stringProperty("sub-color"), QStringLiteral("#FF12ABEF"));
+    QCOMPARE(stringProperty("sub-back-color"), QStringLiteral("#3F000000"));
+    const auto subtitleBorder = doubleProperty("sub-border-size");
+    QCOMPARE(subtitleBorder.first, 0);
+    QCOMPARE(subtitleBorder.second, 3.0);
+    const auto subtitlePosition = intProperty("sub-pos");
+    QCOMPARE(subtitlePosition.first, 0);
+    QCOMPARE(subtitlePosition.second, int64_t{123});
+    QCOMPARE(stringProperty("replaygain"), QStringLiteral("album"));
+    player.stop();
+}
+
 void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
 {
     QQuickWindow window;
@@ -65,6 +144,8 @@ void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
     QSignalSpy synchronizedSpy(&window, &QQuickWindow::afterSynchronizing);
     item.setPlayerObject(player);
     QCOMPARE(item.playerObject(), player);
+    player->load(QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media")), 0, 1);
+    QVERIFY2(player->handle() != nullptr, "detach test did not exercise a live mpv core");
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     QTRY_VERIFY(!synchronizedSpy.isEmpty());

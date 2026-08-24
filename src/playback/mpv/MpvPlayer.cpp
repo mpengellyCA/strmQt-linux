@@ -137,8 +137,24 @@ bool MpvPlayer::ensureInitialized()
     mpv_observe_property(m_mpv, 0, "video-params", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, 0, "frame-drop-count", MPV_FORMAT_INT64);
     mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
+    applyDeferredSettings();
     emit renderHandleChanged();
     return true;
+}
+
+void MpvPlayer::applyDeferredSettings()
+{
+    // These setters are valid before the expensive core exists. Retaining the
+    // requested values is what lets settings applied during startup or while a
+    // playback ticket is in flight affect the very first file.
+    setVolume(m_requestedVolume);
+    setMuted(m_requestedMuted);
+    setPlaybackSpeed(m_speed);
+    setAudioDelayMs(m_audioDelayMs);
+    setSubtitleDelayMs(m_subtitleDelayMs);
+    setSubtitleStyle(m_subtitleFont, m_subtitleScale, m_subtitleColor,
+                     m_subtitleBackground, m_subtitlePosition);
+    setReplayGain(m_replayGainMode);
 }
 
 MpvPlayer::~MpvPlayer()
@@ -324,81 +340,105 @@ qint64 MpvPlayer::bufferedMs() const
 
 void MpvPlayer::setPlaybackSpeed(qreal speed)
 {
-    if (!m_mpv)
-        return;
     double value = qBound(kMinSpeed, speed, kMaxSpeed);
+    if (!m_mpv) {
+        if (!qFuzzyCompare(value, m_speed)) {
+            m_speed = value;
+            emit playbackSpeedChanged();
+        }
+        return;
+    }
     mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &value);
 }
 
 void MpvPlayer::setSubtitleStyle(const QString &font, int scale, const QString &color,
                                  int background, int position)
 {
+    m_subtitleFont = font;
+    m_subtitleScale = qBound(50, scale, 300);
+    static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+    m_subtitleColor = hex.match(color).hasMatch() ? color.toUpper()
+                                                  : QStringLiteral("#FFFFFF");
+    m_subtitleBackground = qBound(0, background, 100);
+    m_subtitlePosition = qBound(0, position, 150);
     if (!m_mpv)
         return;
 
     // Empty means "leave mpv's own choice alone" — sub-font does not accept an
     // empty string, and writing one would drop styling entirely.
-    if (!font.isEmpty()) {
-        const QByteArray family = font.toUtf8();
+    if (!m_subtitleFont.isEmpty()) {
+        const QByteArray family = m_subtitleFont.toUtf8();
         mpv_set_property_string(m_mpv, "sub-font", family.constData());
     }
 
-    double sub = qBound(0.5, scale / 100.0, 3.0);
+    double sub = m_subtitleScale / 100.0;
     mpv_set_property(m_mpv, "sub-scale", MPV_FORMAT_DOUBLE, &sub);
 
     // mpv takes colours as "#RRGGBB" or "#AARRGGBB"; anything else makes it
     // reject the property and keep the previous look, so the value is checked
     // rather than passed through.
-    static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
-    const QByteArray rgb =
-        (hex.match(color).hasMatch() ? color : QStringLiteral("#FFFFFF")).toUtf8();
+    const QByteArray rgb = m_subtitleColor.toUtf8();
     mpv_set_property_string(m_mpv, "sub-color", rgb.constData());
 
     // Two different mpv knobs render a "background": sub-back-color fills the
     // glyph box, and sub-border-size draws an outline. At zero opacity the box
     // must disappear AND the outline come back, or the text is unreadable over
     // a bright frame.
-    const int alpha = qBound(0, background, 100) * 255 / 100;
-    const QByteArray back =
-        QStringLiteral("#%1000000").arg(alpha, 2, 16, QLatin1Char('0')).toUpper().toUtf8();
+    const int alpha = m_subtitleBackground * 255 / 100;
+    const QByteArray back = QStringLiteral("#%1")
+                                .arg(static_cast<quint32>(alpha) << 24, 8, 16,
+                                     QLatin1Char('0'))
+                                .toUpper()
+                                .toUtf8();
     mpv_set_property_string(m_mpv, "sub-back-color", back.constData());
-    double border = background > 50 ? 0.0 : 3.0;
+    double border = m_subtitleBackground > 50 ? 0.0 : 3.0;
     mpv_set_property(m_mpv, "sub-border-size", MPV_FORMAT_DOUBLE, &border);
 
-    int64_t pos = qBound(0, position, 150);
+    int64_t pos = m_subtitlePosition;
     mpv_set_property(m_mpv, "sub-pos", MPV_FORMAT_INT64, &pos);
 }
 
 void MpvPlayer::setAudioDelayMs(int ms)
 {
-    if (!m_mpv)
+    if (!m_mpv) {
+        if (ms != m_audioDelayMs) {
+            m_audioDelayMs = ms;
+            emit audioDelayChanged();
+        }
         return;
+    }
     double seconds = ms / 1000.0;
     mpv_set_property(m_mpv, "audio-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
 void MpvPlayer::setSubtitleDelayMs(int ms)
 {
-    if (!m_mpv)
+    if (!m_mpv) {
+        if (ms != m_subtitleDelayMs) {
+            m_subtitleDelayMs = ms;
+            emit subtitleDelayChanged();
+        }
         return;
+    }
     double seconds = ms / 1000.0;
     mpv_set_property(m_mpv, "sub-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
 void MpvPlayer::setReplayGain(const QString &mode)
 {
-    if (!m_mpv)
-        return;
     // mpv's vocabulary is no|track|album; ours spells the first one "off".
     // Anything unrecognised is treated as off rather than passed through:
     // mpv rejects an unknown choice and leaves the previous gain in place,
     // which is the one outcome the user cannot see and cannot undo.
-    const char *value = "no";
-    if (mode == QLatin1String("track"))
-        value = "track";
-    else if (mode == QLatin1String("album"))
-        value = "album";
-    const int rc = mpv_set_property_string(m_mpv, "replaygain", value);
+    m_replayGainMode = mode == QLatin1String("track") || mode == QLatin1String("album")
+        ? mode
+        : QStringLiteral("off");
+    if (!m_mpv)
+        return;
+    const QByteArray value = m_replayGainMode == QLatin1String("off")
+        ? QByteArrayLiteral("no")
+        : m_replayGainMode.toLatin1();
+    const int rc = mpv_set_property_string(m_mpv, "replaygain", value.constData());
     if (rc < 0)
         qCWarning(logPlayback) << "mpv set replaygain failed:" << mpv_error_string(rc);
 }
@@ -506,16 +546,17 @@ bool MpvPlayer::screenshotToFile(const QString &path)
 
 void MpvPlayer::setVolume(int percent)
 {
+    m_requestedVolume = qBound(0, percent, kMaxVolume);
     if (!m_mpv)
         return;
-    double volume = qBound(0, percent, kMaxVolume);
+    double volume = m_requestedVolume;
     mpv_set_property(m_mpv, "volume", MPV_FORMAT_DOUBLE, &volume);
 }
 
 int MpvPlayer::volume() const
 {
     if (!m_mpv)
-        return kDefaultVolume;
+        return m_requestedVolume;
     double volume = 0.0;
     if (mpv_get_property(m_mpv, "volume", MPV_FORMAT_DOUBLE, &volume) < 0)
         return kDefaultVolume;
@@ -525,7 +566,7 @@ int MpvPlayer::volume() const
 bool MpvPlayer::muted() const
 {
     if (!m_mpv)
-        return false;
+        return m_requestedMuted;
     int flag = 0;
     if (mpv_get_property(m_mpv, "mute", MPV_FORMAT_FLAG, &flag) < 0)
         return false;
@@ -534,6 +575,7 @@ bool MpvPlayer::muted() const
 
 void MpvPlayer::setMuted(bool muted)
 {
+    m_requestedMuted = muted;
     if (!m_mpv)
         return;
     // mpv's own mute flag, not volume 0: unmuting has to come back to the level

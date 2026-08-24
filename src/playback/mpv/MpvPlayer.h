@@ -186,6 +186,7 @@ signals:
 
 private:
     bool ensureInitialized();
+    void applyDeferredSettings();
     static void wakeup(void *ctx);
     Q_INVOKABLE void drainEvents();
     void setState(State state, LoadId loadId);
@@ -197,6 +198,14 @@ private:
 
     mpv_handle *m_mpv = nullptr;
     QString m_toneMapping;
+    int m_requestedVolume = 100;
+    bool m_requestedMuted = false;
+    QString m_subtitleFont;
+    int m_subtitleScale = 100;
+    QString m_subtitleColor = QStringLiteral("#FFFFFF");
+    int m_subtitleBackground = 0;
+    int m_subtitlePosition = 100;
+    QString m_replayGainMode = QStringLiteral("off");
     State m_state = State::Idle;
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
