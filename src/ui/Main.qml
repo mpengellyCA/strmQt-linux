@@ -834,10 +834,15 @@ ApplicationWindow {
 
     // Not in the input map yet, so these carry their own defaults and pick up a
     // binding automatically the moment InputMap grows one.
+    // A toggle has to be able to close what it opened. Opening either overlay
+    // moves the interaction context to "overlay", so each of these stays armed
+    // for its OWN sheet — and only its own, so that "?" typed into the command
+    // palette's search box is text and not a shortcut.
     MappedShortcut {
         actionId: "app.shortcuts"
         fallback: ["?"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
+                || (shortcutSheet.opened && !commandPalette.opened && !resumePrompt.visible)
         onActivated: shortcutSheet.toggle()
     }
 
@@ -845,6 +850,7 @@ ApplicationWindow {
         actionId: "app.commandPalette"
         fallback: ["Ctrl+K"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
+                || (commandPalette.opened && !shortcutSheet.opened && !resumePrompt.visible)
         onActivated: commandPalette.toggle()
     }
 
