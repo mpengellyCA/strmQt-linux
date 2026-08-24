@@ -16,8 +16,9 @@ namespace strmqt {
 
 // Secret storage for auth tokens. Talks to KWallet asynchronously over D-Bus
 // (org.kde.kwalletd6) when available — no KF6 link dependency — and otherwise keeps
-// values in memory for this process only. The explicit file constructor below is
-// a test seam for validating legacy-file permissions and is never used in production.
+// values in memory for this process only. Legacy INI migration and the explicit
+// test-file mode dispatch every QSettings/QFile operation to the Qt thread pool;
+// the test-file constructor below is never used in production.
 class SecretsStore : public QObject
 {
     Q_OBJECT
@@ -87,7 +88,9 @@ private:
         NotStarted,
         NetworkWalletPending,
         OpenPending,
+        LegacyScanPending,
         Migrating,
+        LegacyCleanupPending,
         Ready,
     };
 
@@ -116,10 +119,7 @@ private:
     void finishCurrent(const Result<QString> &result);
     void setStorageMode(StorageMode mode);
     QString fallbackFilePath() const;
-    bool removeLegacySecret(const QString &key) const;
-    Result<bool> writePlaintextSecret(const QString &key, const QString &value);
-    Result<QString> readPlaintextSecret(const QString &key) const;
-    Result<bool> removePlaintextSecret(const QString &key) const;
+    void removeLegacyForCurrent(Result<QString> operationResult);
 
     int m_walletHandle = -1;
     QString m_forcedFallbackPath;

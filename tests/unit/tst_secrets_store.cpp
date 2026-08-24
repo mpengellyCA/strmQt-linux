@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QSettings>
@@ -55,12 +56,16 @@ private slots:
     void plaintextTestModeRoundTripsAsynchronously();
     void walletOperationsAreDelayedAndReportFailures();
     void unavailableWalletIsSessionOnly();
+    void sessionOnlyWriteNeutralizesLegacySecret();
+    void rejectedWalletRemoveNeutralizesLegacySecret();
+    void sessionOnlyCleanupFailureIsReported();
     void legacyMigrationDeletesOnlyAfterEveryWrite();
     void failedLegacyMigrationRetainsTheFile();
     void identityChangeDuringOpenSkipsOldReadAndOrdersNewWork();
     void identityChangeDuringReadRetiresTheReply();
     void identityChangeDuringWriteOrdersRemovalAfterIt();
     void identityChangeDuringRemoveOrdersNewWriteAfterIt();
+    void destructionSettlesCurrentAndQueuedOperations();
 };
 
 void SecretsStoreTest::plaintextTestModeRoundTripsAsynchronously()
@@ -155,6 +160,77 @@ void SecretsStoreTest::unavailableWalletIsSessionOnly()
     QVERIFY(absent.value.isEmpty());
 }
 
+void SecretsStoreTest::sessionOnlyWriteNeutralizesLegacySecret()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    {
+        QSettings legacy(path, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
+        legacy.sync();
+    }
+    QVERIFY(QFileInfo::exists(path));
+
+    FakeSecretsStore store;
+    store.available = false;
+    store.setLegacyFilePathForTests(path);
+    const Result<bool> written = awaitResult(
+        store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("memory-token")));
+
+    QVERIFY(written.ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::SessionOnly);
+    QCOMPARE(awaitResult(store.readSecret(QStringLiteral("emby/accessToken"))).value,
+             QStringLiteral("memory-token"));
+    QVERIFY(!QFileInfo::exists(path));
+}
+
+void SecretsStoreTest::rejectedWalletRemoveNeutralizesLegacySecret()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    {
+        QSettings legacy(path, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
+        legacy.sync();
+    }
+    QVERIFY(QFileInfo::exists(path));
+
+    FakeSecretsStore store;
+    store.setLegacyFilePathForTests(path);
+    const QFuture<Result<bool>> removed = store.removeSecret(QStringLiteral("emby/accessToken"));
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
+    store.replyNetworkWallet(false);
+
+    QVERIFY(awaitResult(removed).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::SessionOnly);
+    QVERIFY(!QFileInfo::exists(path));
+}
+
+void SecretsStoreTest::sessionOnlyCleanupFailureIsReported()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    {
+        QSettings legacy(path, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
+        legacy.sync();
+    }
+    QVERIFY(QFileInfo::exists(path));
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+
+    FakeSecretsStore store;
+    store.available = false;
+    store.setLegacyFilePathForTests(path);
+    const Result<bool> written = awaitResult(
+        store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("memory-token")));
+
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                                  QFileDevice::ExeOwner));
+    QVERIFY(!written.ok());
+    QVERIFY(awaitResult(store.readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
+    QVERIFY(QFileInfo::exists(path));
+}
+
 void SecretsStoreTest::legacyMigrationDeletesOnlyAfterEveryWrite()
 {
     QTemporaryDir dir;
@@ -173,13 +249,13 @@ void SecretsStoreTest::legacyMigrationDeletesOnlyAfterEveryWrite()
     store.replyNetworkWallet(true);
     store.replyOpen(true);
 
-    QCOMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
+    QTRY_COMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
     QVERIFY(QFileInfo::exists(path));
     store.replyWrite(true);
-    QCOMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
+    QTRY_COMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
     QVERIFY(QFileInfo::exists(path));
     store.replyWrite(true);
-    QVERIFY(!QFileInfo::exists(path));
+    QTRY_VERIFY(!QFileInfo::exists(path));
 
     QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Read));
     store.replyRead(true, QStringLiteral("old-token"));
@@ -202,7 +278,7 @@ void SecretsStoreTest::failedLegacyMigrationRetainsTheFile()
     QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
     store.replyNetworkWallet(true);
     store.replyOpen(true);
-    QCOMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
+    QTRY_COMPARE(store.calls.last().type, FakeSecretsStore::CallType::Write);
     store.replyWrite(false);
     QVERIFY(QFileInfo::exists(path));
 
@@ -296,6 +372,32 @@ void SecretsStoreTest::identityChangeDuringRemoveOrdersNewWriteAfterIt()
     QCOMPARE(store.calls.last().value, QStringLiteral("new-token"));
     store.replyWrite(true);
     QVERIFY(awaitResult(write).ok());
+}
+
+void SecretsStoreTest::destructionSettlesCurrentAndQueuedOperations()
+{
+    QTemporaryDir dir;
+    auto *store = new FakeSecretsStore;
+    store->setLegacyFilePathForTests(dir.filePath(QStringLiteral("missing.ini")));
+    const QFuture<Result<bool>> current =
+        store->writeSecret(QStringLiteral("token"), QStringLiteral("value"));
+    const QFuture<Result<QString>> queued = store->readSecret(QStringLiteral("token"));
+
+    QTRY_VERIFY(lastCallIs(*store, FakeSecretsStore::CallType::NetworkWallet));
+    store->replyNetworkWallet(true);
+    store->replyOpen(true);
+    QTRY_VERIFY(lastCallIs(*store, FakeSecretsStore::CallType::Write));
+    QVERIFY(!current.isFinished());
+    QVERIFY(!queued.isFinished());
+
+    delete store;
+
+    QVERIFY(current.isFinished());
+    QVERIFY(queued.isFinished());
+    QCOMPARE(current.resultCount(), 1);
+    QCOMPARE(queued.resultCount(), 1);
+    QVERIFY(!current.result().ok());
+    QVERIFY(!queued.result().ok());
 }
 
 QTEST_GUILESS_MAIN(SecretsStoreTest)

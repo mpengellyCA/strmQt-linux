@@ -174,9 +174,13 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
                  "again next time.\n";
     }
 
-    out() << "Logged in as " << result.value.user.name
-          << (secrets.isWalletBacked() ? " (token stored in KWallet)\n"
-                                       : " (token kept for this process only)\n");
+    out() << "Logged in as " << result.value.user.name;
+    if (!stored.ok())
+        out() << " (access token was not saved)\n";
+    else if (secrets.isWalletBacked())
+        out() << " (token stored in KWallet)\n";
+    else
+        out() << " (token kept for this process only)\n";
     return 0;
 }
 

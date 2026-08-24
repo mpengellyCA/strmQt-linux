@@ -9,10 +9,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QPointer>
 #include <QPromise>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QThreadPool>
 #include <QTimer>
 
 namespace strmqt {
@@ -23,6 +25,17 @@ const auto kWalletService = QStringLiteral("org.kde.kwalletd6");
 const auto kWalletPath = QStringLiteral("/modules/kwalletd6");
 const auto kWalletInterface = QStringLiteral("org.kde.KWallet");
 const auto kWalletFolder = QStringLiteral("StrmQt");
+
+using LegacyEntries = QList<QPair<QString, QString>>;
+
+struct LegacyScan
+{
+    bool exists = false;
+    LegacyEntries entries;
+    QString error;
+
+    bool ok() const { return error.isEmpty(); }
+};
 
 QString appId()
 {
@@ -71,6 +84,99 @@ void resolve(const std::shared_ptr<QPromise<Result<T>>> &promise, Result<T> resu
 {
     promise->addResult(std::move(result));
     promise->finish();
+}
+
+// QSettings is reentrant, not an asynchronous API. Each task constructs and
+// destroys its own QSettings instance on a QThreadPool thread, and returns only
+// value types to a watcher owned by the GUI-thread SecretsStore. Destroying the
+// store destroys the watcher, so a late task completion cannot call back into a
+// dead QObject; the worker-owned promise can still finish independently.
+template<class T, class Work, class Completion>
+void runLegacyTask(SecretsStore *store, Work work, Completion completion)
+{
+    auto promise = std::make_shared<QPromise<T>>();
+    promise->start();
+    auto *watcher = new QFutureWatcher<T>(store);
+    QObject::connect(watcher, &QFutureWatcher<T>::finished, watcher,
+                     [watcher, completion = std::move(completion)]() mutable {
+                         completion(watcher->result());
+                         watcher->deleteLater();
+                     });
+    watcher->setFuture(promise->future());
+    QThreadPool::globalInstance()->start([promise, work = std::move(work)]() mutable {
+        promise->addResult(work());
+        promise->finish();
+    });
+}
+
+LegacyScan scanLegacyFile(const QString &path)
+{
+    LegacyScan result;
+    result.exists = QFileInfo::exists(path);
+    if (!result.exists)
+        return result;
+
+    QSettings legacy(path, QSettings::IniFormat);
+    const QStringList keys = legacy.allKeys();
+    result.entries.reserve(keys.size());
+    for (const QString &key : keys)
+        result.entries.append({key, legacy.value(key).toString()});
+    if (legacy.status() != QSettings::NoError)
+        result.error = QStringLiteral("could not read legacy secret file");
+    return result;
+}
+
+Result<bool> removeLegacySecretFile(const QString &path, const QString &key)
+{
+    if (!QFileInfo::exists(path))
+        return Result<bool>::success(true);
+    QSettings legacy(path, QSettings::IniFormat);
+    legacy.remove(key);
+    legacy.sync();
+    if (legacy.status() != QSettings::NoError || legacy.contains(key))
+        return Result<bool>::failure(QStringLiteral("could not remove legacy plaintext secret"));
+    if (!legacy.allKeys().isEmpty())
+        return Result<bool>::success(true);
+    if (QFile::remove(path) || !QFileInfo::exists(path))
+        return Result<bool>::success(true);
+    return Result<bool>::failure(QStringLiteral("could not remove empty legacy secret file"));
+}
+
+Result<bool> removeLegacyFile(const QString &path)
+{
+    if (!QFileInfo::exists(path) || QFile::remove(path) || !QFileInfo::exists(path))
+        return Result<bool>::success(true);
+    return Result<bool>::failure(QStringLiteral("could not remove legacy secret file"));
+}
+
+Result<bool> writePlaintextSecretFile(const QString &path, const QString &key, const QString &value)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSettings store(path, QSettings::IniFormat);
+    store.setValue(key, value);
+    store.sync();
+    const bool written =
+        store.status() == QSettings::NoError && store.value(key).toString() == value;
+    const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    const QFile::Permissions exposed = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
+                                       QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                       QFileDevice::WriteOther | QFileDevice::ExeOther;
+    if (written && QFile::setPermissions(path, ownerOnly)) {
+        const QFile::Permissions actual = QFileInfo(path).permissions();
+        if (actual.testFlag(QFileDevice::ReadOwner) && actual.testFlag(QFileDevice::WriteOwner) &&
+            !(actual & exposed))
+            return Result<bool>::success(true);
+    }
+    removeLegacySecretFile(path, key);
+    return Result<bool>::failure(QStringLiteral("could not safely write test secret file"));
+}
+
+Result<QString> readPlaintextSecretFile(const QString &path, const QString &key)
+{
+    QSettings store(path, QSettings::IniFormat);
+    if (store.status() != QSettings::NoError)
+        return Result<QString>::failure(QStringLiteral("could not read test secret file"));
+    return Result<QString>::success(store.value(key).toString());
 }
 
 } // namespace
@@ -173,27 +279,38 @@ void SecretsStore::processNext()
     if (m_storageMode == StorageMode::SessionOnly) {
         if (operation.type == OperationType::Write) {
             m_sessionSecrets.insert(operation.key, operation.value);
-            finishCurrent(Result<QString>::success({}));
+            removeLegacyForCurrent(Result<QString>::success({}));
         } else if (operation.type == OperationType::Read) {
             finishCurrent(Result<QString>::success(m_sessionSecrets.value(operation.key)));
         } else {
             m_sessionSecrets.remove(operation.key);
-            finishCurrent(Result<QString>::success({}));
+            removeLegacyForCurrent(Result<QString>::success({}));
         }
         return;
     }
 
     if (m_storageMode == StorageMode::PlaintextFallback) {
+        const QString path = fallbackFilePath();
+        const QString key = operation.key;
         if (operation.type == OperationType::Write) {
-            const Result<bool> result = writePlaintextSecret(operation.key, operation.value);
-            finishCurrent(result.ok() ? Result<QString>::success({})
-                                      : Result<QString>::failure(result.error));
+            const QString value = operation.value;
+            runLegacyTask<Result<bool>>(
+                this, [path, key, value]() { return writePlaintextSecretFile(path, key, value); },
+                [this](const Result<bool> &result) {
+                    finishCurrent(result.ok() ? Result<QString>::success({})
+                                              : Result<QString>::failure(result.error));
+                });
         } else if (operation.type == OperationType::Read) {
-            finishCurrent(readPlaintextSecret(operation.key));
+            runLegacyTask<Result<QString>>(
+                this, [path, key]() { return readPlaintextSecretFile(path, key); },
+                [this](const Result<QString> &result) { finishCurrent(result); });
         } else {
-            const Result<bool> result = removePlaintextSecret(operation.key);
-            finishCurrent(result.ok() ? Result<QString>::success({})
-                                      : Result<QString>::failure(result.error));
+            runLegacyTask<Result<bool>>(
+                this, [path, key]() { return removeLegacySecretFile(path, key); },
+                [this](const Result<bool> &result) {
+                    finishCurrent(result.ok() ? Result<QString>::success({})
+                                              : Result<QString>::failure(result.error));
+                });
         }
         return;
     }
@@ -253,21 +370,29 @@ void SecretsStore::completeOpenWallet(bool success, int handle, const QString &e
 void SecretsStore::startLegacyMigration()
 {
     const QString path = fallbackFilePath();
-    if (!QFileInfo::exists(path)) {
-        finishInitialization();
-        return;
-    }
-
-    QSettings legacy(path, QSettings::IniFormat);
     m_legacyEntries.clear();
-    const QStringList keys = legacy.allKeys();
-    m_legacyEntries.reserve(keys.size());
-    for (const QString &key : keys)
-        m_legacyEntries.append({key, legacy.value(key).toString()});
-    m_legacyIndex = 0;
-    m_legacyMigrationSucceeded = legacy.status() == QSettings::NoError;
-    m_initialization = InitializationState::Migrating;
-    migrateNext();
+    m_initialization = InitializationState::LegacyScanPending;
+    runLegacyTask<LegacyScan>(
+        this, [path]() { return scanLegacyFile(path); },
+        [this, path](LegacyScan scan) {
+            if (m_initialization != InitializationState::LegacyScanPending)
+                return;
+            if (!scan.ok()) {
+                qCWarning(logCore) << "could not scan legacy credentials; plaintext retained at"
+                                   << path << scan.error;
+                finishInitialization();
+                return;
+            }
+            if (!scan.exists) {
+                finishInitialization();
+                return;
+            }
+            m_legacyEntries = std::move(scan.entries);
+            m_legacyIndex = 0;
+            m_legacyMigrationSucceeded = true;
+            m_initialization = InitializationState::Migrating;
+            migrateNext();
+        });
 }
 
 void SecretsStore::migrateNext()
@@ -278,18 +403,30 @@ void SecretsStore::migrateNext()
         return;
     }
 
-    const QString path = fallbackFilePath();
-    if (m_legacyMigrationSucceeded) {
-        if (QFile::remove(path) || !QFileInfo::exists(path))
-            qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
-        else
-            qCWarning(logCore) << "migrated legacy credentials but could not remove" << path;
-    } else {
+    if (!m_legacyMigrationSucceeded) {
+        const QString path = fallbackFilePath();
         qCWarning(logCore) << "legacy credential migration incomplete; plaintext retained at"
                            << path;
+        m_legacyEntries.clear();
+        finishInitialization();
+        return;
     }
-    m_legacyEntries.clear();
-    finishInitialization();
+
+    const QString path = fallbackFilePath();
+    m_initialization = InitializationState::LegacyCleanupPending;
+    runLegacyTask<Result<bool>>(
+        this, [path]() { return removeLegacyFile(path); },
+        [this, path](const Result<bool> &removed) {
+            if (m_initialization != InitializationState::LegacyCleanupPending)
+                return;
+            if (removed.ok())
+                qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
+            else
+                qCWarning(logCore)
+                    << "migrated legacy credentials but could not remove" << path << removed.error;
+            m_legacyEntries.clear();
+            finishInitialization();
+        });
 }
 
 void SecretsStore::finishInitialization()
@@ -308,12 +445,11 @@ void SecretsStore::completeWritePassword(bool success, const QString &error)
     }
     if (!m_current || m_current->type != OperationType::Write)
         return;
-    if (success && !removeLegacySecret(m_current->key)) {
-        qCWarning(logCore) << "stored" << m_current->key
-                           << "in the wallet but could not remove the older plaintext copy;"
-                           << "delete it by hand:" << fallbackFilePath();
+    if (!success) {
+        finishCurrent(Result<QString>::failure(error));
+        return;
     }
-    finishCurrent(success ? Result<QString>::success({}) : Result<QString>::failure(error));
+    removeLegacyForCurrent(Result<QString>::success({}));
 }
 
 void SecretsStore::completeReadPassword(bool success, const QString &value, const QString &error)
@@ -327,11 +463,32 @@ void SecretsStore::completeRemoveEntry(bool success, const QString &error)
 {
     if (!m_current || m_current->type != OperationType::Remove)
         return;
-    if (!removeLegacySecret(m_current->key)) {
-        qCWarning(logCore) << "could not remove legacy plaintext credential" << m_current->key
-                           << "at" << fallbackFilePath();
-    }
-    finishCurrent(success ? Result<QString>::success({}) : Result<QString>::failure(error));
+    removeLegacyForCurrent(success ? Result<QString>::success({})
+                                   : Result<QString>::failure(error));
+}
+
+void SecretsStore::removeLegacyForCurrent(Result<QString> operationResult)
+{
+    if (!m_current)
+        return;
+    const QString path = fallbackFilePath();
+    const QString key = m_current->key;
+    runLegacyTask<Result<bool>>(
+        this, [path, key]() { return removeLegacySecretFile(path, key); },
+        [this, path, key,
+         operationResult = std::move(operationResult)](const Result<bool> &removed) mutable {
+            if (!removed.ok()) {
+                qCWarning(logCore) << "could not remove legacy plaintext credential" << key << "at"
+                                   << path << removed.error;
+                if (operationResult.ok()) {
+                    if (m_storageMode == StorageMode::SessionOnly && m_current &&
+                        m_current->type == OperationType::Write)
+                        m_sessionSecrets.remove(key);
+                    operationResult = Result<QString>::failure(removed.error);
+                }
+            }
+            finishCurrent(operationResult);
+        });
 }
 
 void SecretsStore::finishCurrent(const Result<QString> &result)
@@ -361,59 +518,6 @@ QString SecretsStore::fallbackFilePath() const
         return m_forcedFallbackPath;
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     return dir + QStringLiteral("/secrets.ini");
-}
-
-bool SecretsStore::removeLegacySecret(const QString &key) const
-{
-    const QString path = fallbackFilePath();
-    if (!QFileInfo::exists(path))
-        return true;
-    QSettings legacy(path, QSettings::IniFormat);
-    legacy.remove(key);
-    legacy.sync();
-    if (legacy.status() != QSettings::NoError || legacy.contains(key))
-        return false;
-    if (!legacy.allKeys().isEmpty())
-        return true;
-    return QFile::remove(path) || !QFileInfo::exists(path);
-}
-
-Result<bool> SecretsStore::writePlaintextSecret(const QString &key, const QString &value)
-{
-    const QString path = fallbackFilePath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QSettings store(path, QSettings::IniFormat);
-    store.setValue(key, value);
-    store.sync();
-    const bool written =
-        store.status() == QSettings::NoError && store.value(key).toString() == value;
-    const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
-    const QFile::Permissions exposed = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
-                                       QFileDevice::ExeGroup | QFileDevice::ReadOther |
-                                       QFileDevice::WriteOther | QFileDevice::ExeOther;
-    if (written && QFile::setPermissions(path, ownerOnly)) {
-        const QFile::Permissions actual = QFileInfo(path).permissions();
-        if (actual.testFlag(QFileDevice::ReadOwner) && actual.testFlag(QFileDevice::WriteOwner) &&
-            !(actual & exposed))
-            return Result<bool>::success(true);
-    }
-    removeLegacySecret(key);
-    return Result<bool>::failure(QStringLiteral("could not safely write test secret file"));
-}
-
-Result<QString> SecretsStore::readPlaintextSecret(const QString &key) const
-{
-    QSettings store(fallbackFilePath(), QSettings::IniFormat);
-    if (store.status() != QSettings::NoError)
-        return Result<QString>::failure(QStringLiteral("could not read test secret file"));
-    return Result<QString>::success(store.value(key).toString());
-}
-
-Result<bool> SecretsStore::removePlaintextSecret(const QString &key) const
-{
-    return removeLegacySecret(key)
-               ? Result<bool>::success(true)
-               : Result<bool>::failure(QStringLiteral("could not remove test secret"));
 }
 
 bool SecretsStore::walletTransportAvailable() const
