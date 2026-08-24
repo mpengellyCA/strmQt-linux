@@ -275,6 +275,70 @@ void PlayQueue::setItems(QList<MediaItem> items, int startIndex)
     notifyCursor();
 }
 
+PlayQueue::Snapshot PlayQueue::snapshot() const
+{
+    Snapshot snap;
+    snap.playOrder.reserve(m_entries.size());
+    for (const Entry &entry : std::as_const(m_entries))
+        snap.playOrder.append(entry.item);
+    snap.originalPositions.reserve(m_originalKeys.size());
+    for (const quint64 key : std::as_const(m_originalKeys)) {
+        int position = -1;
+        for (int row = 0; row < m_entries.size(); ++row) {
+            if (m_entries.at(row).key == key) {
+                position = row;
+                break;
+            }
+        }
+        if (position >= 0)
+            snap.originalPositions.append(position);
+    }
+    snap.currentIndex = m_currentIndex;
+    snap.shuffled = m_shuffled;
+    snap.repeatMode = m_repeatMode;
+    return snap;
+}
+
+void PlayQueue::restore(const Snapshot &snapshot)
+{
+    const bool shuffledChanging = m_shuffled != snapshot.shuffled;
+    const bool repeatChanging = m_repeatMode != snapshot.repeatMode;
+
+    beginResetModel();
+    m_entries.clear();
+    m_originalKeys.clear();
+    m_entries.reserve(snapshot.playOrder.size());
+    for (const MediaItem &item : snapshot.playOrder)
+        m_entries.append({item, m_nextKey++});
+    for (const int position : snapshot.originalPositions) {
+        if (position >= 0 && position < m_entries.size())
+            m_originalKeys.append(m_entries.at(position).key);
+    }
+    // A snapshot whose given order does not describe every entry cannot be
+    // trusted to un-shuffle correctly, so fall back to the play order rather
+    // than restoring a queue that would reorder itself on the next toggle.
+    if (m_originalKeys.size() != m_entries.size()) {
+        m_originalKeys.clear();
+        for (const Entry &entry : std::as_const(m_entries))
+            m_originalKeys.append(entry.key);
+    }
+    m_currentIndex = m_entries.isEmpty()
+                         ? -1
+                         : qBound(0, snapshot.currentIndex,
+                                  static_cast<int>(m_entries.size()) - 1);
+    m_shuffled = snapshot.shuffled;
+    m_repeatMode = snapshot.repeatMode;
+    syncView();
+    endResetModel();
+
+    if (shuffledChanging)
+        emit shuffledChanged();
+    if (repeatChanging)
+        emit repeatModeChanged();
+    emit queueChanged();
+    notifyCursor();
+}
+
 int PlayQueue::originalPositionOf(quint64 key) const
 {
     return static_cast<int>(m_originalKeys.indexOf(key));

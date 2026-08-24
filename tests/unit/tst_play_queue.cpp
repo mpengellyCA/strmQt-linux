@@ -67,6 +67,7 @@ private slots:
     void insertingIntoAnEmptyQueueStartsIt();
     void moveItemKeepsTheCursorOnTheSameItem();
     void jumpToAndClear();
+    void snapshotRestoresOrderCursorAndModes();
     void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
     void playCountSurvivesTheRoundTrip();
@@ -582,6 +583,45 @@ void PlayQueueTest::contextLabelNamesTheRecordTheQueueCameFrom()
     // Not music: the label is a music surface and does not describe a season.
     queue.setItems(episodes(3));
     QCOMPARE(queue.contextLabel(), QString());
+}
+
+// A film interrupting a record has to be able to put the record back exactly as
+// it was — which is more than the track and the position. A queue that came
+// back unshuffled, or re-shuffled into a different future, would be a lie about
+// what plays next, so the play order itself is part of the state.
+void PlayQueueTest::snapshotRestoresOrderCursorAndModes()
+{
+    PlayQueue queue;
+    queue.setItems(episodes(6), 0);
+    queue.setShuffled(true);
+    queue.setRepeatMode(PlayQueue::RepeatAll);
+    queue.jumpTo(3);
+
+    const QStringList playOrder = idsOf(queue);
+    const QString currentId = queue.currentItem().value(QStringLiteral("itemId")).toString();
+    const PlayQueue::Snapshot snapshot = queue.snapshot();
+    QVERIFY(snapshot.isValid());
+
+    // Something else takes the queue over entirely.
+    queue.setItems({episode(99)}, 0);
+    QCOMPARE(queue.rowCount(), 1);
+    QVERIFY(!queue.shuffled());
+
+    queue.restore(snapshot);
+    QCOMPARE(idsOf(queue), playOrder);
+    QCOMPARE(queue.currentIndex(), 3);
+    QCOMPARE(queue.currentItem().value(QStringLiteral("itemId")).toString(), currentId);
+    QVERIFY(queue.shuffled());
+    QCOMPARE(queue.repeatMode(), PlayQueue::RepeatAll);
+
+    // And the order it was given in came back too, so un-shuffling still walks
+    // the episodes rather than freezing the shuffle in place.
+    queue.setShuffled(false);
+    QStringList inOrder;
+    for (const MediaItem &item : episodes(6))
+        inOrder.append(item.id);
+    QCOMPARE(idsOf(queue), inOrder);
+    QCOMPARE(queue.currentItem().value(QStringLiteral("itemId")).toString(), currentId);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

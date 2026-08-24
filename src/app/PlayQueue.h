@@ -64,6 +64,26 @@ public:
     // call setShuffled(true) afterwards and can still get the order back).
     void setItems(QList<MediaItem> items, int startIndex = 0);
 
+    // A queue that can be put back exactly as it was, for the one case that
+    // needs it: a film interrupting a record (PlayerController). setItems()
+    // cannot do this — it defines the given order as the unshuffled one, so a
+    // shuffled queue would come back either unshuffled or re-shuffled into a
+    // different future, and "resume where I was" would be a lie about what
+    // plays next.
+    struct Snapshot
+    {
+        QList<MediaItem> playOrder;   // the order actually played
+        QList<int> originalPositions; // indices into playOrder, in given order
+        int currentIndex = -1;
+        bool shuffled = false;
+        RepeatMode repeatMode = RepeatOff;
+
+        bool isValid() const { return !playOrder.isEmpty(); }
+    };
+
+    Snapshot snapshot() const;
+    void restore(const Snapshot &snapshot);
+
     // Derived from what the queue HOLDS, not remembered from the verb that
     // filled it. A label carried in from a click can outlive the queue it
     // described — play an album, then queue three more things onto it, and the
