@@ -23,6 +23,8 @@ private slots:
     void artUrlIsPublishedAsAValidUri();
     void ratingIsClamped();
     void queueStateDrivesCanGoNextAndPrevious();
+    void capabilitiesFollowPlaybackLifecycle();
+    void volumeRoundTripsAndClampsRequests();
     void repeatedSetNowPlayingIsIdempotent();
 
 private:
@@ -235,6 +237,54 @@ void MprisMetadataTest::queueStateDrivesCanGoNextAndPrevious()
     mpris.setQueueState(false, false);
     QVERIFY(!mpris.canGoNext());
     QVERIFY(!mpris.canGoPrevious());
+}
+
+void MprisMetadataTest::capabilitiesFollowPlaybackLifecycle()
+{
+    MprisPlayer mpris;
+    QVERIFY(!mpris.canPlay());
+    QVERIFY(!mpris.canPause());
+    QVERIFY(!mpris.canSeek());
+
+    mpris.setPlaybackActive(true, false);
+    QVERIFY(mpris.canPlay());
+    QVERIFY(mpris.canPause());
+    QVERIFY(mpris.canSeek());
+
+    mpris.setBusy(true);
+    QVERIFY(!mpris.canPlay());
+    QVERIFY(!mpris.canPause());
+    QVERIFY(!mpris.canSeek());
+
+    mpris.setBusy(false);
+    mpris.setPlaybackActive(true, true);
+    QVERIFY(mpris.canPlay());
+    QVERIFY(mpris.canPause());
+    QVERIFY(mpris.canSeek());
+
+    mpris.setPlaybackActive(false, false);
+    QVERIFY(!mpris.canPlay());
+    QVERIFY(!mpris.canPause());
+    QVERIFY(!mpris.canSeek());
+}
+
+void MprisMetadataTest::volumeRoundTripsAndClampsRequests()
+{
+    MprisPlayer mpris;
+    QCOMPARE(mpris.volume(), 1.0);
+    mpris.setVolume(0.42);
+    QCOMPARE(mpris.volume(), 0.42);
+    mpris.setVolume(9.0);
+    QCOMPARE(mpris.volume(), 1.3);
+
+    QSignalSpy requests(&mpris, &MprisPlayer::volumeRequested);
+    mpris.requestVolumeChange(-1.0);
+    mpris.requestVolumeChange(0.75);
+    mpris.requestVolumeChange(2.0);
+    QCOMPARE(requests.count(), 3);
+    QCOMPARE(requests.at(0).at(0).toDouble(), 0.0);
+    QCOMPARE(requests.at(1).at(0).toDouble(), 0.75);
+    QCOMPARE(requests.at(2).at(0).toDouble(), 1.3);
 }
 
 void MprisMetadataTest::repeatedSetNowPlayingIsIdempotent()

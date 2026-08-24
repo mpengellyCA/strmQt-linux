@@ -216,6 +216,7 @@ void Application::teardownAuthenticatedSession()
     // the desktop media-control surface while the login page is visible.
     m_mprisArtId.clear();
     m_mprisArtUrl.clear();
+    m_mpris->setBusy(false);
     m_mpris->setPlaybackActive(false, false);
     m_mpris->setQueueState(false, false);
     m_mpris->setPositionMs(0);
@@ -229,6 +230,7 @@ void Application::wirePlaybackIntegrations()
     auto syncState = [this] {
         const bool active = m_player->active();
         const bool paused = m_player->paused();
+        m_mpris->setBusy(m_player->busy());
         m_mpris->setPlaybackActive(active, paused);
         if (active && !paused)
             m_powerInhibit->acquire(QStringLiteral("Playing video"));
@@ -237,6 +239,26 @@ void Application::wirePlaybackIntegrations()
     };
     connect(m_player, &PlayerController::activeChanged, this, syncState);
     connect(m_player, &PlayerController::pausedChanged, this, syncState);
+    connect(m_player, &PlayerController::busyChanged, this, syncState);
+    syncState();
+
+    // MPRIS Volume is a linear multiplier with 1.0 as nominal volume; the
+    // controller exposes the same range as integer percent, including mpv's
+    // intentional amplification up to 130%. Muting publishes effective zero
+    // without throwing away the level that unmute restores.
+    const auto syncVolume = [this] {
+        const double volume = m_player->muted() ? 0.0 : m_player->volume() / 100.0;
+        m_mpris->setVolume(volume);
+    };
+    connect(m_player, &PlayerController::volumeChanged, this, syncVolume);
+    connect(m_player, &PlayerController::mutedChanged, this, syncVolume);
+    connect(m_mpris, &MprisPlayer::volumeRequested, m_player, [this](double volume) {
+        const int percent = qRound(volume * 100.0);
+        if (percent > 0 && m_player->muted())
+            m_player->setMuted(false);
+        m_player->setVolume(percent);
+    });
+    syncVolume();
     // Title and duration land on separate signals and the queue entry carries
     // everything else, so all three funnel into one rebuild; MprisPlayer drops
     // the repeats rather than putting them on the bus.

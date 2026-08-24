@@ -93,32 +93,61 @@ public:
     double rate() const { return 1.0; }
     void setRate(double) {}
     QVariantMap metadata() const { return m_player->metadata(); }
-    double volume() const { return 1.0; }
-    void setVolume(double) {}
+    double volume() const { return m_player->volume(); }
+    void setVolume(double volume) { m_player->requestVolumeChange(volume); }
     qlonglong position() const { return m_player->positionUs(); }
     double minimumRate() const { return 1.0; }
     double maximumRate() const { return 1.0; }
     bool canGoNext() const { return m_player->canGoNext(); }
     bool canGoPrevious() const { return m_player->canGoPrevious(); }
-    bool canPlay() const { return true; }
-    bool canPause() const { return true; }
-    bool canSeek() const { return true; }
+    bool canPlay() const { return m_player->canPlay(); }
+    bool canPause() const { return m_player->canPause(); }
+    bool canSeek() const { return m_player->canSeek(); }
     bool canControl() const { return true; }
 
 signals:
     void Seeked(qlonglong positionUs);
 
 public slots:
-    void PlayPause() { emit m_player->playPauseRequested(); }
-    void Play() { emit m_player->playRequested(); }
-    void Pause() { emit m_player->pauseRequested(); }
-    void Stop() { emit m_player->stopRequested(); }
-    void Next() { emit m_player->nextRequested(); }
-    void Previous() { emit m_player->previousRequested(); }
-    void Seek(qlonglong offsetUs) { emit m_player->seekRequested(offsetUs / 1000); }
+    void PlayPause()
+    {
+        if (m_player->canPlay() || m_player->canPause())
+            emit m_player->playPauseRequested();
+    }
+    void Play()
+    {
+        if (m_player->canPlay())
+            emit m_player->playRequested();
+    }
+    void Pause()
+    {
+        if (m_player->canPause())
+            emit m_player->pauseRequested();
+    }
+    void Stop()
+    {
+        if (m_player->playbackActive())
+            emit m_player->stopRequested();
+    }
+    void Next()
+    {
+        if (m_player->canGoNext())
+            emit m_player->nextRequested();
+    }
+    void Previous()
+    {
+        if (m_player->canGoPrevious())
+            emit m_player->previousRequested();
+    }
+    void Seek(qlonglong offsetUs)
+    {
+        if (m_player->canSeek())
+            emit m_player->seekRequested(offsetUs / 1000);
+    }
     void SetPosition(const QDBusObjectPath &, qlonglong positionUs)
     {
-        emit m_player->setPositionRequested(positionUs / 1000);
+        if (m_player->canSeek())
+            emit m_player->setPositionRequested(positionUs / 1000);
     }
     void OpenUri(const QString &) {}
 
@@ -136,18 +165,21 @@ MprisPlayer::~MprisPlayer()
 {
     if (m_registered) {
         QDBusConnection::sessionBus().unregisterObject(kObjectPath);
-        QDBusConnection::sessionBus().unregisterService(kServiceName);
+        QDBusConnection::sessionBus().unregisterService(m_serviceName);
     }
 }
 
 bool MprisPlayer::registerOnBus()
 {
+    if (m_registered)
+        return true;
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         qCInfo(logApp) << "session bus unavailable; MPRIS disabled";
         return false;
     }
-    if (!bus.registerService(kServiceName)) {
+    QString serviceName = kServiceName;
+    if (!bus.registerService(serviceName)) {
         // Another instance holds the well-known name; the MPRIS spec allows a
         // .instance-suffixed name so controllers can still find us.
         const QString fallback = kServiceName + QStringLiteral(".instance") +
@@ -156,13 +188,16 @@ bool MprisPlayer::registerOnBus()
             qCWarning(logApp) << "could not register MPRIS service";
             return false;
         }
+        serviceName = fallback;
     }
     if (!bus.registerObject(kObjectPath, this)) {
         qCWarning(logApp) << "could not register MPRIS object";
+        bus.unregisterService(serviceName);
         return false;
     }
+    m_serviceName = serviceName;
     m_registered = true;
-    qCInfo(logApp) << "MPRIS registered as" << kServiceName;
+    qCInfo(logApp) << "MPRIS registered as" << m_serviceName;
     return true;
 }
 
@@ -219,8 +254,24 @@ void MprisPlayer::setPlaybackActive(bool active, bool paused)
     m_paused = paused;
     QVariantMap changed;
     changed.insert(QStringLiteral("PlaybackStatus"), playbackStatus());
-    if (metadataChanged)
+    if (metadataChanged) {
         changed.insert(QStringLiteral("Metadata"), metadata());
+        changed.insert(QStringLiteral("CanPlay"), canPlay());
+        changed.insert(QStringLiteral("CanPause"), canPause());
+        changed.insert(QStringLiteral("CanSeek"), canSeek());
+    }
+    emitPropertiesChanged(changed);
+}
+
+void MprisPlayer::setBusy(bool busy)
+{
+    if (m_busy == busy)
+        return;
+    m_busy = busy;
+    QVariantMap changed;
+    changed.insert(QStringLiteral("CanPlay"), canPlay());
+    changed.insert(QStringLiteral("CanPause"), canPause());
+    changed.insert(QStringLiteral("CanSeek"), canSeek());
     emitPropertiesChanged(changed);
 }
 
@@ -271,6 +322,20 @@ void MprisPlayer::notifySeeked(qint64 positionMs)
         QDBusMessage::createSignal(kObjectPath, kPlayerInterface, QStringLiteral("Seeked"));
     signal << qlonglong(positionMs) * 1000;
     QDBusConnection::sessionBus().send(signal);
+}
+
+void MprisPlayer::setVolume(double volume)
+{
+    const double clamped = std::clamp(volume, 0.0, 1.3);
+    if (qFuzzyCompare(m_volume, clamped))
+        return;
+    m_volume = clamped;
+    emitPropertiesChanged({{QStringLiteral("Volume"), m_volume}});
+}
+
+void MprisPlayer::requestVolumeChange(double volume)
+{
+    emit volumeRequested(std::clamp(volume, 0.0, 1.3));
 }
 
 void MprisPlayer::emitMetadataChanged()

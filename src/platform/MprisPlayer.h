@@ -48,6 +48,10 @@ public:
     bool registerOnBus(); // false when D-Bus is unavailable (degrade silently)
 
     void setPlaybackActive(bool active, bool paused);
+    // Resolving/loading cannot accept transport or seek commands yet even
+    // though a playback session exists. Keep that state separate from active
+    // so desktop clients do not offer controls that target the outgoing load.
+    void setBusy(bool busy);
     void setNowPlaying(const TrackInfo &track);
     // Artwork is fetched asynchronously and lands after the rest of the track,
     // so it gets its own setter instead of forcing the caller to hold a whole
@@ -59,6 +63,10 @@ public:
     void setQueueState(bool hasNext, bool hasPrevious);
     void setPositionMs(qint64 positionMs);
     void notifySeeked(qint64 positionMs);
+    // MPRIS uses 1.0 as nominal volume and permits amplification above it.
+    // PlayerController's 0..130 surface maps to 0.0..1.3 here.
+    void setVolume(double volume);
+    void requestVolumeChange(double volume);
 
     // Getters used by the D-Bus adaptors.
     QString playbackStatus() const;
@@ -66,6 +74,11 @@ public:
     qlonglong positionUs() const { return m_positionMs * 1000; }
     bool canGoNext() const { return m_hasNext; }
     bool canGoPrevious() const { return m_hasPrevious; }
+    bool canPlay() const { return m_active && !m_busy; }
+    bool canPause() const { return m_active && !m_busy; }
+    bool canSeek() const { return m_active && !m_busy; }
+    bool playbackActive() const { return m_active; }
+    double volume() const { return m_volume; }
 
 signals:
     void playPauseRequested();
@@ -76,6 +89,7 @@ signals:
     void previousRequested();
     void seekRequested(qint64 deltaMs);
     void setPositionRequested(qint64 positionMs);
+    void volumeRequested(double volume);
 
 private:
     void emitPropertiesChanged(const QVariantMap &changed);
@@ -84,10 +98,13 @@ private:
     bool m_registered = false;
     bool m_active = false;
     bool m_paused = false;
+    bool m_busy = false;
     bool m_hasNext = false;
     bool m_hasPrevious = false;
     TrackInfo m_track;
     qint64 m_positionMs = 0;
+    double m_volume = 1.0;
+    QString m_serviceName;
 };
 
 } // namespace strmqt
