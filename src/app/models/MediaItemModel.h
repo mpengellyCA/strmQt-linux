@@ -3,6 +3,7 @@
 #include "server/dto/MediaItem.h"
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QVariantMap>
 
@@ -73,7 +74,7 @@ public:
     // every item. Keep the conversion and names here so the two model surfaces
     // cannot drift apart.
     static QVariant dataForItem(const MediaItem &item, int role);
-    static QHash<int, QByteArray> mediaRoleNames();
+    static const QHash<int, QByteArray> &mediaRoleNames();
 
     void setItems(QList<MediaItem> items, int totalRecordCount = -1);
     // `totalRecordCount` is the count the appended page itself reported; -1
@@ -117,7 +118,10 @@ signals:
     void totalRecordCountChanged();
 
 private:
+    void rebuildItemIndex();
+
     QList<MediaItem> m_items;
+    QHash<QString, QList<int>> m_rowsByItemId;
     int m_totalRecordCount = 0;
 };
 

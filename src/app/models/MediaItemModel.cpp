@@ -218,9 +218,9 @@ QHash<int, QByteArray> MediaItemModel::roleNames() const
     return mediaRoleNames();
 }
 
-QHash<int, QByteArray> MediaItemModel::mediaRoleNames()
+const QHash<int, QByteArray> &MediaItemModel::mediaRoleNames()
 {
-    return {
+    static const QHash<int, QByteArray> roles = {
         {IdRole, "itemId"},
         {NameRole, "name"},
         {LabelRole, "label"},
@@ -254,6 +254,15 @@ QHash<int, QByteArray> MediaItemModel::mediaRoleNames()
         {UnplayedCountRole, "unplayedCount"},
         {SubtitleRole, "subtitle"},
     };
+    return roles;
+}
+
+void MediaItemModel::rebuildItemIndex()
+{
+    m_rowsByItemId.clear();
+    m_rowsByItemId.reserve(m_items.size());
+    for (int row = 0; row < m_items.size(); ++row)
+        m_rowsByItemId[m_items.at(row).id].append(row);
 }
 
 void MediaItemModel::setItems(QList<MediaItem> items, int totalRecordCount)
@@ -265,6 +274,7 @@ void MediaItemModel::setItems(QList<MediaItem> items, int totalRecordCount)
 
     beginResetModel();
     m_items = std::move(items);
+    rebuildItemIndex();
     m_totalRecordCount = newTotalRecordCount;
     endResetModel();
     if (oldCount != static_cast<int>(m_items.size()))
@@ -280,6 +290,8 @@ void MediaItemModel::appendItems(const QList<MediaItem> &items, int totalRecordC
     const int first = static_cast<int>(m_items.size());
     beginInsertRows(QModelIndex(), first, first + static_cast<int>(items.size()) - 1);
     m_items.append(items);
+    for (int row = first; row < m_items.size(); ++row)
+        m_rowsByItemId[m_items.at(row).id].append(row);
     endInsertRows();
 
     // Keep the total coherent with the rows: see the header for why a stale
@@ -304,7 +316,7 @@ QVariantMap MediaItemModel::get(int row) const
     const QModelIndex index = this->index(row);
     if (!index.isValid())
         return map;
-    const auto roles = roleNames();
+    const auto &roles = mediaRoleNames();
     for (auto it = roles.cbegin(); it != roles.cend(); ++it)
         map.insert(QString::fromLatin1(it.value()), data(index, it.key()));
     return map;
@@ -326,9 +338,10 @@ void MediaItemModel::updateUserData(const QString &itemId, bool played, bool fav
 void MediaItemModel::updateUserData(const QString &itemId, bool played, bool favorite,
                                     qint64 playbackPositionTicks, int playCount)
 {
-    for (int row = 0; row < m_items.size(); ++row) {
-        if (m_items[row].id != itemId)
-            continue;
+    const auto rows = m_rowsByItemId.constFind(itemId);
+    if (rows == m_rowsByItemId.cend())
+        return;
+    for (const int row : rows.value()) {
         m_items[row].played = played;
         m_items[row].favorite = favorite;
         if (playbackPositionTicks >= 0)

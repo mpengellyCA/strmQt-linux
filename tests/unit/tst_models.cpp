@@ -37,6 +37,7 @@ private slots:
     void setItemsNotifiesOnlyChangedProperties();
     void getReturnsAllRoles();
     void userDataUpdateEmitsDataChanged();
+    void userDataUpdateUsesMaintainedIndex();
     void libraryModelRoles();
     void setLibrariesNotifiesOnlyChangedCount();
     void homeRailDescriptorsAreIncremental();
@@ -164,6 +165,35 @@ void ModelsTest::userDataUpdateEmitsDataChanged()
 
     model.updateUserData(QStringLiteral("does-not-exist"), false, false);
     QCOMPARE(spy.count(), 1);
+}
+
+void ModelsTest::userDataUpdateUsesMaintainedIndex()
+{
+    MediaItem first = makeEpisode();
+    first.id = QStringLiteral("shared-id");
+    MediaItem second = first;
+    MediaItem unrelated = first;
+    unrelated.id = QStringLiteral("other-id");
+
+    MediaItemModel model;
+    model.setItems({first, unrelated});
+    model.appendItems({second});
+    QSignalSpy spy(&model, &MediaItemModel::dataChanged);
+
+    model.updateUserData(QStringLiteral("shared-id"), true, true, 420000000, 7);
+    QCOMPARE(spy.count(), 2);
+    for (const int row : {0, 2}) {
+        QVERIFY(model.data(model.index(row), MediaItemModel::PlayedRole).toBool());
+        QVERIFY(model.data(model.index(row), MediaItemModel::FavoriteRole).toBool());
+        QCOMPARE(model.data(model.index(row), MediaItemModel::PlayCountRole).toInt(), 7);
+    }
+    QVERIFY(!model.data(model.index(1), MediaItemModel::PlayedRole).toBool());
+
+    // A reset must discard old row locations as well as old item storage.
+    model.setItems({unrelated});
+    spy.clear();
+    model.updateUserData(QStringLiteral("shared-id"), false, false);
+    QCOMPARE(spy.count(), 0);
 }
 
 void ModelsTest::libraryModelRoles()
