@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QObject>
-#include <QVariantList>
 #include <QString>
 #include <QUrl>
 
@@ -22,7 +21,6 @@ class SessionController : public QObject
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString username READ username NOTIFY authenticatedChanged)
-    Q_PROPERTY(QVariantList publicUsers READ publicUsers NOTIFY publicUsersChanged)
     Q_PROPERTY(QUrl serverUrl READ serverUrl WRITE setServerUrl NOTIFY serverUrlChanged)
     Q_PROPERTY(QString playbackEngine READ playbackEngine WRITE setPlaybackEngine NOTIFY
                    playbackEngineChanged)
@@ -43,19 +41,12 @@ public:
 
     // Starts an asynchronous token restore. The window is already available
     // while KWallet opens; authenticatedChanged announces a successful restore.
-    QVariantList publicUsers() const { return m_publicUsers; }
-
     Q_INVOKABLE void restore();
     Q_INVOKABLE void login(const QString &username, const QString &password);
     Q_INVOKABLE void logout();
     // Sign out and return to the login screen WITHOUT forgetting the server —
     // switching user is not the same act as leaving the server behind.
     Q_INVOKABLE void switchUser();
-    // Users the server advertises, {id, name, imageUrl}. May be shorter than
-    // the real user list, or empty: Emby hides users flagged as hidden, and on
-    // the target server the signed-in user is not in it. A picker seeded from
-    // this must keep the username field, not replace it.
-    Q_INVOKABLE void loadPublicUsers();
 
 signals:
     // Emitted before credentials or server identity change. Consumers use this
@@ -65,7 +56,6 @@ signals:
     void authenticatedChanged();
     void busyChanged();
     void errorMessageChanged();
-    void publicUsersChanged();
     void serverUrlChanged();
     void playbackEngineChanged();
 
@@ -83,7 +73,6 @@ private:
     bool m_busy = false;
     bool m_restorePending = false;
     QString m_errorMessage;
-    QVariantList m_publicUsers;
     quint64 m_epoch = 0;
 };
 

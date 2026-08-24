@@ -55,7 +55,6 @@ private slots:
     void sessionLoginPersistsAndRestores();
     void sessionLoginFailureSurfaces();
     void sessionWithoutServerDoesNotRestore();
-    void publicUserImagesUseSessionNamespace();
     void logoutRetiresALateLogin();
     void serverChangeRetiresALateLogin();
     void delayedWalletRestoreIsRetiredByLogout();
@@ -89,20 +88,6 @@ void ControllersTest::init()
 
     m_client = new emby::EmbyClient(this);
     m_client->setDeviceId(QStringLiteral("test-device"));
-}
-
-void ControllersTest::publicUserImagesUseSessionNamespace()
-{
-    m_mock->addRoute(
-        QStringLiteral("GET"), QStringLiteral("/Users/Public"), 200,
-        QByteArrayLiteral("[{\"Id\":\"public-user\",\"Name\":\"Guest\","
-                          "\"ImageTags\":{\"Primary\":\"avatar-tag\"}}]"));
-    m_client->setBaseUrl(m_mock->baseUrl());
-    SessionController session(m_settings, m_secrets, m_client);
-    session.loadPublicUsers();
-    QTRY_COMPARE_WITH_TIMEOUT(session.publicUsers().size(), 1, 5000);
-    QCOMPARE(session.publicUsers().first().toMap().value(QStringLiteral("imageUrl")).toString(),
-             QStringLiteral("image://emby/test-session/public-user/Primary/avatar-tag"));
 }
 
 void ControllersTest::cleanup()

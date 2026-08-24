@@ -2,7 +2,6 @@
 
 #include "core/Log.h"
 #include "core/Settings.h"
-#include "app/models/MediaItemModel.h"
 #include "platform/SecretsStore.h"
 #include "server/emby/EmbyClient.h"
 
@@ -201,35 +200,6 @@ void SessionController::switchUser()
     // different intents, and "switch user" must never grow into "forget the
     // server" if logout ever does.
     logout();
-    loadPublicUsers();
-}
-
-void SessionController::loadPublicUsers()
-{
-    const quint64 epoch = m_epoch;
-    m_client->publicUsers().then(this, [this, epoch](const Result<QList<MediaItem>> &result) {
-        if (epoch != m_epoch)
-            return;
-        if (!result.ok()) {
-            // Not an error worth showing: a server may simply advertise nobody.
-            qCDebug(logApp) << "public users unavailable:" << result.error;
-            return;
-        }
-        QVariantList users;
-        for (const MediaItem &user : result.value) {
-            if (user.name.isEmpty())
-                continue;
-            QVariantMap map;
-            map.insert(QStringLiteral("id"), user.id);
-            map.insert(QStringLiteral("name"), user.name);
-            map.insert(QStringLiteral("imageUrl"),
-                       embyImageSource(user.id, QStringLiteral("Primary"),
-                                       user.primaryImageTag));
-            users.append(map);
-        }
-        m_publicUsers = users;
-        emit publicUsersChanged();
-    });
 }
 
 quint64 SessionController::beginSessionBoundary()
@@ -244,10 +214,6 @@ quint64 SessionController::beginSessionBoundary()
     m_client->retireOutstandingRequests();
     emit sessionBoundaryChanged(epoch);
     setBusy(false);
-    if (!m_publicUsers.isEmpty()) {
-        m_publicUsers.clear();
-        emit publicUsersChanged();
-    }
     return epoch;
 }
 
