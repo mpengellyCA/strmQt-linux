@@ -487,7 +487,7 @@ void ItemActionsTest::capabilityMatrixSeparatesContainersFromPlayableItems()
 
     for (const QString &type :
          {QStringLiteral("Movie"), QStringLiteral("Episode"), QStringLiteral("Audio"),
-          QStringLiteral("Video"), QStringLiteral("MusicVideo")}) {
+          QStringLiteral("AudioBook"), QStringLiteral("Video"), QStringLiteral("MusicVideo")}) {
         const QVariantMap caps = capabilities(type);
         QVERIFY2(caps.value(QStringLiteral("play")).toBool(), qPrintable(type));
         QVERIFY2(caps.value(QStringLiteral("queue")).toBool(), qPrintable(type));

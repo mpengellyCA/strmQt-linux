@@ -107,7 +107,12 @@ ItemKind itemKindFor(const QString &type)
         return ItemKind::Season;
     if (type.compare(QLatin1String("BoxSet"), Qt::CaseInsensitive) == 0)
         return ItemKind::BoxSet;
-    if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0)
+    // AudioBook rides with Audio, the way it already does everywhere else that
+    // asks: PlayerController::typeIsAudio(), PlayerController::isAudio() and
+    // MediaItem::artwork() all group the two. Splitting them here would take
+    // every verb off a spoken-word row that used to play.
+    if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0 ||
+        type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0)
         return ItemKind::Audio;
     if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0)
         return ItemKind::MusicAlbum;
@@ -373,8 +378,12 @@ void ItemActions::startPlayback(const QVariant &item, bool fromStart)
         return;
     }
     if (!classified.isLeaf()) {
+        // Say so. Every other refusal in this file toasts, and the container
+        // path this replaced surfaced "nothing to play here" from its empty
+        // fetch — a Play button that goes quiet reads as a broken build.
         qCWarning(logApp) << "ItemActions: item kind has no direct play verb"
                           << map.value(QStringLiteral("type")).toString();
+        emit actionFailed(tr("There is nothing to play here."));
         return;
     }
     if (!m_player) {
@@ -414,6 +423,7 @@ void ItemActions::resume(const QVariant &item)
     }
     if (!classified.isLeaf()) {
         qCWarning(logApp) << "ItemActions: resume requires a playable leaf";
+        emit actionFailed(tr("There is nothing to play here."));
         return;
     }
     if (!m_player) {
@@ -462,6 +472,7 @@ void ItemActions::playNext(const QVariant &item)
     }
     if (!classified.isLeaf()) {
         qCWarning(logApp) << "ItemActions: playNext requires a playable leaf";
+        emit actionFailed(tr("There is nothing to queue here."));
         return;
     }
     if (!requireQueueTarget())
@@ -480,6 +491,7 @@ void ItemActions::addToQueue(const QVariant &item)
     }
     if (!classified.isLeaf()) {
         qCWarning(logApp) << "ItemActions: addToQueue requires a playable leaf";
+        emit actionFailed(tr("There is nothing to queue here."));
         return;
     }
     if (!requireQueueTarget())

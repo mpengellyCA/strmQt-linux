@@ -416,6 +416,7 @@ void ItemActionsQueueTest::forbiddenContainerDispatchCannotReachPlaybackOrQueue(
     QSignalSpy queue(m_actions, &ItemActions::queueChanged);
     QSignalSpy routes(m_actions, &ItemActions::routeRequested);
     QSignalSpy ordered(m_actions, &ItemActions::orderedAlbumPlayRequested);
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
     const int beforeRequests = m_mock->requestCount();
 
     for (const QString &type : {QStringLiteral("MusicArtist"), QStringLiteral("Playlist")}) {
@@ -434,6 +435,10 @@ void ItemActionsQueueTest::forbiddenContainerDispatchCannotReachPlaybackOrQueue(
     QCOMPARE(routes.count(), 0);
     QCOMPARE(m_player->queue()->rowCount(), 0);
     QCOMPARE(m_mock->requestCount(), beforeRequests);
+    // Refused, but never in silence: the direct verbs a card's Play button and
+    // the remote both reach say why. (performItemVerb is gated by capability
+    // and never calls through, so only the two direct calls per kind toast.)
+    QCOMPARE(failed.count(), 4);
 
     // The legacy direct play surface is safe too: a playlist becomes an Open
     // route and an artist remains a no-op, never a guessed ParentId expansion.
