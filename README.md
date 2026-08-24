@@ -28,8 +28,9 @@ against a live Emby 4.9 server:
 - Playlists, favourites, resume, and watch state reported back to the server
 - Remote control from another Emby client, and MPRIS2 for KDE Connect
 
-The build is clean under `-Werror`, `ctest` passes 29/29, `strmqt_qmllint` reports no
-type errors, and `STRMQT_SELFTEST=1` constructs all 13 pages.
+The build is clean under `-Werror`, `ctest` passes 33/33, the reviewed
+`strmqt_qmllint` warning baseline matches, and `STRMQT_SELFTEST=1` constructs all 13
+pages.
 
 **Caveats worth knowing before you try it.** The interface has been verified by tests,
 a page-construction self-test and live-server probes rather than by sustained daily use,
@@ -89,7 +90,8 @@ Optional — each degrades gracefully when absent:
 | kwallet | secure credential storage (via `org.kde.kwalletd6` on D-Bus) | — |
 | kscreen | HDR display probing via `kscreen-doctor` | — |
 
-Without kwallet the token falls back to a plaintext INI file and the app logs a warning.
+Without KWallet the token remains in memory for the current session and the user signs
+in again after restart; production builds never silently persist it as plaintext.
 Without kscreen the HDR probe degrades silently and playback continues with tone mapping.
 The app builds and runs keyboard-only without SDL3, and with mpv alone without libvlc.
 
