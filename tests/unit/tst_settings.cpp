@@ -1,3 +1,4 @@
+#include <QSettings>
 #include <QtTest>
 
 #include "core/Settings.h"
@@ -12,6 +13,7 @@ private slots:
     void defaultServerUrl();
     void serverUrlRoundTrip();
     void retainedPlaybackStateIsSessionScoped();
+    void preScopingKeysAreAdoptedByTheFirstSessionOnly();
 };
 
 void SettingsTest::defaultServerUrl()
@@ -73,6 +75,50 @@ void SettingsTest::retainedPlaybackStateIsSessionScoped()
 
     settings.setServerUrl(QUrl(QStringLiteral("https://two.example")));
     QVERIFY(settings.lastPlayback().isEmpty());
+}
+
+// Session scoping arrived after these keys had been written flat, so an upgrade
+// would otherwise read as "the app forgot everything". The first session to run
+// the migration adopts them; a second account must not inherit them.
+void SettingsTest::preScopingKeysAreAdoptedByTheFirstSessionOnly()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("test.ini"));
+
+    {
+        QSettings legacy(path, QSettings::IniFormat);
+        legacy.setValue(QStringLiteral("resume/itemId"), QStringLiteral("301001"));
+        legacy.setValue(QStringLiteral("resume/title"), QStringLiteral("The Matrix"));
+        legacy.setValue(QStringLiteral("resume/positionMs"), 42'000);
+        legacy.setValue(QStringLiteral("libraryView/movies/mode"), QStringLiteral("grid"));
+        legacy.setValue(QStringLiteral("versions/301001"), QStringLiteral("source-a"));
+        legacy.sync();
+    }
+
+    Settings settings(path);
+    settings.setServerUrl(QUrl(QStringLiteral("https://one.example")));
+    settings.setUserId(QStringLiteral("user-one"));
+    settings.migrateLegacySessionData();
+
+    QCOMPARE(settings.lastPlayback().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+    QCOMPARE(settings.lastPlayback().value(QStringLiteral("positionMs")).toLongLong(),
+             Q_INT64_C(42'000));
+    QCOMPARE(settings.libraryViewMode(QStringLiteral("movies")), QStringLiteral("grid"));
+    QCOMPARE(settings.rememberedVersion(QStringLiteral("301001")), QStringLiteral("source-a"));
+
+    // The flat keys are gone, so nothing can be adopted twice.
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        QVERIFY(!raw.contains(QStringLiteral("resume/itemId")));
+        QVERIFY(!raw.contains(QStringLiteral("libraryView/movies/mode")));
+    }
+
+    settings.setUserId(QStringLiteral("user-two"));
+    settings.migrateLegacySessionData();
+    QVERIFY(settings.lastPlayback().isEmpty());
+    QVERIFY(settings.libraryViewMode(QStringLiteral("movies")).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)

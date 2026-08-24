@@ -210,6 +210,10 @@ public:
     // Crash-resume record: written during playback, cleared on clean stop.
     // lastPlayback() returns {} when the previous session ended cleanly.
     void setLastPlayback(const QString &itemId, const QString &title, qint64 positionMs);
+    // Call once a server and user are both known: moves the pre-scoping keys
+    // into that session's scope. A no-op afterwards, and for every session but
+    // the first one to run it.
+    void migrateLegacySessionData();
     QVariantMap lastPlayback() const;
     void clearLastPlayback();
 

@@ -1,5 +1,7 @@
 #include "Settings.h"
 
+#include "Log.h"
+
 #include <QRegularExpression>
 #include <QCryptographicHash>
 
@@ -25,6 +27,10 @@ const auto kPollIntervalKey = QStringLiteral("live/pollIntervalSeconds");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
 const auto kLastTitleKey = QStringLiteral("resume/title");
 const auto kLastPositionKey = QStringLiteral("resume/positionMs");
+// Set once, the first time a session scope exists to adopt the pre-scoping
+// keys. Without it the second account to sign in would inherit the first's
+// resume point and view preferences.
+const auto kScopeMigratedKey = QStringLiteral("migration/sessionScopeAdopted");
 // ARCHITECTURE.md: comfortable on the desk, TV when a gamepad takes over (F3);
 // projection-booth amber is the default identity (F4).
 const auto kDefaultDensity = QStringLiteral("comfortable");
@@ -59,6 +65,42 @@ QString Settings::sessionScope() const
                                 '\0' + user.toUtf8();
     return QString::fromLatin1(
         QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+}
+
+// Per-session scoping (server+user) arrived after these keys had been written
+// flat for one implicit session. Hand that data to the first session that can
+// own it, exactly once, so an upgrade does not read as "everything forgotten".
+void Settings::migrateLegacySessionData()
+{
+    const QString scope = sessionScope();
+    if (scope.isEmpty() || m_store.value(kScopeMigratedKey, false).toBool())
+        return;
+    m_store.setValue(kScopeMigratedKey, true);
+
+    QStringList legacyKeys{kLastItemKey, kLastTitleKey, kLastPositionKey};
+    for (const QString &group : {QStringLiteral("libraryView"), QStringLiteral("tracks"),
+                                 QStringLiteral("versions")}) {
+        m_store.beginGroup(group);
+        const QStringList keys = m_store.allKeys();
+        m_store.endGroup();
+        for (const QString &key : keys)
+            legacyKeys.append(group + QLatin1Char('/') + key);
+    }
+
+    int adopted = 0;
+    for (const QString &legacyKey : std::as_const(legacyKeys)) {
+        if (!m_store.contains(legacyKey))
+            continue;
+        const QString scoped = QStringLiteral("sessions/%1/%2").arg(scope, legacyKey);
+        if (!m_store.contains(scoped)) {
+            m_store.setValue(scoped, m_store.value(legacyKey));
+            ++adopted;
+        }
+        m_store.remove(legacyKey);
+    }
+    if (adopted > 0)
+        qCInfo(logCore) << "adopted" << adopted << "pre-scoping settings into the current session";
+    m_store.sync();
 }
 
 QString Settings::scopedKey(const QString &key) const
