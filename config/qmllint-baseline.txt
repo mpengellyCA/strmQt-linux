@@ -424,7 +424,7 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.openDetails
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, index)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.setFavorite(id, !Actions.isFavorite(id))
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.setFavorite(id, !Actions.isFavorite(id))
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(songsTable.selectedIds(), true)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(table.selectedIds(), true)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.shuffle(id, "music")
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
@@ -489,7 +489,7 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefi
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: Actions.shuffle(page.scopeId, "music")
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: PlayerCtl.togglePause()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onClicked: Actions.shuffle(page.scopeId, "music")
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onFavoriteRequested: Actions.setFavoriteAll(songsTable.selectedIds(), true)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onFavoriteRequested: Actions.setFavoriteAll(page.songsView().selectedIds(), true)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.instantMix(page.artistAt(index))
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMoreAlbums) MusicCtl.loadMoreAlbums()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMoreAlbums) MusicCtl.loadMoreAlbums()
@@ -499,7 +499,7 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (Musi
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMorePlaylists) MusicCtl.loadMorePlaylists()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMoreSongs) MusicCtl.loadMoreSongs()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMoreSongs) MusicCtl.loadMoreSongs()
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onQueueRequested: Actions.addAllToQueue(songsTable.selectedItems())
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onQueueRequested: Actions.addAllToQueue(page.songsView().selectedItems())
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl.artistMode = "albumArtists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl.artistMode = "artists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	options: MusicCtl.genreOptions,
@@ -582,43 +582,57 @@ src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	text: qsTr("%1 —
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.busy || PlayerCtl.buffering
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.busy || PlayerCtl.buffering
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.errorMessage.length > 0
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	&& browseRow.record.id === PlaylistCtl.currentId
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	.arg(PlaylistCtl.currentName)
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, 0);
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, Math.max(0, Math.min(items.length - 1, row)));
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.addAllToQueue(items);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, startIndex);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.create(name, []);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.ensureAllPlaylists();
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.moveEntry(entry, target);
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.open(record.id, record.name);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = "";
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = "";
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = "";
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = filterField.text;
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = filterField.text;
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.moveRow(memberRow.index, -1)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.moveRow(memberRow.index, 1)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.moveRow(row, -1);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.moveRow(row, 1);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.openFiltered(browseList.currentIndex);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.openFiltered(browseList.currentIndex);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.openFiltered(browseList.currentIndex);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.openFiltered(browseRow.index);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.refresh();
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.remove(PlaylistCtl.currentId);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.remove(PlaylistCtl.currentId);
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeEntries([entry]);
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeEntries([entry]);
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeEntries(entries);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeRow(memberRow.index)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeRow(row);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.removeSelection(memberList.selectedRows);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.rename(PlaylistCtl.currentId, wanted);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.rename(PlaylistCtl.currentId, wanted);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.requestPlayFrom(memberRow.index)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.selectedItemIds(memberList.selectedRows), true)
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	active: PlaylistCtl.loading
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	body: PlaylistCtl.errorMessage
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	body: page.failed ? PlaylistCtl.errorMessage
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	const model = PlaylistCtl.items;
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	const model = PlaylistCtl.items;
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	const model = PlaylistCtl.items;
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	const model = PlaylistCtl.playlists;
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	if (!PlaylistCtl.loading && page.pendingEntryId.length > 0)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	const item = PlaylistCtl.itemAt(row);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	if (!PlaylistCtl.playlistsComplete) {
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	if (PlaylistCtl.errorMessage.length > 0) {
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	if (record.id === PlaylistCtl.currentId)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	model: PlaylistCtl.filteredPlaylists
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	model: PlaylistCtl.items
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: PlaylistCtl.loading
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onActionTriggered: PlaylistCtl.reload()
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onActivated: index => PlaylistCtl.requestPlayFrom(index)
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onClicked: PlaylistCtl.reload()
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onFavoriteRequested: Actions.setFavoriteAll(page.selectedItemIds(), true)
-src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onQueueRequested: Actions.addAllToQueue(memberList.selectedItems())
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onClicked: PlaylistCtl.requestPlayFrom(0)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onClicked: PlaylistCtl.requestShuffle()
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onFavoriteRequested: Actions.setFavoriteAll(
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onQueueRequested: PlaylistCtl.requestQueueSelection(memberList.selectedRows)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	onRemoveRequested: PlaylistCtl.removeSelection(memberList.selectedRows)
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	opacity: PlaylistCtl.loading ? 0.0 : 1.0
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	page.playlistsPending = PlaylistCtl.playlists.count === 0;
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property bool failed: PlaylistCtl.errorMessage.length > 0
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property bool hasOpenPlaylist: PlaylistCtl.currentId.length > 0
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property bool opened: browseRow.itemId === PlaylistCtl.currentId
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property int memberCount: PlaylistCtl.items.count
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property int playlistCount: PlaylistCtl.playlists.count
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	readonly property int playlistTotal: PlaylistCtl.playlists.totalRecordCount
@@ -641,6 +655,7 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Actions.play(item)
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Actions.playAll(id, "music")
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Actions.togglePlayed(item)
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Component.onCompleted: page.builtQuery = SearchCtl.query
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Component.onCompleted: searchField.text = SearchCtl.query
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.clearRecentQueries()
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.noteQueryUsed(SearchCtl.query)
@@ -652,13 +667,10 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.ha
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.hasQuery && SearchCtl.genres ? SearchCtl.genres : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const genre = SearchCtl.genres[index]
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const model = SearchCtl.model
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const model = SearchCtl.model
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const model = SearchCtl.model
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const person = SearchCtl.people[index]
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	const recent = SearchCtl.recentQueries
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	headline: qsTr("No results for “%1”").arg(SearchCtl.query)
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	if (SearchCtl.query.length > 0)
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	if (first !== SearchCtl.model.count - (last - first + 1)) {
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	if (page.builtQuery !== SearchCtl.query) {
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
@@ -675,7 +687,14 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	people: page.hasQu
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property bool hasQuery: SearchCtl.query.length > 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property int resultCount: SearchCtl.model ? SearchCtl.model.count : 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property int resultCount: SearchCtl.model ? SearchCtl.model.count : 0
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	target: Actions
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var albumModel: SearchCtl.albums
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var artistModel: SearchCtl.artists
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var collectionModel: SearchCtl.collections
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var episodeModel: SearchCtl.episodes
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var movieModel: SearchCtl.movies
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var otherModel: SearchCtl.other
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var seriesModel: SearchCtl.series
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	readonly property var trackModel: SearchCtl.tracks
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	target: SearchCtl.model
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: !page.hasQuery && !SearchCtl.searching && page.recentChips.length === 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: SearchCtl.searching && page.resultCount === 0
