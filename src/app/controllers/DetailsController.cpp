@@ -22,6 +22,7 @@ void DetailsController::resetSessionState()
 {
     ++m_generation;
     cancelRequests();
+    m_itemId.clear();
     m_similar->clear();
     m_tagline.clear();
     m_mediaSources.clear();
@@ -85,6 +86,7 @@ void DetailsController::load(const QString &itemId)
 {
     const int generation = ++m_generation;
     cancelRequests();
+    m_itemId = itemId;
     m_tagline.clear();
     m_mediaSources.clear();
     m_chapters.clear();

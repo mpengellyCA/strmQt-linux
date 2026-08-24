@@ -240,6 +240,12 @@ ApplicationWindow {
     function prepareRoute(route): void {
         switch (route.kind) {
         case "library":
+            // A covered LibraryPage and its process-wide controller already
+            // retain every page the user loaded. Reopening an unchanged scope
+            // would synchronously clear that model, throw away the exact grid
+            // cursor, and redownload its prefix solely because Back was used.
+            if (LibraryCtl.scopeKey === route.key)
+                break;
             if (route.mode === "favorites")
                 LibraryCtl.openFavorites();
             else if (route.mode === "genre")
@@ -252,28 +258,35 @@ ApplicationWindow {
                 LibraryCtl.open(route.id, route.name, route.collectionType);
             break;
         case "person":
-            LibraryCtl.openPerson(route.id, route.name);
+            if (LibraryCtl.scopeKey !== route.key)
+                LibraryCtl.openPerson(route.id, route.name);
             break;
         case "series":
-            SeriesCtl.open(route.id, route.name);
+            if (SeriesCtl.seriesId !== route.id)
+                SeriesCtl.open(route.id, route.name);
             break;
         case "playlist":
-            PlaylistCtl.refresh();
-            if (route.id.length > 0)
+            if (PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
+                PlaylistCtl.refresh();
+            if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
                 PlaylistCtl.open(route.id, route.name);
             break;
         case "music":
             MusicCtl.setLibrary(route.id);
-            MusicCtl.loadAlbums();
+            if (MusicCtl.albums.count === 0)
+                MusicCtl.loadAlbums();
             break;
         case "artist":
-            MusicCtl.openArtist(route.id, route.name);
+            if (MusicCtl.detailKind !== "artist" || MusicCtl.detailId !== route.id)
+                MusicCtl.openArtist(route.id, route.name);
             break;
         case "album":
-            MusicCtl.openAlbum(route.id, route.name);
+            if (MusicCtl.detailKind !== "album" || MusicCtl.detailId !== route.id)
+                MusicCtl.openAlbum(route.id, route.name);
             break;
         case "details":
-            DetailsCtl.load(route.id);
+            if (DetailsCtl.itemId !== route.id)
+                DetailsCtl.load(route.id);
             break;
         case "search":
             SearchCtl.query = route.query;

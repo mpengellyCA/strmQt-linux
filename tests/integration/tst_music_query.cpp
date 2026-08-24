@@ -32,6 +32,7 @@ private slots:
 
     void sortIsPerTabAndReachesTheWire();
     void seededDirectionsAreLeftToTheBar();
+    void repeatedAlbumEnsureKeepsTheInFlightPage();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
@@ -234,6 +235,23 @@ void MusicQueryTest::seededDirectionsAreLeftToTheBar()
     m_music->setSort(QStringLiteral("DateCreated"), false);
     m_music->setSort(QString(), true);
     QCOMPARE(requestsFor(QStringLiteral("/Users/%1/Items").arg(kUserId)), before);
+}
+
+void MusicQueryTest::repeatedAlbumEnsureKeepsTheInFlightPage()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 300);
+
+    m_music->loadAlbums();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+    m_music->loadAlbums();
+    QTest::qWait(50);
+
+    // Main and MusicPage both ensure the default tab during reconstruction.
+    // The second ensure must join the live lane, not retire its useful request
+    // and replace it with another page-0 download.
+    QCOMPARE(requestsFor(itemsPath), 1);
+    settle();
 }
 
 // A genre or a letter is a statement about the music, so it survives switching

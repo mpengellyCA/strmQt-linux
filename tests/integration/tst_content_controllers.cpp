@@ -394,12 +394,14 @@ void ContentControllersTest::detailsClearsBetweenItems()
 
     DetailsController details(m_client);
     details.load(QStringLiteral("a"));
+    QCOMPARE(details.itemId(), QStringLiteral("a"));
     QTRY_COMPARE_WITH_TIMEOUT(details.criticRating(), 93.0, 5000);
 
     // The second item has no rating and no genres. Anything left over would be
     // shown as if it belonged to this item — the failure the user actually
     // notices, because it is plausible rather than empty.
     details.load(QStringLiteral("b"));
+    QCOMPARE(details.itemId(), QStringLiteral("b"));
     QCOMPARE(details.criticRating(), 0.0);
     QVERIFY(details.genres().isEmpty());
     QVERIFY(details.trailers().isEmpty());

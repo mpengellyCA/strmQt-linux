@@ -19,6 +19,11 @@ class EmbyClient;
 class DetailsController : public QObject
 {
     Q_OBJECT
+    // Identity of the item whose detail lanes currently own this controller.
+    // Main uses it when restoring an already-live history entry so Back does
+    // not clear a populated page and race focus restoration against a needless
+    // replacement request.
+    Q_PROPERTY(QString itemId READ itemId NOTIFY detailsChanged)
     Q_PROPERTY(QString tagline READ tagline NOTIFY detailsChanged)
     // Playable versions of this item, one QVariantMap per MediaSource (the
     // MediaSource::toVariantMap() shape, plus an "index"). A later wave builds
@@ -62,6 +67,7 @@ public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
     ~DetailsController() override;
 
+    QString itemId() const { return m_itemId; }
     QString tagline() const { return m_tagline; }
     QVariantList mediaSources() const { return m_mediaSources; }
     int mediaSourceCount() const { return static_cast<int>(m_mediaSources.size()); }
@@ -99,6 +105,7 @@ private:
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
+    QString m_itemId;
     QString m_tagline;
     QVariantList m_mediaSources;
     QVariantList m_chapters;

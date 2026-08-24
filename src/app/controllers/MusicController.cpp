@@ -563,6 +563,12 @@ void MusicController::setLibrary(const QString &libraryId)
 void MusicController::loadAlbums()
 {
     m_started = true;
+    // Main and MusicPage may both ensure the restored default tab. A request
+    // already owns this lane, even when another lane also contributes to the
+    // aggregate loading flag; do not retire a useful page-0 request merely
+    // because the page graph was reconstructed.
+    if (m_albumInFlight != 0)
+        return;
     fetchAlbums(0);
 }
 
