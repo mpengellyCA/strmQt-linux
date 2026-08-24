@@ -81,8 +81,15 @@ void InputMapTest::defaultsMatchTodaysBindings()
     QCOMPARE(m_map->bindings(QStringLiteral("player.cycleSubtitle")),
              QStringList{QStringLiteral("C")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.toggleOsd")), QStringList{QStringLiteral("I")});
+    // Esc leaves the player rather than ending the session, and takes the
+    // gamepad's Back button with it. Stop keeps a key of its own — and now a
+    // button on both the OSD and the now-playing panel — so the destructive
+    // verb is still reachable, just not by the key that means "go back".
+    QCOMPARE(m_map->bindings(QStringLiteral("player.minimize")),
+             (QStringList{QStringLiteral("Backspace"), QStringLiteral("Esc"),
+                          QStringLiteral("Back")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.stop")),
-             (QStringList{QStringLiteral("S"), QStringLiteral("Esc"), QStringLiteral("Back")}));
+             QStringList{QStringLiteral("S")});
 
     // The catalogue is what the shortcut sheet and the remap UI render.
     const QVariantList actions = m_map->actions();
@@ -184,7 +191,7 @@ void InputMapTest::planSection37IsFullyCovered()
         QStringLiteral("player.togglePause"),
         QStringLiteral("player.seekForward"),
         QStringLiteral("player.seekForwardLong"),
-        QStringLiteral("player.stop"),
+        QStringLiteral("player.minimize"),
         QStringLiteral("player.toggleOsd"),
     };
     for (const QString &id : gamepadRows)
@@ -297,12 +304,12 @@ void InputMapTest::freedDefaultLetsTheSecondHalfOfASwapSurviveAReload()
 
 void InputMapTest::contextsKeepBrowseAndPlayerApart()
 {
-    // Esc is Back while browsing and Stop in the player: not a conflict, and a
-    // rebind inside one context does not have to fight the other.
+    // Esc goes back in both contexts now — out of the page while browsing, out
+    // of the player while playing — which is the same verb, not a conflict.
     QCOMPARE(m_map->actionForSequence(QStringLiteral("Esc"), QStringLiteral("browse")),
              QStringLiteral("nav.back"));
     QCOMPARE(m_map->actionForSequence(QStringLiteral("Esc"), QStringLiteral("player")),
-             QStringLiteral("player.stop"));
+             QStringLiteral("player.minimize"));
 
     // A global action does conflict with a context-specific one.
     QVERIFY(!m_map->setBinding(QStringLiteral("app.settings"), QStringLiteral("K")));

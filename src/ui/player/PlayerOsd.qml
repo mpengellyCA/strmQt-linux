@@ -39,6 +39,9 @@ Item {
     property bool fullscreen: false
 
     signal fullscreenRequested
+    // The pointer's way off the player, mirroring Esc/Backspace. Until this
+    // existed the only exits were keys with nothing on screen naming them.
+    signal leaveRequested
 
     // Auto-hide. `requested` is what the timer and toggleOsd() move; everything
     // else reads `shown`.
@@ -265,21 +268,41 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: topBlock.implicitHeight + osd.safeMargin
+            height: Math.max(topBlock.implicitHeight,
+                             leaveButton.height + Theme.spacingValue)
+                    + osd.safeMargin
 
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Theme.scrimColor }
                 GradientStop { position: 1.0; color: "transparent" }
             }
 
+            // Back, where every full-screen surface puts it. Pointer-only on
+            // purpose: the keyboard already has Esc and Backspace, and a tab
+            // stop here would sit in front of the transport row that the OSD's
+            // Down-arrow contract hands the keyboard to.
+            StrmIconButton {
+                id: leaveButton
+
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.topMargin: Theme.spacingValue
+                anchors.leftMargin: osd.safeMargin
+                iconName: "arrow-left"
+                tooltip: qsTr("Back")
+                accessibleName: qsTr("Leave the player, keep playing")
+                activeFocusOnTab: false
+                onClicked: osd.leaveRequested()
+            }
+
             Column {
                 id: topBlock
 
                 anchors.top: parent.top
-                anchors.left: parent.left
+                anchors.left: leaveButton.right
                 anchors.right: parent.right
                 anchors.topMargin: Theme.spacingValue
-                anchors.leftMargin: osd.safeMargin
+                anchors.leftMargin: Theme.spacingValue
                 anchors.rightMargin: osd.safeMargin
                 spacing: Theme.scale(4)
 

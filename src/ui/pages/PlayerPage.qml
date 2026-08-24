@@ -204,6 +204,7 @@ FocusScope {
         visible: page.audioMode
         enabled: page.audioMode
         sleeveInFlight: page.sleeveInFlight
+        onLeaveRequested: page.minimizeRequested()
     }
 
     // ── Loading / buffering ─────────────────────────────────────────────────
@@ -234,6 +235,7 @@ FocusScope {
         visible: !page.audioMode
 
         onFullscreenRequested: page.toggleFullscreen()
+        onLeaveRequested: page.minimizeRequested()
     }
 
     // ── Error surface ───────────────────────────────────────────────────────
@@ -339,15 +341,23 @@ FocusScope {
         case "player.minimize":
             // Leaves the page without ending the session; the mini player takes
             // over. Distinct from stop precisely because stop is destructive.
+            //
+            // Esc arrives here too now, not at player.stop. Ending a record
+            // because someone pressed the key every other application spells
+            // "go back" is a trap, and it was the only way off this page for a
+            // pointer user: leaving is the reversible answer, and Stop is still
+            // one key (S) and one button away for anyone who means it.
+            //
+            // A panel that could only be dismissed by leaving the page would
+            // not be a panel, so an open one closes first. Audio mode stands
+            // the OSD down entirely, and asking it anyway could silently
+            // dismiss a panel nobody can see.
+            if (!page.audioMode && osd.closeTopmost())
+                break;
             page.minimizeRequested();
             break;
         case "player.stop":
-            // Esc closes what is open before it ends the session. A panel that
-            // could only be dismissed by ending playback would not be a panel.
-            // In audio mode there is no OSD to close, and asking anyway could
-            // silently dismiss a panel nobody can see instead of stopping.
-            if (page.audioMode || !osd.closeTopmost())
-                PlayerCtl.stop(); // Main pops the page on stopped()
+            PlayerCtl.stop(); // Main pops the page on stopped()
             break;
         default:
             osd.wake();

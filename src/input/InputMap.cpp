@@ -433,18 +433,23 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("L")},
          QString()},
+        // Esc lives here, not on player.stop. It is the key every other
+        // application spells "go back", and ending a record with it — losing
+        // the queue, the shuffle and the position — is not what anybody who
+        // pressed it meant. The gamepad's Back button goes with it for the
+        // same reason. Stop keeps a key of its own, and now has a button.
         {QStringLiteral("player.minimize"),
          QObject::tr("Leave the player, keep playing"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("Backspace")},
-         QString()},
+         {QStringLiteral("Backspace"), QStringLiteral("Esc"), QStringLiteral("Back")},
+         QObject::tr("View")},
         {QStringLiteral("player.stop"),
          QObject::tr("Stop playback"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("S"), QStringLiteral("Esc"), QStringLiteral("Back")},
-         QObject::tr("View")},
+         {QStringLiteral("S")},
+         QString()},
         // PLAN §3.7 requires a volume row; no page handles it yet (PlayerController
         // has no volume API), so this is a binding waiting for its verb.
         {QStringLiteral("player.volumeUp"),

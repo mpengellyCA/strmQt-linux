@@ -49,6 +49,11 @@ FocusScope {
     // The hero hides ITS copy for the duration; the property is bound by the
     // owner and never set, so nothing can forget to undo it.
     property bool sleeveInFlight: false
+
+    // ── Out ─────────────────────────────────────────────────────────────────
+    // The pointer's way back to browsing without ending the record. A request,
+    // not a command: this panel does not pop pages any more than a card does.
+    signal leaveRequested
     readonly property bool compactGeometry: panel.width < Theme.scale(720)
                                             || panel.height < Theme.scale(560)
     readonly property bool shortLandscape: panel.width >= Theme.scale(600)
@@ -1020,5 +1025,24 @@ FocusScope {
                 }
             }
         }
+    }
+
+    // ── Back ────────────────────────────────────────────────────────────────
+    // Declared last so it draws over the wash and the panes, and anchored to
+    // the panel rather than to `content` so the compact layout's tighter
+    // margins do not move it. Pointer-only, like the OSD's: Esc and Backspace
+    // are the keyboard's route and the transport row owns the tab stops.
+    StrmIconButton {
+        id: leaveButton
+
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.topMargin: Theme.spacingValue
+        anchors.leftMargin: Theme.spacingValue
+        iconName: "arrow-left"
+        tooltip: qsTr("Back")
+        accessibleName: qsTr("Leave the player, keep playing")
+        activeFocusOnTab: false
+        onClicked: panel.leaveRequested()
     }
 }
