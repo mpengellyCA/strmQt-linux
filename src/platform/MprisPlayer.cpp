@@ -144,10 +144,9 @@ public slots:
         if (m_player->canSeek())
             emit m_player->seekRequested(offsetUs / 1000);
     }
-    void SetPosition(const QDBusObjectPath &, qlonglong positionUs)
+    void SetPosition(const QDBusObjectPath &trackId, qlonglong positionUs)
     {
-        if (m_player->canSeek())
-            emit m_player->setPositionRequested(positionUs / 1000);
+        m_player->requestSetPosition(trackId.path(), positionUs / 1000);
     }
     void OpenUri(const QString &) {}
 
@@ -311,6 +310,13 @@ void MprisPlayer::setPositionMs(qint64 positionMs)
 {
     // Position is polled by clients, not signalled.
     m_positionMs = positionMs;
+}
+
+void MprisPlayer::requestSetPosition(const QString &requestedTrackPath, qint64 positionMs)
+{
+    if (!canSeek() || requestedTrackPath != trackPath(m_track.itemId).path())
+        return;
+    emit setPositionRequested(positionMs);
 }
 
 void MprisPlayer::notifySeeked(qint64 positionMs)

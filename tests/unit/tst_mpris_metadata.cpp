@@ -25,6 +25,7 @@ private slots:
     void queueStateDrivesCanGoNextAndPrevious();
     void capabilitiesFollowPlaybackLifecycle();
     void volumeRoundTripsAndClampsRequests();
+    void setPositionRejectsAStaleTrackId();
     void repeatedSetNowPlayingIsIdempotent();
 
 private:
@@ -285,6 +286,36 @@ void MprisMetadataTest::volumeRoundTripsAndClampsRequests()
     QCOMPARE(requests.at(0).at(0).toDouble(), 0.0);
     QCOMPARE(requests.at(1).at(0).toDouble(), 0.75);
     QCOMPARE(requests.at(2).at(0).toDouble(), 1.3);
+}
+
+void MprisMetadataTest::setPositionRejectsAStaleTrackId()
+{
+    MprisPlayer mpris;
+    mpris.setPlaybackActive(true, false);
+    MprisPlayer::TrackInfo track = fullTrack();
+    mpris.setNowPlaying(track);
+
+    const QString firstPath = mpris.metadata()
+                                  .value(QStringLiteral("mpris:trackid"))
+                                  .value<QDBusObjectPath>()
+                                  .path();
+    QSignalSpy seeks(&mpris, &MprisPlayer::setPositionRequested);
+    mpris.requestSetPosition(firstPath, 42'000);
+    QCOMPARE(seeks.size(), 1);
+    QCOMPARE(seeks.first().at(0).toLongLong(), 42'000);
+
+    track.itemId = QStringLiteral("replacement");
+    mpris.setNowPlaying(track);
+    mpris.requestSetPosition(firstPath, 90'000);
+    QCOMPARE(seeks.size(), 1);
+
+    const QString replacementPath = mpris.metadata()
+                                        .value(QStringLiteral("mpris:trackid"))
+                                        .value<QDBusObjectPath>()
+                                        .path();
+    mpris.requestSetPosition(replacementPath, 91'000);
+    QCOMPARE(seeks.size(), 2);
+    QCOMPARE(seeks.last().at(0).toLongLong(), 91'000);
 }
 
 void MprisMetadataTest::repeatedSetNowPlayingIsIdempotent()

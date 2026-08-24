@@ -67,6 +67,9 @@ public:
     // PlayerController's 0..130 surface maps to 0.0..1.3 here.
     void setVolume(double volume);
     void requestVolumeChange(double volume);
+    // MPRIS SetPosition carries the track id the client observed. Reject a
+    // delayed command after the queue has advanced to a different item.
+    void requestSetPosition(const QString &trackPath, qint64 positionMs);
 
     // Getters used by the D-Bus adaptors.
     QString playbackStatus() const;
