@@ -21,9 +21,6 @@ import StrmQt
 Popup {
     id: menu
 
-    Accessible.role: Accessible.Menu
-    Accessible.name: qsTr("Actions")
-
     property var actions: []
     property int currentIndex: -1
     // Off for a menu of TOGGLES rather than of commands: a multi-select genre
@@ -302,6 +299,9 @@ Popup {
     // genuinely different list still rebuilds and opens at the top.
     contentItem: ListView {
         id: list
+
+        Accessible.role: Accessible.PopupMenu
+        Accessible.name: qsTr("Actions")
 
         focus: true
         clip: true
