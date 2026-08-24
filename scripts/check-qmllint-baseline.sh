@@ -58,8 +58,9 @@ if [[ ! -f $baseline ]]; then
 fi
 
 if ! diff -u "$baseline" "$normalized"; then
-    added=$(comm -13 "$baseline" "$normalized" | wc -l)
-    removed=$(comm -23 "$baseline" "$normalized" | wc -l)
+    # Same collation the files were sorted with, or comm rejects them.
+    added=$(LC_ALL=C comm -13 "$baseline" "$normalized" | wc -l)
+    removed=$(LC_ALL=C comm -23 "$baseline" "$normalized" | wc -l)
     baseline_count=$(wc -l < "$baseline")
     echo "qmllint warning set changed: +$added / -$removed against $baseline_count baselined." >&2
     if (( added + removed >= baseline_count )); then

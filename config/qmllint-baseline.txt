@@ -38,6 +38,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	SeriesCtl.open(seriesId, seriesName);
 src/ui/Main.qml: Unqualified access [unqualified]	const action = Input.actionForKey(event.key, event.modifiers, "browse");
 src/ui/Main.qml: Unqualified access [unqualified]	const libraries = HomeCtl.libraries;
+src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio && !root.playerOnTop)
 src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio || !miniPlayer.active || toRect.width <= 0) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio || !miniPlayer.active) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !root.playerOnTop) {
@@ -81,6 +82,7 @@ src/ui/Theme.qml: Unqualified access [unqualified]	? CoverTint.maxWashOpacity : 
 src/ui/Theme.qml: Unqualified access [unqualified]	property bool reducedMotion: typeof Prefs !== "undefined" ? Prefs.reducedMotion : false
 src/ui/Theme.qml: Unqualified access [unqualified]	property string accentName: typeof Prefs !== "undefined" ? Prefs.themeAccent : "projection"
 src/ui/Theme.qml: Unqualified access [unqualified]	property string densityMode: typeof Prefs !== "undefined" ? Prefs.densityMode
+src/ui/Theme.qml: Unqualified access [unqualified]	readonly property int wheelStepPx: typeof App !== "undefined" ? App.wheelStepPx : 72
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	const generation = CoverTint.revision;
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	return generation < 0 ? Qt.rgba(0, 0, 0, 0) : CoverTint.tintFor(wash.source);
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	visible: Prefs.backdropEnabled && wash.source.length > 0
