@@ -33,6 +33,7 @@ private slots:
     void sortIsPerTabAndReachesTheWire();
     void seededDirectionsAreLeftToTheBar();
     void repeatedAlbumEnsureKeepsTheInFlightPage();
+    void albumPagingIgnoresAnUnrelatedArtistRequest();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
@@ -251,6 +252,37 @@ void MusicQueryTest::repeatedAlbumEnsureKeepsTheInFlightPage()
     // The second ensure must join the live lane, not retire its useful request
     // and replace it with another page-0 download.
     QCOMPARE(requestsFor(itemsPath), 1);
+    settle();
+}
+
+void MusicQueryTest::albumPagingIgnoresAnUnrelatedArtistRequest()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     onePageOf("MusicAlbum", 2));
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     onePageOf("MusicArtist", 1));
+
+    m_music->loadAlbums();
+    settle();
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+    QVERIFY(m_music->canLoadMoreAlbums());
+
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 500);
+    m_music->setTab(QStringLiteral("artists"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(artistsPath), 1, 5000);
+    QVERIFY(m_music->loading());
+
+    // The page's nearEnd signal is throttled at this loaded count. An unrelated
+    // artist request must not consume its sole opportunity to admit album page 2.
+    m_music->loadMoreAlbums();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 2, 5000);
+    const QUrlQuery secondAlbumQuery(
+        m_mock->requests().at(indexOfNthRequest(itemsPath, 1)).query);
+    QCOMPARE(secondAlbumQuery.queryItemValue(QStringLiteral("StartIndex")),
+             QStringLiteral("1"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_music->albums()->rowCount(), 2, 5000);
     settle();
 }
 

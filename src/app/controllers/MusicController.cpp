@@ -574,7 +574,7 @@ void MusicController::loadAlbums()
 
 void MusicController::loadMoreAlbums()
 {
-    if (!canLoadMoreAlbums() || m_loading)
+    if (!canLoadMoreAlbums() || m_albumInFlight != 0)
         return;
     fetchAlbums(m_albums->rowCount());
 }
@@ -620,12 +620,14 @@ void MusicController::fetchAlbums(int startIndex)
 void MusicController::loadArtists()
 {
     m_started = true;
+    if (m_artistInFlight != 0)
+        return;
     fetchArtists(0);
 }
 
 void MusicController::loadMoreArtists()
 {
-    if (!canLoadMoreArtists() || m_loading)
+    if (!canLoadMoreArtists() || m_artistInFlight != 0)
         return;
     fetchArtists(m_artists->rowCount());
 }
@@ -674,12 +676,14 @@ void MusicController::fetchArtists(int startIndex)
 void MusicController::loadSongs()
 {
     m_started = true;
+    if (m_songInFlight != 0)
+        return;
     fetchSongs(0);
 }
 
 void MusicController::loadMoreSongs()
 {
-    if (!canLoadMoreSongs() || m_loading)
+    if (!canLoadMoreSongs() || m_songInFlight != 0)
         return;
     fetchSongs(m_songs->rowCount());
 }
@@ -734,12 +738,14 @@ void MusicController::fetchSongs(int startIndex)
 void MusicController::loadPlaylists()
 {
     m_started = true;
+    if (m_playlistInFlight != 0)
+        return;
     fetchPlaylists(0);
 }
 
 void MusicController::loadMorePlaylists()
 {
-    if (!canLoadMorePlaylists() || m_loading)
+    if (!canLoadMorePlaylists() || m_playlistInFlight != 0)
         return;
     fetchPlaylists(m_playlists->rowCount());
 }
