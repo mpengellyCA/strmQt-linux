@@ -272,6 +272,12 @@ ApplicationWindow {
         case "album":
             MusicCtl.openAlbum(route.id, route.name);
             break;
+        case "details":
+            DetailsCtl.load(route.id);
+            break;
+        case "search":
+            SearchCtl.query = route.query;
+            break;
         }
     }
 
@@ -419,7 +425,8 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        root.pushPage({ "kind": "search", "key": "search", "title": qsTr("Search") });
+        root.pushPage({ "kind": "search", "query": SearchCtl.query,
+                        "key": "search", "title": qsTr("Search") });
     }
 
     function openSettings(): void {
@@ -507,6 +514,7 @@ ApplicationWindow {
         focus: true
         historyLimit: root.navigationHistoryLimit
         focusItem: root.activeFocusItem
+        currentSearchQuery: SearchCtl.query
         initialRoute: Session.authenticated
                       ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
                       : ({ "kind": "login", "key": "login", "title": qsTr("Sign in") })
