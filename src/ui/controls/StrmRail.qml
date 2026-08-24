@@ -234,8 +234,8 @@ FocusScope {
             Component.onDestruction: cell.setHovered(false)
 
             // Pooling does not destroy the delegate. Clear the external hover
-            // owner at both edges of reuse so it can never describe the row
-            // this cell represented before its model roles were replaced.
+            // owner while pooled, then synchronize it with the live handler
+            // after the cell receives its new model identity.
             ListView.onPooled: cell.setHovered(false)
             ListView.onReused: cell.setHovered(cardItem.hovered)
 
