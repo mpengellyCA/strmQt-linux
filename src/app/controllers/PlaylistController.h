@@ -5,7 +5,9 @@
 #include <QByteArray>
 #include <QObject>
 #include <QSet>
+#include <QSortFilterProxyModel>
 #include <QString>
+#include <QVariantMap>
 #include <QVariantList>
 
 namespace strmqt {
@@ -26,6 +28,10 @@ class PlaylistController : public QObject
     Q_OBJECT
     // Every playlist the user has, for pickers and the browse page.
     Q_PROPERTY(strmqt::MediaItemModel *playlists READ playlists CONSTANT)
+    // The browse page's filtered view. Filtering is domain/model policy, not a
+    // second JS copy of every playlist record in QML.
+    Q_PROPERTY(QSortFilterProxyModel *filteredPlaylists READ filteredPlaylists CONSTANT)
+    Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY filterTextChanged)
     // Members of the currently opened playlist.
     Q_PROPERTY(strmqt::MediaItemModel *items READ items CONSTANT)
     Q_PROPERTY(QString currentId READ currentId NOTIFY currentChanged)
@@ -37,7 +43,9 @@ public:
     explicit PlaylistController(emby::EmbyClient *client, QObject *parent = nullptr);
 
     MediaItemModel *playlists() const { return m_playlists; }
+    QSortFilterProxyModel *filteredPlaylists() const { return m_filteredPlaylists; }
     MediaItemModel *items() const { return m_items; }
+    QString filterText() const { return m_filterText; }
     QString currentId() const { return m_currentId; }
     QString currentName() const { return m_currentName; }
     bool loading() const { return m_loading; }
@@ -72,8 +80,24 @@ public:
     // has, and for the same reason — a walk that broke on page 2 is not a
     // finished list, so a surface about to read the list may always ask.
     Q_INVOKABLE void ensureAllPlaylists();
+    Q_INVOKABLE void openFiltered(int row);
     Q_INVOKABLE void open(const QString &playlistId, const QString &name);
     Q_INVOKABLE void reload();
+
+    // ── Open-playlist policy ───────────────────────────────────────────────
+    // QML owns the visible cursor/selection. The controller owns what those
+    // row numbers mean: queue records address media items, while destructive
+    // writes address playlist entries. Every returned map retains the entry id
+    // so duplicate occurrences of one media item remain separate queue rows.
+    Q_INVOKABLE QVariantMap itemAt(int row) const;
+    Q_INVOKABLE QStringList selectedItemIds(const QVariantMap &selectedRows) const;
+    Q_INVOKABLE void requestPlayFrom(int row);
+    Q_INVOKABLE void requestShuffle();
+    Q_INVOKABLE void requestQueueSelection(const QVariantMap &selectedRows);
+    Q_INVOKABLE void removeRow(int row);
+    Q_INVOKABLE void removeItem(const QVariantMap &item);
+    Q_INVOKABLE void removeSelection(const QVariantMap &selectedRows);
+    Q_INVOKABLE void moveRow(int row, int delta);
 
     // `itemIds` may be empty: an empty playlist is a legitimate thing to make.
     //
@@ -87,13 +111,13 @@ public:
     Q_INVOKABLE void create(const QString &name, const QStringList &itemIds,
                             const QString &mediaType = QString());
     Q_INVOKABLE void addItems(const QString &playlistId, const QStringList &itemIds);
-    // Entry ids, from the model's playlistItemId role — NOT item ids.
-    Q_INVOKABLE void removeEntries(const QStringList &entryIds);
-    Q_INVOKABLE void moveEntry(const QString &entryId, int newIndex);
     Q_INVOKABLE void rename(const QString &playlistId, const QString &name);
     // Irreversible on the server. The caller must have confirmed with the user
     // before reaching here; this does not ask.
     Q_INVOKABLE void remove(const QString &playlistId);
+
+public slots:
+    void setFilterText(const QString &text);
 
 signals:
     void currentChanged();
@@ -103,6 +127,16 @@ signals:
     // A verb succeeded and the UI should say so.
     void actionSucceeded(const QString &message);
     void actionFailed(const QString &message);
+    void actionWarning(const QString &message);
+    // Queue/playback stay implemented once in ItemActions. These signals carry
+    // controller-materialized intent to that boundary without QML rebuilding
+    // or shuffling domain records.
+    void playItemsRequested(const QVariantList &items, int startIndex);
+    void queueItemsRequested(const QVariantList &items);
+    // The server owns playlist order. After a successful move and authoritative
+    // reload, ask the view to follow the same entry at its new row.
+    void moveFocusRequested(int row);
+    void filterTextChanged();
     // The open playlist was deleted; the UI must leave it.
     void currentRemoved();
     // The SET of playlists changed: one was created, renamed or deleted. This
@@ -116,14 +150,26 @@ signals:
 private:
     void fetchPlaylistPage(int startIndex);
     void fetchMemberPage(const QString &playlistId, int startIndex, int generation);
+    // Entry ids, from the model's playlistItemId role — NOT item ids. Kept
+    // private so UI callers cannot bypass row/selection validation.
+    void removeEntries(const QStringList &entryIds);
+    void moveEntry(const QString &entryId, int newIndex);
     void resetMemberWalk();
     void stopMemberWalk(const QString &message);
+    QList<int> selectedRowNumbers(const QVariantMap &selectedRows, int *requested = nullptr) const;
+    QVariantList materializeRows(const QList<int> &rows) const;
+    QVariantList materializeAll() const;
+    QString entryIdAt(int row) const;
+    int indexOfEntry(const QString &entryId) const;
+    void finishPendingMoveFocus();
     void setLoading(bool loading);
     void setError(const QString &message);
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_playlists;
+    QSortFilterProxyModel *m_filteredPlaylists;
     MediaItemModel *m_items;
+    QString m_filterText;
     QString m_currentId;
     QString m_currentName;
     QString m_error;
@@ -155,6 +201,7 @@ private:
     QSet<QByteArray> m_memberPageSignatures;
     QSet<QByteArray> m_memberEntrySignatures;
     int m_memberPagesLoaded = 0;
+    QString m_pendingMovedEntryId;
 };
 
 } // namespace strmqt

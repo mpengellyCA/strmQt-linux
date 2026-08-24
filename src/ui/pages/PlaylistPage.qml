@@ -14,11 +14,8 @@ import StrmQt
 // they are built differently on purpose:
 //
 //   Left   1,564 playlists on this server. Never drawn all at once: a ListView
-//          over an array of row indices, so only the visible delegates exist,
-//          and a filter field narrows it because scrolling to "Workout" past
-//          fifteen hundred neighbours is not browsing. The records behind it are
-//          cached ONCE per model reload (plain JS objects), so typing filters a
-//          string array instead of re-marshalling 500 QVariantMaps per keystroke.
+//          over PlaylistController's filter proxy, so only the visible delegates
+//          exist and filtering never copies or classifies domain records in QML.
 //
 //   Right  the open playlist's members, straight off PlaylistCtl.items — a
 //          QAbstractItemModel, virtualised by the view itself.
@@ -28,9 +25,9 @@ import StrmQt
 // item id. Emby gives each row its own entry id because the same track can
 // legitimately appear twice in one playlist, so "remove that item" is ambiguous
 // where "remove that entry" is not — on a 25-track album with a repeated track,
-// using the item id would silently take out the wrong row. `entryIdAt()` is the
-// only way this page names a row to the controller, and it refuses to act when
-// the server sent no entry id rather than guessing.
+// using the item id would silently take out the wrong row. The controller maps
+// visible row selections to item ids for favourites and entry ids for edits; the
+// page never guesses which identity a verb needs.
 //
 // ── The server owns the order ──────────────────────────────────────────────
 // moveEntry() refetches the whole list afterwards, so the rows are replaced
@@ -45,17 +42,6 @@ FocusScope {
     id: page
 
     objectName: "playlistPage"
-
-    // ── Model mirrors ──────────────────────────────────────────────────────
-    // Plain JS records for the browse list: { row, id, name, lower, art }.
-    // Rebuilt only when the playlist model itself changes.
-    property var playlistRecords: []
-    // Indices into playlistRecords that survive the filter; the ListView's model.
-    property var filteredRows: []
-
-    // The entry a move is in flight for, so the cursor can follow it across the
-    // refetch that the move triggers.
-    property string pendingEntryId: ""
 
     // PlaylistController raises `loading` for member fetches only — refresh()
     // has no flag of its own — so "the playlist list has not arrived yet" is
@@ -80,201 +66,8 @@ FocusScope {
     readonly property int listPaneWidth: Math.max(Theme.scale(280),
                                                   Math.min(Theme.scale(360), page.width * 0.3))
 
-    // ── Records and filtering ──────────────────────────────────────────────
-    function rebuildRecords(): void {
-        const model = PlaylistCtl.playlists;
-        const out = [];
-        for (let i = 0; i < model.count; ++i) {
-            const entry = model.get(i);
-            const name = entry.name !== undefined ? String(entry.name) : "";
-            out.push({
-                "row": i,
-                "id": entry.itemId !== undefined ? String(entry.itemId) : "",
-                "name": name,
-                "lower": name.toLowerCase(),
-                "art": entry.posterUrl !== undefined ? String(entry.posterUrl) : ""
-            });
-        }
-        page.playlistRecords = out;
-        page.rebuildFilter();
-    }
-
-    function rebuildFilter(): void {
-        const needle = filterField.text.trim().toLowerCase();
-        const source = page.playlistRecords;
-        const out = [];
-        for (let i = 0; i < source.length; ++i) {
-            if (needle.length === 0 || source[i].lower.indexOf(needle) >= 0)
-                out.push(i);
-        }
-        page.filteredRows = out;
-        browseList.currentIndex = out.length > 0 ? 0 : -1;
-    }
-
-    function recordAt(filteredIndex) {
-        if (filteredIndex < 0 || filteredIndex >= page.filteredRows.length)
-            return null;
-        return page.playlistRecords[page.filteredRows[filteredIndex]];
-    }
-
-    function openFiltered(filteredIndex): void {
-        const record = page.recordAt(filteredIndex);
-        if (!record || record.id.length === 0)
-            return;
-        browseList.currentIndex = filteredIndex;
-        if (record.id === PlaylistCtl.currentId)
-            return;
-        PlaylistCtl.open(record.id, record.name);
-    }
-
-    // ── Members ────────────────────────────────────────────────────────────
-    function memberAt(row) {
-        const model = PlaylistCtl.items;
-        if (!model || row < 0 || row >= model.count)
-            return null;
-        return model.get(row);
-    }
-
-    // The ONE place a row is named to the controller. Entry id, never item id.
-    function entryIdAt(row): string {
-        const item = page.memberAt(row);
-        if (!item || item.playlistItemId === undefined)
-            return "";
-        return String(item.playlistItemId);
-    }
-
-    // Every loaded member, in order, as the queue. Built here rather than
-    // fetched again: the page already holds exactly the rows the user is
-    // looking at, in exactly the order the server said, and a second query
-    // would have to re-derive an order that this list already is.
-    function memberItems() {
-        const model = PlaylistCtl.items;
-        const out = [];
-        for (let i = 0; i < model.count; ++i)
-            out.push(model.get(i));
-        return out;
-    }
-
-    function playFrom(row): void {
-        const items = page.memberItems();
-        if (items.length === 0)
-            return;
-        Actions.playAllFrom(items, Math.max(0, Math.min(items.length - 1, row)));
-    }
-
-    // Shuffled locally rather than through Actions.shuffle(): that verb asks the
-    // server for SortBy=Random under a parent id, and its item-type filter for
-    // an unknown collection kind is {Movie, Episode, Video} — which returns
-    // nothing at all for a music playlist, and most playlists on this server are
-    // music. The playlist IS the queue; shuffling the rows we have is both
-    // correct for every media type and exactly what the user can see.
-    function shuffleAll(): void {
-        const items = page.memberItems();
-        if (items.length === 0)
-            return;
-        for (let i = items.length - 1; i > 0; --i) {
-            const j = Math.floor(Math.random() * (i + 1));
-            const swap = items[i];
-            items[i] = items[j];
-            items[j] = swap;
-        }
-        Actions.playAllFrom(items, 0);
-    }
-
-    function removeRow(row): void {
-        const entry = page.entryIdAt(row);
-        if (entry.length === 0) {
-            toasts.show(qsTr("The server did not give this row an entry id, so it cannot be removed."),
-                        "error");
-            return;
-        }
-        PlaylistCtl.removeEntries([entry]);
-    }
-
-    // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
-    // A playlist row is addressed two different ways and both are needed here:
-    // the ITEM id is what a favourite is about, and the ENTRY id is what a
-    // removal is about — the same film in a list twice is two entries and one
-    // item, which is exactly why removeEntries() takes entry ids.
-    function selectedItemIds() {
-        const rows = memberList.selectedItems();
-        const out = [];
-        for (let i = 0; i < rows.length; ++i) {
-            if (rows[i] && rows[i].itemId !== undefined)
-                out.push(String(rows[i].itemId));
-        }
-        return out;
-    }
-
-    function selectedEntryIds() {
-        const rows = memberList.selectedItems();
-        const out = [];
-        for (let i = 0; i < rows.length; ++i) {
-            if (rows[i] && rows[i].playlistItemId !== undefined
-                    && String(rows[i].playlistItemId).length > 0)
-                out.push(String(rows[i].playlistItemId));
-        }
-        return out;
-    }
-
-    function removeSelection(): void {
-        const entries = page.selectedEntryIds();
-        const picked = memberList.selectionCount;
-        if (entries.length === 0) {
-            toasts.show(qsTr("The server did not give these rows entry ids, so they cannot be removed."),
-                        "error");
-            return;
-        }
-        // A PARTIAL shortfall used to pass in silence: the rows with no entry id
-        // were dropped from the list and nothing said so, and the user watched
-        // three of the five they picked come back after the refetch. Report it
-        // before the call, because after it the selection is gone.
-        if (entries.length < picked) {
-            toasts.show(qsTr("%1 of %2 selected rows have no entry id and cannot be removed.")
-                            .arg(picked - entries.length).arg(picked),
-                        "warning");
-        }
-        // The refetch that follows is a model reset, and TrackTable drops the
-        // selection on one — which is right: the rows those indices named are
-        // gone, and that is what was just asked for.
-        PlaylistCtl.removeEntries(entries);
-    }
-
-    function moveRow(row, delta): void {
-        const target = row + delta;
-        if (row < 0 || row >= page.memberCount || target < 0 || target >= page.memberCount)
-            return;
-        const entry = page.entryIdAt(row);
-        if (entry.length === 0) {
-            toasts.show(qsTr("The server did not give this row an entry id, so it cannot be moved."),
-                        "error");
-            return;
-        }
-        // Remembered BEFORE the call: the refetch it triggers replaces every row.
-        page.pendingEntryId = entry;
-        PlaylistCtl.moveEntry(entry, target);
-    }
-
-    // Called once the refetch settles. Matching by entry id rather than by index
-    // is the whole point — the index is exactly the thing that just changed.
-    function restoreCursor(): void {
-        const want = page.pendingEntryId;
-        page.pendingEntryId = "";
-        if (want.length === 0)
-            return;
-        const model = PlaylistCtl.items;
-        for (let i = 0; i < model.count; ++i) {
-            const item = model.get(i);
-            if (item.playlistItemId !== undefined && String(item.playlistItemId) === want) {
-                memberList.currentIndex = i;
-                memberList.positionViewAtIndex(i, ListView.Contain);
-                return;
-            }
-        }
-    }
-
     function showMemberMenu(row, sceneX, sceneY): void {
-        const item = page.memberAt(row);
+        const item = PlaylistCtl.itemAt(row);
         if (!item)
             return;
         memberList.currentIndex = row;
@@ -307,7 +100,10 @@ FocusScope {
         } else {
             page.playlistsPending = false;
         }
-        page.rebuildRecords();
+        // The filter belongs to this page instance. A controller can outlive an
+        // evicted navigation graph, so synchronise its proxy with the newly
+        // constructed field instead of inheriting invisible text.
+        PlaylistCtl.filterText = filterField.text;
     }
 
     Timer {
@@ -322,7 +118,6 @@ FocusScope {
         function onCountChanged() {
             page.playlistsPending = false;
             refreshGuard.stop();
-            page.rebuildRecords();
         }
     }
 
@@ -331,10 +126,6 @@ FocusScope {
     Connections {
         target: PlaylistCtl
 
-        function onLoadingChanged() {
-            if (!PlaylistCtl.loading && page.pendingEntryId.length > 0)
-                Qt.callLater(page.restoreCursor);
-        }
         // A refresh that failed emits no count change, so this is the other way
         // the "still fetching" flag comes down.
         function onErrorChanged() {
@@ -345,6 +136,30 @@ FocusScope {
         }
         function onActionSucceeded(message) { toasts.show(message, "success"); }
         function onActionFailed(message) { toasts.show(message, "error"); }
+        function onActionWarning(message) { toasts.show(message, "warning"); }
+        function onPlayItemsRequested(items, startIndex) {
+            // StackView may retain a covered PlaylistPage. Only the page whose
+            // gesture raised this intent may forward it to the global Actions
+            // service, or duplicate history entries would play the queue twice.
+            if (page.StackView.status === StackView.Active)
+                Actions.playAllFrom(items, startIndex);
+        }
+        function onQueueItemsRequested(items) {
+            if (page.StackView.status === StackView.Active)
+                Actions.addAllToQueue(items);
+        }
+        function onMoveFocusRequested(row) {
+            if (page.StackView.status !== StackView.Active)
+                return;
+            // Model reset has completed, but ListView lays out the new delegates
+            // on its next turn. Follow the authoritative entry after that turn.
+            Qt.callLater(() => {
+                if (page.StackView.status !== StackView.Active)
+                    return;
+                memberList.currentIndex = row;
+                memberList.positionViewAtIndex(row, ListView.Contain);
+            });
+        }
     }
 
     // ── Header ─────────────────────────────────────────────────────────────
@@ -397,18 +212,25 @@ FocusScope {
             anchors.top: parent.top
             placeholderText: qsTr("Filter playlists…")
 
-            onTextEdited: page.rebuildFilter()
-            onCleared: page.rebuildFilter()
+            onTextEdited: {
+                PlaylistCtl.filterText = filterField.text;
+                browseList.currentIndex = browseList.count > 0 ? 0 : -1;
+            }
+            onCleared: {
+                PlaylistCtl.filterText = "";
+                browseList.currentIndex = browseList.count > 0 ? 0 : -1;
+            }
             onEscapePressed: {
                 if (filterField.text.length > 0) {
                     filterField.clear();
-                    page.rebuildFilter();
+                    PlaylistCtl.filterText = "";
+                    browseList.currentIndex = browseList.count > 0 ? 0 : -1;
                 } else {
                     browseList.forceActiveFocus(Qt.OtherFocusReason);
                 }
             }
             onAccepted: {
-                page.openFiltered(browseList.currentIndex);
+                PlaylistCtl.openFiltered(browseList.currentIndex);
                 browseList.forceActiveFocus(Qt.OtherFocusReason);
             }
 
@@ -435,13 +257,21 @@ FocusScope {
             // an empty view cannot hold focus and would hand the page back with
             // nothing focused.
             focus: browseList.count > 0
-            model: page.filteredRows
+            model: PlaylistCtl.filteredPlaylists
             currentIndex: -1
             keyNavigationWraps: false
             highlightMoveDuration: Theme.animFastMs
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: Theme.controlHeightLarge * 6
             reuseItems: true
+
+            onCountChanged: {
+                if (browseList.count === 0)
+                    browseList.currentIndex = -1;
+                else if (browseList.currentIndex < 0
+                         || browseList.currentIndex >= browseList.count)
+                    browseList.currentIndex = 0;
+            }
 
             ScrollBar.vertical: StrmScrollBar {}
 
@@ -455,11 +285,11 @@ FocusScope {
 
             Keys.onReturnPressed: event => {
                 if (!event.isAutoRepeat)
-                    page.openFiltered(browseList.currentIndex);
+                    PlaylistCtl.openFiltered(browseList.currentIndex);
             }
             Keys.onEnterPressed: event => {
                 if (!event.isAutoRepeat)
-                    page.openFiltered(browseList.currentIndex);
+                    PlaylistCtl.openFiltered(browseList.currentIndex);
             }
 
             Keys.onPressed: event => {
@@ -487,14 +317,12 @@ FocusScope {
                 id: browseRow
 
                 required property int index
-                required property var modelData
+                required property string itemId
+                required property string name
 
-                readonly property var record: page.playlistRecords[browseRow.modelData]
                 readonly property bool current: browseRow.ListView.isCurrentItem
                                                 && browseList.activeFocus
-                readonly property bool opened: browseRow.record !== undefined
-                                               && browseRow.record !== null
-                                               && browseRow.record.id === PlaylistCtl.currentId
+                readonly property bool opened: browseRow.itemId === PlaylistCtl.currentId
                 readonly property bool hovered: browseHover.hovered
 
                 width: browseList.width
@@ -545,7 +373,7 @@ FocusScope {
                     anchors.right: parent.right
                     anchors.rightMargin: Theme.spacingValue
                     anchors.verticalCenter: parent.verticalCenter
-                    text: browseRow.record ? browseRow.record.name : ""
+                    text: browseRow.name
                     color: (browseRow.current || browseRow.hovered || browseRow.opened)
                            ? Theme.textPrimaryColor : Theme.textSecondaryColor
                     font.family: Theme.fontBody
@@ -575,7 +403,7 @@ FocusScope {
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: {
                         browseList.forceActiveFocus(Qt.MouseFocusReason);
-                        page.openFiltered(browseRow.index);
+                        PlaylistCtl.openFiltered(browseRow.index);
                     }
                 }
             }
@@ -590,7 +418,7 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             shape: "list"
-            active: page.playlistsPending && page.playlistRecords.length === 0
+            active: page.playlistsPending && page.playlistCount === 0
             margins: 0
         }
 
@@ -600,7 +428,7 @@ FocusScope {
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             anchors.right: parent.right
-            visible: browseList.count === 0 && page.playlistRecords.length > 0
+            visible: browseList.count === 0 && page.playlistCount > 0
             iconName: "filter"
             headline: qsTr("No playlist matches")
             body: qsTr("Nothing here is called “%1”.").arg(filterField.text)
@@ -608,7 +436,8 @@ FocusScope {
             actionIcon: "close"
             onActionTriggered: {
                 filterField.clear();
-                page.rebuildFilter();
+                PlaylistCtl.filterText = "";
+                browseList.currentIndex = browseList.count > 0 ? 0 : -1;
             }
         }
     }
@@ -684,7 +513,7 @@ FocusScope {
                     iconName: "play"
                     variant: "primary"
                     enabled: page.memberCount > 0
-                    onClicked: page.playFrom(0)
+                    onClicked: PlaylistCtl.requestPlayFrom(0)
 
                     KeyNavigation.left: browseList
                     KeyNavigation.right: shuffleButton
@@ -696,7 +525,7 @@ FocusScope {
                     text: qsTr("Shuffle")
                     iconName: "shuffle"
                     enabled: page.memberCount > 0
-                    onClicked: page.shuffleAll()
+                    onClicked: PlaylistCtl.requestShuffle()
 
                     KeyNavigation.left: playAllButton
                     KeyNavigation.right: reloadButton
@@ -762,9 +591,10 @@ FocusScope {
             allowPlaylist: false
             allowRemove: true
 
-            onQueueRequested: Actions.addAllToQueue(memberList.selectedItems())
-            onFavoriteRequested: Actions.setFavoriteAll(page.selectedItemIds(), true)
-            onRemoveRequested: page.removeSelection()
+            onQueueRequested: PlaylistCtl.requestQueueSelection(memberList.selectedRows)
+            onFavoriteRequested: Actions.setFavoriteAll(
+                                     PlaylistCtl.selectedItemIds(memberList.selectedRows), true)
+            onRemoveRequested: PlaylistCtl.removeSelection(memberList.selectedRows)
             onClearRequested: {
                 memberList.clearSelection();
                 memberList.forceActiveFocus(Qt.OtherFocusReason);
@@ -811,7 +641,7 @@ FocusScope {
             KeyNavigation.left: browseList
             KeyNavigation.up: playAllButton
 
-            onActivated: index => page.playFrom(index)
+            onActivated: index => PlaylistCtl.requestPlayFrom(index)
 
             // The edit verbs on the keyboard, handed to the table rather than
             // declared as this view's own Keys.onPressed — re-declaring that
@@ -828,10 +658,10 @@ FocusScope {
                 const row = memberList.currentIndex;
                 if (event.modifiers & Qt.AltModifier) {
                     if (event.key === Qt.Key_Up && !event.isAutoRepeat) {
-                        page.moveRow(row, -1);
+                        PlaylistCtl.moveRow(row, -1);
                         event.accepted = true;
                     } else if (event.key === Qt.Key_Down && !event.isAutoRepeat) {
-                        page.moveRow(row, 1);
+                        PlaylistCtl.moveRow(row, 1);
                         event.accepted = true;
                     }
                     return;
@@ -840,9 +670,9 @@ FocusScope {
                     // A selection wins over the cursor: with rows picked,
                     // Delete obviously means those rows.
                     if (memberList.selectionCount > 0)
-                        page.removeSelection();
+                        PlaylistCtl.removeSelection(memberList.selectedRows);
                     else
-                        page.removeRow(row);
+                        PlaylistCtl.removeRow(row);
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
                     const item = memberList.currentItem;
@@ -943,7 +773,7 @@ FocusScope {
                     tooltip: qsTr("Play from here")
                     onClicked: {
                         memberList.cancelNavigationFocusRestore()
-                        page.playFrom(memberRow.index)
+                        PlaylistCtl.requestPlayFrom(memberRow.index)
                     }
                 }
 
@@ -957,7 +787,7 @@ FocusScope {
                     shortcut: "Alt+Up"
                     onClicked: {
                         memberList.cancelNavigationFocusRestore()
-                        page.moveRow(memberRow.index, -1)
+                        PlaylistCtl.moveRow(memberRow.index, -1)
                     }
                 }
 
@@ -971,7 +801,7 @@ FocusScope {
                     shortcut: "Alt+Down"
                     onClicked: {
                         memberList.cancelNavigationFocusRestore()
-                        page.moveRow(memberRow.index, 1)
+                        PlaylistCtl.moveRow(memberRow.index, 1)
                     }
                 }
 
@@ -984,7 +814,7 @@ FocusScope {
                     shortcut: "Del"
                     onClicked: {
                         memberList.cancelNavigationFocusRestore()
-                        page.removeRow(memberRow.index)
+                        PlaylistCtl.removeRow(memberRow.index)
                     }
                 }
             }
@@ -1029,7 +859,7 @@ FocusScope {
     // sitting empty (ARCHITECTURE.md).
     EmptyState {
         anchors.fill: memberPane
-        visible: !page.hasOpenPlaylist && page.playlistRecords.length > 0
+        visible: !page.hasOpenPlaylist && page.playlistCount > 0
         iconName: "playlist"
         headline: qsTr("Pick a playlist")
         body: qsTr("Choose one on the left to see what is in it, play it, or rearrange it.")
@@ -1040,7 +870,7 @@ FocusScope {
     EmptyState {
         anchors.centerIn: parent
         width: Theme.scale(420)
-        visible: page.playlistRecords.length === 0 && !page.playlistsPending
+        visible: page.playlistCount === 0 && !page.playlistsPending
         severity: page.failed ? "error" : "info"
         iconName: page.failed ? "info" : "playlist"
         headline: page.failed ? qsTr("Couldn't load your playlists")
@@ -1182,12 +1012,7 @@ FocusScope {
         id: itemMenu
 
         allowRemoveFromPlaylist: true
-        onRemoveFromPlaylistRequested: item => {
-            const entry = item && item.playlistItemId !== undefined
-                        ? String(item.playlistItemId) : "";
-            if (entry.length > 0)
-                PlaylistCtl.removeEntries([entry]);
-        }
+        onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)
     }
 
     // This page's own toast surface: every verb on it is a write to the user's

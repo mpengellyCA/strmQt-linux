@@ -6,6 +6,10 @@
 
 #include <QCryptographicHash>
 #include <QHash>
+#include <QRandomGenerator>
+
+#include <algorithm>
+#include <utility>
 
 namespace strmqt {
 
@@ -79,8 +83,12 @@ QByteArray memberPageSignature(const QList<MediaItem> &items, QList<QByteArray> 
 
 PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_playlists(new MediaItemModel(this)),
-      m_items(new MediaItemModel(this))
+      m_filteredPlaylists(new QSortFilterProxyModel(this)), m_items(new MediaItemModel(this))
 {
+    m_filteredPlaylists->setSourceModel(m_playlists);
+    m_filteredPlaylists->setFilterRole(MediaItemModel::NameRole);
+    m_filteredPlaylists->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    m_filteredPlaylists->setDynamicSortFilter(true);
 }
 
 void PlaylistController::resetSessionState()
@@ -92,6 +100,8 @@ void PlaylistController::resetSessionState()
     m_items->clear();
     m_currentId.clear();
     m_currentName.clear();
+    m_pendingMovedEntryId.clear();
+    setFilterText({});
     m_listNextIndex = 0;
     m_listComplete = false;
     m_listWalkActive = false;
@@ -123,6 +133,31 @@ void PlaylistController::ensureAllPlaylists()
         return;
     m_listWalkActive = true;
     fetchPlaylistPage(m_listNextIndex);
+}
+
+void PlaylistController::setFilterText(const QString &text)
+{
+    if (m_filterText == text)
+        return;
+    m_filterText = text;
+    // Fixed-string filtering is a literal, case-insensitive substring match.
+    // Trimming preserves the old page contract: surrounding spaces are not a
+    // request to hide every otherwise matching playlist.
+    m_filteredPlaylists->setFilterFixedString(text.trimmed());
+    emit filterTextChanged();
+}
+
+void PlaylistController::openFiltered(int row)
+{
+    if (row < 0 || row >= m_filteredPlaylists->rowCount())
+        return;
+    const QModelIndex source = m_filteredPlaylists->mapToSource(m_filteredPlaylists->index(row, 0));
+    if (!source.isValid() || source.row() < 0 || source.row() >= m_playlists->items().size())
+        return;
+    const MediaItem &playlist = m_playlists->items().at(source.row());
+    if (playlist.id.isEmpty() || playlist.id == m_currentId)
+        return;
+    open(playlist.id, playlist.name);
 }
 
 void PlaylistController::fetchPlaylistPage(int startIndex)
@@ -179,6 +214,7 @@ void PlaylistController::open(const QString &playlistId, const QString &name)
         return;
     m_currentId = playlistId;
     m_currentName = name;
+    m_pendingMovedEntryId.clear();
     emit currentChanged();
     m_items->clear();
     reload();
@@ -208,6 +244,7 @@ void PlaylistController::fetchMemberPage(const QString &playlistId, int startInd
                 resetMemberWalk();
                 setLoading(false);
                 setError(result.error);
+                finishPendingMoveFocus();
                 return;
             }
 
@@ -270,6 +307,7 @@ void PlaylistController::fetchMemberPage(const QString &playlistId, int startInd
             resetMemberWalk();
             setError(QString());
             setLoading(false);
+            finishPendingMoveFocus();
         });
 }
 
@@ -285,10 +323,193 @@ void PlaylistController::stopMemberWalk(const QString &message)
     resetMemberWalk();
     setLoading(false);
     setError(message);
+    finishPendingMoveFocus();
     // A partial model remains usable, so PlaylistPage does not replace it with
     // its empty-error state. Raise the same toast channel as failed verbs to
     // make the truncation visible while those retained rows stay on screen.
     emit actionFailed(message);
+}
+
+QVariantMap PlaylistController::itemAt(int row) const
+{
+    return m_items->get(row);
+}
+
+QList<int> PlaylistController::selectedRowNumbers(const QVariantMap &selectedRows,
+                                                  int *requested) const
+{
+    QList<int> rows;
+    int selectedCount = 0;
+    rows.reserve(selectedRows.size());
+    for (auto it = selectedRows.cbegin(); it != selectedRows.cend(); ++it) {
+        if (!it.value().toBool())
+            continue;
+        ++selectedCount;
+        bool ok = false;
+        const int row = it.key().toInt(&ok);
+        if (ok && row >= 0 && row < m_items->rowCount())
+            rows.append(row);
+    }
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    if (requested)
+        *requested = selectedCount;
+    return rows;
+}
+
+QVariantList PlaylistController::materializeRows(const QList<int> &rows) const
+{
+    QVariantList result;
+    result.reserve(rows.size());
+    for (int row : rows) {
+        const QVariantMap item = m_items->get(row);
+        if (!item.isEmpty())
+            result.append(item);
+    }
+    return result;
+}
+
+QVariantList PlaylistController::materializeAll() const
+{
+    QList<int> rows;
+    rows.reserve(m_items->rowCount());
+    for (int row = 0; row < m_items->rowCount(); ++row)
+        rows.append(row);
+    return materializeRows(rows);
+}
+
+QStringList PlaylistController::selectedItemIds(const QVariantMap &selectedRows) const
+{
+    QStringList ids;
+    const QList<int> rows = selectedRowNumbers(selectedRows);
+    ids.reserve(rows.size());
+    for (int row : rows) {
+        const QString id = m_items->items().at(row).id;
+        if (!id.isEmpty())
+            ids.append(id);
+    }
+    return ids;
+}
+
+void PlaylistController::requestPlayFrom(int row)
+{
+    const QVariantList queue = materializeAll();
+    if (queue.isEmpty())
+        return;
+    emit playItemsRequested(queue, qBound(0, row, static_cast<int>(queue.size()) - 1));
+}
+
+void PlaylistController::requestShuffle()
+{
+    QVariantList queue = materializeAll();
+    if (queue.isEmpty())
+        return;
+    for (qsizetype row = queue.size() - 1; row > 0; --row) {
+        const qsizetype other =
+            QRandomGenerator::global()->bounded(static_cast<quint32>(row + 1));
+        queue.swapItemsAt(row, other);
+    }
+    emit playItemsRequested(queue, 0);
+}
+
+void PlaylistController::requestQueueSelection(const QVariantMap &selectedRows)
+{
+    const QVariantList queue = materializeRows(selectedRowNumbers(selectedRows));
+    if (!queue.isEmpty())
+        emit queueItemsRequested(queue);
+}
+
+QString PlaylistController::entryIdAt(int row) const
+{
+    if (row < 0 || row >= m_items->items().size())
+        return {};
+    return m_items->items().at(row).playlistItemId;
+}
+
+int PlaylistController::indexOfEntry(const QString &entryId) const
+{
+    if (entryId.isEmpty())
+        return -1;
+    for (int row = 0; row < m_items->items().size(); ++row) {
+        if (m_items->items().at(row).playlistItemId == entryId)
+            return row;
+    }
+    return -1;
+}
+
+void PlaylistController::removeRow(int row)
+{
+    const QString entryId = entryIdAt(row);
+    if (entryId.isEmpty()) {
+        emit actionFailed(
+            tr("The server did not give this row an entry id, so it cannot be removed."));
+        return;
+    }
+    removeEntries({entryId});
+}
+
+void PlaylistController::removeItem(const QVariantMap &item)
+{
+    const QString entryId = item.value(QStringLiteral("playlistItemId")).toString();
+    if (entryId.isEmpty() || indexOfEntry(entryId) < 0) {
+        emit actionFailed(
+            tr("The server did not give this row an entry id, so it cannot be removed."));
+        return;
+    }
+    removeEntries({entryId});
+}
+
+void PlaylistController::removeSelection(const QVariantMap &selectedRows)
+{
+    int requested = 0;
+    const QList<int> rows = selectedRowNumbers(selectedRows, &requested);
+    QStringList entryIds;
+    entryIds.reserve(rows.size());
+    for (int row : rows) {
+        const QString entryId = entryIdAt(row);
+        if (!entryId.isEmpty())
+            entryIds.append(entryId);
+    }
+
+    if (entryIds.isEmpty()) {
+        if (requested > 0) {
+            emit actionFailed(
+                tr("The server did not give these rows entry ids, so they cannot be removed."));
+        }
+        return;
+    }
+    if (entryIds.size() < requested) {
+        emit actionWarning(
+            tr("%1 of %2 selected rows have no entry id and cannot be removed.")
+                .arg(requested - entryIds.size())
+                .arg(requested));
+    }
+    removeEntries(entryIds);
+}
+
+void PlaylistController::moveRow(int row, int delta)
+{
+    const qint64 target = qint64(row) + qint64(delta);
+    if (row < 0 || row >= m_items->rowCount() || target < 0 || target >= m_items->rowCount())
+        return;
+    const QString entryId = entryIdAt(row);
+    if (entryId.isEmpty()) {
+        emit actionFailed(
+            tr("The server did not give this row an entry id, so it cannot be moved."));
+        return;
+    }
+    m_pendingMovedEntryId = entryId;
+    moveEntry(entryId, static_cast<int>(target));
+}
+
+void PlaylistController::finishPendingMoveFocus()
+{
+    if (m_pendingMovedEntryId.isEmpty())
+        return;
+    const QString entryId = std::exchange(m_pendingMovedEntryId, {});
+    const int row = indexOfEntry(entryId);
+    if (row >= 0)
+        emit moveFocusRequested(row);
 }
 
 void PlaylistController::create(const QString &name, const QStringList &itemIds,
@@ -355,14 +576,17 @@ void PlaylistController::removeEntries(const QStringList &entryIds)
 
 void PlaylistController::moveEntry(const QString &entryId, int newIndex)
 {
-    if (m_currentId.isEmpty() || entryId.isEmpty() || newIndex < 0)
+    if (m_currentId.isEmpty() || entryId.isEmpty() || newIndex < 0
+        || newIndex >= m_items->rowCount())
         return;
     const int sessionGeneration = m_sessionGeneration;
     m_client->movePlaylistItem(m_currentId, entryId, newIndex)
-        .then(this, [this, sessionGeneration](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration, entryId](const Result<bool> &result) {
             if (sessionGeneration != m_sessionGeneration)
                 return;
             if (!result.ok()) {
+                if (m_pendingMovedEntryId == entryId)
+                    m_pendingMovedEntryId.clear();
                 emit actionFailed(result.error);
                 return;
             }

@@ -2,6 +2,8 @@
 #include <QUrlQuery>
 #include <QtTest>
 
+#include <tuple>
+
 #include "MockEmbyServer.h"
 #include "app/controllers/DetailsController.h"
 #include "app/controllers/LiveUpdateService.h"
@@ -54,6 +56,10 @@ private slots:
     void searchResetPreservesPerAccountHistory();
     void playlistFetchesDoNotStrandEachOther();
     void playlistSessionResetRetiresBothWalksAndMutations();
+    void playlistBrowseFilteringIsControllerOwned();
+    void playlistQueuePolicyPreservesDuplicateEntries();
+    void playlistSelectionRemovalValidatesEntryIdentity();
+    void playlistReorderValidatesBoundsAndRestoresEntry();
     void createWhileOpenLeavesTheOpenPlaylistAlone();
     void creationCarriesTheMediaTypeItWasGiven();
     void playlistMembersPageToTheEnd_data();
@@ -1001,6 +1007,206 @@ void ContentControllersTest::searchResetPreservesPerAccountHistory()
     m_client->setSession(kToken, userB);
     QCOMPARE(search.recentQueries(), QStringList{QStringLiteral("B only")});
     search.clearRecentQueries();
+}
+
+void ContentControllersTest::playlistBrowseFilteringIsControllerOwned()
+{
+    PlaylistController playlists(m_client);
+    QList<MediaItem> records;
+    for (const auto &[id, name] : {
+             std::pair{QStringLiteral("morning"), QStringLiteral("Morning Drive")},
+             std::pair{QStringLiteral("road"), QStringLiteral("Long Road Home")},
+             std::pair{QStringLiteral("workout"), QStringLiteral("Workout")}}) {
+        MediaItem item;
+        item.id = id;
+        item.name = name;
+        item.type = QStringLiteral("Playlist");
+        records.append(item);
+    }
+    playlists.playlists()->setItems(records, records.size());
+    QCOMPARE(playlists.filteredPlaylists()->rowCount(), 3);
+
+    playlists.setFilterText(QStringLiteral(" ROAD "));
+    QCOMPARE(playlists.filteredPlaylists()->rowCount(), 1);
+    QCOMPARE(playlists.filteredPlaylists()
+                 ->data(playlists.filteredPlaylists()->index(0, 0), MediaItemModel::NameRole)
+                 .toString(),
+             QStringLiteral("Long Road Home"));
+
+    playlists.setFilterText(QStringLiteral("DRIVE"));
+    QCOMPARE(playlists.filteredPlaylists()->rowCount(), 1);
+    QCOMPARE(playlists.filteredPlaylists()
+                 ->data(playlists.filteredPlaylists()->index(0, 0), MediaItemModel::IdRole)
+                 .toString(),
+             QStringLiteral("morning"));
+    playlists.setFilterText({});
+    QCOMPARE(playlists.filteredPlaylists()->rowCount(), 3);
+}
+
+void ContentControllersTest::playlistQueuePolicyPreservesDuplicateEntries()
+{
+    PlaylistController playlists(m_client);
+    QList<MediaItem> members;
+    for (const auto &[id, entry, name] : {
+             std::tuple{QStringLiteral("same"), QStringLiteral("entry-a"),
+                        QStringLiteral("Encore first")},
+             std::tuple{QStringLiteral("same"), QStringLiteral("entry-b"),
+                        QStringLiteral("Encore second")},
+             std::tuple{QStringLiteral("other"), QStringLiteral("entry-c"),
+                        QStringLiteral("Finale")}}) {
+        MediaItem item;
+        item.id = id;
+        item.playlistItemId = entry;
+        item.name = name;
+        item.type = QStringLiteral("Audio");
+        members.append(item);
+    }
+    playlists.items()->setItems(members, members.size());
+    QSignalSpy played(&playlists, &PlaylistController::playItemsRequested);
+    QSignalSpy queued(&playlists, &PlaylistController::queueItemsRequested);
+
+    playlists.requestPlayFrom(99);
+    QCOMPARE(played.count(), 1);
+    const QVariantList ordered = played.first().at(0).toList();
+    QCOMPARE(ordered.size(), 3);
+    QCOMPARE(played.first().at(1).toInt(), 2);
+    QCOMPARE(ordered.at(0).toMap().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("same"));
+    QCOMPARE(ordered.at(1).toMap().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("same"));
+    QCOMPARE(ordered.at(0).toMap().value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(ordered.at(1).toMap().value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-b"));
+
+    playlists.requestShuffle();
+    QCOMPARE(played.count(), 2);
+    const QVariantList shuffled = played.at(1).at(0).toList();
+    QCOMPARE(shuffled.size(), ordered.size());
+    QCOMPARE(played.at(1).at(1).toInt(), 0);
+    QStringList shuffledEntries;
+    for (const QVariant &record : shuffled)
+        shuffledEntries.append(record.toMap().value(QStringLiteral("playlistItemId")).toString());
+    shuffledEntries.sort();
+    QCOMPARE(shuffledEntries,
+             QStringList({QStringLiteral("entry-a"), QStringLiteral("entry-b"),
+                          QStringLiteral("entry-c")}));
+
+    const QVariantMap selection{{QStringLiteral("1"), true}, {QStringLiteral("0"), true}};
+    QCOMPARE(playlists.selectedItemIds(selection),
+             QStringList({QStringLiteral("same"), QStringLiteral("same")}));
+    playlists.requestQueueSelection(selection);
+    QCOMPARE(queued.count(), 1);
+    const QVariantList picked = queued.first().first().toList();
+    QCOMPARE(picked.size(), 2);
+    QCOMPARE(picked.at(0).toMap().value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(picked.at(1).toMap().value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-b"));
+}
+
+void ContentControllersTest::playlistSelectionRemovalValidatesEntryIdentity()
+{
+    const QString membersPath = QStringLiteral("/Playlists/pl1/Items");
+    m_mock->addRoute(QStringLiteral("GET"), membersPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("DELETE"), membersPath, 204, {});
+    PlaylistController playlists(m_client);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Mixed"));
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+
+    MediaItem valid;
+    valid.id = QStringLiteral("same");
+    valid.name = QStringLiteral("Valid");
+    valid.type = QStringLiteral("Audio");
+    valid.playlistItemId = QStringLiteral("entry-valid");
+    MediaItem malformed = valid;
+    malformed.name = QStringLiteral("Malformed");
+    malformed.playlistItemId.clear();
+    playlists.items()->setItems({valid, malformed}, 2);
+
+    QSignalSpy warning(&playlists, &PlaylistController::actionWarning);
+    QSignalSpy failed(&playlists, &PlaylistController::actionFailed);
+    QSignalSpy succeeded(&playlists, &PlaylistController::actionSucceeded);
+    const auto deleteRequests = [this, &membersPath] {
+        int count = 0;
+        for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests()) {
+            if (request.method == QLatin1String("DELETE") && request.path == membersPath)
+                ++count;
+        }
+        return count;
+    };
+    playlists.removeSelection(
+        {{QStringLiteral("0"), true}, {QStringLiteral("1"), true}});
+    QTRY_COMPARE_WITH_TIMEOUT(deleteRequests(), 1, 5000);
+    QCOMPARE(warning.count(), 1);
+    QVERIFY(warning.first().first().toString().contains(QStringLiteral("1 of 2")));
+    QCOMPARE(failed.count(), 0);
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("DELETE"), membersPath).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("EntryIds")), QStringLiteral("entry-valid"));
+    QTRY_COMPARE_WITH_TIMEOUT(succeeded.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+
+    playlists.items()->setItems({malformed}, 1);
+    const int deletesBefore = deleteRequests();
+    playlists.removeSelection({{QStringLiteral("0"), true}});
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(deleteRequests(), deletesBefore);
+}
+
+void ContentControllersTest::playlistReorderValidatesBoundsAndRestoresEntry()
+{
+    const QString membersPath = QStringLiteral("/Playlists/pl1/Items");
+    const QByteArray original = QByteArrayLiteral(
+        "{\"Items\":[{\"Id\":\"a\",\"Name\":\"A\",\"Type\":\"Audio\","
+        "\"PlaylistItemId\":\"entry-a\"},{\"Id\":\"b\",\"Name\":\"B\","
+        "\"Type\":\"Audio\",\"PlaylistItemId\":\"entry-b\"},{\"Id\":\"c\","
+        "\"Name\":\"C\",\"Type\":\"Audio\",\"PlaylistItemId\":\"entry-c\"}],"
+        "\"TotalRecordCount\":3}");
+    m_mock->addRoute(QStringLiteral("GET"), membersPath, 200, original);
+    PlaylistController playlists(m_client);
+    playlists.open(QStringLiteral("pl1"), QStringLiteral("Ordered"));
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QCOMPARE(playlists.items()->rowCount(), 3);
+
+    const int requestsBefore = m_mock->requestCount();
+    playlists.moveRow(0, -1);
+    playlists.moveRow(2, 1);
+    playlists.moveRow(-1, 1);
+    playlists.moveRow(1, 10);
+    QCOMPARE(m_mock->requestCount(), requestsBefore);
+
+    const QString movePath = QStringLiteral("/Playlists/pl1/Items/entry-b/Move/2");
+    m_mock->addRoute(QStringLiteral("POST"), movePath, 204, {});
+    m_mock->addRoute(
+        QStringLiteral("GET"), membersPath, 200,
+        QByteArrayLiteral(
+            "{\"Items\":[{\"Id\":\"a\",\"Name\":\"A\",\"Type\":\"Audio\","
+            "\"PlaylistItemId\":\"entry-a\"},{\"Id\":\"c\",\"Name\":\"C\","
+            "\"Type\":\"Audio\",\"PlaylistItemId\":\"entry-c\"},{\"Id\":\"b\","
+            "\"Name\":\"B\",\"Type\":\"Audio\",\"PlaylistItemId\":\"entry-b\"}],"
+            "\"TotalRecordCount\":3}"));
+    QSignalSpy focus(&playlists, &PlaylistController::moveFocusRequested);
+    playlists.moveRow(1, 1);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(movePath), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(focus.count(), 1, 5000);
+    QCOMPARE(focus.first().first().toInt(), 2);
+    QCOMPARE(playlists.items()->get(2).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-b"));
+
+    MediaItem malformed;
+    malformed.id = QStringLiteral("broken");
+    malformed.name = QStringLiteral("Broken");
+    malformed.type = QStringLiteral("Audio");
+    MediaItem tail = malformed;
+    tail.id = QStringLiteral("tail");
+    tail.playlistItemId = QStringLiteral("entry-tail");
+    playlists.items()->setItems({malformed, tail}, 2);
+    QSignalSpy failed(&playlists, &PlaylistController::actionFailed);
+    const int movesBefore = requestsFor(movePath);
+    playlists.moveRow(0, 1);
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(requestsFor(movePath), movesBefore);
 }
 
 void ContentControllersTest::playlistSessionResetRetiresBothWalksAndMutations()
