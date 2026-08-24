@@ -74,12 +74,14 @@ FocusScope {
     readonly property string albumArtistId: page.albumArtistIds.length > 0
                                             ? String(page.albumArtistIds[0]) : ""
 
-    readonly property int trackCount: MusicCtl.tracks.count > 0
+    readonly property bool scopeMine: page.albumId.length > 0
+                                      && MusicCtl.albumId === page.albumId
+    readonly property int trackCount: page.scopeMine && MusicCtl.tracks.count > 0
                                       ? MusicCtl.tracks.count
                                       : ((page.albumItem && page.albumItem.childCount !== undefined)
                                          ? Number(page.albumItem.childCount) : 0)
 
-    readonly property bool hasTracks: MusicCtl.tracks.count > 0
+    readonly property bool hasTracks: page.scopeMine && MusicCtl.tracks.count > 0
 
     // ── Derived once per track load ────────────────────────────────────────
     // The one pass over the loaded tracks — running time, multi-disc, where the
@@ -93,10 +95,7 @@ FocusScope {
     Component.onCompleted: page.syncFavorite()
 
     // Likewise: an album page reused for a second album re-reads both.
-    onAlbumIdChanged: {
-        page.syncFavorite()
-        page.trackFetchTimedOut = false
-    }
+    onAlbumIdChanged: page.syncFavorite()
 
     // ── Formatting ─────────────────────────────────────────────────────────
     function formatDuration(ms) {
@@ -198,27 +197,12 @@ FocusScope {
     }
 
     // ── Track fetch state ──────────────────────────────────────────────────
-    // MusicController::openAlbum() reports neither `loading` nor
-    // `errorMessage` (see this wave's hand-back note), so this page cannot ask
-    // whether the fetch is in flight or has failed — it can only observe that
-    // no tracks have arrived. A skeleton that never resolves is the worst of
-    // the available answers, so after a grace period the page offers the
-    // request again instead of shimmering forever.
-    property bool trackFetchTimedOut: false
-
-    readonly property bool awaitingTracks: page.albumId.length > 0 && !page.hasTracks
-                                           && !page.trackFetchTimedOut
-
-    Timer {
-        running: page.albumId.length > 0 && !page.hasTracks
-        interval: 12000
-        onTriggered: page.trackFetchTimedOut = true
-    }
-
-    Connections {
-        target: MusicCtl
-        function onAlbumChanged() { page.trackFetchTimedOut = false }
-    }
+    // A detail request is owned by the shared controller and carries both a
+    // real in-flight state and a real failure. Scope the state to this album so
+    // a covered page never displays another album's rows while StackView is
+    // transitioning between them.
+    readonly property bool awaitingTracks: page.scopeMine && MusicCtl.loading
+                                           && !page.hasTracks
 
     // ── The music input context (MUSIC.md §7) ──────────────────────────────
     // The same four keys the music library binds, answered for a record.
@@ -796,19 +780,20 @@ FocusScope {
         anchors.right: parent.right
         anchors.top: tableHead.bottom
         anchors.bottom: parent.bottom
-        visible: !page.hasTracks && !page.awaitingTracks
+        visible: page.albumId.length === 0
+                 || (page.scopeMine && !MusicCtl.loading && !page.hasTracks)
         iconName: "lib-music"
-        headline: page.albumId.length > 0 ? qsTr("No tracks came back")
-                                          : qsTr("No album open")
+        headline: page.albumId.length === 0
+                  ? qsTr("No album open")
+                  : (MusicCtl.errorMessage.length > 0
+                     ? qsTr("Could not load tracks") : qsTr("No tracks came back"))
         body: page.albumId.length > 0
-              ? qsTr("The server returned nothing for this album. It may still be "
-                     + "scanning, or the request may have failed.")
+              ? (MusicCtl.errorMessage.length > 0
+                 ? MusicCtl.errorMessage
+                 : qsTr("The server returned no tracks for this album."))
               : qsTr("Open an album from the music library to see its tracks.")
         actionText: page.albumId.length > 0 ? qsTr("Try again") : ""
         actionIcon: page.albumId.length > 0 ? "refresh" : ""
-        onActionTriggered: {
-            page.trackFetchTimedOut = false
-            MusicCtl.openAlbum(page.albumId, page.albumName)
-        }
+        onActionTriggered: MusicCtl.openAlbum(page.albumId, page.albumName)
     }
 }

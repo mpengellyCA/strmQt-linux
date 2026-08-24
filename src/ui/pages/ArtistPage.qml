@@ -112,13 +112,10 @@ FocusScope {
     readonly property int topTracksRows: Math.min(6, page.topTracksLoaded)
     readonly property int topTrackRowHeight: Theme.scale(38)
 
-    // `MusicCtl.loading` is raised by the album and artist *list* fetches and
-    // not by openArtist(), so "is the discography still coming" has to be
-    // tracked here: raised with the request, lowered by the first row, and
-    // capped by a guard timer so an artist with nothing filed under them — or a
-    // request that failed, which openArtist() reports nowhere — does not sit on
-    // a skeleton forever.
-    property bool discographyLoading: false
+    // The controller owns the request lifetime and failure. Keeping this as a
+    // binding avoids a timer declaring a slow request empty while it is still
+    // in flight, and avoids leaving a fast empty response on a skeleton.
+    readonly property bool discographyLoading: page.scopeMine && MusicCtl.loading
 
     readonly property bool discographyEmpty: page.artistId.length > 0
                                              && page.scopeMine
@@ -127,10 +124,8 @@ FocusScope {
 
     // Favourite is the one piece of user state this page writes. It is seeded
     // from the row that was handed in rather than from Actions.isFavorite():
-    // MusicController's models are not registered with ItemActions, so that
-    // call answers "false" for every album and artist on this server until
-    // something has been toggled in this session. Reported; until then the
-    // handed-in row is the honest source and the signal keeps it current.
+    // The handed-in row is the initial source; ItemActions' signal keeps this
+    // scalar navigation snapshot current after a mutation.
     property bool artistFavorite: false
 
     readonly property int artSize: Theme.scale(200)
@@ -139,8 +134,6 @@ FocusScope {
     function ensureScope(): void {
         if (page.artistId.length === 0 || page.scopeMine)
             return
-        page.discographyLoading = true
-        loadGuard.restart()
         MusicCtl.openArtist(page.artistId, page.artistName)
     }
 
@@ -257,22 +250,6 @@ FocusScope {
             if (itemId === page.artistId)
                 page.artistFavorite = favorite
         }
-    }
-
-    Connections {
-        target: MusicCtl.artistAlbums
-        function onCountChanged() {
-            if (MusicCtl.artistAlbums.count > 0) {
-                page.discographyLoading = false
-                loadGuard.stop()
-            }
-        }
-    }
-
-    Timer {
-        id: loadGuard
-        interval: 6000
-        onTriggered: page.discographyLoading = false
     }
 
     // ── The music input context (MUSIC.md §7) ──────────────────────────────
@@ -793,7 +770,7 @@ FocusScope {
         // Shown only while the shared controller is still scoped to this
         // artist: a grid quietly full of somebody else's records is worse than
         // no grid at all.
-        visible: page.scopeMine && !page.discographyLoading && page.albumsLoaded > 0
+        visible: page.scopeMine && !MusicCtl.loading && page.albumsLoaded > 0
         // Focus follows content, never visibility.
         focus: albumGrid.count > 0
 
@@ -902,15 +879,15 @@ FocusScope {
         anchors.right: parent.right
         visible: page.discographyEmpty
         iconName: "lib-music"
-        headline: qsTr("No albums for %1").arg(page.displayName)
-        body: qsTr("Nothing on this server is filed under this artist — their tracks may sit on compilations credited to someone else.")
+        headline: MusicCtl.errorMessage.length > 0
+                  ? qsTr("Could not load albums")
+                  : qsTr("No albums for %1").arg(page.displayName)
+        body: MusicCtl.errorMessage.length > 0
+              ? MusicCtl.errorMessage
+              : qsTr("Nothing on this server is filed under this artist — their tracks may sit on compilations credited to someone else.")
         actionText: qsTr("Reload")
         actionIcon: "refresh"
-        onActionTriggered: {
-            page.discographyLoading = true
-            loadGuard.restart()
-            MusicCtl.openArtist(page.artistId, page.artistName)
-        }
+        onActionTriggered: MusicCtl.openArtist(page.artistId, page.artistName)
     }
 
     // Pushed with nothing to show. Reachable only from a broken link or from
