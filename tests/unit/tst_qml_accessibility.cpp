@@ -60,7 +60,23 @@ class TestQmlAccessibility : public QObject
 
 private slots:
     void controlsExposeSemanticActionsAndValues();
+    void searchBackUsesMainNavigationTransaction();
 };
+
+void TestQmlAccessibility::searchBackUsesMainNavigationTransaction()
+{
+    QFile search(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/SearchPage.qml"));
+    QVERIFY(search.open(QIODevice::ReadOnly));
+    const QByteArray searchSource = search.readAll();
+    QVERIFY(searchSource.contains("signal backRequested()"));
+    QVERIFY(searchSource.contains("page.backRequested()"));
+    QVERIFY(!searchSource.contains("StackView.view.pop()"));
+
+    QFile main(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
+    QVERIFY(main.open(QIODevice::ReadOnly));
+    const QByteArray mainSource = main.readAll();
+    QVERIFY(mainSource.contains("function onBackRequested() { root.goBack(); }"));
+}
 
 void TestQmlAccessibility::controlsExposeSemanticActionsAndValues()
 {

@@ -622,6 +622,15 @@ ApplicationWindow {
         }
     }
 
+    // Page-specific Back handling still goes through the same transaction as
+    // the rail, mouse and input-map paths. Search uses this after its first Esc
+    // has already cleared the query.
+    Connections {
+        target: stack.currentItem
+        ignoreUnknownSignals: true
+        function onBackRequested() { root.goBack(); }
+    }
+
     // Above every piece of chrome: the sleeve travels over the rail and the bar,
     // not behind them. It declares no input handling, so nothing it passes over
     // becomes unclickable.

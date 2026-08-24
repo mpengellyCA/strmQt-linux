@@ -50,6 +50,7 @@ import StrmQt
 FocusScope {
     id: page
     objectName: "searchPage"
+    signal backRequested()
 
     readonly property bool hasQuery: SearchCtl.query.length > 0
 
@@ -1263,8 +1264,7 @@ FocusScope {
                 SearchCtl.query = ""
                 return
             }
-            if (page.StackView.view)
-                page.StackView.view.pop()
+            page.backRequested()
         }
     }
 
