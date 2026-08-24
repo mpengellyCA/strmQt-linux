@@ -536,6 +536,7 @@ Item {
         readonly property int focusedTrackIndex: searchTrackList.currentIndex
         readonly property bool trackRestorePending: searchTrackFocus.pending
         readonly property bool trackFocused: searchTrackList.activeFocus
+        readonly property bool trackOwnerVisible: searchTracks.visible
         objectName: routeId
         focus: true
 
@@ -1198,17 +1199,23 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QVERIFY(locator.startsWith(
         QStringLiteral("[\"semantic\",\"search-tracks\",\"i:track-b\",1")));
 
-    // The old snapshot still contains the exact id, but the controller has
-    // begun replacing it. Returning must leave that row uncertified until the
-    // terminal edge says the new model is coherent.
+    // Match Main's production order: the controller enters its replacement
+    // state and clears the rows before Back reconstructs/uncovers SearchPage.
+    // The semantic owner is therefore initially ineligible. The stack must
+    // retain the locator until the owner appears, then the owner itself must
+    // keep it pending until the terminal edge certifies the new model.
     QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "clearSearchTracks"));
     QVERIFY(invoke(root, "goBack"));
-    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
-    QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 1);
+    QTRY_VERIFY(!currentItem(history)->property("trackOwnerVisible").toBool());
+    QVERIFY(!currentItem(history)->property("trackRestorePending").toBool());
     QCOMPARE(root->property("searchTrackResolutionCount").toInt(), 0);
+    QTRY_COMPARE(history->property("_focusRetryToken").toInt(),
+                 searchRoute.value(QStringLiteral("token")).toInt());
+
     QVERIFY(invoke(root, "replaceSearchTracksReordered"));
-    QTest::qWait(50);
-    QVERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_VERIFY(currentItem(history)->property("trackOwnerVisible").toBool());
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
     QCOMPARE(root->property("searchTrackResolutionCount").toInt(), 0);
 
     QVERIFY(invoke(root, "setSearchTrackRefill", false));
