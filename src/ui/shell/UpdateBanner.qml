@@ -7,17 +7,15 @@ import StrmQt
 // Live updates deliberately do NOT reload a grid the user has paged into —
 // content must never move under the cursor or the scroll position. The cost of
 // that decision is that new items are withheld, so there has to be a way to see
-// them. Without this the withholding is silent: LibraryController and
-// HomeController have carried updatesPending/pendingNewCount/applyPending since
-// M10 and nothing in the UI referenced any of them.
+// them. Without this the LibraryController's withholding would be silent.
 //
 // It is an offer, not a notification: it appears in the corner, never steals
 // focus, and applying is an explicit act.
 Item {
     id: banner
 
-    // The controller to read and act on (LibraryCtl or HomeCtl). Anything with
-    // updatesPending / pendingNewCount / applyPending() / discardPending().
+    // The controller to read and act on. Anything with updatesPending /
+    // pendingNewCount / applyPending() / discardPending().
     property var controller: null
 
     readonly property bool pending: banner.controller !== null

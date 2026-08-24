@@ -543,19 +543,6 @@ FocusScope {
         onActionTriggered: HomeCtl.refresh()
     }
 
-    // Home is a set of rails the user scrolls; a rebuild would move every one of
-    // them. Same offer as the library grid: explicit, and never focus-stealing.
-    UpdateBanner {
-        id: updateBanner
-
-        controller: HomeCtl
-        anchors.right: parent.right
-        anchors.rightMargin: Theme.spacingLoose
-        anchors.top: parent.top
-        anchors.topMargin: Theme.spacingLoose
-        z: 5
-    }
-
     EmptyState {
         anchors.fill: parent
         visible: page.showEmpty

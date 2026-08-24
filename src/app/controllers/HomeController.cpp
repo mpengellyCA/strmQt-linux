@@ -8,7 +8,6 @@
 #include <memory>
 #include "server/emby/EmbyClient.h"
 
-#include <QSet>
 #include <QTimer>
 #include <QVariantMap>
 
@@ -22,20 +21,6 @@ bool wantsLatestRail(const Library &library)
 {
     return library.collectionType == QLatin1String("movies") ||
            library.collectionType == QLatin1String("tvshows");
-}
-
-QSet<QString> idsOf(const QList<MediaItem> &items)
-{
-    QSet<QString> ids;
-    ids.reserve(items.size());
-    for (const MediaItem &item : items)
-        ids.insert(item.id);
-    return ids;
-}
-
-QSet<QString> idsOf(const MediaItemModel *model)
-{
-    return idsOf(model->items());
 }
 
 } // namespace
@@ -100,14 +85,7 @@ void HomeController::resetSessionState()
     syncRailDescriptors();
 
     m_incoming = Snapshot{};
-    m_held = Snapshot{};
-    m_applyWhenReady = true;
-    setPending(false, 0);
     setError({});
-    if (!m_autoApplyUpdates) {
-        m_autoApplyUpdates = true;
-        emit autoApplyUpdatesChanged();
-    }
 }
 
 void HomeController::bindLiveUpdates(LiveUpdateService *service)
@@ -123,21 +101,9 @@ void HomeController::bindLiveUpdates(LiveUpdateService *service)
             &HomeController::onUserDataInvalidated);
 }
 
-void HomeController::setAutoApplyUpdates(bool autoApply)
-{
-    if (m_autoApplyUpdates == autoApply)
-        return;
-    m_autoApplyUpdates = autoApply;
-    emit autoApplyUpdatesChanged();
-    // Turning it back on (the user scrolled home) is an invitation to land
-    // whatever has been waiting.
-    if (m_autoApplyUpdates && m_hasPending)
-        applyPending();
-}
-
 void HomeController::refresh()
 {
-    startRefresh(/*applyWhenReady=*/true);
+    startRefresh();
 }
 
 void HomeController::onLibraryInvalidated(const QStringList &itemIds)
@@ -148,7 +114,7 @@ void HomeController::onLibraryInvalidated(const QStringList &itemIds)
         qCDebug(logApp) << "home: library invalidation folded into an in-flight refresh";
         return;
     }
-    startRefresh(/*applyWhenReady=*/m_autoApplyUpdates);
+    startRefresh();
 }
 
 void HomeController::onUserDataPatched(const QVariantList &entries)
@@ -176,7 +142,7 @@ void HomeController::onUserDataInvalidated(const QStringList &itemIds)
     // Continue Watching, Next Up and Favorites are three server-side queries.
     // The changed ids do not contain enough type/series context to decide who
     // enters them, so fetch one coherent snapshot and respect the page's
-    // existing "do not move under the cursor" policy.
+    // membership as one coherent snapshot.
     //
     // Audio playback deliberately leaves live updates running, and every
     // progress report changes user data on the server. Without a floor between
@@ -194,10 +160,10 @@ void HomeController::onUserDataInvalidated(const QStringList &itemIds)
         }
     }
     m_lastUserDataRefresh.start();
-    startRefresh(/*applyWhenReady=*/m_autoApplyUpdates);
+    startRefresh();
 }
 
-void HomeController::startRefresh(bool applyWhenReady)
+void HomeController::startRefresh()
 {
     const bool wasBusy = busy();
     ++m_generation;
@@ -206,7 +172,6 @@ void HomeController::startRefresh(bool applyWhenReady)
     // old generation and must not decrement the new refresh's request count.
     m_pending = 0;
     m_incoming = Snapshot{};
-    m_applyWhenReady = applyWhenReady;
     setError({});
 
     beginRequest();
@@ -296,38 +261,7 @@ void HomeController::finishRefresh()
         m_incoming.favorites.isEmpty())
         return;
 
-    if (m_applyWhenReady || m_autoApplyUpdates) {
-        applySnapshot(m_incoming);
-        setPending(false, 0);
-        return;
-    }
-
-    const int newCount = countNewItems(m_incoming);
-    if (newCount == 0) {
-        // Nothing the user can see would move: swapping it in is free.
-        applySnapshot(m_incoming);
-        setPending(false, 0);
-        return;
-    }
-    m_held = m_incoming;
-    setPending(true, newCount);
-}
-
-int HomeController::countNewItems(const Snapshot &snapshot) const
-{
-    QSet<QString> onScreen = idsOf(m_resume);
-    onScreen += idsOf(m_nextUp);
-    onScreen += idsOf(m_favorites);
-    for (auto it = m_railModels.cbegin(); it != m_railModels.cend(); ++it)
-        onScreen += idsOf(it.value());
-
-    QSet<QString> incoming = idsOf(snapshot.resume);
-    incoming += idsOf(snapshot.nextUp);
-    incoming += idsOf(snapshot.favorites);
-    for (const auto &rail : snapshot.rails)
-        incoming += idsOf(rail.second);
-
-    return static_cast<int>((incoming - onScreen).size());
+    applySnapshot(m_incoming);
 }
 
 MediaItemModel *HomeController::railModelFor(const QString &libraryId)
@@ -505,32 +439,6 @@ void HomeController::fetchGenreRails()
                     });
             }
         });
-}
-
-void HomeController::applyPending()
-{
-    if (!m_hasPending)
-        return;
-    applySnapshot(m_held);
-    m_held = Snapshot{};
-    setPending(false, 0);
-}
-
-void HomeController::discardPending()
-{
-    if (!m_hasPending)
-        return;
-    m_held = Snapshot{};
-    setPending(false, 0);
-}
-
-void HomeController::setPending(bool pending, int newCount)
-{
-    if (m_hasPending == pending && m_pendingNewCount == newCount)
-        return;
-    m_hasPending = pending;
-    m_pendingNewCount = newCount;
-    emit pendingChanged();
 }
 
 void HomeController::togglePlayed(const QString &itemId, bool played, bool favorite)

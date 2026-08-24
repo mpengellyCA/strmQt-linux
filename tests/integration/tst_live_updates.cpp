@@ -82,7 +82,7 @@ private slots:
     void userDataPatchesThenReconcilesHomeMembership();
     void filteredLaterPageAnnouncesMembershipChange();
     void homeMembershipRefreshHasAFloorBetweenBursts();
-    void homeHoldsUpdatesWhenAutoApplyIsOff();
+    void homeLibraryInvalidationAppliesCoherentSnapshot();
     void libraryGridAnnouncesNewItemsInsteadOfReloading();
 
 private:
@@ -560,47 +560,32 @@ void LiveUpdatesTest::homeMembershipRefreshHasAFloorBetweenBursts()
     QCOMPARE(m_mock->requestCount() - afterFirst, requestsPerSnapshot);
 }
 
-void LiveUpdatesTest::homeHoldsUpdatesWhenAutoApplyIsOff()
+void LiveUpdatesTest::homeLibraryInvalidationAppliesCoherentSnapshot()
 {
     routeHomeFixtures();
 
     HomeController home(m_client);
     home.refresh();
     QTRY_VERIFY(!home.busy());
-    const int railsBefore = home.latestRails().size();
-    QVERIFY(railsBefore > 0);
+    QVERIFY(!home.latestRails().isEmpty());
     auto *rail = home.latestRails().first().toMap()
                      .value(QStringLiteral("model")).value<MediaItemModel *>();
     QVERIFY(rail);
-    const int itemsBefore = rail->rowCount();
 
-    // The user is scrolled away: nothing may move under the cursor.
-    home.setAutoApplyUpdates(false);
-
-    // The server now has an extra item in Latest.
     m_mock->addRoute(QStringLiteral("GET"),
                      QStringLiteral("/Users/%1/Items/Latest").arg(kUserId), 200,
                      QByteArrayLiteral(R"([{"Id":"999999","Name":"Brand New","Type":"Movie"},)"
                                        R"({"Id":"301099","Name":"Dune: Part Two","Type":"Movie"}])"));
 
-    QSignalSpy pending(&home, &HomeController::pendingChanged);
     home.onLibraryInvalidated({});
     QTRY_VERIFY(!home.busy());
 
-    QVERIFY2(home.updatesPending(), "a server-side change was applied under the cursor");
-    QCOMPARE(home.pendingNewCount(), 1);
-    QCOMPARE(rail->rowCount(), itemsBefore); // untouched until the user says so
-    QVERIFY(!pending.isEmpty());
-
-    home.applyPending();
-    QVERIFY(!home.updatesPending());
-    QCOMPARE(home.pendingNewCount(), 0);
-    auto *railAfter = home.latestRails().first().toMap()
-                          .value(QStringLiteral("model")).value<MediaItemModel *>();
-    QCOMPARE(railAfter->rowCount(), 2);
-    QCOMPARE(railAfter->get(0).value(QStringLiteral("itemId")).toString(), QStringLiteral("999999"));
-    // The rail model is reused across refreshes, so QML's bindings survive.
-    QCOMPARE(railAfter, rail);
+    auto *updatedRail = home.latestRails().first().toMap()
+                            .value(QStringLiteral("model")).value<MediaItemModel *>();
+    QCOMPARE(updatedRail, rail); // refresh preserves the model/delegate identity
+    QCOMPARE(updatedRail->rowCount(), 2);
+    QCOMPARE(updatedRail->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("999999"));
 }
 
 void LiveUpdatesTest::libraryGridAnnouncesNewItemsInsteadOfReloading()

@@ -25,12 +25,9 @@ class EmbyClient;
 // Feeds the Home page: Continue Watching, Next Up, per-library Latest rails, and
 // the library list itself.
 //
-// Live updates (ARCHITECTURE.md): a refresh always fetches into a staging
-// snapshot and only then decides whether to swap it in. A user-driven refresh
-// applies straight away; a server-driven one applies only when the page says it
-// is safe to (autoApplyUpdates), otherwise the snapshot is held and
-// pendingNewCount tells the UI how many items are waiting behind an
-// "N new items" affordance. Content never reorders under the cursor.
+// Live updates (ARCHITECTURE.md): a refresh fetches into a staging snapshot and
+// swaps it in only after all lanes settle, so the page never shows a mixture of
+// old and new rails.
 //
 // A UserDataChanged patches visible fields immediately, then reconciles the
 // server-owned membership of Continue Watching / Next Up / Favorites.
@@ -53,15 +50,6 @@ class HomeController : public QObject
     Q_PROPERTY(QVariantList genreRails READ genreRails NOTIFY genreRailsChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
-    // Fresh content is fetched and waiting to be swapped in.
-    Q_PROPERTY(bool updatesPending READ updatesPending NOTIFY pendingChanged)
-    // How many item ids in the waiting snapshot are not on screen yet — the
-    // number behind "3 new items".
-    Q_PROPERTY(int pendingNewCount READ pendingNewCount NOTIFY pendingChanged)
-    // QML sets this false while the user is scrolled away from the top or is
-    // interacting with a rail; true (the default) lets updates land silently.
-    Q_PROPERTY(bool autoApplyUpdates READ autoApplyUpdates WRITE setAutoApplyUpdates NOTIFY
-                   autoApplyUpdatesChanged)
 
 public:
     explicit HomeController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -75,21 +63,12 @@ public:
     QVariantList genreRails() const { return m_genreRails; }
     bool busy() const { return m_pending > 0; }
     QString errorMessage() const { return m_errorMessage; }
-    bool updatesPending() const { return m_hasPending; }
-    int pendingNewCount() const { return m_pendingNewCount; }
-    bool autoApplyUpdates() const { return m_autoApplyUpdates; }
-    void setAutoApplyUpdates(bool autoApply);
 
     // Authentication owns every row, descriptor and deferred refresh in this
     // controller. Called synchronously before EmbyClient changes identity.
     void resetSessionState();
 
-    // User-driven refresh: applies as soon as it lands.
     Q_INVOKABLE void refresh();
-    // Swap a held snapshot in. No-op when nothing is pending.
-    Q_INVOKABLE void applyPending();
-    // Throw a held snapshot away (the user dismissed the pill).
-    Q_INVOKABLE void discardPending();
 
     // Fire-and-forget toggles; models update optimistically on success.
     Q_INVOKABLE void togglePlayed(const QString &itemId, bool played, bool favorite);
@@ -119,8 +98,6 @@ signals:
     void genreRailsChanged();
     void busyChanged();
     void errorMessageChanged();
-    void pendingChanged();
-    void autoApplyUpdatesChanged();
 
 private:
     void fetchGenreRails();
@@ -149,11 +126,9 @@ private:
         bool haveLibraries = false;
     };
 
-    void startRefresh(bool applyWhenReady);
+    void startRefresh();
     void finishRefresh();
     void applySnapshot(const Snapshot &snapshot);
-    int countNewItems(const Snapshot &snapshot) const;
-    void setPending(bool pending, int newCount);
     void beginRequest();
     void endRequest(int generation);
     void setError(const QString &message);
@@ -188,12 +163,7 @@ private:
     int m_genreGeneration = 0;
     int m_sessionGeneration = 0;
 
-    Snapshot m_incoming;      // the refresh currently in flight
-    Snapshot m_held;          // fetched, waiting for applyPending()
-    bool m_applyWhenReady = true;
-    bool m_hasPending = false;
-    int m_pendingNewCount = 0;
-    bool m_autoApplyUpdates = true;
+    Snapshot m_incoming; // the refresh currently in flight
 };
 
 } // namespace strmqt
