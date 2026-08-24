@@ -46,6 +46,7 @@ private slots:
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
     void sessionChangeCancelsOutstandingRequests();
+    void reassertingTheSameIdentityKeepsRequestsAlive();
     void renameCannotChainAWriteAcrossServers();
 
 private:
@@ -326,6 +327,37 @@ void EmbyClientTest::sessionChangeCancelsOutstandingRequests()
     const auto result = waitFor(std::move(future));
     QVERIFY(!result.ok());
     QCOMPARE(result.error, QStringLiteral("request canceled"));
+}
+
+// Cancellation belongs to a real identity change and to an explicit boundary
+// (SessionController calls retireOutstandingRequests() for one). Re-asserting
+// the address or session the client already has is neither, and must not take
+// down work that belongs to the identity staying in place.
+void EmbyClientTest::reassertingTheSameIdentityKeepsRequestsAlive()
+{
+    m_client->setSession(kToken, kUserId);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Views").arg(kUserId),
+                                     fixturePath(QStringLiteral("views.json"))));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Users/%1/Views").arg(kUserId), 200);
+
+    QFuture<Result<QList<Library>>> future = m_client->userViews();
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+    m_client->setBaseUrl(m_mock->baseUrl());
+    m_client->setSession(kToken, kUserId);
+
+    const auto result = waitFor(std::move(future));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QVERIFY(!result.value.isEmpty());
+
+    // The explicit boundary still retires everything, identity unchanged.
+    QFuture<Result<QList<Library>>> retired = m_client->userViews();
+    QTRY_COMPARE(m_mock->requestCount(), 2);
+    m_client->retireOutstandingRequests();
+    const auto canceled = waitFor(std::move(retired));
+    QVERIFY(!canceled.ok());
+    QCOMPARE(canceled.error, QStringLiteral("request canceled"));
 }
 
 void EmbyClientTest::renameCannotChainAWriteAcrossServers()

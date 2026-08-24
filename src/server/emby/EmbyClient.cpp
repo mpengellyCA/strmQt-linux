@@ -68,18 +68,21 @@ EmbyClient::EmbyClient(QObject *parent) : QObject(parent), m_nam(new QNetworkAcc
 
 void EmbyClient::setBaseUrl(const QUrl &url)
 {
-    invalidateOutstandingRequests();
+    // Only a real change is a request boundary. Re-asserting the address the
+    // client already has (restore(), a repeated login attempt) must not cancel
+    // work that belongs to the identity staying in place.
     if (url == m_baseUrl)
         return;
+    retireOutstandingRequests();
     m_baseUrl = url;
     emit identityChanged();
 }
 
 void EmbyClient::setSession(const QString &accessToken, const QString &userId)
 {
-    invalidateOutstandingRequests();
     if (accessToken == m_accessToken && userId == m_userId)
         return;
+    retireOutstandingRequests();
     m_accessToken = accessToken;
     m_userId = userId;
     emit identityChanged();
@@ -90,7 +93,7 @@ EmbyClient::RequestContext EmbyClient::requestContext() const
     return {m_baseUrl, m_deviceId, m_deviceName, m_accessToken, m_userId, m_requestEpoch};
 }
 
-void EmbyClient::invalidateOutstandingRequests()
+void EmbyClient::retireOutstandingRequests()
 {
     ++m_requestEpoch;
     const QList<QNetworkReply *> replies = m_nam->findChildren<QNetworkReply *>();

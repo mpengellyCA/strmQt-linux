@@ -113,6 +113,7 @@ bool SessionController::restore()
         return false;
     }
     m_client->setSession(token, userId);
+    m_settings->migrateLegacySessionData();
     setAuthenticated(true);
     qCInfo(logApp) << "session restored for user" << m_settings->username();
     return true;
@@ -152,6 +153,9 @@ void SessionController::login(const QString &username, const QString &password)
             m_settings->setUsername(result.value.user.name);
             m_settings->setUserId(result.value.user.id);
             m_client->setSession(result.value.accessToken, result.value.user.id);
+            // Server and user are both known only now, which is the earliest
+            // point the pre-scoping keys have an owner to be adopted by.
+            m_settings->migrateLegacySessionData();
             if (!m_secrets->writeSecret(kTokenSecretKey, result.value.accessToken))
                 qCWarning(logApp) << "could not persist access token";
             setAuthenticated(true);
@@ -206,6 +210,11 @@ void SessionController::loadPublicUsers()
 quint64 SessionController::beginSessionBoundary()
 {
     const quint64 epoch = ++m_epoch;
+    // The boundary itself retires server work, not the credential clearing that
+    // follows it: logging out mid-login leaves the client's identity unchanged
+    // (empty to empty), and that reply must still be dropped rather than
+    // authenticating the session the user just left.
+    m_client->retireOutstandingRequests();
     emit sessionBoundaryChanged(epoch);
     setBusy(false);
     if (!m_publicUsers.isEmpty()) {

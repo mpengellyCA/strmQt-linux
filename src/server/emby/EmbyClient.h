@@ -43,6 +43,15 @@ public:
     // launched under the prior identity is aborted and retired.
     void setBaseUrl(const QUrl &url);
 
+    // Retire every reply launched so far: their promises resolve as canceled
+    // and their continuations do not touch client state. The identity setters
+    // do this for themselves when the identity actually changes; call it
+    // directly for a boundary that does not change it, such as logging out
+    // while an authentication for the same (empty) identity is still in
+    // flight — without it that reply lands and adopts a session nobody asked
+    // for any more.
+    void retireOutstandingRequests();
+
     // Device identity used in X-Emby-Authorization (stable per install).
     void setDeviceId(const QString &id) { m_deviceId = id; }
     void setDeviceName(const QString &name) { m_deviceName = name; }
@@ -265,7 +274,6 @@ private:
     };
 
     RequestContext requestContext() const;
-    void invalidateOutstandingRequests();
     QNetworkReply *startGet(const QString &path, const QUrlQuery &query);
     QNetworkReply *startGet(const QString &path, const QUrlQuery &query,
                             const RequestContext &context);
