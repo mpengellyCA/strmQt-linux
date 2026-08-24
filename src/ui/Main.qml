@@ -30,18 +30,13 @@ ApplicationWindow {
     color: Theme.ground
 
     // ── Navigation history (ARCHITECTURE.md) ──────────────────────────────────
-    // StackView gives us back and nothing else. `navTrail` mirrors the pushed
-    // pages so a popped page can be pushed again — a forward stack needs the
-    // component and its properties, and StackView.pop() hands back neither.
-    //
-    // Records are { component, props, prepare, key, title }. `prepare` re-arms
-    // whichever controller backs the page before it is pushed again, so going
-    // forward into a library shows that library and not whatever was opened
-    // since.
-    property var navTrail: []
-    property var navForward: []
-    // Depth → the item that had focus when that depth was left behind.
-    property var focusMemory: ({})
+    // Retained records are compact scalar routes, never page Components, model
+    // rows or controller closures. BoundedNavigationStack caps both those
+    // descriptors and the live page graphs reconstructed from them.
+    readonly property int navigationHistoryLimit: 40
+    readonly property var navTrail: stack.navTrail
+    readonly property var navForward: stack.navForward
+    readonly property var focusMemory: stack.focusMemory
 
     readonly property bool playerOnTop: stack.currentItem !== null
                                         && stack.currentItem.objectName === "playerPage"
@@ -72,8 +67,7 @@ ApplicationWindow {
         value: root.interactionContext
     }
 
-    readonly property var currentEntry: root.navTrail.length > 0
-                                        ? root.navTrail[root.navTrail.length - 1] : null
+    readonly property var currentEntry: stack.currentEntry
     // Destination key for the nav rail: "home", "favorites", "search",
     // "settings", "details", "series", or a library id.
     readonly property string currentKey: root.currentEntry !== null
@@ -81,8 +75,8 @@ ApplicationWindow {
     readonly property string pageTitle: root.currentEntry !== null
                                         ? root.currentEntry.title : qsTr("Home")
 
-    readonly property bool canGoBack: stack.depth > 1 && !root.playerOnTop
-    readonly property bool canGoForward: root.navForward.length > 0 && !root.playerOnTop
+    readonly property bool canGoBack: stack.canGoBack && !root.playerOnTop
+    readonly property bool canGoForward: stack.canGoForward && !root.playerOnTop
 
     // ── Bindings come from InputMap, never from literals ───────────────────
     // MappedShortcut moved to src/ui/controls/ when music grew an input context
@@ -93,29 +87,14 @@ ApplicationWindow {
 
     // ── Navigation ─────────────────────────────────────────────────────────
     function rememberFocus(): void {
-        const item = root.activeFocusItem;
-        if (item)
-            root.focusMemory[stack.depth] = item;
+        stack.rememberFocus();
     }
 
     // Focus is restored to the exact item the page was left on, not to the page
     // as a whole. That difference is what makes the app feel like it remembers
     // where you were instead of resetting you to the first card.
     function restoreFocusToPage(): void {
-        const remembered = root.focusMemory[stack.depth];
-        delete root.focusMemory[stack.depth];
-        if (remembered) {
-            try {
-                if (remembered.visible && remembered.enabled) {
-                    remembered.forceActiveFocus(Qt.OtherFocusReason);
-                    return;
-                }
-            } catch (err) {
-                // The remembered item was destroyed with its page; fall back.
-            }
-        }
-        if (stack.currentItem)
-            stack.currentItem.forceActiveFocus(Qt.OtherFocusReason);
+        stack.restoreFocusToCurrentPage();
     }
 
     // A pushed page must claim focus, exactly as a popped one does via
@@ -126,23 +105,16 @@ ApplicationWindow {
     // Every page root is a FocusScope, so this delegates to whatever the page
     // marked `focus: true` (SearchPage's field, a grid's first cell).
     function focusCurrentPage(): void {
-        if (stack.currentItem)
-            stack.currentItem.forceActiveFocus(Qt.OtherFocusReason);
+        stack.focusCurrentPage();
     }
 
-    function pushPage(component, props, prepare, key, pageTitle): void {
-        root.rememberFocus();
-        // Any new push abandons the forward branch, the way a browser does.
-        root.navForward = [];
-        root.navTrail = root.navTrail.concat([{
-            "component": component,
-            "props": props !== undefined && props !== null ? props : ({}),
-            "prepare": prepare !== undefined ? prepare : null,
-            "key": key,
-            "title": pageTitle
-        }]);
-        stack.push(component, props !== undefined && props !== null ? props : ({}));
-        Qt.callLater(root.focusCurrentPage);
+    function pushPage(route, initialProperties): void {
+        // Player is a transient overlay, not a history entry. A remote route
+        // can arrive while it is visible; remove that overlay before mutating
+        // the bounded page cache so its token/page ordering stays exact.
+        if (root.playerOnTop)
+            stack.pop(StackView.Immediate);
+        stack.pushRoute(route, initialProperties);
     }
 
     // Every route into the player goes through the same focus hand-off. The
@@ -236,47 +208,61 @@ ApplicationWindow {
     function goBack(): void {
         if (!root.canGoBack)
             return;
-        if (root.navTrail.length > 0) {
-            const entry = root.navTrail[root.navTrail.length - 1];
-            root.navTrail = root.navTrail.slice(0, -1);
-            root.navForward = [entry].concat(root.navForward);
-        }
-        stack.pop();
-        // Re-arm whatever backs the page we are returning TO. Controllers are
-        // single instances shared across pages, so popping alone leaves them
-        // scoped to the page just left: going back from a person to a library
-        // showed the library page with the person's filmography still in it.
-        const restored = root.navTrail.length > 0
-                       ? root.navTrail[root.navTrail.length - 1] : null;
-        if (restored && restored.prepare)
-            restored.prepare();
-        Qt.callLater(root.restoreFocusToPage);
+        stack.goBack();
     }
 
     function goForward(): void {
         if (!root.canGoForward)
             return;
-        const entry = root.navForward[0];
-        root.navForward = root.navForward.slice(1);
-        root.rememberFocus();
-        root.navTrail = root.navTrail.concat([entry]);
-        if (entry.prepare)
-            entry.prepare();
-        stack.push(entry.component, entry.props);
-        Qt.callLater(root.focusCurrentPage);
+        stack.goForward();
     }
 
     function goHome(): void {
-        if (stack.depth > 1) {
-            root.rememberFocus();
-            // Unwinding to Home is still history: everything left behind stays
-            // reachable with Forward, newest first.
-            root.navForward = root.navTrail.slice().reverse().concat(root.navForward);
-            root.navTrail = [];
-            while (stack.depth > 1)
-                stack.pop();
+        if (root.playerOnTop)
+            stack.pop(StackView.Immediate);
+        stack.goHome();
+    }
+
+    // Controllers are process-wide, while routes are not. Re-arm the scope of
+    // a page restored from Back/Forward before its graph becomes interactive.
+    // The switch replaces the captured per-entry closures formerly retained by
+    // navigation history.
+    function prepareRoute(route): void {
+        switch (route.kind) {
+        case "library":
+            if (route.mode === "favorites")
+                LibraryCtl.openFavorites();
+            else if (route.mode === "genre")
+                LibraryCtl.openGenre(route.id, route.name);
+            else if (route.mode === "studio")
+                LibraryCtl.openStudio(route.id, route.name);
+            else if (route.mode === "collection")
+                LibraryCtl.openCollection(route.id, route.name);
+            else
+                LibraryCtl.open(route.id, route.name, route.collectionType);
+            break;
+        case "person":
+            LibraryCtl.openPerson(route.id, route.name);
+            break;
+        case "series":
+            SeriesCtl.open(route.id, route.name);
+            break;
+        case "playlist":
+            PlaylistCtl.refresh();
+            if (route.id.length > 0)
+                PlaylistCtl.open(route.id, route.name);
+            break;
+        case "music":
+            MusicCtl.setLibrary(route.id);
+            MusicCtl.loadAlbums();
+            break;
+        case "artist":
+            MusicCtl.openArtist(route.id, route.name);
+            break;
+        case "album":
+            MusicCtl.openAlbum(route.id, route.name);
+            break;
         }
-        Qt.callLater(root.restoreFocusToPage);
     }
 
     // Music kinds get their own pages. Without this an album card opened the
@@ -290,9 +276,9 @@ ApplicationWindow {
                 return true;
             }
             MusicCtl.openArtist(item.itemId, item.name);
-            root.pushPage(artistComponent, { "artistItem": item },
-                          () => MusicCtl.openArtist(item.itemId, item.name),
-                          key, item.name);
+            root.pushPage({ "kind": "artist", "id": item.itemId, "name": item.name,
+                            "itemType": "MusicArtist", "key": key, "title": item.name },
+                          { "artistItem": item });
             return true;
         }
         if (type === "MusicAlbum") {
@@ -302,9 +288,9 @@ ApplicationWindow {
                 return true;
             }
             MusicCtl.openAlbum(item.itemId, item.name);
-            root.pushPage(albumComponent, { "albumItem": item },
-                          () => MusicCtl.openAlbum(item.itemId, item.name),
-                          key, item.name);
+            root.pushPage({ "kind": "album", "id": item.itemId, "name": item.name,
+                            "itemType": "MusicAlbum", "key": key, "title": item.name },
+                          { "albumItem": item });
             return true;
         }
         // A track opens the album it belongs to: there is no page for one song,
@@ -333,15 +319,19 @@ ApplicationWindow {
         // Music routes to its own pages; everything else is the details page.
         if (item && root.openMusic(item))
             return;
-        root.pushPage(detailsComponent, { "item": item }, null, "details",
-                      item && item.name ? item.name : qsTr("Details"));
+        const name = item && item.name ? String(item.name) : qsTr("Details");
+        root.pushPage({ "kind": "details",
+                        "id": item && item.itemId !== undefined ? String(item.itemId) : "",
+                        "name": name,
+                        "itemType": item && item.type !== undefined ? String(item.type) : "",
+                        "key": "details", "title": name },
+                      { "item": item });
     }
 
     function openSeries(seriesId, seriesName): void {
         SeriesCtl.open(seriesId, seriesName);
-        root.pushPage(seriesComponent, ({}),
-                      () => SeriesCtl.open(seriesId, seriesName),
-                      "series", seriesName);
+        root.pushPage({ "kind": "series", "id": seriesId, "name": seriesName,
+                        "key": "series", "title": seriesName });
     }
 
     // Favorites is a filter across every library rather than a library of its
@@ -356,9 +346,8 @@ ApplicationWindow {
             return;
         }
         LibraryCtl.openFavorites();
-        root.pushPage(libraryComponent, ({}),
-                      () => LibraryCtl.openFavorites(),
-                      "favorites", qsTr("Favorites"));
+        root.pushPage({ "kind": "library", "mode": "favorites",
+                        "key": "favorites", "title": qsTr("Favorites") });
     }
 
     function openLibrary(libraryId, name, collectionType): void {
@@ -371,11 +360,9 @@ ApplicationWindow {
             }
             MusicCtl.setLibrary(libraryId);
             MusicCtl.loadAlbums();
-            const arm = () => {
-                MusicCtl.setLibrary(libraryId);
-                MusicCtl.loadAlbums();
-            };
-            root.pushPage(musicComponent, ({}), arm, libraryId, name);
+            root.pushPage({ "kind": "music", "id": libraryId, "name": name,
+                            "collectionType": collectionType,
+                            "key": libraryId, "title": name });
             return;
         }
         // Guarded like the others, and for a second reason: without it, clicking
@@ -385,9 +372,10 @@ ApplicationWindow {
             return;
         }
         LibraryCtl.open(libraryId, name, collectionType);
-        root.pushPage(libraryComponent, ({}),
-                      () => LibraryCtl.open(libraryId, name, collectionType),
-                      libraryId, name);
+        root.pushPage({ "kind": "library", "mode": "library",
+                        "id": libraryId, "name": name,
+                        "collectionType": collectionType,
+                        "key": libraryId, "title": name });
     }
 
     function openPlaylists(): void {
@@ -396,8 +384,8 @@ ApplicationWindow {
             return;
         }
         PlaylistCtl.refresh();
-        root.pushPage(playlistComponent, ({}), () => PlaylistCtl.refresh(),
-                      "playlists", qsTr("Playlists"));
+        root.pushPage({ "kind": "playlist", "key": "playlists",
+                        "title": qsTr("Playlists") });
     }
 
     // The same page, opened ON a playlist. It is one destination and keeps one
@@ -412,11 +400,8 @@ ApplicationWindow {
             return;
         }
         PlaylistCtl.refresh();
-        const arm = () => {
-            PlaylistCtl.refresh();
-            PlaylistCtl.open(playlistId, name);
-        };
-        root.pushPage(playlistComponent, ({}), arm, "playlists", qsTr("Playlists"));
+        root.pushPage({ "kind": "playlist", "id": playlistId, "name": name,
+                        "key": "playlists", "title": qsTr("Playlists") });
     }
 
     function openSearch(): void {
@@ -424,7 +409,7 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        root.pushPage(searchComponent, ({}), null, "search", qsTr("Search"));
+        root.pushPage({ "kind": "search", "key": "search", "title": qsTr("Search") });
     }
 
     function openSettings(): void {
@@ -432,7 +417,8 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        root.pushPage(settingsComponent, ({}), null, "settings", qsTr("Settings"));
+        root.pushPage({ "kind": "settings", "key": "settings",
+                        "title": qsTr("Settings") });
     }
 
     // A genre chip, a cast member or a studio: the same grid with one server-side
@@ -449,23 +435,20 @@ ApplicationWindow {
         // rather than the generic filtered grid the other scopes use.
         if (kind === "person") {
             LibraryCtl.openPerson(id, name);
-            root.pushPage(personComponent, { "personId": id, "personName": name },
-                          () => LibraryCtl.openPerson(id, name), key, name);
+            root.pushPage({ "kind": "person", "id": id, "name": name,
+                            "key": key, "title": name },
+                          { "personId": id, "personName": name });
             return;
         }
 
-        const run = () => {
-            if (kind === "genre")
-                LibraryCtl.openGenre(id, name);
-            else if (kind === "person")
-                LibraryCtl.openPerson(id, name);
-            else if (kind === "studio")
-                LibraryCtl.openStudio(id, name);
-            else if (kind === "collection")
-                LibraryCtl.openCollection(id, name);
-        };
-        run();
-        root.pushPage(libraryComponent, ({}), run, key, name);
+        if (kind === "genre")
+            LibraryCtl.openGenre(id, name);
+        else if (kind === "studio")
+            LibraryCtl.openStudio(id, name);
+        else if (kind === "collection")
+            LibraryCtl.openCollection(id, name);
+        root.pushPage({ "kind": "library", "mode": kind, "id": id, "name": name,
+                        "key": key, "title": name });
     }
 
     // Available to pages as ApplicationWindow.window.notify(...) so a page does
@@ -501,7 +484,7 @@ ApplicationWindow {
         }
     }
 
-    StackView {
+    BoundedNavigationStack {
         id: stack
 
         anchors.fill: parent
@@ -512,21 +495,27 @@ ApplicationWindow {
         // is exactly the row a user scrolls to.
         anchors.bottomMargin: miniPlayer.reservedHeight
         focus: true
+        historyLimit: root.navigationHistoryLimit
+        focusItem: root.activeFocusItem
+        initialRoute: Session.authenticated
+                      ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
+                      : ({ "kind": "login", "key": "login", "title": qsTr("Sign in") })
         initialItem: Session.authenticated ? homeComponent : loginComponent
 
-        // focusMemory is keyed by depth, and only the depth being restored ever
-        // deleted its own entry. Abandon a branch — go back three pages, then
-        // walk a different way — and the entries above the new depth still hold
-        // references to items that were destroyed with their pages, so the next
-        // restore at that depth reads a dead object and throws (masked by the
-        // try/catch in restoreFocusToPage). Anything deeper than the stack is by
-        // definition gone, so this is where it gets dropped.
-        onDepthChanged: {
-            for (const key in root.focusMemory) {
-                if (Number(key) > stack.depth)
-                    delete root.focusMemory[key];
-            }
-        }
+        loginPageComponent: loginComponent
+        homePageComponent: homeComponent
+        libraryPageComponent: libraryComponent
+        personPageComponent: personComponent
+        playlistPageComponent: playlistComponent
+        artistPageComponent: artistComponent
+        albumPageComponent: albumComponent
+        musicPageComponent: musicComponent
+        detailsPageComponent: detailsComponent
+        seriesPageComponent: seriesComponent
+        searchPageComponent: searchComponent
+        settingsPageComponent: settingsComponent
+
+        onPrepareRequested: route => root.prepareRoute(route)
 
         // Page-construction self-test (STRMQT_SELFTEST=1). See main.cpp: a
         // plain offscreen run only ever builds StackView's initialItem, so a
@@ -1273,15 +1262,12 @@ ApplicationWindow {
         target: Session
 
         function onAuthenticatedChanged() {
-            stack.clear();
-            root.navTrail = [];
-            root.navForward = [];
-            root.focusMemory = ({});
             if (Session.authenticated) {
-                stack.push(homeComponent);
+                stack.resetToRoute({ "kind": "home", "key": "home", "title": qsTr("Home") });
                 HomeCtl.refresh();
             } else {
-                stack.push(loginComponent);
+                stack.resetToRoute({ "kind": "login", "key": "login",
+                                     "title": qsTr("Sign in") });
             }
         }
     }

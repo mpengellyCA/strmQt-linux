@@ -37,6 +37,11 @@ target_compile_definitions(tst_qml_accessibility PRIVATE STRMQT_SOURCE_DIR="${CM
 set_tests_properties(tst_qml_accessibility PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1")
 
+strmqt_add_test(tst_navigation_history unit/tst_navigation_history.cpp)
+target_link_libraries(tst_navigation_history PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_navigation_history PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_navigation_history PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp

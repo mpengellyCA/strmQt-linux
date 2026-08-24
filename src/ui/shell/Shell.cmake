@@ -1,6 +1,4 @@
-# Application chrome (ARCHITECTURE.md). Main.qml is a bare StackView today:
-# no header, no back, no search or settings affordance, so a first-run mouse
-# user can sign in and is then functionally stuck.
+# Application chrome and bounded navigation infrastructure (ARCHITECTURE.md).
 qt_target_qml_sources(strmqt QML_FILES
     ui/shell/TopBar.qml
     ui/shell/NavRail.qml
@@ -13,4 +11,5 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/shell/UpdateBanner.qml
     ui/shell/MiniPlayer.qml
     ui/shell/SleeveFlight.qml
+    ui/shell/BoundedNavigationStack.qml
 )
