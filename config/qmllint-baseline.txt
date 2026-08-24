@@ -409,9 +409,12 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.albums
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.artistsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.playlistsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.songsLoading)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: MusicCtl.albumsErrorMessage
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: MusicCtl.albumsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: MusicCtl.libraryId
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.artistsTab ? MusicCtl.artistsErrorMessage
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.artistsTab ? MusicCtl.artistsLoading
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.songsTab ? MusicCtl.songsErrorMessage
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	: page.songsTab ? MusicCtl.songsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.instantMix(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.instantMix(item)
@@ -457,7 +460,6 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	active: App.interac
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && PlayerCtl.active
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && PlayerCtl.active
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && page.scopeId.length > 0
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	body: MusicCtl.errorMessage
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	body: MusicCtl.filtered
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	const favorite = Actions.isFavorite(id)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	const model = MusicCtl.albums
@@ -501,9 +503,9 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onQueueRequested: A
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl.artistMode = "albumArtists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onToggled: MusicCtl.artistMode = "artists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	options: MusicCtl.genreOptions,
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	page.playlistsTab ? MusicCtl.playlistsErrorMessage
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool albumArtistMode: MusicCtl.artistMode === "albumArtists"
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool currentTabLoading: page.playlistsTab ? MusicCtl.playlistsLoading
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property bool failed: MusicCtl.errorMessage.length > 0
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int albumTotal: MusicCtl.albums.totalRecordCount
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int artistTotal: MusicCtl.artists.totalRecordCount
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property int playlistTotal: MusicCtl.playlists.totalRecordCount
@@ -511,7 +513,6 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	readonly property i
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	selected: MusicCtl.genreIds
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	target: MusicCtl
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	text: qsTr("Couldn't load more: %1").arg(MusicCtl.errorMessage)
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.errorMessage.length === 0
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.errorMessage.length > 0
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	&& LibraryCtl.model.count === 0
