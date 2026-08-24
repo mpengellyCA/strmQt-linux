@@ -79,6 +79,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	if (Session.authenticated) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
 src/ui/Main.qml: Unqualified access [unqualified]	initialItem: Session.authenticated ? homeComponent : loginComponent
 src/ui/Main.qml: Unqualified access [unqualified]	initialRoute: Session.authenticated
+src/ui/Main.qml: Unqualified access [unqualified]	onFocusRestoreOverrideRequested: stack.retireFocusRestoreOwnership()
 src/ui/Main.qml: Unqualified access [unqualified]	onMinimizeRequested: root.minimizePlayer()
 src/ui/Main.qml: Unqualified access [unqualified]	onPointChanged: Input.noteInput("mouse")
 src/ui/Main.qml: Unqualified access [unqualified]	onSignOutRequested: Session.logout()
@@ -660,9 +661,7 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	Component.onComple
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.clearRecentQueries()
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.noteQueryUsed(SearchCtl.query)
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.noteQueryUsed(SearchCtl.query)
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = ""
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = ""
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = text
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	SearchCtl.query = query
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	body: SearchCtl.errorMessage
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.hasQuery && SearchCtl.genres ? SearchCtl.genres : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	chipModel: page.hasQuery && SearchCtl.genres ? SearchCtl.genres : []
@@ -682,8 +681,6 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRef
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onActionTriggered: SearchCtl.retry()
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onCleared: SearchCtl.query = ""
-src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onTextEdited: SearchCtl.query = searchField.text
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	page.builtQuery = SearchCtl.query
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	people: page.hasQuery && SearchCtl.people ? SearchCtl.people : []
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	people: page.hasQuery && SearchCtl.people ? SearchCtl.people : []
