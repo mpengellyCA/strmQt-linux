@@ -24,6 +24,10 @@ class DetailsController : public QObject
     // not clear a populated page and race focus restoration against a needless
     // replacement request.
     Q_PROPERTY(QString itemId READ itemId NOTIFY detailsChanged)
+    // True only while the primary detail request for itemId is live. `itemId`
+    // remains non-empty after a successful settlement, but is retired on
+    // failure or when the shared request lane is handed to a Person page.
+    Q_PROPERTY(bool itemLoading READ itemLoading NOTIFY detailsChanged)
     Q_PROPERTY(QString tagline READ tagline NOTIFY detailsChanged)
     // Playable versions of this item, one QVariantMap per MediaSource (the
     // MediaSource::toVariantMap() shape, plus an "index"). A later wave builds
@@ -68,6 +72,7 @@ public:
     ~DetailsController() override;
 
     QString itemId() const { return m_itemId; }
+    bool itemLoading() const { return m_itemLoading; }
     QString tagline() const { return m_tagline; }
     QVariantList mediaSources() const { return m_mediaSources; }
     int mediaSourceCount() const { return static_cast<int>(m_mediaSources.size()); }
@@ -88,6 +93,9 @@ public:
     void resetSessionState();
 
     Q_INVOKABLE void load(const QString &itemId);
+    // Joins a live or successfully-settled request for the same item. Failed
+    // and cancelled ownership is cleared, so the same call becomes a retry.
+    Q_INVOKABLE void ensureLoaded(const QString &itemId);
     // A person is an ordinary item to Emby: /Users/{uid}/Items/{personId}
     // returns Overview, PremiereDate (their birth date) and
     // ProductionLocations (their birthplace). Verified on the live server.
@@ -106,6 +114,7 @@ private:
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
     QString m_itemId;
+    bool m_itemLoading = false;
     QString m_tagline;
     QVariantList m_mediaSources;
     QVariantList m_chapters;

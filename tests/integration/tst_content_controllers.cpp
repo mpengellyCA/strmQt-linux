@@ -39,6 +39,8 @@ private slots:
     void detailsExposesEveryEnrichment();
     void detailsPersonImageUsesSessionNamespace();
     void detailsClearsBetweenItems();
+    void detailsEnsureJoinsUsableStateAndRetriesFailure();
+    void detailsPersonLoadRetiresAnInFlightItemOwner();
     void supersededDetailsAbortsEveryLane();
     void seriesFetchesItsOwnRecord();
     void seriesNextUnwatchedQueryIsBounded();
@@ -406,6 +408,90 @@ void ContentControllersTest::detailsClearsBetweenItems()
     QVERIFY(details.genres().isEmpty());
     QVERIFY(details.trailers().isEmpty());
     QVERIFY(details.collections().isEmpty());
+}
+
+void ContentControllersTest::detailsEnsureJoinsUsableStateAndRetriesFailure()
+{
+    const QString detailPath = QStringLiteral("/Users/%1/Items/joined").arg(kUserId);
+    const QString similarPath = QStringLiteral("/Items/joined/Similar");
+    const QString collectionsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"joined\",\"Name\":\"Joined\","
+                                       "\"Type\":\"Movie\",\"Taglines\":[\"Ready\"]}"));
+    m_mock->addRoute(QStringLiteral("GET"), similarPath, 200,
+                     QByteArrayLiteral("{\"Items\":[]}"));
+    m_mock->addRoute(QStringLiteral("GET"), collectionsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), detailPath, 300);
+
+    DetailsController details(m_client);
+    details.ensureLoaded(QStringLiteral("joined"));
+    QCOMPARE(details.itemId(), QStringLiteral("joined"));
+    QVERIFY(details.itemLoading());
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(detailPath), 1, 5000);
+
+    // A reconstructed page joins both a live request and its settled result.
+    details.ensureLoaded(QStringLiteral("joined"));
+    QTest::qWait(50);
+    QCOMPARE(requestsFor(detailPath), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QCOMPARE(details.tagline(), QStringLiteral("Ready"));
+    details.ensureLoaded(QStringLiteral("joined"));
+    QTest::qWait(50);
+    QCOMPARE(requestsFor(detailPath), 1);
+
+    // A failed primary response must not leave the same id certifying that the
+    // empty controller state is reusable. Re-registering the fixture makes the
+    // next ensure an observable retry.
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 500, QByteArrayLiteral("{}"));
+    details.load(QStringLiteral("joined"));
+    QTRY_VERIFY_WITH_TIMEOUT(details.itemId().isEmpty(), 5000);
+    QCOMPARE(requestsFor(detailPath), 2);
+
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"joined\",\"Name\":\"Joined\","
+                                       "\"Type\":\"Movie\",\"Taglines\":[\"Retried\"]}"));
+    details.ensureLoaded(QStringLiteral("joined"));
+    QTRY_COMPARE_WITH_TIMEOUT(details.tagline(), QStringLiteral("Retried"), 5000);
+    QCOMPARE(details.itemId(), QStringLiteral("joined"));
+    QCOMPARE(requestsFor(detailPath), 3);
+}
+
+void ContentControllersTest::detailsPersonLoadRetiresAnInFlightItemOwner()
+{
+    const QString detailPath = QStringLiteral("/Users/%1/Items/interrupted").arg(kUserId);
+    const QString personPath = QStringLiteral("/Users/%1/Items/person").arg(kUserId);
+    const QString similarPath = QStringLiteral("/Items/interrupted/Similar");
+    const QString collectionsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"interrupted\",\"Name\":\"Item\","
+                                       "\"Type\":\"Movie\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), personPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"person\",\"Name\":\"Person\","
+                                       "\"Type\":\"Person\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), similarPath, 200,
+                     QByteArrayLiteral("{\"Items\":[]}"));
+    m_mock->addRoute(QStringLiteral("GET"), collectionsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), detailPath, 1000);
+    m_mock->setRouteDelay(QStringLiteral("GET"), personPath, 300);
+
+    DetailsController details(m_client);
+    details.ensureLoaded(QStringLiteral("interrupted"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(detailPath), 1, 5000);
+    QVERIFY(details.itemLoading());
+
+    details.loadPerson(QStringLiteral("person"));
+    QVERIFY(details.itemId().isEmpty());
+    QVERIFY(!details.itemLoading());
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->abortedResponseCount(detailPath), 1, 5000);
+
+    // Returning to the interrupted item cannot join the cancelled request.
+    m_mock->setRouteDelay(QStringLiteral("GET"), detailPath, 0);
+    details.ensureLoaded(QStringLiteral("interrupted"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(detailPath), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QCOMPARE(details.itemId(), QStringLiteral("interrupted"));
 }
 
 void ContentControllersTest::supersededDetailsAbortsEveryLane()

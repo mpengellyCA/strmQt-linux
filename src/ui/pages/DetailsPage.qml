@@ -1131,11 +1131,32 @@ FocusScope {
 
     onItemIdChanged: page.syncUserState()
 
+    function ensureDetailsScope(): void {
+        if (page.itemId.length === 0) {
+            page.detailsLoading = false
+            loadGuard.stop()
+            return
+        }
+        // Main may already have prepared this restored route. The controller's
+        // ensure joins either its live request or its successfully retained
+        // state; a failure/loadPerson cancellation clears itemId and therefore
+        // turns the same call into a retry.
+        DetailsCtl.ensureLoaded(page.itemId)
+        page.detailsLoading = DetailsCtl.itemId === page.itemId && DetailsCtl.itemLoading
+        if (page.detailsLoading)
+            loadGuard.restart()
+        else
+            loadGuard.stop()
+    }
+
     Component.onCompleted: {
-        DetailsCtl.load(page.itemId)
-        page.detailsLoading = true
-        loadGuard.restart()
+        page.ensureDetailsScope()
         page.syncUserState()
+    }
+
+    onVisibleChanged: {
+        if (page.visible)
+            Qt.callLater(page.ensureDetailsScope)
     }
 
     Connections {
@@ -1155,9 +1176,15 @@ FocusScope {
         target: DetailsCtl
 
         function onDetailsChanged() {
-            page.detailsLoading = false
-            loadGuard.stop()
-            page.restoreVersion()
+            page.detailsLoading = DetailsCtl.itemId === page.itemId
+                                  && DetailsCtl.itemLoading
+            if (page.detailsLoading) {
+                loadGuard.restart()
+            } else {
+                loadGuard.stop()
+                if (DetailsCtl.itemId === page.itemId)
+                    page.restoreVersion()
+            }
         }
     }
 

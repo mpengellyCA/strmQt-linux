@@ -23,6 +23,7 @@ void DetailsController::resetSessionState()
     ++m_generation;
     cancelRequests();
     m_itemId.clear();
+    m_itemLoading = false;
     m_similar->clear();
     m_tagline.clear();
     m_mediaSources.clear();
@@ -47,6 +48,11 @@ void DetailsController::loadPerson(const QString &personId)
 {
     const int generation = ++m_generation;
     cancelRequests();
+    const bool retiredItemOwner = !m_itemId.isEmpty() || m_itemLoading;
+    m_itemId.clear();
+    m_itemLoading = false;
+    if (retiredItemOwner)
+        emit detailsChanged();
     m_person.clear();
     emit personChanged();
     if (personId.isEmpty())
@@ -87,6 +93,7 @@ void DetailsController::load(const QString &itemId)
     const int generation = ++m_generation;
     cancelRequests();
     m_itemId = itemId;
+    m_itemLoading = !itemId.isEmpty();
     m_tagline.clear();
     m_mediaSources.clear();
     m_chapters.clear();
@@ -102,11 +109,25 @@ void DetailsController::load(const QString &itemId)
     emit detailsChanged();
     m_similar->clear();
 
-    m_client->itemDetails(itemId, &m_detailsRequest).then(this, [this, generation](const Result<ItemDetails> &result) {
+    m_collections.clear();
+    emit collectionsChanged();
+    if (itemId.isEmpty())
+        return;
+
+    m_client->itemDetails(itemId, &m_detailsRequest)
+        .then(this, [this, generation](const Result<ItemDetails> &result) {
         if (generation != m_generation)
             return;
+        m_itemLoading = false;
         if (!result.ok()) {
+            // Ownership equality is used to join a restored page to useful
+            // state. A failed primary response is not useful state: retire
+            // the id so the next ensureLoaded() honestly retries it.
+            m_itemId.clear();
+            m_collectionsRequest.cancel();
+            m_similarRequest.cancel();
             qCWarning(logApp) << "item details load failed:" << result.error;
+            emit detailsChanged();
             return;
         }
         const ItemDetails &details = result.value;
@@ -179,8 +200,6 @@ void DetailsController::load(const QString &itemId)
     // Collection membership. A separate request because the item payload has no
     // field for it: ListItemIds against BoxSets is the reverse lookup, and the
     // plausible-looking ContainsItemId is silently ignored by the server.
-    m_collections.clear();
-    emit collectionsChanged();
     ItemsQuery collectionsQuery;
     collectionsQuery.includeItemTypes = {QStringLiteral("BoxSet")};
     collectionsQuery.listItemIds = {itemId};
@@ -207,6 +226,13 @@ void DetailsController::load(const QString &itemId)
             if (result.ok())
                 m_similar->setItems(result.value);
         });
+}
+
+void DetailsController::ensureLoaded(const QString &itemId)
+{
+    if (itemId.isEmpty() || m_itemId == itemId)
+        return;
+    load(itemId);
 }
 
 void DetailsController::cancelRequests()
