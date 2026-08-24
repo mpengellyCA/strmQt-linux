@@ -96,6 +96,12 @@ strmqt_add_test(tst_content_controllers
 )
 target_include_directories(tst_content_controllers PRIVATE mocks)
 
+strmqt_add_test(tst_search_coherence
+    integration/tst_search_coherence.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+)
+target_include_directories(tst_search_coherence PRIVATE mocks)
+
 strmqt_add_test(tst_player_controller
     integration/tst_player_controller.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp

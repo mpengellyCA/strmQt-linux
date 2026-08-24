@@ -70,20 +70,24 @@ void SearchController::resetSessionState()
     ++m_generation;
     cancelRequests();
     m_debounce.stop();
-    m_model->clear();
 
-    if (!m_query.isEmpty()) {
-        m_query.clear();
+    const bool queryWasSet = !m_query.isEmpty();
+    m_query.clear();
+    // Empty the owner before publishing any terminal lifecycle signal. A
+    // Search page may be restoring focus while the process-wide controller is
+    // crossing accounts; another account's retained rows are never a valid
+    // terminal snapshot for that restore.
+    m_model->clear();
+    const bool facetsWereSet = !m_people.isEmpty() || !m_genres.isEmpty();
+    m_people.clear();
+    m_genres.clear();
+    if (queryWasSet)
         emit queryChanged();
-    }
+    if (facetsWereSet)
+        emit facetsChanged();
     if (m_searching) {
         m_searching = false;
         emit searchingChanged();
-    }
-    if (!m_people.isEmpty() || !m_genres.isEmpty()) {
-        m_people.clear();
-        m_genres.clear();
-        emit facetsChanged();
     }
     // The stored value remains under user A's identity key. EmbyClient emits
     // identityChanged after the boundary, and reloadRecentQueries() then reads
@@ -125,14 +129,28 @@ void SearchController::setQuery(const QString &query)
     m_query = query;
     ++m_generation;
     cancelRequests();
+
+    const bool hasQuery = !query.trimmed().isEmpty();
+    if (hasQuery && !m_searching) {
+        // Refill ownership begins before retained rows are cleared and before
+        // the debounce. NavigationFocusRestorer must never certify another
+        // query's rows during that otherwise-idle interval.
+        m_searching = true;
+        emit searchingChanged();
+    }
+
+    // Every query owns a fresh result/facet snapshot. Clearing now makes
+    // failure and cancellation terminal on an honest empty model instead of
+    // leaving the previous query drawn under the new text.
+    m_model->clear();
+    const bool facetsWereSet = !m_people.isEmpty() || !m_genres.isEmpty();
+    m_people.clear();
+    m_genres.clear();
     emit queryChanged();
-    if (query.trimmed().isEmpty()) {
-        m_model->clear();
-        // Facets are separate lists and would otherwise survive an emptied
-        // query, leaving people and genres on screen for a search that is gone.
-        m_people.clear();
-        m_genres.clear();
+    if (facetsWereSet)
         emit facetsChanged();
+
+    if (!hasQuery) {
         m_debounce.stop();
         if (m_searching) {
             m_searching = false;
@@ -146,8 +164,6 @@ void SearchController::setQuery(const QString &query)
 void SearchController::runSearch()
 {
     const int generation = m_generation;
-    m_searching = true;
-    emit searchingChanged();
 
     ItemsQuery query;
     query.searchTerm = m_query.trimmed();
@@ -167,9 +183,6 @@ void SearchController::runSearch()
 
     // People and genres are their own endpoints and land independently; the item
     // results must not wait on them.
-    m_people.clear();
-    m_genres.clear();
-    emit facetsChanged();
     const QString term = m_query.trimmed();
     m_client->persons(term, kFacetLimit, &m_peopleRequest)
         .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
@@ -190,12 +203,15 @@ void SearchController::runSearch()
         .then(this, [this, generation](const Result<ItemsPage> &result) {
             if (generation != m_generation)
                 return;
-            m_searching = false;
-            emit searchingChanged();
             if (result.ok())
                 m_model->setItems(result.value.items, result.value.totalRecordCount);
             else
                 qCWarning(logApp) << "search failed:" << result.error;
+            // The terminal signal is a promise that the model is coherent for
+            // this query: populated on success, empty on failure. Publish it
+            // only after the owner has reached that state.
+            m_searching = false;
+            emit searchingChanged();
         });
 }
 
