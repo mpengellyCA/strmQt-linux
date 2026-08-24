@@ -1025,6 +1025,20 @@ ApplicationWindow {
                 root.showPlayer(false);
             }
         }
+        // A film chosen while a record is playing. The session was already
+        // active, so onActiveChanged() never fired and the picture had nowhere
+        // to go: the video played behind the library with only its sound, and
+        // the only way to see it was to stop and start it again. The surface
+        // is decided when the item is chosen, which is what this signal means.
+        //
+        // Audio is deliberately not here. A record started from a page opens
+        // the player through onActiveChanged() as it always has, and a record
+        // started while another one plays leaves the user where they are —
+        // that is the whole point of the docked bar.
+        function onItemStarted() {
+            if (!PlayerCtl.isAudio && !root.playerOnTop)
+                root.showPlayer(false);
+        }
         function onStopped() {
             // Nothing is playing, so there is no sleeve to land: whatever was in
             // the air stops here rather than flying at a hero that is about to

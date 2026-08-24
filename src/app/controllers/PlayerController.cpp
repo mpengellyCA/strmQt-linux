@@ -363,10 +363,31 @@ void PlayerController::playItem(const QString &itemId, const QString &title,
     startItem(itemId, title, startPositionMs, preferredSourceIndex, false, itemType);
 }
 
+bool PlayerController::typeIsAudio(const QString &type)
+{
+    return type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
+        || type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0;
+}
+
 void PlayerController::startItem(const QString &itemId, const QString &title,
                                  qint64 startPositionMs, int preferredSourceIndex, bool fromQueue,
                                  const QString &itemType)
 {
+    // Before anything is torn down, and in particular before the engine stop
+    // below publishes a zeroed position: a film chosen over a playing record
+    // puts that record aside instead of destroying it. Only a deliberate
+    // choice does this — a queue running from an album into its music video is
+    // the queue doing what it was told, not an interruption.
+    if (!m_transportStart) {
+        if (typeIsAudio(itemType)) {
+            // New music replaces the old: whatever was set aside is not what
+            // the user wants back any more.
+            m_suspendedAudio = {};
+        } else if (m_active && m_isAudio && !m_itemId.isEmpty()) {
+            suspendAudioSession();
+        }
+    }
+
     // Resolve starts from a quiescent engine. This makes the intermediate
     // snapshot coherent (pending metadata plus an empty timeline) and means a
     // failed handoff cannot leave the outgoing file playing behind an inactive
@@ -430,6 +451,10 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     setBusy(true);
     setActive(true);
     updateIsAudio();
+    // isAudio is settled by now — the item's own type decided it — so a shell
+    // reacting to this already knows which surface the choice needs.
+    if (!m_transportStart)
+        emit itemStarted();
     m_reporting = true;
     m_stallStep = 0;
     m_healthyTicks = 0;
@@ -964,6 +989,9 @@ bool PlayerController::tryAutoPlayNextEpisode()
             // Seeded as a queue item rather than a bare playItem() so the next
             // episode carries its own artwork and metadata into the mini
             // player and the OSD, and so THIS runs again when it ends.
+            // Transport, not a choice: nobody asked for this episode now, so
+            // it must not pull a browsing user onto the player page.
+            const QScopedValueRollback<bool> transport(m_transportStart, true);
             playQueueItems({next}, 0, false);
         });
     // Responsibility taken: finishSession() is now this callback's to call.
@@ -980,6 +1008,7 @@ bool PlayerController::advanceToNext()
         moved = m_queue->advance();
     }
     emit queueStateChanged();
+    const QScopedValueRollback<bool> transport(m_transportStart, true);
     return moved && startQueueCurrent(true);
 }
 
@@ -1024,6 +1053,7 @@ void PlayerController::playNext()
         m_queue->advance();
     }
     emit queueStateChanged();
+    const QScopedValueRollback<bool> transport(m_transportStart, true);
     startQueueCurrent(true);
 }
 
@@ -1044,6 +1074,7 @@ void PlayerController::playPrevious()
         m_queue->goBack();
     }
     emit queueStateChanged();
+    const QScopedValueRollback<bool> transport(m_transportStart, true);
     startQueueCurrent(true);
 }
 
@@ -1379,6 +1410,38 @@ void PlayerController::closeCurrentSession()
     m_started = false;
 }
 
+void PlayerController::suspendAudioSession()
+{
+    m_suspendedAudio = {};
+    m_suspendedAudio.queue = m_queue->snapshot();
+    m_suspendedAudio.itemId = m_itemId;
+    m_suspendedAudio.title = m_title;
+    m_suspendedAudio.itemType = m_currentItemType;
+    m_suspendedAudio.positionMs = qMax<qint64>(0, m_lastPositionMs);
+    if (!m_suspendedAudio.isValid()) {
+        m_suspendedAudio = {};
+        return;
+    }
+    qCInfo(logPlayback) << "setting aside audio session at" << m_suspendedAudio.positionMs
+                        << "ms for" << m_suspendedAudio.itemId;
+}
+
+void PlayerController::resumeSuspendedAudio()
+{
+    if (!m_suspendedAudio.isValid())
+        return;
+    const SuspendedAudio resume = m_suspendedAudio;
+    m_suspendedAudio = {};
+
+    m_queue->restore(resume.queue);
+    // Marked as an advance, not a choice: nobody asked for this item now, so
+    // no surface comes forward for it. The record simply carries on where the
+    // film interrupted it, under whatever page the user is looking at.
+    const QScopedValueRollback<bool> guard(m_transportStart, true);
+    startItem(resume.itemId, resume.title, resume.positionMs, -1, /*fromQueue=*/true,
+              resume.itemType);
+}
+
 void PlayerController::finishSession(TerminationReason reason)
 {
     if (reason == TerminationReason::Failure && m_started)
@@ -1425,6 +1488,15 @@ void PlayerController::finishSession(TerminationReason reason)
     clearAbLoop();
     setActive(false);
     emit stopped();
+
+    // The film is over — by its own end or because the user stopped it — so
+    // the record it interrupted goes back on. Deferred by one turn so this
+    // session is fully finished first: the shell pops the player page on
+    // stopped(), and the resumed audio must not race that with a start.
+    // A failure keeps the snapshot: the error is on screen and the user gets
+    // to decide, rather than having music start under an error nobody read.
+    if (reason != TerminationReason::Failure && m_suspendedAudio.isValid())
+        QTimer::singleShot(0, this, [this] { resumeSuspendedAudio(); });
 }
 
 void PlayerController::persistResume()

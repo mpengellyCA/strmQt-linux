@@ -69,6 +69,8 @@ private slots:
     void changingItemClosesTheOutgoingSession();
     void currentChangedLeadsTheControllersTitleAndDuration();
     void isAudioFollowsTheQueuesItemType();
+    void aFilmSetsTheRecordAsideAndGivesItBack();
+    void onlyAChosenItemAnnouncesItself();
     void isAudioFallsBackToTheSourceWhenTheTypeIsUnknown();
     void isAudioDoesNotLingerFromTheOutgoingItemsTicket();
 
@@ -656,6 +658,75 @@ void QueuePlaybackTest::isAudioDoesNotLingerFromTheOutgoingItemsTicket()
     QVERIFY(m_controller->isAudio());
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QVERIFY(m_controller->isAudio());
+}
+
+// Choosing a film while a record is playing used to replace the session
+// outright: the queue, the shuffle and the position were gone, and the only way
+// back to the music was to find it again. The record is put aside instead, and
+// comes back when the film ends — same track, same place.
+void QueuePlaybackTest::aFilmSetsTheRecordAsideAndGivesItBack()
+{
+    QVariantList tracks;
+    for (const QString &id : {QStringLiteral("301004"), QStringLiteral("301002")}) {
+        QVariantMap track;
+        track.insert(QStringLiteral("itemId"), id);
+        track.insert(QStringLiteral("name"), QStringLiteral("Track %1").arg(id));
+        track.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+        tracks.append(track);
+    }
+    m_controller->playQueue(tracks, 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QTRY_VERIFY(m_controller->isAudio());
+    m_backend->simulateDuration(300'000);
+    m_backend->simulatePosition(97'000);
+    QCOMPARE(m_controller->queue()->rowCount(), 2);
+
+    // A film, chosen deliberately, over the top of it.
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
+                           QStringLiteral("Movie"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(!m_controller->isAudio());
+    QCOMPARE(m_controller->queue()->rowCount(), 1); // the film owns the queue now
+    m_backend->simulateState(PlayerBackend::State::Playing);
+
+    // The film ends. The record comes back where it was, with its queue.
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(600'000);
+    m_backend->simulateEnd();
+
+    QTRY_VERIFY(m_controller->isAudio());
+    QTRY_COMPARE(m_controller->queue()->rowCount(), 2);
+    QCOMPARE(m_controller->queue()->currentItem().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301004"));
+    // The queue is back before the resolve that follows it, so wait for the
+    // load itself rather than reading the film's start position back.
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(m_backend->loadedStarts.constLast(), Q_INT64_C(97000));
+    QVERIFY(m_controller->active());
+}
+
+// The shell brings a playback surface forward when the user chooses something.
+// It must not do that for the queue moving on its own, or a skip would drag a
+// browsing user onto the player page for a button they pressed to stay put.
+void QueuePlaybackTest::onlyAChosenItemAnnouncesItself()
+{
+    QSignalSpy started(m_controller, &PlayerController::itemStarted);
+
+    m_controller->playQueue(threeItems(), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(started.count(), 1); // a choice
+
+    m_controller->playNext();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(started.count(), 1); // transport, not a choice
+
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(120'000);
+    m_backend->simulatePosition(120'000);
+    m_backend->simulateEnd();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(started.count(), 1); // an auto-advance is not a choice either
 }
 
 QTEST_GUILESS_MAIN(QueuePlaybackTest)

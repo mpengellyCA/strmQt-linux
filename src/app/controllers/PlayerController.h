@@ -270,8 +270,29 @@ signals:
     // extrapolates position between polls needs to be told when its extrapolation
     // became wrong, and MPRIS's Seeked signal is exactly that.
     void seeked(qint64 positionMs);
+    // A new item was started because the user asked for it — as opposed to a
+    // queue advancing, an episode auto-playing, or a record being put back
+    // after a film. The shell uses it to decide whether a playback surface has
+    // to come forward: a film started while a record is playing needs its
+    // picture at the moment it is chosen, not the next time the session
+    // happens to begin.
+    void itemStarted();
 
 private:
+    // A record put aside because the user chose a film. Everything needed to
+    // put it back exactly as it was, which is more than a position: the queue,
+    // its play order, the shuffle and the repeat mode are the state.
+    struct SuspendedAudio
+    {
+        PlayQueue::Snapshot queue;
+        QString itemId;
+        QString title;
+        QString itemType;
+        qint64 positionMs = 0;
+
+        bool isValid() const { return queue.isValid() && !itemId.isEmpty(); }
+    };
+
     enum class TerminationReason
     {
         CleanEnd,
@@ -319,7 +340,12 @@ private:
     // that replaces the item under the playhead calls this first, or the server
     // is never told the old item stopped and the progress timer keeps running
     // into the next one (see the comment on the definition).
+    static bool typeIsAudio(const QString &type);
     void closeCurrentSession();
+    // Put the playing record aside / take it back out. Both no-ops unless
+    // there is something to do.
+    void suspendAudioSession();
+    void resumeSuspendedAudio();
     void finishSession(TerminationReason reason);
     void persistResume();
     void setActive(bool active);
@@ -391,6 +417,13 @@ private:
     bool m_started = false;   // current rung got to Playing at least once
     bool m_reporting = false; // this session reports to the server
     int m_generation = 0;
+    // True while a start comes from the queue moving rather than from someone
+    // choosing an item: an auto-advance, an episode auto-play, a skip, or a
+    // record being put back. Those must not announce itemStarted(), because a
+    // shell that brings a playback surface forward for them would yank the
+    // user off the page they are on for a button they pressed to stay there.
+    bool m_transportStart = false;
+    SuspendedAudio m_suspendedAudio;
     PlayerBackend::LoadId m_nextLoadId = 0;
     PlayerBackend::LoadId m_expectedLoadId = 0;
     QString m_errorMessage;
