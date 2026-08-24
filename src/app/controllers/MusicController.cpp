@@ -84,6 +84,10 @@ void MusicController::resetSessionState()
     m_artistInFlight = 0;
     m_songInFlight = 0;
     m_playlistInFlight = 0;
+    m_albumDirty = false;
+    m_artistDirty = false;
+    m_songDirty = false;
+    m_playlistDirty = false;
     m_detailInFlight = 0;
     m_artistAlbumsInFlight = 0;
     m_artistTracksInFlight = 0;
@@ -142,6 +146,8 @@ void MusicController::resetSessionState()
 
 bool MusicController::canLoadMoreAlbums() const
 {
+    if (m_albumDirty)
+        return false;
     if (isRandomSort(m_albumSortBy))
         return false; // see isRandomSort(): a second page is a second shuffle
     return m_albums->rowCount() < m_albums->totalRecordCount();
@@ -149,6 +155,8 @@ bool MusicController::canLoadMoreAlbums() const
 
 bool MusicController::canLoadMoreArtists() const
 {
+    if (m_artistDirty)
+        return false;
     if (isRandomSort(m_artistSortBy))
         return false;
     return m_artists->rowCount() < m_artists->totalRecordCount();
@@ -156,6 +164,8 @@ bool MusicController::canLoadMoreArtists() const
 
 bool MusicController::canLoadMoreSongs() const
 {
+    if (m_songDirty)
+        return false;
     if (isRandomSort(m_songSortBy))
         return false;
     return m_songs->rowCount() < m_songs->totalRecordCount();
@@ -163,6 +173,8 @@ bool MusicController::canLoadMoreSongs() const
 
 bool MusicController::canLoadMorePlaylists() const
 {
+    if (m_playlistDirty)
+        return false;
     if (isRandomSort(m_playlistSortBy))
         return false;
     return m_playlists->rowCount() < m_playlists->totalRecordCount();
@@ -300,31 +312,44 @@ void MusicController::setSort(const QString &key, bool descending)
         m_albumSortDescending = descending;
     }
     // A sort is per tab, so it invalidates only the tab it belongs to — unlike
-    // every filter below, which invalidates all three.
+    // every shared filter below, which dirties the other three lanes.
     emit queryChanged();
-    // The tab's own list signal goes with it, because canLoadMore* now reads the
-    // sort (see isRandomSort()): picking Random has to retract "there is more"
-    // straight away rather than at whatever moment the next page happens to land.
-    switch (currentTabIndex()) {
+    const int lane = currentTabIndex();
+    if (!m_started) {
+        // canLoadMore* reads the sort (see isRandomSort()), so picking Random
+        // retracts "there is more" even before this controller has been asked
+        // for a page.
+        switch (lane) {
+        case 1:
+            emit artistsChanged();
+            break;
+        case 2:
+            emit songsChanged();
+            break;
+        case 3:
+            emit playlistsChanged();
+            break;
+        default:
+            emit albumsChanged();
+            break;
+        }
+        return;
+    }
+
+    invalidateBrowseLane(lane, true, false);
+    updateLoading();
+    switch (lane) {
     case 1:
-        emit artistsChanged();
-        if (m_started)
-            fetchArtists(0);
+        fetchArtists(0);
         break;
     case 2:
-        emit songsChanged();
-        if (m_started)
-            fetchSongs(0);
+        fetchSongs(0);
         break;
     case 3:
-        emit playlistsChanged();
-        if (m_started)
-            fetchPlaylists(0);
+        fetchPlaylists(0);
         break;
     default:
-        emit albumsChanged();
-        if (m_started)
-            fetchAlbums(0);
+        fetchAlbums(0);
         break;
     }
 }
@@ -409,6 +434,68 @@ void MusicController::updateLoading()
     emit errorChanged();
 }
 
+bool MusicController::browseLaneDirty(int lane) const
+{
+    switch (lane) {
+    case 1:
+        return m_artistDirty;
+    case 2:
+        return m_songDirty;
+    case 3:
+        return m_playlistDirty;
+    default:
+        return m_albumDirty;
+    }
+}
+
+void MusicController::invalidateBrowseLane(int lane, bool clearModel, bool dirty)
+{
+    switch (lane) {
+    case 1:
+        retire(m_artistGeneration, m_artistInFlight);
+        m_artistDirty = dirty;
+        m_artistError.clear();
+        if (clearModel)
+            m_artists->clear();
+        emit artistsChanged();
+        break;
+    case 2:
+        retire(m_songGeneration, m_songInFlight);
+        m_songDirty = dirty;
+        m_songError.clear();
+        if (clearModel)
+            m_songs->clear();
+        emit songsChanged();
+        break;
+    case 3:
+        retire(m_playlistGeneration, m_playlistInFlight);
+        m_playlistDirty = dirty;
+        m_playlistError.clear();
+        if (clearModel)
+            m_playlists->clear();
+        emit playlistsChanged();
+        break;
+    default:
+        retire(m_albumGeneration, m_albumInFlight);
+        m_albumDirty = dirty;
+        m_albumError.clear();
+        if (clearModel)
+            m_albums->clear();
+        emit albumsChanged();
+        break;
+    }
+}
+
+void MusicController::prepareBrowseLaneForLoad(int lane)
+{
+    if (!browseLaneDirty(lane))
+        return;
+    // A dirty hidden model belongs to the previous shared filter. Clear it
+    // synchronously before a Loader can create delegates for this lane.
+    invalidateBrowseLane(lane, true, false);
+    updateLoading();
+}
+
 int MusicController::beginDetail(const QString &kind, const QString &id)
 {
     const int generation = retire(m_generation, m_detailInFlight);
@@ -463,26 +550,17 @@ void MusicController::applyQueryChange()
     if (!m_started)
         return; // nothing has been asked for yet; the value is a preference so far
 
-    // Clearing a model is not enough on its own — a page already in flight for
-    // the old filter would land in the new one — so every generation moves.
-    retire(m_albumGeneration, m_albumInFlight);
-    retire(m_artistGeneration, m_artistInFlight);
-    retire(m_songGeneration, m_songInFlight);
-    retire(m_playlistGeneration, m_playlistInFlight);
-    m_albums->clear();
-    m_artists->clear();
-    m_songs->clear();
-    m_playlists->clear();
-    clearBrowseErrors();
-    emit albumsChanged();
-    emit artistsChanged();
-    emit songsChanged();
-    emit playlistsChanged();
+    // Every old-filter request is retired, but only the visible lane owns a
+    // view. Clear/refetch that one immediately; hidden models retain their
+    // storage without delegates and become dirty until activation.
+    const int activeLane = currentTabIndex();
+    for (int lane = 0; lane < 4; ++lane)
+        invalidateBrowseLane(lane, lane == activeLane, lane != activeLane);
     updateLoading();
-    // Only the visible tab refetches. The others are empty now, so the page's
-    // own "load this tab if it is empty" path fills them when they are next
-    // looked at, which is one request instead of four for a filter the user can
-    // see the results of in one place.
+    // Only the visible tab refetches. Activating a dirty hidden lane clears its
+    // retained storage before its Loader is created, then fetches the current
+    // query. That is one request instead of four for a filter the user can see
+    // the results of in one place.
     switch (currentTabIndex()) {
     case 1:
         fetchArtists(0);
@@ -505,20 +583,20 @@ void MusicController::ensureCurrentTab()
         return;
     switch (currentTabIndex()) {
     case 1:
-        if (m_artists->rowCount() == 0 && m_artistInFlight == 0)
-            fetchArtists(0);
+        if ((m_artistDirty || m_artists->rowCount() == 0) && m_artistInFlight == 0)
+            loadArtists();
         break;
     case 2:
-        if (m_songs->rowCount() == 0 && m_songInFlight == 0)
-            fetchSongs(0);
+        if ((m_songDirty || m_songs->rowCount() == 0) && m_songInFlight == 0)
+            loadSongs();
         break;
     case 3:
-        if (m_playlists->rowCount() == 0 && m_playlistInFlight == 0)
-            fetchPlaylists(0);
+        if ((m_playlistDirty || m_playlists->rowCount() == 0) && m_playlistInFlight == 0)
+            loadPlaylists();
         break;
     default:
-        if (m_albums->rowCount() == 0 && m_albumInFlight == 0)
-            fetchAlbums(0);
+        if ((m_albumDirty || m_albums->rowCount() == 0) && m_albumInFlight == 0)
+            loadAlbums();
         break;
     }
 }
@@ -530,18 +608,18 @@ void MusicController::setArtistMode(const QString &mode)
     if (m_artistMode == wanted)
         return;
     m_artistMode = wanted;
-    // `artistMode` notifies on artistsChanged, and the only other emit on this
-    // path is inside fetchArtists()'s reply — which never runs on an error. The
-    // two chips render this value, so without an emit here they sat on the old
-    // mode until the network answered and stayed on it for good if it did not:
-    // pressing "All artists" looked like it had done nothing.
-    emit artistsChanged();
     // A mode chosen before the first list was asked for is a preference, not a
     // query (see m_started): loadArtists() would have set the flag and fired a
     // request, which is the one thing the contract says a setter must not do.
-    if (!m_started)
+    if (!m_started) {
+        emit artistsChanged();
         return;
-    fetchArtists(0);
+    }
+    const bool active = currentTabIndex() == 1;
+    invalidateBrowseLane(1, active, !active);
+    updateLoading();
+    if (active)
+        fetchArtists(0);
 }
 
 void MusicController::setLibrary(const QString &libraryId)
@@ -566,14 +644,20 @@ void MusicController::setLibrary(const QString &libraryId)
     retire(m_artistGeneration, m_artistInFlight);
     retire(m_songGeneration, m_songInFlight);
     retire(m_playlistGeneration, m_playlistInFlight);
+    m_albumDirty = false;
+    m_artistDirty = false;
+    m_songDirty = false;
+    m_playlistDirty = false;
     ++m_genreGeneration;
     m_albums->clear();
     m_artists->clear();
     m_songs->clear();
-    // Four models cleared, four signals — applyQueryChange() does the same, and
-    // for the same reason. canLoadMoreAlbums, canLoadMoreArtists and artistMode
-    // all notify on these two, so leaving them out left "there is more" true for
-    // the previous library's 5,037 rows in front of a grid holding nothing.
+    // Four models cleared, four signals. Unlike a shared-filter change, a
+    // library retarget is an identity boundary, so even hidden model storage is
+    // discarded immediately. canLoadMoreAlbums, canLoadMoreArtists and
+    // artistMode all notify on these two, so leaving them out left "there is
+    // more" true for the previous library's 5,037 rows in front of a grid
+    // holding nothing.
     emit albumsChanged();
     emit artistsChanged();
     emit songsChanged();
@@ -618,6 +702,7 @@ void MusicController::setLibrary(const QString &libraryId)
 void MusicController::loadAlbums()
 {
     m_started = true;
+    prepareBrowseLaneForLoad(0);
     // Main and MusicPage may both ensure the restored default tab. A request
     // already owns this lane, even when another lane also contributes to the
     // aggregate loading flag; do not retire a useful page-0 request merely
@@ -629,7 +714,7 @@ void MusicController::loadAlbums()
 
 void MusicController::loadMoreAlbums()
 {
-    if (!canLoadMoreAlbums() || m_albumInFlight != 0)
+    if (m_albumDirty || !canLoadMoreAlbums() || m_albumInFlight != 0)
         return;
     fetchAlbums(m_albums->rowCount());
 }
@@ -637,6 +722,7 @@ void MusicController::loadMoreAlbums()
 void MusicController::fetchAlbums(int startIndex)
 {
     const int generation = retire(m_albumGeneration, m_albumInFlight);
+    m_albumDirty = false;
     m_albumInFlight = generation;
     setBrowseError(m_albumError, {});
     updateLoading();
@@ -678,6 +764,7 @@ void MusicController::fetchAlbums(int startIndex)
 void MusicController::loadArtists()
 {
     m_started = true;
+    prepareBrowseLaneForLoad(1);
     if (m_artistInFlight != 0)
         return;
     fetchArtists(0);
@@ -685,7 +772,7 @@ void MusicController::loadArtists()
 
 void MusicController::loadMoreArtists()
 {
-    if (!canLoadMoreArtists() || m_artistInFlight != 0)
+    if (m_artistDirty || !canLoadMoreArtists() || m_artistInFlight != 0)
         return;
     fetchArtists(m_artists->rowCount());
 }
@@ -693,6 +780,7 @@ void MusicController::loadMoreArtists()
 void MusicController::fetchArtists(int startIndex)
 {
     const int generation = retire(m_artistGeneration, m_artistInFlight);
+    m_artistDirty = false;
     m_artistInFlight = generation;
     setBrowseError(m_artistError, {});
     updateLoading();
@@ -737,6 +825,7 @@ void MusicController::fetchArtists(int startIndex)
 void MusicController::loadSongs()
 {
     m_started = true;
+    prepareBrowseLaneForLoad(2);
     if (m_songInFlight != 0)
         return;
     fetchSongs(0);
@@ -744,7 +833,7 @@ void MusicController::loadSongs()
 
 void MusicController::loadMoreSongs()
 {
-    if (!canLoadMoreSongs() || m_songInFlight != 0)
+    if (m_songDirty || !canLoadMoreSongs() || m_songInFlight != 0)
         return;
     fetchSongs(m_songs->rowCount());
 }
@@ -752,6 +841,7 @@ void MusicController::loadMoreSongs()
 void MusicController::fetchSongs(int startIndex)
 {
     const int generation = retire(m_songGeneration, m_songInFlight);
+    m_songDirty = false;
     m_songInFlight = generation;
     setBrowseError(m_songError, {});
     updateLoading();
@@ -802,6 +892,7 @@ void MusicController::fetchSongs(int startIndex)
 void MusicController::loadPlaylists()
 {
     m_started = true;
+    prepareBrowseLaneForLoad(3);
     if (m_playlistInFlight != 0)
         return;
     fetchPlaylists(0);
@@ -809,7 +900,7 @@ void MusicController::loadPlaylists()
 
 void MusicController::loadMorePlaylists()
 {
-    if (!canLoadMorePlaylists() || m_playlistInFlight != 0)
+    if (m_playlistDirty || !canLoadMorePlaylists() || m_playlistInFlight != 0)
         return;
     fetchPlaylists(m_playlists->rowCount());
 }
@@ -827,6 +918,7 @@ void MusicController::invalidatePlaylists()
     // nothing else lowers stays true for the rest of the session — which is
     // exactly the strand review found here.
     retire(m_playlistGeneration, m_playlistInFlight);
+    m_playlistDirty = false;
     m_playlists->clear();
     setBrowseError(m_playlistError, {});
     emit playlistsChanged();
@@ -838,6 +930,7 @@ void MusicController::invalidatePlaylists()
 void MusicController::fetchPlaylists(int startIndex)
 {
     const int generation = retire(m_playlistGeneration, m_playlistInFlight);
+    m_playlistDirty = false;
     // No library, no audio scoping. An unscoped query would answer with every
     // playlist the user has, film lists included, under a heading that says
     // this is their music — which is exactly the thing this tab exists to stop.

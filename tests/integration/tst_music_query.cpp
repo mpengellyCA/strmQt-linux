@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QSignalSpy>
 #include <QUrlQuery>
 #include <QtTest>
@@ -42,6 +43,8 @@ private slots:
     void browseErrorsStayWithTheirLane();
     void libraryRetargetPublishesClearedModelBeforeTerminal();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
+    void aHiddenOldQueryReplyCannotBypassLazyInvalidation();
+    void musicPageInstantiatesOnlyTheActiveTab();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
     void genresPageOnTheArrayNotTheCount();
@@ -75,11 +78,12 @@ private:
             .toUtf8();
     }
 
-    static QByteArray pageOf(const QString &type, const QString &id)
+    static QByteArray pageOf(const QString &type, const QString &id, int total = 1)
     {
         return QStringLiteral("{\"Items\":[{\"Id\":\"%1\",\"Name\":\"%1\","
-                              "\"Type\":\"%2\"}],\"TotalRecordCount\":1}")
+                              "\"Type\":\"%2\"}],\"TotalRecordCount\":%3}")
             .arg(id, type)
+            .arg(total)
             .toUtf8();
     }
 
@@ -530,15 +534,59 @@ void MusicQueryTest::libraryRetargetPublishesClearedModelBeforeTerminal()
 }
 
 // A genre or a letter is a statement about the music, so it survives switching
-// how you look at it — and it invalidates the two tabs that are not on screen
-// rather than refetching all three at once.
+// how you look at it. Only the active lane clears/refetches immediately; hidden
+// rows have no delegates and remain allocated but inadmissible until their tab
+// is activated.
 void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
 {
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+
+    // Seed all four lanes with distinct old-query rows. Switching back to a
+    // populated Albums lane must not itself refetch anything.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("MusicAlbum"), QStringLiteral("old-album"), 2));
     m_music->loadAlbums();
     settle();
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     pageOf(QStringLiteral("MusicArtist"), QStringLiteral("old-artist"), 2));
+    m_music->setTab(QStringLiteral("artists"));
+    settle();
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("Audio"), QStringLiteral("old-song"), 2));
+    m_music->setTab(QStringLiteral("songs"));
+    settle();
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("Playlist"), QStringLiteral("old-playlist"), 2));
+    m_music->setTab(QStringLiteral("playlists"));
+    settle();
+    m_music->setTab(QStringLiteral("albums"));
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+    QCOMPARE(m_music->artists()->rowCount(), 1);
+    QCOMPARE(m_music->songs()->rowCount(), 1);
+    QCOMPARE(m_music->playlists()->rowCount(), 1);
+    QVERIFY(m_music->canLoadMoreArtists());
+    QVERIFY(m_music->canLoadMoreSongs());
+    QVERIFY(m_music->canLoadMorePlaylists());
     QVERIFY(!m_music->filtered());
 
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("MusicAlbum"), QStringLiteral("filtered-album"), 2));
     m_music->setNameStartsWith(QStringLiteral("T"));
+    // Invalidation is synchronous. The active model is empty while its new
+    // page is in flight; hidden models retain storage but paging cannot append
+    // the new query to old-query rows.
+    QCOMPARE(m_music->albums()->rowCount(), 0);
+    QVERIFY(m_music->albumsLoading());
+    QCOMPARE(m_music->artists()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("old-artist"));
+    QCOMPARE(m_music->songs()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("old-song"));
+    QCOMPARE(m_music->playlists()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("old-playlist"));
+    QVERIFY(!m_music->canLoadMoreArtists());
+    QVERIFY(!m_music->canLoadMoreSongs());
+    QVERIFY(!m_music->canLoadMorePlaylists());
     settle();
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWith")),
              QStringLiteral("T"));
@@ -550,6 +598,9 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     settle();
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
 
+    m_music->setNameStartsWith(QStringLiteral("T"));
+    settle();
+
     m_music->setGenreIds({QStringLiteral("1937444"), QStringLiteral("1933045")});
     settle();
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("GenreIds")),
@@ -560,22 +611,138 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
 
-    // The tabs the user is not looking at were emptied, so the same narrowing
-    // is what they refill with when they are next opened.
-    QCOMPARE(m_music->songs()->rowCount(), 0);
-    m_music->setTab(QStringLiteral("songs"));
+    // Activating each hidden dirty lane clears it before a caller could create
+    // delegates, starts exactly its own request, and carries the shared query.
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     pageOf(QStringLiteral("MusicArtist"), QStringLiteral("new-artist"), 2));
+    m_music->setTab(QStringLiteral("artists"));
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QVERIFY(m_music->artistsLoading());
     settle();
+    QCOMPARE(m_music->artists()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("new-artist"));
+    QCOMPARE(lastQueryFor(artistsPath).queryItemValue(QStringLiteral("Filters")),
+             QStringLiteral("IsFavorite"));
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("Audio"), QStringLiteral("new-song"), 2));
+    m_music->setTab(QStringLiteral("songs"));
+    QCOMPARE(m_music->songs()->rowCount(), 0);
+    QVERIFY(m_music->songsLoading());
+    settle();
+    QCOMPARE(m_music->songs()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("new-song"));
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("GenreIds")),
              QStringLiteral("1937444,1933045"));
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
 
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("Playlist"), QStringLiteral("new-playlist"), 2));
+    m_music->setTab(QStringLiteral("playlists"));
+    QCOMPARE(m_music->playlists()->rowCount(), 0);
+    QVERIFY(m_music->playlistsLoading());
+    settle();
+    QCOMPARE(m_music->playlists()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("new-playlist"));
+
+    // Clearing the shared filters follows the same active-only rule. The
+    // filtered Albums/Artists/Songs rows remain allocated and dirty until those
+    // tabs are chosen; only Playlists is cleared and reloaded now.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     pageOf(QStringLiteral("Playlist"), QStringLiteral("plain-playlist"), 2));
     m_music->clearFilters();
+    QCOMPARE(m_music->playlists()->rowCount(), 0);
+    QVERIFY(m_music->playlistsLoading());
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+    QCOMPARE(m_music->artists()->rowCount(), 1);
+    QCOMPARE(m_music->songs()->rowCount(), 1);
+    QVERIFY(!m_music->canLoadMoreAlbums());
+    QVERIFY(!m_music->canLoadMoreArtists());
+    QVERIFY(!m_music->canLoadMoreSongs());
     settle();
     QVERIFY(!m_music->filtered());
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("GenreIds")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("Filters")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
+}
+
+void MusicQueryTest::aHiddenOldQueryReplyCannotBypassLazyInvalidation()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString artistsPath = QStringLiteral("/Artists/AlbumArtists");
+
+    m_music->loadAlbums();
+    settle();
+
+    // Start an old-query Artists request without making that lane visible.
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     pageOf(QStringLiteral("MusicArtist"), QStringLiteral("stale-artist"), 2));
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 350);
+    m_music->loadArtists();
+    QVERIFY(m_music->artistsLoading());
+
+    // Albums remains active. The filter retires the hidden request and fetches
+    // only Albums; the stale Artists completion must neither publish rows nor
+    // make its dirty lane page-admissible again.
+    m_music->setFavoritesOnly(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->albumsLoading(), 5000);
+    QVERIFY(!m_music->artistsLoading());
+    QTest::qWait(450);
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QVERIFY(!m_music->canLoadMoreArtists());
+
+    m_mock->setRouteDelay(QStringLiteral("GET"), artistsPath, 0);
+    m_mock->addRoute(QStringLiteral("GET"), artistsPath, 200,
+                     pageOf(QStringLiteral("MusicArtist"), QStringLiteral("fresh-artist"), 2));
+    const int beforeActivation = requestsFor(artistsPath);
+    m_music->setTab(QStringLiteral("artists"));
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QVERIFY(m_music->artistsLoading());
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(artistsPath), beforeActivation + 1, 5000);
+    settle();
+    QCOMPARE(m_music->artists()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("fresh-artist"));
+    QCOMPARE(lastQueryFor(artistsPath).queryItemValue(QStringLiteral("Filters")),
+             QStringLiteral("IsFavorite"));
+}
+
+// The UI half of the lazy-lane contract is structural: Component declarations
+// are inert, and exactly one Loader chooses among them. Pin the capture ->
+// controller retarget -> source swap order too, because swapping first destroys
+// the old view before its bounded navigation cursor can be retained.
+void MusicQueryTest::musicPageInstantiatesOnlyTheActiveTab()
+{
+    const QString path = QFINDTESTDATA("../../src/ui/pages/MusicPage.qml");
+    QVERIFY2(!path.isEmpty(), "MusicPage.qml test data was not found");
+    QFile page(path);
+    QVERIFY(page.open(QIODevice::ReadOnly));
+    const QByteArray source = page.readAll();
+
+    QCOMPARE(source.count("id: tabViewLoader"), 1);
+    QCOMPARE(source.count("Loader {"), 1);
+    for (const QByteArray &component : {QByteArrayLiteral("albumsViewComponent"),
+                                        QByteArrayLiteral("artistsViewComponent"),
+                                        QByteArrayLiteral("songsViewComponent"),
+                                        QByteArrayLiteral("playlistsViewComponent")}) {
+        QCOMPARE(source.count("id: " + component), 1);
+    }
+    QVERIFY(source.contains("sourceComponent: page.loadedTab === 1 ? artistsViewComponent"));
+    QCOMPARE(source.count("visible: page.albumsTab"), 0);
+    QCOMPARE(source.count("visible: page.songsTab"), 0);
+    QCOMPARE(source.count("visible: page.playlistsTab"), 0);
+
+    const qsizetype handler = source.indexOf("onTabSelected: index => {");
+    const qsizetype capture = source.indexOf("page.captureActiveView()", handler);
+    const qsizetype retarget = source.indexOf("MusicCtl.tab =", handler);
+    const qsizetype swap = source.indexOf("page.loadedTab = index", handler);
+    QVERIFY(handler >= 0);
+    QVERIFY(capture > handler);
+    QVERIFY(retarget > capture);
+    QVERIFY(swap > retarget);
+    QVERIFY(source.contains("view.navigationFocusSnapshot()"));
+    QVERIFY(source.contains("view.restoreNavigationFocus(String(state.identity),"
+                            " Number(state.index))"));
 }
 
 // The Songs tab must never be the open album's `tracks` model. Sharing it is

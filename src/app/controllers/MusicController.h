@@ -18,13 +18,13 @@ namespace emby {
 class EmbyClient;
 }
 
-// Music browsing (ARCHITECTURE.md): artists, albums, and an album's tracks.
+// Music browsing (ARCHITECTURE.md): library albums, artists, songs and audio
+// playlists, plus album/artist detail models.
 //
 // Separate from LibraryController rather than another scope on it, because
-// music is not one grid with a filter. It is three related lists with different
-// shapes — square art, a track table, an artist's discography — and the target
-// library has 4,871 artists, 5,037 albums and 56,283 tracks, so every one of
-// them pages.
+// music is not one grid with a filter. Its browse lanes have different shapes
+// — square art and a track table — and the target library has 4,871 artists,
+// 5,037 albums and 56,283 tracks, so every one of them pages.
 class MusicController : public QObject
 {
     Q_OBJECT
@@ -112,9 +112,9 @@ class MusicController : public QObject
     //     screen. A genre or a letter, by contrast, is a statement about the
     //     music and survives switching how you look at it.
     //  2. **A query change refetches the visible tab and invalidates the other
-    //     two.** Refetching all three would fire three requests for a filter the
-    //     user can only see the results of one of; leaving them alone would show
-    //     yesterday's albums under today's genre.
+    //     three.** Refetching all four would fire four requests for a filter the
+    //     user can only see the results of one of; leaving them usable would
+    //     show yesterday's albums under today's genre.
     //
     // "albums" | "artists" | "songs" | "playlists".
     Q_PROPERTY(QString tab READ tab WRITE setTab NOTIFY tabChanged)
@@ -202,10 +202,10 @@ public:
 
     void resetSessionState();
 
-    // Each of these re-runs the visible tab from page 0 and invalidates the
-    // other two, and each no-ops when the value is unchanged so a menu that
-    // re-emits on open does not refetch — the same contract LibraryController's
-    // setters have.
+    // Each shared filter re-runs the visible tab from page 0 and marks the
+    // hidden lanes dirty, and each no-ops when the value is unchanged so a menu
+    // that re-emits on open does not refetch — the same contract
+    // LibraryController's setters have.
     Q_INVOKABLE void setSort(const QString &key, bool descending);
     Q_INVOKABLE void setNameStartsWith(const QString &letter);
     Q_INVOKABLE void setGenreIds(const QStringList &genreIds);
@@ -365,12 +365,19 @@ private:
     void finishArtistAlbums(int generation, const QString &error);
     void finishArtistTracks(int generation);
     // Applies the shared filter axes (letter, genres, favourites) to a
-    // query. One place, so the three tabs cannot drift apart on what "filtered"
+    // query. One place, so the four tabs cannot drift apart on what "filtered"
     // means.
     void applyFilters(ItemsQuery &query) const;
-    // Refetch the tab on screen; clear the other two so revisiting one asks the
-    // server again rather than showing the previous query's results.
+    // Refetch the tab on screen; hidden lanes keep their model storage but are
+    // marked dirty so revisiting one clears it before asking the server again.
+    // MusicPage has no hidden delegates, so those retained rows are never drawn.
     void applyQueryChange();
+    // Retire one lane and invalidate its error/paging state. `clearModel` is
+    // true for the active lane and false for a hidden lane whose view does not
+    // exist. `dirty` means it must clear/refetch before it can be used again.
+    void invalidateBrowseLane(int lane, bool clearModel, bool dirty);
+    bool browseLaneDirty(int lane) const;
+    void prepareBrowseLaneForLoad(int lane);
     // Fetch the current tab's first page if its model is empty.
     void ensureCurrentTab();
     // 0 albums · 1 artists · 2 songs · 3 playlists.
@@ -477,6 +484,13 @@ private:
     int m_artistInFlight = 0;
     int m_songInFlight = 0;
     int m_playlistInFlight = 0;
+    // Shared filters invalidate all four queries, but only MusicPage's active
+    // lane owns delegates. Hidden models stay allocated until activation and
+    // are never exposed as current while these flags are true.
+    bool m_albumDirty = false;
+    bool m_artistDirty = false;
+    bool m_songDirty = false;
+    bool m_playlistDirty = false;
     // openAlbum() and openArtist() share m_generation and an explicit kind/id
     // owner. Artist discography and top tracks settle independently because
     // they populate different focus-restoration owners.

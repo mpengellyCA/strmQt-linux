@@ -15,9 +15,9 @@ import StrmQt
 // Why a tab bar rather than four nav-rail destinations: they are four
 // readings of one library, and the answer to "where is this record" is
 // sometimes the album, sometimes the artist and sometimes the track. Switching
-// must not refetch what is already loaded, so all four views exist at once and
-// each keeps its own scroll position and its own keyboard cursor; only one is
-// visible, so the hidden ones create no delegates.
+// must not retain four delegate trees: one Loader owns the active view and the
+// other three are lightweight Components. A bounded navigation snapshot per
+// tab restores its cursor when the Loader switches back.
 //
 // The Playlists tab is the user's AUDIO playlists and nothing else. The nav
 // rail's own Playlists destination is still every playlist they have — a music
@@ -68,6 +68,15 @@ FocusScope {
     readonly property bool artistsTab: page.currentTab === 1
     readonly property bool songsTab: page.currentTab === 2
     readonly property bool playlistsTab: page.currentTab === 3
+    // Decoupled from tabBar.currentIndex so onTabSelected can snapshot the old
+    // Loader item before changing its sourceComponent.
+    property int loadedTab: 0
+    property bool viewReady: false
+    readonly property var activeView: tabViewLoader.item
+    property var albumsViewState: ({ "valid": false, "identity": "", "index": -1 })
+    property var artistsViewState: ({ "valid": false, "identity": "", "index": -1 })
+    property var songsViewState: ({ "valid": false, "identity": "", "index": -1 })
+    property var playlistsViewState: ({ "valid": false, "identity": "", "index": -1 })
 
     // Each tab owns a separate request lane. Aggregate loading answers whether
     // anything in the controller is busy; it is not a lifecycle signal for the
@@ -102,10 +111,8 @@ FocusScope {
     readonly property int playlistTotal: MusicCtl.playlists.totalRecordCount
 
     readonly property bool failed: page.currentTabErrorMessage.length > 0
-    readonly property int shownCount: page.songsTab ? songsTable.count
-                                    : page.playlistsTab ? playlistsGrid.count
-                                    : page.albumsTab ? albumsGrid.count
-                                    : artistsGrid.count
+    readonly property int shownCount: page.activeView && page.activeView.count !== undefined
+                                      ? Number(page.activeView.count) : 0
     readonly property bool isEmpty: page.shownCount === 0 && !page.currentTabLoading
     // Nothing below the tab bar can take focus while the first page is in
     // flight or the view is empty, so the tab bar holds it — a page that
@@ -115,6 +122,43 @@ FocusScope {
 
     function formatCount(value) {
         return Number(value).toLocaleString(Qt.locale(), 'f', 0)
+    }
+
+    function viewState(index): var {
+        return index === 1 ? page.artistsViewState
+             : index === 2 ? page.songsViewState
+             : index === 3 ? page.playlistsViewState : page.albumsViewState
+    }
+
+    function setViewState(index, state): void {
+        if (index === 1)
+            page.artistsViewState = state
+        else if (index === 2)
+            page.songsViewState = state
+        else if (index === 3)
+            page.playlistsViewState = state
+        else
+            page.albumsViewState = state
+    }
+
+    function captureActiveView(): void {
+        const view = page.activeView
+        if (!view || typeof view.navigationFocusSnapshot !== "function")
+            return
+        page.setViewState(page.loadedTab, view.navigationFocusSnapshot())
+    }
+
+    function restoreActiveView(): void {
+        const view = page.activeView
+        const state = page.viewState(page.loadedTab)
+        if (!view || !state || state.valid !== true
+                || typeof view.restoreNavigationFocus !== "function")
+            return
+        view.restoreNavigationFocus(String(state.identity), Number(state.index))
+    }
+
+    function songsView(): var {
+        return page.loadedTab === 2 ? page.activeView : null
     }
 
     readonly property string headerSubtitle: {
@@ -197,7 +241,9 @@ FocusScope {
         if (page.libraryId.length > 0)
             MusicCtl.setLibrary(page.libraryId)
         tabBar.currentIndex = page.tabIndex(page.initialTab)
+        page.loadedTab = tabBar.currentIndex
         MusicCtl.tab = page.tabKey
+        page.viewReady = true
         if (page.artistsTab)
             page.ensureArtists()
         else if (page.songsTab)
@@ -257,7 +303,10 @@ FocusScope {
     // the library, because a selection spanning forty records has no other
     // honest name to offer the "create from these" row.
     function fileSongSelection() {
-        const ids = songsTable.selectedIds()
+        const table = page.songsView()
+        if (!table)
+            return
+        const ids = table.selectedIds()
         if (ids.length === 0)
             return
         playlistPicker.show(page.libraryName.length > 0 ? page.libraryName : qsTr("Music"), ids)
@@ -343,13 +392,16 @@ FocusScope {
     // being typed, so play/pause works from the track list too.
     // What the keyboard is standing on, whichever view is showing.
     function focusedItem() {
-        if (page.songsTab)
-            return page.songAt(songsTable.currentIndex)
-        if (page.artistsTab)
-            return page.artistAt(artistsGrid.currentIndex)
-        if (page.playlistsTab)
-            return page.playlistAt(playlistsGrid.currentIndex)
-        return page.albumAt(albumsGrid.currentIndex)
+        const view = page.activeView
+        if (!view || view.currentIndex === undefined)
+            return null
+        if (page.loadedTab === 2)
+            return page.songAt(view.currentIndex)
+        if (page.loadedTab === 1)
+            return page.artistAt(view.currentIndex)
+        if (page.loadedTab === 3)
+            return page.playlistAt(view.currentIndex)
+        return page.albumAt(view.currentIndex)
     }
 
     MappedShortcut {
@@ -377,8 +429,9 @@ FocusScope {
         onActivated: {
             // A selection wins over the cursor: if the user has picked rows,
             // "favourite" is obviously about those rows.
-            if (page.songsTab && songsTable.selectionCount > 0) {
-                Actions.setFavoriteAll(songsTable.selectedIds(), true)
+            const table = page.songsView()
+            if (table && table.selectionCount > 0) {
+                Actions.setFavoriteAll(table.selectedIds(), true)
                 return
             }
             const item = page.focusedItem()
@@ -496,6 +549,7 @@ FocusScope {
         KeyNavigation.down: filterBar
 
         onTabSelected: index => {
+            page.captureActiveView()
             // The controller keeps a sort per tab and fetches the tab's first
             // page if it has none, so telling it which tab is on screen is the
             // whole of the switch. The ensure* calls stay for the case it
@@ -503,6 +557,10 @@ FocusScope {
             // controller at all.
             MusicCtl.tab = index === 3 ? "playlists" : index === 2 ? "songs"
                          : index === 1 ? "artists" : "albums"
+            // MusicCtl clears/starts a dirty lane synchronously. Only after
+            // that contract is established may the Loader construct delegates
+            // for the newly active model.
+            page.loadedTab = index
             if (index === 1)
                 page.ensureArtists()
             else if (index === 2)
@@ -561,183 +619,20 @@ FocusScope {
         // Down out of the bar lands in whichever view it is narrowing, and Up
         // lands back on the tabs — which is where Up out of a grid reached
         // before there was a bar between them.
-        downTarget: page.songsTab ? songsTable
-                  : page.playlistsTab ? playlistsGrid
-                  : page.artistsTab ? artistsGrid : albumsGrid
+        downTarget: page.activeView
         upTarget: tabBar
     }
 
-    // Both grids are built and only one is shown. Hiding a GridView releases
-    // its delegates, so the cost of the other tab is its model — which the
-    // controller owns either way — and the benefit is that switching back
-    // returns to the same scroll offset and the same focused card.
-    StrmGrid {
-        id: albumsGrid
-
-        navigationFocusKey: "music-albums"
-        navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.albumsLoading
-
-        anchors.top: filterBar.bottom
-        anchors.topMargin: Theme.spacingTight
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        visible: page.albumsTab
-        enabled: page.albumsTab
-
-        gridModel: MusicCtl.albums
-        cardVariant: "square"
-        emptyText: ""
-        prefetchThreshold: 30
-        focus: page.albumsTab && albumsGrid.count > 0
-
-        KeyNavigation.up: filterBar.entryItem
-
-        onNearEnd: if (MusicCtl.canLoadMoreAlbums) MusicCtl.loadMoreAlbums()
-
-        onItemActivated: index => page.requestAlbum(page.albumAt(index))
-        onItemPlayRequested: index => page.playAlbum(page.albumAt(index))
-        onItemPlayedToggled: index => {
-            const item = page.albumAt(index)
-            if (item)
-                Actions.togglePlayed(item)
-        }
-        onItemFavoriteToggled: index => {
-            const item = page.albumAt(index)
-            if (item)
-                Actions.toggleFavorite(item)
-        }
-        onMenuRequested: (index, mx, my) => musicMenu.popupFor("album", page.albumAt(index),
-                                                               mx, my)
-    }
-
-    StrmGrid {
-        id: artistsGrid
-
-        navigationFocusKey: "music-artists"
-        navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.artistsLoading
-
-        anchors.top: filterBar.bottom
-        anchors.topMargin: Theme.spacingTight
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        visible: page.artistsTab
-        enabled: page.artistsTab
-
-        gridModel: MusicCtl.artists
-        cardVariant: "square"
-        emptyText: ""
-        prefetchThreshold: 30
-        focus: page.artistsTab && artistsGrid.count > 0
-
-        KeyNavigation.up: filterBar.entryItem
-
-        onNearEnd: if (MusicCtl.canLoadMoreArtists) MusicCtl.loadMoreArtists()
-
-        onItemActivated: index => page.requestArtist(page.artistAt(index))
-        // ▸ starts an instant mix (MUSIC.md §7). It used to open the artist
-        // page — the honest answer while no verb queued by artist, and a
-        // directory rather than something you could play. There is a verb now:
-        // /Items/{artistId}/InstantMix is one request, the server picks, and it
-        // was measured to answer audio of that artist's own world rather than
-        // the library at random. See EmbyClient::instantMix().
-        onItemPlayRequested: index => Actions.instantMix(page.artistAt(index))
-        onItemFavoriteToggled: index => {
-            const item = page.artistAt(index)
-            if (item)
-                Actions.toggleFavorite(item)
-        }
-        onMenuRequested: (index, mx, my) => musicMenu.popupFor("artist", page.artistAt(index),
-                                                               mx, my)
-    }
-
-    // ── Playlists ──────────────────────────────────────────────────────────
-    // The user's AUDIO playlists. Which ones those are is the server's answer,
-    // not a guess made here: MusicController asks with the music library as
-    // ParentId and Emby matches each playlist's own media type against that
-    // library's content type. Nothing on this page inspects a playlist to
-    // decide whether it belongs (MUSIC.md §3 allowed for a per-playlist probe
-    // as a fallback; it is not needed, and the measurement is in the
-    // controller).
-    //
-    // Square cards, like the other two grids: Emby draws a playlist's cover as
-    // a mosaic of its records, which is a sleeve.
-    StrmGrid {
-        id: playlistsGrid
-
-        navigationFocusKey: "music-playlists"
-        navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.playlistsLoading
-
-        anchors.top: filterBar.bottom
-        anchors.topMargin: Theme.spacingTight
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        visible: page.playlistsTab
-        enabled: page.playlistsTab
-
-        gridModel: MusicCtl.playlists
-        cardVariant: "square"
-        emptyText: ""
-        prefetchThreshold: 30
-        focus: page.playlistsTab && playlistsGrid.count > 0
-
-        KeyNavigation.up: filterBar.entryItem
-
-        onNearEnd: if (MusicCtl.canLoadMorePlaylists) MusicCtl.loadMorePlaylists()
-
-        onItemActivated: index => page.requestPlaylist(page.playlistAt(index))
-        // ▸ opens it, the same answer the artist grid gives and for a sharper
-        // reason: a playlist's order IS the playlist, and Actions.playAll()
-        // sorts by IndexNumber,SortName, which would hand back the same tracks
-        // in an order the user never chose. The playlist page plays it in its
-        // own order.
-        onItemPlayRequested: index => page.requestPlaylist(page.playlistAt(index))
-        onItemFavoriteToggled: index => {
-            const item = page.playlistAt(index)
-            if (item)
-                Actions.toggleFavorite(item)
-        }
-        onMenuRequested: (index, mx, my) => musicMenu.popupFor("playlist",
-                                                               page.playlistAt(index), mx, my)
-    }
-
-    // ── Songs ──────────────────────────────────────────────────────────────
-    // The shared TrackTable (ARCHITECTURE.md), not a fourth inline delegate:
-    // it was extracted in the previous phase precisely so this tab would not
-    // become one. One tab stop, Up/Down and the page keys owned internally,
-    // and type-to-jump — which a 56,283-row list needs more than any other
-    // table in the app.
-    //
-    // Two things differ from an album's table and both are properties of the
-    // shared component rather than a fork of it:
-    //
-    //  * `alwaysShowArtist` — an album's table earns its artist column by
-    //    walking the model and asking "does any row differ from the album's
-    //    credit". Here the answer is known in advance and the walk would repeat
-    //    over a growing model on every page fetch.
-    //  * `discGrouping: false` — a disc banner is a statement about one record.
-    //
-    // The album goes on the row's second line rather than into a column of its
-    // own: TrackRow already draws a `secondary` line (it is the shape the queue
-    // and playlist panes use), and a fifth column would leave the title nothing.
-    //
-    // The number column is the row's ORDINAL, not its track number: under a
-    // name or date sort a column reading 11, 3, 7 down the page says nothing,
-    // and TrackRow documents the slot as "track number or ordinal".
+    // The four views below are Components, not four live views. tabViewLoader
+    // owns exactly one of them; changing sourceComponent destroys the old
+    // delegate tree before constructing the next one.
     readonly property int songRowHeight: Theme.scale(52)
     readonly property int songNumberColumn: Theme.scale(46)
     readonly property int songDurationColumn: Theme.scale(64)
     readonly property int songVerbsColumn: Theme.scale(72)
-    readonly property int songArtistColumn: songsTable.showArtistColumn ? Theme.scale(220) : 0
+    readonly property int songArtistColumn:
+        page.songsView() && page.songsView().showArtistColumn ? Theme.scale(220) : 0
 
-    // The batch verbs for the Songs tab's selection (MUSIC.md §7). Only ever
-    // shown with the Songs tab, because it is the only view here whose rows can
-    // be selected — a grid card is opened, not picked.
     SelectionBar {
         id: songSelection
 
@@ -747,111 +642,188 @@ FocusScope {
         anchors.leftMargin: Theme.pageMarginValue
         anchors.rightMargin: Theme.pageMarginValue
 
-        count: page.songsTab ? songsTable.selectionCount : 0
+        count: page.songsView() ? page.songsView().selectionCount : 0
 
-        onQueueRequested: Actions.addAllToQueue(songsTable.selectedItems())
+        onQueueRequested: Actions.addAllToQueue(page.songsView().selectedItems())
         onPlaylistRequested: page.fileSongSelection()
-        onFavoriteRequested: Actions.setFavoriteAll(songsTable.selectedIds(), true)
+        onFavoriteRequested: Actions.setFavoriteAll(page.songsView().selectedIds(), true)
         onClearRequested: {
-            songsTable.clearSelection()
-            songsTable.forceActiveFocus(Qt.OtherFocusReason)
+            const table = page.songsView()
+            if (table) {
+                table.clearSelection()
+                table.forceActiveFocus(Qt.OtherFocusReason)
+            }
         }
     }
 
-    TrackTable {
-        id: songsTable
+    Component {
+        id: albumsViewComponent
 
-        navigationFocusKey: "music-songs"
-        navigationFocusFallbackItem: tabBar
-        navigationFocusRefillActive: MusicCtl.songsLoading
+        StrmGrid {
+            id: albumsGrid
+            navigationFocusKey: "music-albums"
+            navigationFocusFallbackItem: tabBar
+            navigationFocusRefillActive: MusicCtl.albumsLoading
+            gridModel: MusicCtl.albums
+            cardVariant: "square"
+            emptyText: ""
+            prefetchThreshold: 30
+            focus: albumsGrid.count > 0
+            KeyNavigation.up: filterBar.entryItem
+            onNearEnd: if (MusicCtl.canLoadMoreAlbums) MusicCtl.loadMoreAlbums()
+            onItemActivated: index => page.requestAlbum(page.albumAt(index))
+            onItemPlayRequested: index => page.playAlbum(page.albumAt(index))
+            onItemPlayedToggled: index => {
+                const item = page.albumAt(index)
+                if (item)
+                    Actions.togglePlayed(item)
+            }
+            onItemFavoriteToggled: index => {
+                const item = page.albumAt(index)
+                if (item)
+                    Actions.toggleFavorite(item)
+            }
+            onMenuRequested: (index, mx, my) =>
+                musicMenu.popupFor("album", page.albumAt(index), mx, my)
+        }
+    }
 
-        anchors.top: songSelection.bottom
+    Component {
+        id: artistsViewComponent
+
+        StrmGrid {
+            id: artistsGrid
+            navigationFocusKey: "music-artists"
+            navigationFocusFallbackItem: tabBar
+            navigationFocusRefillActive: MusicCtl.artistsLoading
+            gridModel: MusicCtl.artists
+            cardVariant: "square"
+            emptyText: ""
+            prefetchThreshold: 30
+            focus: artistsGrid.count > 0
+            KeyNavigation.up: filterBar.entryItem
+            onNearEnd: if (MusicCtl.canLoadMoreArtists) MusicCtl.loadMoreArtists()
+            onItemActivated: index => page.requestArtist(page.artistAt(index))
+            onItemPlayRequested: index => Actions.instantMix(page.artistAt(index))
+            onItemFavoriteToggled: index => {
+                const item = page.artistAt(index)
+                if (item)
+                    Actions.toggleFavorite(item)
+            }
+            onMenuRequested: (index, mx, my) =>
+                musicMenu.popupFor("artist", page.artistAt(index), mx, my)
+        }
+    }
+
+    Component {
+        id: playlistsViewComponent
+
+        StrmGrid {
+            id: playlistsGrid
+            navigationFocusKey: "music-playlists"
+            navigationFocusFallbackItem: tabBar
+            navigationFocusRefillActive: MusicCtl.playlistsLoading
+            gridModel: MusicCtl.playlists
+            cardVariant: "square"
+            emptyText: ""
+            prefetchThreshold: 30
+            focus: playlistsGrid.count > 0
+            KeyNavigation.up: filterBar.entryItem
+            onNearEnd: if (MusicCtl.canLoadMorePlaylists) MusicCtl.loadMorePlaylists()
+            onItemActivated: index => page.requestPlaylist(page.playlistAt(index))
+            onItemPlayRequested: index => page.requestPlaylist(page.playlistAt(index))
+            onItemFavoriteToggled: index => {
+                const item = page.playlistAt(index)
+                if (item)
+                    Actions.toggleFavorite(item)
+            }
+            onMenuRequested: (index, mx, my) =>
+                musicMenu.popupFor("playlist", page.playlistAt(index), mx, my)
+        }
+    }
+
+    Component {
+        id: songsViewComponent
+
+        TrackTable {
+            id: songsTable
+            navigationFocusKey: "music-songs"
+            navigationFocusFallbackItem: tabBar
+            navigationFocusRefillActive: MusicCtl.songsLoading
+            focus: songsTable.count > 0
+            model: MusicCtl.songs
+            rowHeight: page.songRowHeight
+            discGrouping: false
+            artistRule: false
+            alwaysShowArtist: true
+            multiSelect: true
+            KeyNavigation.up: filterBar.entryItem
+            onActivated: index => page.playSongFrom(index)
+            prefetchThreshold: 30
+            onNearEnd: if (MusicCtl.canLoadMoreSongs) MusicCtl.loadMoreSongs()
+
+            delegate: TrackRow {
+                id: songRow
+                required property int index
+                required property var model
+                readonly property string trackId: songRow.model.itemId !== undefined
+                                                  ? String(songRow.model.itemId) : ""
+                width: songsTable.width
+                navigationFocusOwner: songsTable
+                rowHeight: page.songRowHeight
+                numberColumn: page.songNumberColumn
+                durationColumn: page.songDurationColumn
+                verbsColumn: page.songVerbsColumn
+                artistColumn: page.songArtistColumn
+                title: songRow.model.name !== undefined ? String(songRow.model.name) : ""
+                secondary: songRow.model.album !== undefined && songRow.model.album !== null
+                           ? String(songRow.model.album) : ""
+                artist: songsTable.shownArtistFor(songRow.model)
+                durationText: page.formatDuration(songRow.model.runtimeMs)
+                number: songRow.index + 1
+                coverUrl: songRow.model.posterUrl !== undefined
+                          ? String(songRow.model.posterUrl) : ""
+                showCover: true
+                current: songsTable.currentIndex === songRow.index && songsTable.activeFocus
+                selected: songsTable.isSelected(songRow.index)
+                playing: songRow.trackId.length > 0 && songRow.trackId === page.nowPlayingId
+                favorite: songRow.model.favorite === true
+                showFavorite: true
+                showMenu: true
+                verbsRevealed: songRow.hovered || songRow.favorite
+                onActivated: modifiers => {
+                    songsTable.forceActiveFocus(Qt.MouseFocusReason)
+                    songsTable.activateAt(songRow.index, modifiers)
+                }
+                onFavoriteToggled: {
+                    const item = page.songAt(songRow.index)
+                    if (item)
+                        Actions.toggleFavorite(item)
+                }
+                onMenuRequested: (sceneX, sceneY) =>
+                    songMenu.popupForItemNoDetails(page.songAt(songRow.index), sceneX, sceneY)
+            }
+        }
+    }
+
+    Loader {
+        id: tabViewLoader
+
+        anchors.top: page.songsTab ? songSelection.bottom : filterBar.bottom
         anchors.topMargin: Theme.spacingTight
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: Theme.pageMarginValue
-        anchors.rightMargin: Theme.pageMarginValue
-        anchors.bottomMargin: Theme.spacingValue
-        visible: page.songsTab
-        enabled: page.songsTab
-        focus: page.songsTab && songsTable.count > 0
-
-        model: MusicCtl.songs
-        rowHeight: page.songRowHeight
-        discGrouping: false
-        artistRule: false
-        alwaysShowArtist: true
-        // The tab the whole feature was asked for. A filter or a sort change
-        // refills MusicCtl.songs through setItems(), which is a model reset, so
-        // the selection goes with the rows it named — see TrackTable's header.
-        multiSelect: true
-
-        KeyNavigation.up: filterBar.entryItem
-
-        onActivated: index => page.playSongFrom(index)
-
-        // The same 30-row lead the grids use. TrackTable throttles nearEnd()
-        // per loaded count, so this may call loadMore() unconditionally.
-        prefetchThreshold: 30
-        onNearEnd: if (MusicCtl.canLoadMoreSongs) MusicCtl.loadMoreSongs()
-
-        delegate: TrackRow {
-            id: songRow
-
-            required property int index
-            required property var model
-
-            readonly property string trackId: songRow.model.itemId !== undefined
-                                              ? String(songRow.model.itemId) : ""
-
-            width: songsTable.width
-            navigationFocusOwner: songsTable
-
-            rowHeight: page.songRowHeight
-            numberColumn: page.songNumberColumn
-            durationColumn: page.songDurationColumn
-            verbsColumn: page.songVerbsColumn
-            artistColumn: page.songArtistColumn
-
-            title: songRow.model.name !== undefined ? String(songRow.model.name) : ""
-            // The album, as the second line. `posterUrl` straight from the
-            // model — MediaItem::coverSource() already resolves a track to its
-            // album's cover, so a rip with no embedded art still draws one.
-            secondary: songRow.model.album !== undefined && songRow.model.album !== null
-                       ? String(songRow.model.album) : ""
-            artist: songsTable.shownArtistFor(songRow.model)
-            durationText: page.formatDuration(songRow.model.runtimeMs)
-            number: songRow.index + 1
-            coverUrl: songRow.model.posterUrl !== undefined
-                      ? String(songRow.model.posterUrl) : ""
-            showCover: true
-
-            current: songsTable.currentIndex === songRow.index && songsTable.activeFocus
-            selected: songsTable.isSelected(songRow.index)
-            playing: songRow.trackId.length > 0 && songRow.trackId === page.nowPlayingId
-            favorite: songRow.model.favorite === true
-            showFavorite: true
-            showMenu: true
-            verbsRevealed: songRow.hovered || songRow.favorite
-
-            // Through activateAt(): Ctrl+Click and Shift+Click are the table's
-            // decision, not this delegate's.
-            onActivated: modifiers => {
-                songsTable.forceActiveFocus(Qt.MouseFocusReason)
-                songsTable.activateAt(songRow.index, modifiers)
-            }
-
-            onFavoriteToggled: {
-                const item = page.songAt(songRow.index)
-                if (item)
-                    Actions.toggleFavorite(item)
-            }
-
-            onMenuRequested: (sceneX, sceneY) => {
-                songMenu.popupForItemNoDetails(page.songAt(songRow.index), sceneX, sceneY)
-            }
-        }
+        anchors.leftMargin: page.songsTab ? Theme.pageMarginValue : 0
+        anchors.rightMargin: page.songsTab ? Theme.pageMarginValue : 0
+        anchors.bottomMargin: page.songsTab ? Theme.spacingValue : 0
+        active: page.viewReady
+        focus: true
+        sourceComponent: page.loadedTab === 1 ? artistsViewComponent
+                       : page.loadedTab === 2 ? songsViewComponent
+                       : page.loadedTab === 3 ? playlistsViewComponent
+                                              : albumsViewComponent
+        onLoaded: Qt.callLater(page.restoreActiveView)
     }
 
     // The shared item menu, minus "Details": for a track the album page IS the
@@ -886,8 +858,9 @@ FocusScope {
         // page: an overlay that drops the keyboard somewhere else is the same
         // bug as one that never gives it back.
         onDismissed: {
-            if (page.songsTab && songsTable.count > 0)
-                songsTable.forceActiveFocus(Qt.OtherFocusReason)
+            const table = page.songsView()
+            if (table && table.count > 0)
+                table.forceActiveFocus(Qt.OtherFocusReason)
         }
     }
 
