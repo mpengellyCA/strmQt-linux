@@ -9,6 +9,7 @@
 #include "server/emby/EmbyClient.h"
 
 #include <QSet>
+#include <QTimer>
 #include <QVariantMap>
 
 namespace strmqt {
@@ -113,6 +114,26 @@ void HomeController::onUserDataInvalidated(const QStringList &itemIds)
     // The changed ids do not contain enough type/series context to decide who
     // enters them, so fetch one coherent snapshot and respect the page's
     // existing "do not move under the cursor" policy.
+    //
+    // Audio playback deliberately leaves live updates running, and every
+    // progress report changes user data on the server. Without a floor between
+    // snapshots, Home refetches three queries on that cadence for as long as
+    // the music plays. The first invalidation is still immediate; anything
+    // behind it collapses into one deferred refresh.
+    if (m_userDataRefreshFloorMs > 0 && m_lastUserDataRefresh.isValid()) {
+        const qint64 waited = m_lastUserDataRefresh.elapsed();
+        if (waited < m_userDataRefreshFloorMs) {
+            if (!m_userDataRefreshQueued) {
+                m_userDataRefreshQueued = true;
+                QTimer::singleShot(m_userDataRefreshFloorMs - waited, this, [this] {
+                    m_userDataRefreshQueued = false;
+                    onUserDataInvalidated({});
+                });
+            }
+            return;
+        }
+    }
+    m_lastUserDataRefresh.start();
     startRefresh(/*applyWhenReady=*/m_autoApplyUpdates);
 }
 

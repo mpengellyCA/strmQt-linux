@@ -78,6 +78,7 @@ private slots:
     void transportGoesOffWhenDisabled();
     void userDataPatchesThenReconcilesHomeMembership();
     void filteredLaterPageAnnouncesMembershipChange();
+    void homeMembershipRefreshHasAFloorBetweenBursts();
     void homeHoldsUpdatesWhenAutoApplyIsOff();
     void libraryGridAnnouncesNewItemsInsteadOfReloading();
 
@@ -447,6 +448,37 @@ void LiveUpdatesTest::filteredLaterPageAnnouncesMembershipChange()
     QTRY_VERIFY(library.updatesPending());
     QCOMPARE(library.pendingNewCount(), 0); // "Updated", not a fictitious add
     QCOMPARE(library.model()->rowCount(), 101); // cursor/scroll remain stable
+}
+
+// Audio playback keeps live updates running for hours, and every progress
+// report moves user data on the server. Membership reconciliation is three
+// queries, so it gets a floor: the first invalidation refreshes at once, and
+// everything arriving behind it collapses into a single later snapshot.
+void LiveUpdatesTest::homeMembershipRefreshHasAFloorBetweenBursts()
+{
+    routeHomeFixtures();
+
+    HomeController home(m_client);
+    home.setUserDataRefreshFloorMsForTests(300);
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+
+    const int beforeFirst = m_mock->requestCount();
+    home.onUserDataInvalidated({});
+    QTRY_VERIFY(!home.busy());
+    const int afterFirst = m_mock->requestCount();
+    const int requestsPerSnapshot = afterFirst - beforeFirst;
+    QVERIFY(requestsPerSnapshot > 0);
+
+    home.onUserDataInvalidated({});
+    home.onUserDataInvalidated({});
+    home.onUserDataInvalidated({});
+    QCOMPARE(m_mock->requestCount(), afterFirst); // nothing goes out inside the floor
+
+    QTRY_VERIFY(m_mock->requestCount() > afterFirst);
+    QTRY_VERIFY(!home.busy());
+    // One snapshot for the whole burst, not one per invalidation.
+    QCOMPARE(m_mock->requestCount() - afterFirst, requestsPerSnapshot);
 }
 
 void LiveUpdatesTest::homeHoldsUpdatesWhenAutoApplyIsOff()

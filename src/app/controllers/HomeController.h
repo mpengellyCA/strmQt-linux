@@ -5,6 +5,7 @@
 #include "server/dto/Library.h"
 #include "server/dto/MediaItem.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -98,6 +99,11 @@ public slots:
     void onUserDataPatched(const QVariantList &entries);
     void onUserDataInvalidated(const QStringList &itemIds);
 
+public:
+    // Minimum spacing between membership refreshes driven by user-data
+    // invalidation. Tests drive the burst behaviour directly; 0 disables it.
+    void setUserDataRefreshFloorMsForTests(int ms) { m_userDataRefreshFloorMs = ms; }
+
 signals:
     void latestRailsChanged();
     void genreRailsChanged();
@@ -147,6 +153,9 @@ private:
     MediaItemModel *railModelFor(const QString &libraryId);
 
     emby::EmbyClient *m_client;
+    QElapsedTimer m_lastUserDataRefresh;
+    int m_userDataRefreshFloorMs = 30'000;
+    bool m_userDataRefreshQueued = false;
     MediaItemModel *m_resume;
     MediaItemModel *m_nextUp;
     MediaItemModel *m_favorites;
