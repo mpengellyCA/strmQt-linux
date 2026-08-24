@@ -60,6 +60,7 @@ private slots:
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
     void trackPersistenceWaitsForBackendReadback();
     void playbackSettingsFollowBackendReadback();
+    void screenshotSuccessRequiresBackendConfirmation();
 
     void replayGainReachesTheEngineOnLoadAndOnChange();
 
@@ -133,6 +134,28 @@ void PlayerControllerTest::expectReport(const QString &path, const QString &meth
     QCOMPARE(body.value(QLatin1String("PlaySessionId")).toString(), QStringLiteral("ps0011"));
     QCOMPARE(body.value(QLatin1String("PlayMethod")).toString(), method);
     QCOMPARE(body.value(QLatin1String("IsPaused")).toBool(), paused);
+}
+
+void PlayerControllerTest::screenshotSuccessRequiresBackendConfirmation()
+{
+    m_controller->setScreenshotDirectoryForTests(m_dir->filePath(QStringLiteral("screenshots")));
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+
+    QSignalSpy saved(m_controller, &PlayerController::screenshotSaved);
+    QSignalSpy failed(m_controller, &PlayerController::screenshotFailed);
+    const QString accepted = m_controller->takeScreenshot();
+    QVERIFY(!accepted.isEmpty());
+    QCOMPARE(saved.count(), 1);
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(m_backend->screenshots.last(), accepted);
+
+    m_backend->screenshotSucceeds = false;
+    const QString rejected = m_controller->takeScreenshot();
+    QVERIFY(rejected.isEmpty());
+    QCOMPARE(saved.count(), 1);
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(m_backend->screenshots.size(), 2);
 }
 
 void PlayerControllerTest::directPlayStartsAndReports()

@@ -200,7 +200,7 @@ void TestPlayerTracks::bareBackendDefaults()
     backend.setPlaybackSpeed(2.0);
     backend.setAudioDelayMs(120);
     backend.setSubtitleDelayMs(-80);
-    backend.screenshotToFile(QStringLiteral("/dev/null"));
+    QVERIFY(!backend.screenshotToFile(QStringLiteral("/dev/null")));
     QCOMPARE(backend.currentAudioTrackId(), -1);
     QCOMPARE(backend.playbackSpeed(), 1.0);
 }
@@ -288,7 +288,7 @@ void TestPlayerTracks::fakeBackendStatsAndScrubberFields()
     // Keys the engine cannot answer stay absent rather than reading as zero.
     QVERIFY(!backend.videoStats().contains(QStringLiteral("droppedFrames")));
 
-    backend.screenshotToFile(QStringLiteral("/tmp/shot.png"));
+    QVERIFY(backend.screenshotToFile(QStringLiteral("/tmp/shot.png")));
     QCOMPARE(backend.screenshots, QStringList{QStringLiteral("/tmp/shot.png")});
 }
 

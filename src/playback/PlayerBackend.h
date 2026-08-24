@@ -157,8 +157,13 @@ public:
     //   estimatedFps (qreal, measured output rate), droppedFrames (qint64),
     //   hwdec (QString, empty when decoding in software).
     virtual QVariantMap videoStats() const { return {}; }
-    // Write a frame of the decoded video to path. No-op where unsupported.
-    virtual void screenshotToFile(const QString &path) { Q_UNUSED(path); }
+    // Write a frame of the decoded video to path. Returns false when the
+    // engine does not support screenshots or rejects the write.
+    virtual bool screenshotToFile(const QString &path)
+    {
+        Q_UNUSED(path);
+        return false;
+    }
 
     // ── Frame stepping and A–B loop (ARCHITECTURE.md) ────────────────────────
     // Engines that cannot do these say so, and the controller hides the verbs

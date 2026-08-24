@@ -1171,6 +1171,10 @@ ApplicationWindow {
         function onScreenshotSaved(path) {
             toasts.show(qsTr("Screenshot saved to %1").arg(path), "success");
         }
+
+        function onScreenshotFailed(reason) {
+            toasts.show(reason, "error");
+        }
     }
 
     // Another Emby client sent this session a message. A toast is the only

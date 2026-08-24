@@ -149,13 +149,14 @@ MpvPlayer::~MpvPlayer()
     }
 }
 
-void MpvPlayer::command(const char *args[])
+bool MpvPlayer::command(const char *args[])
 {
     if (!m_mpv)
-        return;
+        return false;
     const int rc = mpv_command(m_mpv, args);
     if (rc < 0)
         qCWarning(logPlayback) << "mpv command" << args[0] << "failed:" << mpv_error_string(rc);
+    return rc >= 0;
 }
 
 void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
@@ -491,13 +492,13 @@ void MpvPlayer::setAbLoop(qint64 aMs, qint64 bMs)
     apply("ab-loop-b", bMs);
 }
 
-void MpvPlayer::screenshotToFile(const QString &path)
+bool MpvPlayer::screenshotToFile(const QString &path)
 {
     const QByteArray target = path.toUtf8();
     // "video" = the decoded frame without OSD or subtitles; the "window" mode
     // has nothing to grab under vo=libmpv.
     const char *args[] = {"screenshot-to-file", target.constData(), "video", nullptr};
-    command(args);
+    return command(args);
 }
 
 void MpvPlayer::setVolume(int percent)

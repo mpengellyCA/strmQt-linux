@@ -1285,11 +1285,13 @@ QString PlayerController::takeScreenshot()
     if (!m_backend || !m_active)
         return {};
 
-    const QString dir =
-        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
-        + QStringLiteral("/StrmQt");
+    const QString dir = m_screenshotDirectoryOverride.isEmpty()
+                            ? QStandardPaths::writableLocation(QStandardPaths::PicturesLocation)
+                                  + QStringLiteral("/StrmQt")
+                            : m_screenshotDirectoryOverride;
     if (!QDir().mkpath(dir)) {
         qCWarning(logPlayback) << "screenshot: cannot create" << dir;
+        emit screenshotFailed(tr("Could not create the screenshot folder."));
         return {};
     }
 
@@ -1306,7 +1308,11 @@ QString PlayerController::takeScreenshot()
     name.replace(illegal, QStringLiteral("_"));
     const QString path = QStringLiteral("%1/%2 - %3.png").arg(dir, name, stamp);
 
-    m_backend->screenshotToFile(path);
+    if (!m_backend->screenshotToFile(path)) {
+        qCWarning(logPlayback) << "screenshot write was rejected:" << path;
+        emit screenshotFailed(tr("This playback engine could not save a screenshot."));
+        return {};
+    }
     qCInfo(logPlayback) << "screenshot:" << path;
     emit screenshotSaved(path);
     return path;

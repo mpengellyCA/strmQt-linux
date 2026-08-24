@@ -106,7 +106,11 @@ public:
     }
     void setReplayGain(const QString &mode) override { replayGainModes.append(mode); }
     QVariantMap videoStats() const override { return m_videoStats; }
-    void screenshotToFile(const QString &path) override { screenshots.append(path); }
+    bool screenshotToFile(const QString &path) override
+    {
+        screenshots.append(path);
+        return screenshotSucceeds;
+    }
 
     // Build a track map shaped exactly like a real engine's, so tests and the
     // OSD see the same keys without hand-writing them each time.
@@ -237,6 +241,7 @@ public:
     QList<int> audioDelayRequests;
     QList<int> subtitleDelayRequests;
     QStringList screenshots;
+    bool screenshotSucceeds = true;
     QStringList replayGainModes;
     int stopCalls = 0;
     bool deferTrackReadback = false;

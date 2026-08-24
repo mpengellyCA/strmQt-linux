@@ -234,6 +234,10 @@ public:
 
     // Shrinks watchdog/backoff timing so integration tests run in milliseconds.
     void setTimingForTests(int watchdogTickMs, int stallTicks, int backoffBaseMs);
+    void setScreenshotDirectoryForTests(const QString &directory)
+    {
+        m_screenshotDirectoryOverride = directory;
+    }
 
 signals:
     void activeChanged();
@@ -259,6 +263,7 @@ signals:
     void abLoopChanged();
     // Path of a screenshot just written; the UI confirms with a toast.
     void screenshotSaved(const QString &path);
+    void screenshotFailed(const QString &reason);
     void mutedChanged();
     // Session over (clean end with nothing left to play, stop, or fatal error) —
     // UI pops the player page. A clean end that auto-advances does NOT emit it.
@@ -436,6 +441,7 @@ private:
     PlayerBackend::LoadId m_nextLoadId = 0;
     PlayerBackend::LoadId m_expectedLoadId = 0;
     QString m_errorMessage;
+    QString m_screenshotDirectoryOverride;
     QVariantList m_chapters;
 
     // Watchdog / recovery state

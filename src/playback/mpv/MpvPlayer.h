@@ -142,7 +142,7 @@ public:
     void setSubtitleDelayMs(int ms) override;
     void setReplayGain(const QString &mode) override;
     QVariantMap videoStats() const override;
-    void screenshotToFile(const QString &path) override;
+    bool screenshotToFile(const QString &path) override;
     bool supportsFrameStep() const override { return true; }
     void frameStep(int direction) override;
     void setAbLoop(qint64 aMs, qint64 bMs) override;
@@ -160,7 +160,7 @@ private:
     Q_INVOKABLE void drainEvents();
     void setState(State state, LoadId loadId);
     void resetPerLoadState(LoadId loadId, qint64 positionMs);
-    void command(const char *args[]);
+    bool command(const char *args[]);
     // Re-read `track-list` and rebuild both lists; emits tracksChanged on change.
     void refreshTracks();
     void setTrackProperty(const char *name, int id);
