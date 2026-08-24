@@ -189,25 +189,6 @@ FocusScope {
         itemMenu.popupForItem(page.albumAt(index), sceneX, sceneY)
     }
 
-    // ── Favourites (the overlay AlbumPage documents) ───────────────────────
-    // MusicController's models are NOT registered with ItemActions, so the
-    // optimistic patch a toggle applies never reaches these rows and the model
-    // role goes stale the moment it is written. Role for the baseline — what the
-    // server actually said — and this map for what has changed since.
-    //
-    // It matters more here than it did before this phase: the batch heart and
-    // the "L" key can move forty rows at once, and forty hearts that did not
-    // change read as a verb that did nothing.
-    //
-    // REPLACED rather than mutated, because a mutated object notifies nothing.
-    property var favoriteOverrides: ({})
-
-    function favoriteOf(itemId, fallback) {
-        if (itemId.length > 0 && page.favoriteOverrides[itemId] !== undefined)
-            return page.favoriteOverrides[itemId] === true
-        return fallback === true
-    }
-
     // ── Top-track verbs ────────────────────────────────────────────────────
     function topTrackAt(index) {
         const model = MusicCtl.artistTracks
@@ -275,12 +256,6 @@ FocusScope {
         function onFavoriteChanged(itemId, favorite) {
             if (itemId === page.artistId)
                 page.artistFavorite = favorite
-            // …and the top-tracks overlay, for the same reason: MusicCtl's
-            // models are not registered with ItemActions, so nothing else
-            // updates those rows.
-            const next = Object.assign({}, page.favoriteOverrides)
-            next[itemId] = favorite
-            page.favoriteOverrides = next
         }
     }
 
@@ -736,7 +711,7 @@ FocusScope {
             current: topTracks.currentIndex === topRow.index && topTracks.activeFocus
             selected: topTracks.isSelected(topRow.index)
             playing: topRow.trackId.length > 0 && topRow.trackId === page.nowPlayingId
-            favorite: page.favoriteOf(topRow.trackId, topRow.model.favorite === true)
+            favorite: topRow.model.favorite === true
             showFavorite: true
             showMenu: true
             verbsRevealed: topRow.hovered || topRow.favorite

@@ -227,34 +227,6 @@ FocusScope {
         Actions.playAllFrom(items, index)
     }
 
-    // ── Favourites (the overlay AlbumPage documents) ───────────────────────
-    // MusicController's models are NOT registered with ItemActions, so the
-    // optimistic patch a toggle applies never reaches these rows and the model
-    // role goes stale the moment it is written. Role for the baseline — what the
-    // server actually said — and this map for what has changed since.
-    //
-    // It matters more here than it did before this phase: the batch heart and
-    // the "L" key can move forty rows at once, and forty hearts that did not
-    // change read as a verb that did nothing.
-    //
-    // REPLACED rather than mutated, because a mutated object notifies nothing.
-    property var favoriteOverrides: ({})
-
-    function favoriteOf(itemId, fallback) {
-        if (itemId.length > 0 && page.favoriteOverrides[itemId] !== undefined)
-            return page.favoriteOverrides[itemId] === true
-        return fallback === true
-    }
-
-    Connections {
-        target: Actions
-        function onFavoriteChanged(itemId, favorite) {
-            const next = Object.assign({}, page.favoriteOverrides)
-            next[itemId] = favorite
-            page.favoriteOverrides = next
-        }
-    }
-
     // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
     // The picker takes a list of ids and always did, so this is the same call
     // the row's own "Add to playlist" makes with one id in it. The subject is
@@ -817,7 +789,7 @@ FocusScope {
             current: songsTable.currentIndex === songRow.index && songsTable.activeFocus
             selected: songsTable.isSelected(songRow.index)
             playing: songRow.trackId.length > 0 && songRow.trackId === page.nowPlayingId
-            favorite: page.favoriteOf(songRow.trackId, songRow.model.favorite === true)
+            favorite: songRow.model.favorite === true
             showFavorite: true
             showMenu: true
             verbsRevealed: songRow.hovered || songRow.favorite

@@ -121,43 +121,18 @@ FocusScope {
     }
 
     // ── Favourites ─────────────────────────────────────────────────────────
-    // MusicController's models are NOT registered with ItemActions (see this
-    // wave's hand-back note), which has two consequences this page has to work
-    // around and neither of which it can fix from QML:
-    //
-    //   · Actions.isFavorite() knows nothing about a track or an album until
-    //     something in *this session* changes it, so the model role — what the
-    //     server actually said — is the baseline, not that lookup;
-    //   · the optimistic patch ItemActions applies after a toggle never reaches
-    //     MusicCtl.tracks, so the role goes stale the moment it is toggled.
-    //
-    // So: role for the baseline, this overlay for what has changed since. The
-    // map is REPLACED rather than mutated because a mutated object notifies
-    // nothing and every heart on screen would keep its old state.
-    //
-    // Registering the four music models in Application.cpp removes the need for
-    // all of it, and the overlay then simply agrees with the role.
-    property var favoriteOverrides: ({})
+    // The header item is a navigation snapshot rather than a live model row,
+    // so it retains one scalar. Track rows use their registered model directly.
     property bool albumFavorite: false
-
-    function favoriteOf(itemId, fallback) {
-        if (itemId.length > 0 && page.favoriteOverrides[itemId] !== undefined)
-            return page.favoriteOverrides[itemId] === true
-        return fallback === true
-    }
 
     function syncFavorite() {
         page.albumFavorite = page.albumId.length > 0
-                && page.favoriteOf(page.albumId,
-                                   page.albumItem && page.albumItem.favorite === true)
+                && page.albumItem && page.albumItem.favorite === true
     }
 
     Connections {
         target: Actions
         function onFavoriteChanged(itemId, favorite) {
-            const next = Object.assign({}, page.favoriteOverrides)
-            next[itemId] = favorite
-            page.favoriteOverrides = next
             if (itemId === page.albumId)
                 page.albumFavorite = favorite
         }
@@ -721,7 +696,7 @@ FocusScope {
             current: trackList.currentIndex === trackRow.index && trackList.activeFocus
             selected: trackList.isSelected(trackRow.index)
             playing: trackRow.trackId.length > 0 && trackRow.trackId === page.nowPlayingId
-            favorite: page.favoriteOf(trackRow.trackId, trackRow.model.favorite === true)
+            favorite: trackRow.model.favorite === true
             showFavorite: true
             showMenu: true
             // A favourited row keeps its filled heart on show; the rest of the
