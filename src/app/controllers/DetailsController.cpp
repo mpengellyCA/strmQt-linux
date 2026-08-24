@@ -7,11 +7,6 @@
 
 namespace strmqt {
 
-namespace {
-constexpr int kCastLimit = 8;
-const auto kSeparator = QStringLiteral(", ");
-} // namespace
-
 DetailsController::DetailsController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_similar(new MediaItemModel(this))
 {
@@ -29,9 +24,6 @@ void DetailsController::resetSessionState()
     cancelRequests();
     m_similar->clear();
     m_tagline.clear();
-    m_genresLine.clear();
-    m_castLine.clear();
-    m_directorLine.clear();
     m_mediaSources.clear();
     m_chapters.clear();
     m_people.clear();
@@ -94,9 +86,6 @@ void DetailsController::load(const QString &itemId)
     const int generation = ++m_generation;
     cancelRequests();
     m_tagline.clear();
-    m_genresLine.clear();
-    m_castLine.clear();
-    m_directorLine.clear();
     m_mediaSources.clear();
     m_chapters.clear();
     m_people.clear();
@@ -120,9 +109,6 @@ void DetailsController::load(const QString &itemId)
         }
         const ItemDetails &details = result.value;
         m_tagline = details.tagline;
-        m_genresLine = details.genres.join(kSeparator);
-        m_castLine = details.cast.mid(0, kCastLimit).join(kSeparator);
-        m_directorLine = details.directors.join(kSeparator);
 
         // The index travels with the map so a picker can hand it straight back
         // to PlayerController::playItem(..., preferredSourceIndex) — the two

@@ -14,15 +14,12 @@ namespace emby {
 class EmbyClient;
 }
 
-// Enriches the Details page beyond the browse-model roles: tagline, genres,
-// cast/director (text) and the "More like this" rail — fetched on page entry.
+// Enriches the Details page beyond the browse-model roles: tagline, structured
+// genre/cast/crew records, and the "More like this" rail — fetched on page entry.
 class DetailsController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString tagline READ tagline NOTIFY detailsChanged)
-    Q_PROPERTY(QString genresLine READ genresLine NOTIFY detailsChanged)
-    Q_PROPERTY(QString castLine READ castLine NOTIFY detailsChanged)
-    Q_PROPERTY(QString directorLine READ directorLine NOTIFY detailsChanged)
     // Playable versions of this item, one QVariantMap per MediaSource (the
     // MediaSource::toVariantMap() shape, plus an "index"). A later wave builds
     // the version picker and the media-info panel on top of this; the details
@@ -66,9 +63,6 @@ public:
     ~DetailsController() override;
 
     QString tagline() const { return m_tagline; }
-    QString genresLine() const { return m_genresLine; }
-    QString castLine() const { return m_castLine; }
-    QString directorLine() const { return m_directorLine; }
     QVariantList mediaSources() const { return m_mediaSources; }
     int mediaSourceCount() const { return static_cast<int>(m_mediaSources.size()); }
     QVariantList chapters() const { return m_chapters; }
@@ -106,9 +100,6 @@ private:
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
     QString m_tagline;
-    QString m_genresLine;
-    QString m_castLine;
-    QString m_directorLine;
     QVariantList m_mediaSources;
     QVariantList m_chapters;
     QVariantList m_people;
