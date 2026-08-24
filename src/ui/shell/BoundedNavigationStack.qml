@@ -508,7 +508,15 @@ StackView {
         if (controls.length !== 1)
             return false;
         const control = controls[0];
-        if (!control.visible || !control.enabled)
+        // An active refill can legitimately make a virtual owner invisible by
+        // taking its count to zero. Transfer the locator to that owner's
+        // restorer now so it can observe an empty terminal result. Without
+        // this handoff the route-level retry can outlive the request and later
+        // resurrect a stale target. Invisible controls without an explicit
+        // active refill remain ineligible, as do all disabled controls.
+        if (!control.enabled
+                || (!control.visible
+                    && control["navigationFocusRefillActive"] !== true))
             return false;
         const accepted = control["restoreNavigationFocus"](identity, index) === true;
         if (accepted && control["navigationFocusRestorePending"] === true) {

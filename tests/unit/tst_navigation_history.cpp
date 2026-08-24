@@ -1201,17 +1201,19 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
 
     // Match Main's production order: the controller enters its replacement
     // state and clears the rows before Back reconstructs/uncovers SearchPage.
-    // The semantic owner is therefore initially ineligible. The stack must
-    // retain the locator until the owner appears, then the owner itself must
-    // keep it pending until the terminal edge certifies the new model.
+    // The semantic owner is therefore initially invisible. Its explicit active
+    // refill transfers ownership immediately from the stack retry to the
+    // control restorer, which keeps it pending until the terminal edge
+    // certifies the new model.
     QVERIFY(invoke(root, "setSearchTrackRefill", true));
     QVERIFY(invoke(root, "clearSearchTracks"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_VERIFY(!currentItem(history)->property("trackOwnerVisible").toBool());
-    QVERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
     QCOMPARE(root->property("searchTrackResolutionCount").toInt(), 0);
-    QTRY_COMPARE(history->property("_focusRetryToken").toInt(),
-                 searchRoute.value(QStringLiteral("token")).toInt());
+    QCOMPARE(history->property("_focusRetryToken").toInt(), -1);
+    QCOMPARE(history->property("_pendingSemanticToken").toInt(),
+             searchRoute.value(QStringLiteral("token")).toInt());
 
     QVERIFY(invoke(root, "replaceSearchTracksReordered"));
     QTRY_VERIFY(currentItem(history)->property("trackOwnerVisible").toBool());
@@ -1225,16 +1227,31 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 0);
     QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-row-track-b"));
 
-    // A terminal empty result has no eligible row. The track owner must retire
-    // the locator and hand focus to SearchPage's field.
+    // A terminal empty result has no eligible row. Start from the same
+    // production ordering so the invisible owner, not the stack retry, owns
+    // the terminal edge. It must retire the locator and hand focus to the
+    // SearchPage field.
     QVERIFY(invoke(root, "pushRoute", 92));
     QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "clearSearchTracks"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
-    QVERIFY(invoke(root, "clearSearchTracks"));
+    QCOMPARE(history->property("_focusRetryToken").toInt(), -1);
     QVERIFY(invoke(root, "setSearchTrackRefill", false));
     QTRY_VERIFY(!currentItem(history)->property("trackRestorePending").toBool());
     QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+    QCOMPARE(history->property("_focusRetryToken").toInt(), -1);
+    QCOMPARE(history->property("_pendingSemanticToken").toInt(), -1);
+
+    // A later, unrelated refill may make the old id visible again. The empty
+    // terminal retired its locator, so this must not resolve or steal focus.
+    const int resolutionCountAfterEmpty = root->property("searchTrackResolutionCount").toInt();
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "replaceSearchTracksReordered"));
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
+    QTest::qWait(100);
+    QCOMPARE(root->property("searchTrackResolutionCount").toInt(), resolutionCountAfterEmpty);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
 
     // A user's newer focus choice wins while the replacement is live. A later
     // matching row and terminal edge must not steal focus back.
@@ -1252,6 +1269,22 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QVERIFY(invoke(root, "setSearchTrackRefill", false));
     QTest::qWait(100);
     QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+
+    // Merely being a semantic control does not make an ordinary hidden owner
+    // eligible. Without an explicit active refill, the stack keeps the bounded
+    // route retry until a user override cancels it.
+    QVERIFY(invoke(root, "seedSearchTracks"));
+    QVERIFY(invoke(root, "focusSearchTrack", 1));
+    QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
+    QVERIFY(invoke(root, "pushRoute", 94));
+    QVERIFY(invoke(root, "clearSearchTracks"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(!currentItem(history)->property("trackOwnerVisible").toBool());
+    QVERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_COMPARE(history->property("_focusRetryToken").toInt(),
+                 searchRoute.value(QStringLiteral("token")).toInt());
+    QVERIFY(invoke(root, "focusSearchTrackOverride"));
+    QTRY_COMPARE(history->property("_focusRetryToken").toInt(), -1);
 }
 
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()
