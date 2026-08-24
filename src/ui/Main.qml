@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls.Basic
-import QtQuick.Effects
 import StrmQt
 
 // The application shell (ARCHITECTURE.md).
@@ -713,22 +712,33 @@ ApplicationWindow {
         Accessible.description: qsTr("Open the player")
         Accessible.onPressAction: root.showPlayer(false)
 
-        MultiEffect {
-            anchors.fill: frame
-            source: frame
-            autoPaddingEnabled: true
-            shadowEnabled: true
-            shadowColor: Theme.shadowColor
-            shadowBlur: Theme.elevation3.blur
-            shadowVerticalOffset: Theme.elevation3.y
-            shadowOpacity: Theme.elevation3.opacity
+        // A rim rather than a real shadow. A MultiEffect draws its SOURCE as
+        // well as the shadow, and with the picture inside that source the copy
+        // landed offset from the original — two overlapping films, which is
+        // invisible for the flat panels this idiom is borrowed from and
+        // glaring here. Hiding the source empties its texture and takes the
+        // shadow with it, and placing the copy by hand did not land either.
+        // Two rounded rectangles, each a little larger and fainter, are worth
+        // more than more machinery for a separation cue this size.
+        Repeater {
+            model: [{ grow: Theme.scale(6), alpha: 0.16 },
+                    { grow: Theme.scale(3), alpha: 0.28 }]
+
+            Rectangle {
+                required property var modelData
+
+                anchors.centerIn: parent
+                width: parent.width + modelData.grow * 2
+                height: parent.height + modelData.grow * 2
+                radius: Theme.radiusCardValue + modelData.grow
+                color: Qt.rgba(0, 0, 0, modelData.alpha)
+            }
         }
 
         Rectangle {
             id: frame
 
             anchors.fill: parent
-            layer.enabled: true // so MultiEffect above can sample it
             radius: Theme.radiusCardValue
             color: "black" // a film's letterbox, not a themed surface
             border.width: 1
