@@ -69,6 +69,7 @@ private slots:
     void jumpToAndClear();
     void snapshotRestoresOrderCursorAndModes();
     void batchAppendIsOneModelOperation();
+    void largeDuplicateQueueSnapshotsByEntryIdentity();
     void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
     void playCountSurvivesTheRoundTrip();
@@ -653,6 +654,43 @@ void PlayQueueTest::batchAppendIsOneModelOperation()
     QCOMPARE(rowsInserted.last().at(2).toInt(), 119);
     QCOMPARE(queueChanged.count(), 2);
     QCOMPARE(currentItemChanged.count(), 1);
+}
+
+void PlayQueueTest::largeDuplicateQueueSnapshotsByEntryIdentity()
+{
+    constexpr int kCount = 2'000;
+    QList<MediaItem> duplicates;
+    duplicates.reserve(kCount);
+    QStringList originalNames;
+    originalNames.reserve(kCount);
+    for (int row = 0; row < kCount; ++row) {
+        MediaItem item = episode(row + 1);
+        item.id = QStringLiteral("same-item-id");
+        item.name = QStringLiteral("Entry %1").arg(row);
+        originalNames.append(item.name);
+        duplicates.append(item);
+    }
+
+    PlayQueue queue;
+    queue.setItems(duplicates, 700);
+    queue.setShuffled(true);
+    queue.jumpTo(1'234);
+    const QString currentName = queue.current().name;
+    const PlayQueue::Snapshot snapshot = queue.snapshot();
+
+    queue.clear();
+    queue.restore(snapshot);
+    QCOMPARE(queue.rowCount(), kCount);
+    QCOMPARE(queue.current().name, currentName);
+    queue.setShuffled(false);
+
+    QStringList restoredNames;
+    restoredNames.reserve(kCount);
+    for (int row = 0; row < queue.rowCount(); ++row)
+        restoredNames.append(
+            queue.itemAt(row).value(QStringLiteral("name")).toString());
+    QCOMPARE(restoredNames, originalNames);
+    QCOMPARE(queue.current().name, currentName);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

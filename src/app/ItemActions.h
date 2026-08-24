@@ -95,6 +95,7 @@ public:
     // addAllToQueue() emits queueChanged() ONCE however many rows were picked:
     // it is one gesture and it deserves one toast, not forty.
     Q_INVOKABLE void addAllToQueue(const QVariantList &items);
+    void playNextAll(const QVariantList &items);
     // setFavorite() per id, so each keeps its own optimistic patch, its own
     // rollback and its own per-item coalescing. Nothing is gained by batching
     // the requests — Emby has no bulk favourite endpoint — and a good deal is

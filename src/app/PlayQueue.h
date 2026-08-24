@@ -121,6 +121,7 @@ public:
     // an album). Invalid entries are ignored; callers can detect an empty
     // result from the returned count.
     int addToQueue(const QList<MediaItem> &items);
+    int playNext(const QList<MediaItem> &items);
     // Removing the current row promotes the next one (playback continues with
     // it); removing the last row left in the queue emits exhausted().
     Q_INVOKABLE void removeAt(int row);
@@ -184,7 +185,6 @@ private:
     // different one, exactly one of the two cursor signals above.
     void notifyCursor(bool displaced = false);
     void setCurrentIndex(int row);
-    void insertEntry(int row, const MediaItem &item, bool originalAfterCurrent);
     int originalPositionOf(quint64 key) const;
 
     QList<Entry> m_entries;        // play order (shuffled or not)

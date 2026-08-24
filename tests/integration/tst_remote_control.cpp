@@ -110,6 +110,7 @@ private slots:
     void playNextPreservesOrderOnAnEmptyQueue();
     void playNextPreservesOrderAfterACurrentItem();
     void playLastAppendsInOrder();
+    void remoteQueueBatchesAreSingleModelOperations();
     void volumeAndMuteCommandsApply();
     void repeatAndShuffleReachTheQueue();
     void uiCommandsBecomeSignals();
@@ -401,6 +402,36 @@ void RemoteControlTest::playLastAppendsInOrder()
     QTRY_COMPARE(m_player->queue()->rowCount(), 3);
     QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(), kItemA);
     QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(), kItemB);
+}
+
+void RemoteControlTest::remoteQueueBatchesAreSingleModelOperations()
+{
+    m_actions->playAllFrom({itemMap(kItemC, QStringLiteral("Playing"))}, 0);
+    QTRY_COMPARE(m_player->queue()->rowCount(), 1);
+
+    QSignalSpy rowsInserted(m_player->queue(), &QAbstractItemModel::rowsInserted);
+    QSignalSpy changed(m_actions, &ItemActions::queueChanged);
+    send(QStringLiteral("Play"),
+         play(QStringLiteral("PlayNext"), {kItemA, kItemB, kItemA}));
+    QCOMPARE(rowsInserted.count(), 1);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(m_player->queue()->rowCount(), 4);
+    QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(), kItemA);
+    QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(), kItemB);
+    QCOMPARE(m_player->queue()->itemAt(3).value(QStringLiteral("itemId")).toString(), kItemA);
+
+    send(QStringLiteral("Play"), play(QStringLiteral("PlayLast"), {kItemB, kItemB}));
+    QCOMPARE(rowsInserted.count(), 2);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(m_player->queue()->rowCount(), 6);
+    QCOMPARE(m_player->queue()->itemAt(4).value(QStringLiteral("itemId")).toString(), kItemB);
+    QCOMPARE(m_player->queue()->itemAt(5).value(QStringLiteral("itemId")).toString(), kItemB);
+
+    send(QStringLiteral("Play"), play(QStringLiteral("PlayNext"), {QString(), QString()}));
+    send(QStringLiteral("Play"), play(QStringLiteral("PlayLast"), {}));
+    QCOMPARE(rowsInserted.count(), 2);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(m_player->queue()->rowCount(), 6);
 }
 
 void RemoteControlTest::volumeAndMuteCommandsApply()

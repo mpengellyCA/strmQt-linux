@@ -356,43 +356,12 @@ int PlayQueue::originalPositionOf(quint64 key) const
     return static_cast<int>(m_originalKeys.indexOf(key));
 }
 
-void PlayQueue::insertEntry(int row, const MediaItem &item, bool originalAfterCurrent)
-{
-    row = qBound(0, row, static_cast<int>(m_entries.size()));
-    const quint64 key = m_nextKey++;
-
-    // Where the item sits in the *unshuffled* order, so un-shuffling later does
-    // not teleport it to the end of the queue.
-    int originalRow = static_cast<int>(m_originalKeys.size());
-    if (originalAfterCurrent && m_currentIndex >= 0 && m_currentIndex < m_entries.size()) {
-        const int after = originalPositionOf(m_entries.at(m_currentIndex).key);
-        if (after >= 0)
-            originalRow = after + 1;
-    }
-
-    beginInsertRows(QModelIndex(), row, row);
-    m_entries.insert(row, {item, key});
-    m_originalKeys.insert(originalRow, key);
-    endInsertRows();
-
-    if (m_entries.size() == 1)
-        m_currentIndex = 0; // first item in an empty queue starts playing
-    else if (row <= m_currentIndex)
-        ++m_currentIndex;
-
-    emitRowMetaChanged();
-    emit queueChanged();
-    // hasNext/hasPrevious hang off currentChanged, and both can flip on an
-    // insert. The cursor itself only moved if this was the first item.
-    notifyCursor();
-}
-
 void PlayQueue::playNext(const QVariant &item)
 {
     const MediaItem media = itemFromVariant(item);
     if (media.id.isEmpty())
         return;
-    insertEntry(m_currentIndex < 0 ? 0 : m_currentIndex + 1, media, true);
+    playNext(QList<MediaItem>{media});
 }
 
 void PlayQueue::addToQueue(const QVariant &item)
@@ -416,6 +385,7 @@ int PlayQueue::addToQueue(const QList<MediaItem> &items)
 
     const int first = static_cast<int>(m_entries.size());
     const int last = first + static_cast<int>(valid.size()) - 1;
+    const bool wasEmpty = m_entries.isEmpty();
     beginInsertRows(QModelIndex(), first, last);
     m_entries.reserve(m_entries.size() + valid.size());
     m_originalKeys.reserve(m_originalKeys.size() + valid.size());
@@ -424,11 +394,74 @@ int PlayQueue::addToQueue(const QList<MediaItem> &items)
         m_entries.append({std::move(item), key});
         m_originalKeys.append(key);
     }
+    if (wasEmpty)
+        m_currentIndex = 0;
     endInsertRows();
 
-    if (first == 0)
+    emit queueChanged();
+    notifyCursor();
+    return static_cast<int>(valid.size());
+}
+
+int PlayQueue::playNext(const QList<MediaItem> &items)
+{
+    QList<MediaItem> valid;
+    valid.reserve(items.size());
+    for (const MediaItem &item : items) {
+        if (!item.id.isEmpty())
+            valid.append(item);
+    }
+    if (valid.isEmpty())
+        return 0;
+
+    const bool wasEmpty = m_entries.isEmpty();
+    const int first = m_currentIndex < 0 ? 0 : m_currentIndex + 1;
+    const int last = first + static_cast<int>(valid.size()) - 1;
+    int originalRow = static_cast<int>(m_originalKeys.size());
+    if (!wasEmpty) {
+        const int currentOriginal = originalPositionOf(m_entries.at(m_currentIndex).key);
+        if (currentOriginal >= 0)
+            originalRow = currentOriginal + 1;
+    }
+
+    QList<Entry> inserted;
+    QList<quint64> insertedKeys;
+    inserted.reserve(valid.size());
+    insertedKeys.reserve(valid.size());
+    for (MediaItem &item : valid) {
+        const quint64 key = m_nextKey++;
+        inserted.append({std::move(item), key});
+        insertedKeys.append(key);
+    }
+
+    beginInsertRows(QModelIndex(), first, last);
+    QList<Entry> mergedEntries;
+    mergedEntries.reserve(m_entries.size() + inserted.size());
+    for (int row = 0; row < first; ++row)
+        mergedEntries.append(std::move(m_entries[row]));
+    mergedEntries.append(std::move(inserted));
+    for (int row = first; row < m_entries.size(); ++row)
+        mergedEntries.append(std::move(m_entries[row]));
+    m_entries = std::move(mergedEntries);
+
+    QList<quint64> mergedOriginal;
+    mergedOriginal.reserve(m_originalKeys.size() + insertedKeys.size());
+    for (int row = 0; row < originalRow; ++row)
+        mergedOriginal.append(m_originalKeys.at(row));
+    mergedOriginal.append(insertedKeys);
+    for (int row = originalRow; row < m_originalKeys.size(); ++row)
+        mergedOriginal.append(m_originalKeys.at(row));
+    m_originalKeys = std::move(mergedOriginal);
+    if (wasEmpty)
         m_currentIndex = 0;
-    emitRowMetaChanged();
+    endInsertRows();
+
+    // Existing rows after the insertion moved, so only their positional role
+    // changed. Inserted delegates read both roles correctly on creation.
+    const int shiftedFirst = last + 1;
+    if (shiftedFirst < m_entries.size())
+        emit dataChanged(index(shiftedFirst), index(static_cast<int>(m_entries.size()) - 1),
+                         {QueueIndexRole});
     emit queueChanged();
     notifyCursor();
     return static_cast<int>(valid.size());

@@ -379,6 +379,21 @@ void ItemActions::addAllToQueue(const QVariantList &items)
     emit queueChanged();
 }
 
+void ItemActions::playNextAll(const QVariantList &items)
+{
+    if (items.isEmpty() || !requireQueueTarget())
+        return;
+    QList<MediaItem> queueItems;
+    queueItems.reserve(items.size());
+    for (const QVariant &entry : items) {
+        const QVariantMap map = resolve(entry);
+        if (!map.value(kItemIdKey).toString().isEmpty())
+            queueItems.append(PlayQueue::itemFromVariant(map));
+    }
+    if (m_player->queue()->playNext(queueItems) > 0)
+        emit queueChanged();
+}
+
 void ItemActions::setFavoriteAll(const QStringList &itemIds, bool favorite)
 {
     for (const QString &itemId : itemIds)
