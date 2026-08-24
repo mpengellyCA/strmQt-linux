@@ -86,6 +86,7 @@ public:
     // Test constructor: back the store with an explicit INI file instead of the
     // platform-default location.
     explicit Settings(const QString &iniFilePath, QObject *parent = nullptr);
+    ~Settings() override;
 
     QUrl serverUrl() const;
     void setServerUrl(const QUrl &url);
@@ -239,13 +240,27 @@ signals:
     void pollIntervalSecondsChanged();
 
 private:
+    struct PendingLastPlayback
+    {
+        QString itemKey;
+        QString titleKey;
+        QString positionKey;
+        QString itemId;
+        QString title;
+        qint64 positionMs = 0;
+        bool dirty = false;
+    };
+
     QString sessionScope() const;
     QString scopedKey(const QString &key) const;
+    void writePendingLastPlayback();
     void touchRetainedPlaybackKey(const QString &group, const QString &entry);
     void pruneRetainedPlaybackState();
     void pruneRetainedPlaybackGroup(const QString &group, const QString &touched = {});
     QSettings m_store;
     QElapsedTimer m_lastPlaybackSync;
+    QString m_lastPlaybackSyncIdentity;
+    PendingLastPlayback m_pendingLastPlayback;
 };
 
 } // namespace strmqt

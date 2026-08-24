@@ -143,11 +143,25 @@ void SettingsTest::crashResumeWritesAreDebouncedUntilFlush()
     QVERIFY(durableContents().contains("positionMs=1000"));
 
     settings.setLastPlayback(QStringLiteral("item"), QStringLiteral("Film"), 2000);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
     QVERIFY(durableContents().contains("positionMs=1000"));
     QVERIFY(!durableContents().contains("positionMs=2000"));
 
     settings.flush();
     QVERIFY(durableContents().contains("positionMs=2000"));
+
+    // A different item gets its own immediate first checkpoint. A clean stop
+    // resets that identity boundary for the item that follows it as well.
+    settings.setLastPlayback(QStringLiteral("item-two"), QStringLiteral("Second"), 3000);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    QVERIFY(durableContents().contains("itemId=item-two"));
+    QVERIFY(durableContents().contains("positionMs=3000"));
+
+    settings.clearLastPlayback();
+    settings.setLastPlayback(QStringLiteral("item-three"), QStringLiteral("Third"), 4000);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    QVERIFY(durableContents().contains("itemId=item-three"));
+    QVERIFY(durableContents().contains("positionMs=4000"));
 }
 
 void SettingsTest::retainedPlaybackChoicesAreBoundedAndKeepRecentEntries()

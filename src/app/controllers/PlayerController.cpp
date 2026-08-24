@@ -403,6 +403,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     if (m_backend->state() != PlayerBackend::State::Idle)
         m_backend->stop();
     clearAbLoop();
+    m_itemReachedReady = false;
 
     if (!fromQueue) {
         // A bare play verb replaces the queue with just this item, so that a
@@ -620,6 +621,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     updateIsAudio();
     setBusy(true);
     m_started = false;
+    m_itemReachedReady = false;
     m_lastPositionMs = 0;
     updatePositionSnapshots(0, true);
     if (m_bufferedEndMs != 0) {
@@ -686,6 +688,7 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
     if (ready && !m_started) {
         m_recovering = false;
         m_started = true;
+        m_itemReachedReady = true;
         setBusy(false);
         updateUpNext();
         m_initiallyPaused = false;
@@ -1537,7 +1540,7 @@ void PlayerController::finishSession(TerminationReason reason)
         ++m_resumeToken;
         m_suspendedAudio = {};
     }
-    if (reason == TerminationReason::Failure && m_started) {
+    if (reason == TerminationReason::Failure && m_itemReachedReady) {
         persistResume();
         if (m_settings)
             m_settings->flush();
@@ -1553,6 +1556,7 @@ void PlayerController::finishSession(TerminationReason reason)
     if (reason != TerminationReason::Failure)
         clearCrashResume();
     m_started = false;
+    m_itemReachedReady = false;
     m_reporting = false;
     m_ticket = {};
     m_ticketItemId.clear();

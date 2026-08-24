@@ -60,6 +60,11 @@ Settings::Settings(const QString &iniFilePath, QObject *parent)
 {
 }
 
+Settings::~Settings()
+{
+    flush();
+}
+
 QString Settings::sessionScope() const
 {
     const QUrl url = serverUrl();
@@ -634,19 +639,51 @@ void Settings::setLastPlayback(const QString &itemId, const QString &title, qint
     const QString itemKey = scopedKey(kLastItemKey);
     if (itemKey.isEmpty())
         return;
-    m_store.setValue(itemKey, itemId);
-    m_store.setValue(scopedKey(kLastTitleKey), title);
-    m_store.setValue(scopedKey(kLastPositionKey), positionMs);
-    if (!m_lastPlaybackSync.isValid() ||
+    const QString identity = itemKey + QChar::Null + itemId;
+
+    // QSettings::setValue() schedules an UpdateRequest, so merely delaying
+    // sync() still rewrites an INI file on the next event-loop turn. Keep the
+    // hot five-second checkpoint outside QSettings until a real durability
+    // boundary. Flush an older identity before replacing the pending record.
+    if (identity != m_lastPlaybackSyncIdentity && m_pendingLastPlayback.dirty)
+        flush();
+
+    m_pendingLastPlayback.itemKey = itemKey;
+    m_pendingLastPlayback.titleKey = scopedKey(kLastTitleKey);
+    m_pendingLastPlayback.positionKey = scopedKey(kLastPositionKey);
+    m_pendingLastPlayback.itemId = itemId;
+    m_pendingLastPlayback.title = title;
+    m_pendingLastPlayback.positionMs = positionMs;
+    m_pendingLastPlayback.dirty = true;
+
+    if (identity != m_lastPlaybackSyncIdentity || !m_lastPlaybackSync.isValid() ||
         m_lastPlaybackSync.elapsed() >= kResumeSyncIntervalMs) {
         flush();
+        m_lastPlaybackSyncIdentity = identity;
     }
+}
+
+void Settings::writePendingLastPlayback()
+{
+    if (!m_pendingLastPlayback.dirty || m_pendingLastPlayback.itemKey.isEmpty())
+        return;
+    m_store.setValue(m_pendingLastPlayback.itemKey, m_pendingLastPlayback.itemId);
+    m_store.setValue(m_pendingLastPlayback.titleKey, m_pendingLastPlayback.title);
+    m_store.setValue(m_pendingLastPlayback.positionKey, m_pendingLastPlayback.positionMs);
 }
 
 void Settings::flush()
 {
+    writePendingLastPlayback();
     m_store.sync();
-    m_lastPlaybackSync.restart();
+    if (m_store.status() == QSettings::NoError) {
+        m_pendingLastPlayback.dirty = false;
+        m_lastPlaybackSync.restart();
+    } else {
+        // Leave the record dirty and the timer invalid/expired so the next
+        // checkpoint retries instead of treating a failed sync as durable.
+        qCWarning(logCore) << "failed to persist application settings";
+    }
 }
 
 QVariantMap Settings::lastPlayback() const
@@ -654,6 +691,14 @@ QVariantMap Settings::lastPlayback() const
     const QString itemKey = scopedKey(kLastItemKey);
     if (itemKey.isEmpty())
         return {};
+    if (m_pendingLastPlayback.itemKey == itemKey &&
+        !m_pendingLastPlayback.itemId.isEmpty()) {
+        QVariantMap map;
+        map.insert(QStringLiteral("itemId"), m_pendingLastPlayback.itemId);
+        map.insert(QStringLiteral("title"), m_pendingLastPlayback.title);
+        map.insert(QStringLiteral("positionMs"), m_pendingLastPlayback.positionMs);
+        return map;
+    }
     const QString itemId = m_store.value(itemKey).toString();
     if (itemId.isEmpty())
         return {};
@@ -670,6 +715,12 @@ void Settings::clearLastPlayback()
     const QString itemKey = scopedKey(kLastItemKey);
     if (itemKey.isEmpty())
         return;
+    // A pending record can belong to the account we just left. Preserve it
+    // under the full keys captured at write time before clearing this scope.
+    if (m_pendingLastPlayback.dirty && m_pendingLastPlayback.itemKey != itemKey)
+        flush();
+    if (m_pendingLastPlayback.itemKey == itemKey)
+        m_pendingLastPlayback = {};
     m_store.remove(itemKey);
     m_store.remove(scopedKey(kLastTitleKey));
     m_store.remove(scopedKey(kLastPositionKey));
@@ -677,6 +728,10 @@ void Settings::clearLastPlayback()
     // power loss immediately after Stop can resurrect an already-cleared item
     // on the next launch.
     flush();
+    // The next item/account needs its own first durable checkpoint even if it
+    // starts inside the ordinary one-minute debounce window.
+    m_lastPlaybackSync.invalidate();
+    m_lastPlaybackSyncIdentity.clear();
 }
 
 QString Settings::deviceId()

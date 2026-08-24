@@ -444,6 +444,10 @@ private:
     bool m_busy = false;
     bool m_isAudio = false;
     bool m_started = false;   // current rung got to Playing at least once
+    // Survives rung reloads/recovery after m_started is reset. A terminal
+    // failure must durably retain a real session's resume point, while a media
+    // item that never reached a ready state must not replace the previous one.
+    bool m_itemReachedReady = false;
     bool m_reporting = false; // this session reports to the server
     int m_generation = 0;
     // True while a start comes from the queue moving rather than from someone

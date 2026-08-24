@@ -541,6 +541,19 @@ void PlayerControllerTest::watchdogNudgesReloadsThenDemotes()
     m_backend->simulateBuffering(true);
     QTest::qWait(200);
     QCOMPARE(m_backend->loadedUrls.size(), 3);
+
+    // Once starvation clears, exhaust the final rung. The watchdog closes the
+    // reporting session before finishing the failure; the crash-resume record
+    // must still carry the last real position durably.
+    m_backend->simulateBuffering(false);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 4);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QTRY_VERIFY(!m_controller->active());
+
+    QFile durable(m_dir->filePath(QStringLiteral("settings.ini")));
+    QVERIFY(durable.open(QIODevice::ReadOnly));
+    QVERIFY(durable.readAll().contains("positionMs=101000"));
 }
 
 void PlayerControllerTest::reloadThenErrorPreservesResumePosition()
@@ -617,6 +630,10 @@ void PlayerControllerTest::midStreamErrorRefetchesTicket()
     m_backend->simulateError(QStringLiteral("reset final"));
     QTRY_COMPARE(stoppedSpy.count(), 1);
     QVERIFY(m_controller->errorMessage().contains(QStringLiteral("reset final")));
+
+    QFile durable(m_dir->filePath(QStringLiteral("settings.ini")));
+    QVERIFY(durable.open(QIODevice::ReadOnly));
+    QVERIFY(durable.readAll().contains("positionMs=500000"));
 }
 
 void PlayerControllerTest::recoveryBurstStartsOnlyOneRefresh()
