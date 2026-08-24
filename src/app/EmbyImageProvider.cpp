@@ -1,5 +1,6 @@
 #include "EmbyImageProvider.h"
 
+#include "ImageLimits.h"
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
 
@@ -26,10 +27,6 @@ constexpr int kExportWidth = 512;
 // Roughly an album's worth of distinct covers. Bounded, and small enough that
 // listing the directory to prune it is cheaper than the write it follows.
 constexpr int kMaxExportedFiles = 24;
-constexpr qint64 kMaxEncodedBytes = 16 * 1024 * 1024;
-constexpr qint64 kMaxDecodedPixels = 20'000'000;
-constexpr int kMaxImageDimension = 8192;
-
 struct BoundedReplyState
 {
     QByteArray bytes;
@@ -40,9 +37,9 @@ void drainBounded(QNetworkReply *reply, const std::shared_ptr<BoundedReplyState>
 {
     if (state->overflow)
         return;
-    const qint64 remaining = kMaxEncodedBytes - state->bytes.size();
+    const qint64 remaining = imagelimits::kMaxEncodedBytes - state->bytes.size();
     state->bytes += reply->read(remaining + 1);
-    if (state->bytes.size() > kMaxEncodedBytes) {
+    if (!imagelimits::encodedBytesAllowed(state->bytes.size())) {
         state->overflow = true;
         reply->abort();
     }
@@ -59,10 +56,7 @@ std::shared_ptr<BoundedReplyState> boundReply(QNetworkReply *reply)
 
 bool imageMetadataAllowed(QImageReader *reader)
 {
-    const QSize size = reader->size();
-    return size.isValid() && size.width() <= kMaxImageDimension &&
-           size.height() <= kMaxImageDimension &&
-           qint64(size.width()) * size.height() <= kMaxDecodedPixels;
+    return imagelimits::decodedSizeAllowed(reader->size());
 }
 
 bool decodeBounded(const QByteArray &bytes, QImage *image)
@@ -142,8 +136,10 @@ EmbyImageFetcher::EmbyImageFetcher(emby::EmbyClient *client, QObject *parent)
     m_cache->setMaximumCacheSize(256 * 1024 * 1024);
     m_nam->setCache(m_cache);
     m_nam->setAutoDeleteReplies(true);
-    connect(m_client, &emby::EmbyClient::identityChanged, this,
-            &EmbyImageFetcher::resetCachePartition);
+    if (m_client) {
+        connect(m_client, &emby::EmbyClient::identityChanged, this,
+                &EmbyImageFetcher::resetCachePartition);
+    }
     resetCachePartition();
 }
 
@@ -156,8 +152,11 @@ void EmbyImageFetcher::resetCachePartition()
     if (!m_cache)
         return;
     m_cache->clear();
-    const QByteArray identity = m_client->baseUrl().toString(QUrl::FullyEncoded).toUtf8() + '\0' +
-                                m_client->userId().toUtf8();
+    QByteArray identity;
+    if (m_client) {
+        identity = m_client->baseUrl().toString(QUrl::FullyEncoded).toUtf8() + '\0' +
+                   m_client->userId().toUtf8();
+    }
     const QString partition = QString::fromLatin1(
         QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
     m_cache->setCacheDirectory(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
