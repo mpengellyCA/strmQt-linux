@@ -124,13 +124,13 @@ QVariant PlayQueue::data(const QModelIndex &index, int role) const
     case IsCurrentRole:
         return index.row() == m_currentIndex;
     default:
-        return m_view.data(m_view.index(index.row()), role);
+        return MediaItemModel::dataForItem(m_entries.at(index.row()).item, role);
     }
 }
 
 QHash<int, QByteArray> PlayQueue::roleNames() const
 {
-    QHash<int, QByteArray> roles = m_view.roleNames();
+    QHash<int, QByteArray> roles = MediaItemModel::mediaRoleNames();
     roles.insert(QueueIndexRole, "queueIndex");
     roles.insert(IsCurrentRole, "isCurrent");
     return roles;
@@ -171,15 +171,6 @@ void PlayQueue::notifyCursor(bool displaced)
         emit currentItemDisplaced();
     else
         emit currentItemChanged();
-}
-
-void PlayQueue::syncView()
-{
-    QList<MediaItem> items;
-    items.reserve(m_entries.size());
-    for (const Entry &entry : std::as_const(m_entries))
-        items.append(entry.item);
-    m_view.setItems(std::move(items));
 }
 
 QVariantMap PlayQueue::itemAt(int row) const
@@ -266,7 +257,6 @@ void PlayQueue::setItems(QList<MediaItem> items, int startIndex)
                          ? -1
                          : qBound(0, startIndex, static_cast<int>(m_entries.size()) - 1);
     const bool wasShuffled = std::exchange(m_shuffled, false);
-    syncView();
     endResetModel();
 
     if (wasShuffled)
@@ -279,19 +269,18 @@ PlayQueue::Snapshot PlayQueue::snapshot() const
 {
     Snapshot snap;
     snap.playOrder.reserve(m_entries.size());
-    for (const Entry &entry : std::as_const(m_entries))
+    QHash<quint64, int> positionsByKey;
+    positionsByKey.reserve(m_entries.size());
+    for (int row = 0; row < m_entries.size(); ++row) {
+        const Entry &entry = m_entries.at(row);
         snap.playOrder.append(entry.item);
+        positionsByKey.insert(entry.key, row);
+    }
     snap.originalPositions.reserve(m_originalKeys.size());
     for (const quint64 key : std::as_const(m_originalKeys)) {
-        int position = -1;
-        for (int row = 0; row < m_entries.size(); ++row) {
-            if (m_entries.at(row).key == key) {
-                position = row;
-                break;
-            }
-        }
-        if (position >= 0)
-            snap.originalPositions.append(position);
+        const auto position = positionsByKey.constFind(key);
+        if (position != positionsByKey.cend())
+            snap.originalPositions.append(*position);
     }
     snap.currentIndex = m_currentIndex;
     snap.shuffled = m_shuffled;
@@ -308,6 +297,7 @@ void PlayQueue::restore(const Snapshot &snapshot)
     m_entries.clear();
     m_originalKeys.clear();
     m_entries.reserve(snapshot.playOrder.size());
+    m_originalKeys.reserve(snapshot.playOrder.size());
     for (const MediaItem &item : snapshot.playOrder)
         m_entries.append({item, m_nextKey++});
     for (const int position : snapshot.originalPositions) {
@@ -328,7 +318,6 @@ void PlayQueue::restore(const Snapshot &snapshot)
                                   static_cast<int>(m_entries.size()) - 1);
     m_shuffled = snapshot.shuffled;
     m_repeatMode = snapshot.repeatMode;
-    syncView();
     endResetModel();
 
     if (shuffledChanging)
@@ -350,7 +339,6 @@ void PlayQueue::enrichEntry(const MediaItem &item)
         // the payload, so replacing what an entry HOLDS must not disturb where
         // it sits or what it is.
         m_entries[row].item = item;
-        syncView();
         const QModelIndex idx = index(row);
         emit dataChanged(idx, idx);
         if (row == m_currentIndex)
@@ -385,7 +373,6 @@ void PlayQueue::insertEntry(int row, const MediaItem &item, bool originalAfterCu
     beginInsertRows(QModelIndex(), row, row);
     m_entries.insert(row, {item, key});
     m_originalKeys.insert(originalRow, key);
-    syncView();
     endInsertRows();
 
     if (m_entries.size() == 1)
@@ -413,7 +400,38 @@ void PlayQueue::addToQueue(const QVariant &item)
     const MediaItem media = itemFromVariant(item);
     if (media.id.isEmpty())
         return;
-    insertEntry(static_cast<int>(m_entries.size()), media, false);
+    addToQueue(QList<MediaItem>{media});
+}
+
+int PlayQueue::addToQueue(const QList<MediaItem> &items)
+{
+    QList<MediaItem> valid;
+    valid.reserve(items.size());
+    for (const MediaItem &item : items) {
+        if (!item.id.isEmpty())
+            valid.append(item);
+    }
+    if (valid.isEmpty())
+        return 0;
+
+    const int first = static_cast<int>(m_entries.size());
+    const int last = first + static_cast<int>(valid.size()) - 1;
+    beginInsertRows(QModelIndex(), first, last);
+    m_entries.reserve(m_entries.size() + valid.size());
+    m_originalKeys.reserve(m_originalKeys.size() + valid.size());
+    for (MediaItem &item : valid) {
+        const quint64 key = m_nextKey++;
+        m_entries.append({std::move(item), key});
+        m_originalKeys.append(key);
+    }
+    endInsertRows();
+
+    if (first == 0)
+        m_currentIndex = 0;
+    emitRowMetaChanged();
+    emit queueChanged();
+    notifyCursor();
+    return static_cast<int>(valid.size());
 }
 
 void PlayQueue::removeAt(int row)
@@ -425,7 +443,6 @@ void PlayQueue::removeAt(int row)
     beginRemoveRows(QModelIndex(), row, row);
     m_originalKeys.removeOne(m_entries.at(row).key);
     m_entries.removeAt(row);
-    syncView();
     endRemoveRows();
 
     if (m_entries.isEmpty()) {
@@ -468,7 +485,6 @@ void PlayQueue::moveItem(int from, int to)
                                   entry.key);
         }
     }
-    syncView();
     endMoveRows();
 
     if (m_currentIndex == from)
@@ -491,7 +507,6 @@ void PlayQueue::clear()
     m_entries.clear();
     m_originalKeys.clear();
     m_currentIndex = -1;
-    syncView();
     endResetModel();
     emit queueChanged();
     notifyCursor();
@@ -609,7 +624,6 @@ void PlayQueue::setShuffled(bool shuffled)
                 }
             }
         }
-        syncView();
         endResetModel();
         notifyCursor();
     }

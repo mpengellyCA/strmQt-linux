@@ -69,6 +69,12 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    // PlayQueue exposes the same media roles without owning a second copy of
+    // every item. Keep the conversion and names here so the two model surfaces
+    // cannot drift apart.
+    static QVariant dataForItem(const MediaItem &item, int role);
+    static QHash<int, QByteArray> mediaRoleNames();
+
     void setItems(QList<MediaItem> items, int totalRecordCount = -1);
     // `totalRecordCount` is the count the appended page itself reported; -1
     // means "the caller has none". A count arriving with a page is newer than

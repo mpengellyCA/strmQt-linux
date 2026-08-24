@@ -17,9 +17,10 @@ namespace strmqt {
 //
 // It is a QAbstractListModel so the queue panel can reuse the same delegates as
 // every rail and grid: the roles below MediaItemModel::SubtitleRole *are*
-// MediaItemModel's roles, with the same names and the same values, because
-// data() forwards to a private MediaItemModel holding the same items. Two extra
-// roles (queueIndex, isCurrent) are all that a queue adds on top.
+// MediaItemModel's roles, with the same names and the same values. Both model
+// surfaces use MediaItemModel's shared role conversion, so the queue does not
+// need a second copy of every item. Two extra roles (queueIndex, isCurrent) are
+// all that a queue adds on top.
 //
 // QtCore only — no QtGui, no network, no player. The queue never starts
 // playback itself; PlayerController watches currentChanged() and does that.
@@ -116,6 +117,10 @@ public:
     // is empty, in which case the item becomes current and starts playing).
     Q_INVOKABLE void playNext(const QVariant &item);
     Q_INVOKABLE void addToQueue(const QVariant &item);
+    // One structural operation for a whole user gesture (for example, adding
+    // an album). Invalid entries are ignored; callers can detect an empty
+    // result from the returned count.
+    int addToQueue(const QList<MediaItem> &items);
     // Removing the current row promotes the next one (playback continues with
     // it); removing the last row left in the queue emits exhausted().
     Q_INVOKABLE void removeAt(int row);
@@ -173,7 +178,6 @@ private:
     };
 
     void emitRowMetaChanged();
-    void syncView();
     // Identity of the entry under the cursor, 0 when there is none.
     quint64 currentKey() const;
     // Emits currentChanged() and, when the entry under the cursor is a
@@ -192,9 +196,6 @@ private:
     quint64 m_currentKey = 0;
     bool m_shuffled = false;
     RepeatMode m_repeatMode = RepeatOff;
-    // Role parity with rails and grids, for free: the queue delegates data() to
-    // a MediaItemModel holding the same rows in the same order.
-    MediaItemModel m_view;
 };
 
 } // namespace strmqt

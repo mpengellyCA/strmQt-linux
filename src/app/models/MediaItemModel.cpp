@@ -81,8 +81,11 @@ QVariant MediaItemModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_items.size())
         return {};
-    const MediaItem &item = m_items[index.row()];
+    return dataForItem(m_items[index.row()], role);
+}
 
+QVariant MediaItemModel::dataForItem(const MediaItem &item, int role)
+{
     switch (role) {
     case IdRole:
         return item.id;
@@ -162,6 +165,11 @@ QVariant MediaItemModel::data(const QModelIndex &index, int role) const
 }
 
 QHash<int, QByteArray> MediaItemModel::roleNames() const
+{
+    return mediaRoleNames();
+}
+
+QHash<int, QByteArray> MediaItemModel::mediaRoleNames()
 {
     return {
         {IdRole, "itemId"},

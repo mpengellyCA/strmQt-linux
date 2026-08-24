@@ -360,14 +360,15 @@ void ItemActions::addAllToQueue(const QVariantList &items)
     }
     if (!requireQueueTarget())
         return;
-    int added = 0;
+    QList<MediaItem> queueItems;
+    queueItems.reserve(items.size());
     for (const QVariant &entry : items) {
         const QVariantMap map = resolve(entry);
         if (map.value(kItemIdKey).toString().isEmpty())
             continue;
-        m_player->queue()->addToQueue(map);
-        ++added;
+        queueItems.append(PlayQueue::itemFromVariant(map));
     }
+    const int added = m_player->queue()->addToQueue(queueItems);
     if (added == 0) {
         qCWarning(logApp) << "ItemActions: addAllToQueue had nothing with an item id";
         emit actionFailed(tr("There is nothing to queue here."));

@@ -68,6 +68,7 @@ private slots:
     void moveItemKeepsTheCursorOnTheSameItem();
     void jumpToAndClear();
     void snapshotRestoresOrderCursorAndModes();
+    void batchAppendIsOneModelOperation();
     void cursorSignalsTellAMoveFromAReIndex();
     void itemFromVariantRoundTripsAModelMap();
     void playCountSurvivesTheRoundTrip();
@@ -622,6 +623,36 @@ void PlayQueueTest::snapshotRestoresOrderCursorAndModes()
         inOrder.append(item.id);
     QCOMPARE(idsOf(queue), inOrder);
     QCOMPARE(queue.currentItem().value(QStringLiteral("itemId")).toString(), currentId);
+}
+
+void PlayQueueTest::batchAppendIsOneModelOperation()
+{
+    PlayQueue queue;
+    QSignalSpy rowsInserted(&queue, &QAbstractItemModel::rowsInserted);
+    QSignalSpy queueChanged(&queue, &PlayQueue::queueChanged);
+    QSignalSpy currentItemChanged(&queue, &PlayQueue::currentItemChanged);
+
+    QList<MediaItem> batch = episodes(100);
+    MediaItem invalid;
+    batch.insert(50, invalid);
+    QCOMPARE(queue.addToQueue(batch), 100);
+
+    QCOMPARE(queue.rowCount(), 100);
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(rowsInserted.count(), 1);
+    QCOMPARE(rowsInserted.first().at(1).toInt(), 0);
+    QCOMPARE(rowsInserted.first().at(2).toInt(), 99);
+    QCOMPARE(queueChanged.count(), 1);
+    QCOMPARE(currentItemChanged.count(), 1);
+
+    QCOMPARE(queue.addToQueue(episodes(20)), 20);
+    QCOMPARE(queue.rowCount(), 120);
+    QCOMPARE(queue.currentIndex(), 0);
+    QCOMPARE(rowsInserted.count(), 2);
+    QCOMPARE(rowsInserted.last().at(1).toInt(), 100);
+    QCOMPARE(rowsInserted.last().at(2).toInt(), 119);
+    QCOMPARE(queueChanged.count(), 2);
+    QCOMPARE(currentItemChanged.count(), 1);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)
