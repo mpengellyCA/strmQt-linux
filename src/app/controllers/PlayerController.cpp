@@ -11,6 +11,7 @@
 
 #include <QScopedValueRollback>
 
+#include <algorithm>
 #include <utility>
 
 namespace strmqt {
@@ -24,6 +25,10 @@ constexpr int kMaxRecoverRetries = 3;
 constexpr qint64 kUpNextWindowMs = 30'000;
 // Below this, "previous" means the previous item; above it, it means "restart".
 constexpr qint64 kRestartThresholdMs = 5'000;
+// Chapter/up-next bookkeeping is controller state, not animation. Sampling it
+// at four times a second keeps it responsive without making every video frame
+// walk the controller's derived state.
+constexpr qint64 kInternalPositionEpsilonMs = 250;
 constexpr qint64 msToTicks(qint64 ms)
 {
     return ms * kTicksPerMs;
@@ -141,7 +146,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             return;
         m_lastPositionMs = ms;
         emit positionChanged();
-        updateUpNext();
+        updatePositionSnapshots(ms);
     });
     connect(m_backend, &PlayerBackend::durationChanged, this,
             [this](qint64, PlayerBackend::LoadId loadId) {
@@ -156,6 +161,8 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
         if (loadId == m_expectedLoadId)
             emit bufferingChanged();
     });
+    connect(m_backend, &PlayerBackend::bufferedMsChanged, this,
+            &PlayerController::updateBufferedEnd);
 
     m_progressTimer.setInterval(kProgressIntervalMs);
     connect(&m_progressTimer, &QTimer::timeout, this, &PlayerController::reportProgress);
@@ -429,10 +436,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     emit streamMethodChanged();
     m_title = title;
     emit titleChanged();
-    if (!m_chapters.isEmpty()) {
-        m_chapters.clear();
-        emit chaptersChanged();
-    }
+    clearChapters();
     // playUrl() passes no item id (dev/test path, no server session).
     // A new item gets a fresh chance to restore its remembered tracks.
     m_tracksRestored = false;
@@ -468,6 +472,11 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // Until playback actually starts, "last position" is the requested start —
     // a pre-start ladder demotion must not lose the resume point.
     m_lastPositionMs = startPositionMs;
+    updatePositionSnapshots(startPositionMs, true);
+    if (m_bufferedEndMs != startPositionMs) {
+        m_bufferedEndMs = startPositionMs;
+        emit bufferedEndChanged();
+    }
 
     m_client->playbackInfo(itemId, msToTicks(startPositionMs))
         .then(this, [this, generation, startPositionMs, itemId](const Result<PlaybackTicket> &result) {
@@ -601,10 +610,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
-    if (!m_chapters.isEmpty()) {
-        m_chapters.clear();
-        emit chaptersChanged();
-    }
+    clearChapters();
     m_rung = 0;
     m_sourceIndex = -1;
     m_preferredSourceIndex = -1;
@@ -615,6 +621,11 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     setBusy(true);
     m_started = false;
     m_lastPositionMs = 0;
+    updatePositionSnapshots(0, true);
+    if (m_bufferedEndMs != 0) {
+        m_bufferedEndMs = 0;
+        emit bufferedEndChanged();
+    }
     m_expectedLoadId = ++m_nextLoadId;
     m_initiallyPaused = false;
     m_backend->load(url, 0, m_expectedLoadId, false);
@@ -827,36 +838,80 @@ void PlayerController::fetchChapters(const QString &itemId, int generation)
         updateIsAudio();
 
         QVariantList list;
+        QList<qint64> starts;
         list.reserve(result.value.chapters.size());
-        for (const Chapter &chapter : result.value.chapters)
+        starts.reserve(result.value.chapters.size());
+        for (const Chapter &chapter : result.value.chapters) {
             list.append(chapter.toVariantMap());
-        if (list == m_chapters)
+            starts.append(chapter.startMs());
+        }
+        if (list == m_chapters && starts == m_chapterStarts)
             return;
         m_chapters = list;
+        m_chapterStarts = starts;
         emit chaptersChanged();
+        updateCurrentChapter(m_lastPositionMs);
     });
 }
 
-int PlayerController::currentChapter() const
+void PlayerController::clearChapters()
 {
-    if (m_chapters.isEmpty())
-        return -1;
-    const qint64 position = positionMs();
-    int found = -1;
-    for (int i = 0; i < m_chapters.size(); ++i) {
-        if (m_chapters.at(i).toMap().value(QStringLiteral("startMs")).toLongLong() <= position)
-            found = i;
-        else
-            break;
+    if (!m_chapters.isEmpty() || !m_chapterStarts.isEmpty()) {
+        m_chapters.clear();
+        m_chapterStarts.clear();
+        emit chaptersChanged();
     }
-    return found;
+    if (m_currentChapter != -1) {
+        m_currentChapter = -1;
+        emit currentChapterChanged();
+    }
+}
+
+void PlayerController::updateCurrentChapter(qint64 positionMs)
+{
+    const auto it = std::upper_bound(m_chapterStarts.cbegin(), m_chapterStarts.cend(), positionMs);
+    const int chapter = it == m_chapterStarts.cbegin()
+                            ? -1
+                            : static_cast<int>(std::distance(m_chapterStarts.cbegin(), it) - 1);
+    if (chapter == m_currentChapter)
+        return;
+    m_currentChapter = chapter;
+    emit currentChapterChanged();
+}
+
+void PlayerController::updatePositionSnapshots(qint64 positionMs, bool forceInternal)
+{
+    const qint64 seconds = qMax<qint64>(0, positionMs) / 1000;
+    if (seconds != m_positionSeconds) {
+        m_positionSeconds = seconds;
+        emit positionSecondsChanged();
+    }
+
+    if (!forceInternal && m_lastInternalPositionMs >= 0 &&
+        qAbs(positionMs - m_lastInternalPositionMs) < kInternalPositionEpsilonMs) {
+        return;
+    }
+    m_lastInternalPositionMs = positionMs;
+    updateCurrentChapter(positionMs);
+    updateUpNext();
+}
+
+void PlayerController::updateBufferedEnd()
+{
+    if (!m_active)
+        return;
+    const qint64 endpoint = qMax<qint64>(0, positionMs() + m_backend->bufferedMs());
+    if (endpoint == m_bufferedEndMs)
+        return;
+    m_bufferedEndMs = endpoint;
+    emit bufferedEndChanged();
 }
 
 void PlayerController::seekToChapter(int index)
 {
-    if (index < 0 || index >= m_chapters.size())
+    if (index < 0 || index >= m_chapterStarts.size())
         return;
-    seekTo(m_chapters.at(index).toMap().value(QStringLiteral("startMs")).toLongLong());
+    seekTo(m_chapterStarts.at(index));
 }
 
 void PlayerController::nextChapter()
@@ -872,8 +927,7 @@ void PlayerController::previousChapter()
     if (current < 0)
         return;
     constexpr qint64 kRestartWindowMs = 3000;
-    const qint64 start =
-        m_chapters.at(current).toMap().value(QStringLiteral("startMs")).toLongLong();
+    const qint64 start = m_chapterStarts.at(current);
     seekToChapter(positionMs() - start > kRestartWindowMs ? current : qMax(0, current - 1));
 }
 
@@ -1197,6 +1251,7 @@ void PlayerController::seekTo(qint64 positionMs)
     // recomputing every step off the same stale base: two taps of skip-forward
     // move 20 s, not 10.
     m_lastPositionMs = target;
+    updatePositionSnapshots(target, true);
     // Announced from here rather than from each caller so that every way of
     // moving the playhead — the scrubber, a skip binding, a chapter jump, a
     // remote SetPosition — reaches a listening MPRIS client as one Seeked.
@@ -1507,10 +1562,12 @@ void PlayerController::finishSession(TerminationReason reason)
     m_initiallyPaused = false;
     ++m_recoveryToken;
     m_lastPositionMs = 0;
-    if (!m_chapters.isEmpty()) {
-        m_chapters.clear();
-        emit chaptersChanged();
+    updatePositionSnapshots(0, true);
+    if (m_bufferedEndMs != 0) {
+        m_bufferedEndMs = 0;
+        emit bufferedEndChanged();
     }
+    clearChapters();
     emit sourcesChanged();
     emit sourceIndexChanged();
     emit streamMethodChanged();

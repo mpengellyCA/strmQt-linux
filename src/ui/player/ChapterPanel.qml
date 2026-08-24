@@ -12,28 +12,15 @@ import StrmQt
 // three you can act on, so it marks where you are and seeks where you click.
 //
 // The owner supplies `chapters` (PlayerCtl.chapters: {name, startMs, imageTag})
-// and `positionMs`, rather than this file reaching for the controller itself —
-// the OSD already guards that surface once and there is no reason to guard it
-// twice.
+// and the controller's cached current index, rather than making this panel
+// rescan QVariant maps every time the playhead moves.
 FocusScope {
     id: panel
 
     property var chapters: []
-    property real positionMs: 0
+    property int currentChapter: -1
 
     signal closeRequested
-
-    // Last chapter whose start is at or before the playhead.
-    readonly property int currentChapter: {
-        let found = -1;
-        for (let i = 0; i < panel.chapters.length; ++i) {
-            if (Number(panel.chapters[i].startMs) <= panel.positionMs)
-                found = i;
-            else
-                break;
-        }
-        return found;
-    }
 
     function formatTime(ms: real): string {
         const totalSeconds = Math.max(0, Math.floor(ms / 1000));

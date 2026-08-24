@@ -40,6 +40,14 @@ class PlayerController : public QObject
     // one more than the architecture allows. It lives here now; QML reads it.
     Q_PROPERTY(bool isAudio READ isAudio NOTIFY isAudioChanged)
     Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY positionChanged)
+    // Text clocks do not need the engine's frame-rate position stream. Keep a
+    // whole-second snapshot beside the smooth scrubber property so changing a
+    // digit does one QML update rather than 24-60 identical ones.
+    Q_PROPERTY(qint64 positionSeconds READ positionSeconds NOTIFY positionSecondsChanged)
+    // Absolute buffered endpoint sampled when the backend's buffered amount
+    // changes. QML must not add relative bufferedMs to the per-frame playhead:
+    // doing so animates a value whose source only changes every ~250 ms.
+    Q_PROPERTY(qint64 bufferedEndMs READ bufferedEndMs NOTIFY bufferedEndChanged)
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY durationChanged)
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
     Q_PROPERTY(QString streamMethod READ streamMethod NOTIFY streamMethodChanged)
@@ -79,7 +87,7 @@ class PlayerController : public QObject
     // NOT from PlaybackInfo, so they are fetched alongside the ticket rather than
     // extracted from it. Empty for items the server has no chapters for.
     Q_PROPERTY(QVariantList chapters READ chapters NOTIFY chaptersChanged)
-    Q_PROPERTY(int currentChapter READ currentChapter NOTIFY positionChanged)
+    Q_PROPERTY(int currentChapter READ currentChapter NOTIFY currentChapterChanged)
 
 public:
     PlayerController(emby::EmbyClient *client, PlayerBackend *backend, Settings *settings = nullptr,
@@ -91,6 +99,8 @@ public:
     bool busy() const { return m_busy; }
     bool isAudio() const { return m_isAudio; }
     qint64 positionMs() const { return m_backend->positionMs(); }
+    qint64 positionSeconds() const { return m_positionSeconds; }
+    qint64 bufferedEndMs() const { return m_bufferedEndMs; }
     qint64 durationMs() const;
     QString title() const { return m_title; }
     QString streamMethod() const;
@@ -128,7 +138,7 @@ public:
 
     QVariantList chapters() const { return m_chapters; }
     // Index of the chapter containing the playhead, or -1 when there are none.
-    int currentChapter() const;
+    int currentChapter() const { return m_currentChapter; }
     Q_INVOKABLE void seekToChapter(int index);
     Q_INVOKABLE void nextChapter();
     // Mirrors every player's "previous" behaviour: within the first few seconds
@@ -245,6 +255,8 @@ signals:
     void busyChanged();
     void isAudioChanged();
     void positionChanged();
+    void positionSecondsChanged();
+    void bufferedEndChanged();
     void durationChanged();
     void titleChanged();
     void streamMethodChanged();
@@ -268,6 +280,7 @@ signals:
     // Session over (clean end with nothing left to play, stop, or fatal error) —
     // UI pops the player page. A clean end that auto-advances does NOT emit it.
     void chaptersChanged();
+    void currentChapterChanged();
     void stopped();
     // Queue shape or cursor moved: hasNext / hasPrevious / nextItem.
     void queueStateChanged();
@@ -360,6 +373,10 @@ private:
     void persistResume();
     void setActive(bool active);
     void fetchChapters(const QString &itemId, int generation);
+    void clearChapters();
+    void updateCurrentChapter(qint64 positionMs);
+    void updatePositionSnapshots(qint64 positionMs, bool forceInternal = false);
+    void updateBufferedEnd();
     // Continue a series when nothing else is queued. Returns true when it took
     // responsibility for what happens next.
     bool tryAutoPlayNextEpisode();
@@ -417,6 +434,9 @@ private:
     // -1 = automatic (ticket default). Set by setPreferredSource()/playItem().
     int m_preferredSourceIndex = -1;
     qint64 m_lastPositionMs = 0;
+    qint64 m_positionSeconds = 0;
+    qint64 m_bufferedEndMs = 0;
+    qint64 m_lastInternalPositionMs = -1;
     int m_volume = 100;
     bool m_muted = false;
     bool m_applyingVolume = false; // guards the engine → controller echo
@@ -443,6 +463,8 @@ private:
     QString m_errorMessage;
     QString m_screenshotDirectoryOverride;
     QVariantList m_chapters;
+    QList<qint64> m_chapterStarts;
+    int m_currentChapter = -1;
 
     // Watchdog / recovery state
     qint64 m_watchdogLastPos = -1;

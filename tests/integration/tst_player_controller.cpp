@@ -61,6 +61,7 @@ private slots:
     void trackPersistenceWaitsForBackendReadback();
     void playbackSettingsFollowBackendReadback();
     void screenshotSuccessRequiresBackendConfirmation();
+    void positionSnapshotsBoundQmlChurn();
 
     void replayGainReachesTheEngineOnLoadAndOnChange();
 
@@ -156,6 +157,65 @@ void PlayerControllerTest::screenshotSuccessRequiresBackendConfirmation()
     QCOMPARE(saved.count(), 1);
     QCOMPARE(failed.count(), 1);
     QCOMPARE(m_backend->screenshots.size(), 2);
+}
+
+void PlayerControllerTest::positionSnapshotsBoundQmlChurn()
+{
+    const QByteArray details = R"json({
+        "Id": "301001",
+        "Name": "The Matrix",
+        "Type": "Movie",
+        "Chapters": [
+            {"Name": "Opening", "StartPositionTicks": 0},
+            {"Name": "First scene", "StartPositionTicks": 5000000},
+            {"Name": "Second scene", "StartPositionTicks": 20000000}
+        ]
+    })json";
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/301001").arg(kUserId), 200, details);
+
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QTRY_COMPARE(m_controller->chapters().size(), 3);
+    QCOMPARE(m_controller->currentChapter(), 0);
+
+    QSignalSpy rawPosition(m_controller, &PlayerController::positionChanged);
+    QSignalSpy wholeSeconds(m_controller, &PlayerController::positionSecondsChanged);
+    QSignalSpy chapter(m_controller, &PlayerController::currentChapterChanged);
+    QSignalSpy buffered(m_controller, &PlayerController::bufferedEndChanged);
+
+    // The smooth playhead remains frame-rate capable, while text and internal
+    // chapter work stay quiet inside a whole second / 250 ms sample window.
+    m_backend->simulatePosition(100);
+    m_backend->simulatePosition(200);
+    m_backend->simulatePosition(249);
+    QCOMPARE(rawPosition.count(), 3);
+    QCOMPARE(wholeSeconds.count(), 0);
+    QCOMPARE(chapter.count(), 0);
+
+    m_backend->simulatePosition(260);
+    m_backend->simulatePosition(490);
+    m_backend->simulatePosition(510);
+    QCOMPARE(m_controller->currentChapter(), 1);
+    QCOMPARE(chapter.count(), 1);
+
+    m_backend->simulatePosition(1001);
+    m_backend->simulatePosition(1010);
+    m_backend->simulatePosition(1090);
+    QCOMPARE(m_controller->positionSeconds(), Q_INT64_C(1));
+    QCOMPARE(wholeSeconds.count(), 1);
+
+    // The buffered fill snapshots an absolute endpoint only when the backend's
+    // buffer estimate changes. Raw playhead frames no longer drag it forward.
+    m_backend->simulateBufferedMs(5000);
+    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6090));
+    QCOMPARE(buffered.count(), 1);
+    m_backend->simulatePosition(1200);
+    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6090));
+    QCOMPARE(buffered.count(), 1);
+    m_backend->simulateBufferedMs(5000);
+    QCOMPARE(m_controller->bufferedEndMs(), Q_INT64_C(6200));
+    QCOMPARE(buffered.count(), 2);
 }
 
 void PlayerControllerTest::directPlayStartsAndReports()

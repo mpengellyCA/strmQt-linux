@@ -121,6 +121,7 @@ FocusScope {
     readonly property string queueContext: NowPlayingInfo.queueContext
 
     readonly property real positionMs: NowPlayingInfo.positionMs
+    readonly property real positionSeconds: NowPlayingInfo.positionSeconds
     readonly property real durationMs: NowPlayingInfo.durationMs
     readonly property bool seekable: NowPlayingInfo.seekable
 
@@ -142,12 +143,12 @@ FocusScope {
         return NowPlayingInfo.formatTime(ms);
     }
 
-    readonly property string endsAt: {
-        if (panel.durationMs <= 0)
-            return "";
-        const remaining = Math.max(0, panel.durationMs - panel.positionMs);
-        return Qt.formatTime(new Date(Date.now() + remaining), Locale.ShortFormat);
-    }
+    readonly property real endsAtEpochMinute: panel.durationMs > 0
+        ? Math.floor((Date.now() + Math.max(0, panel.durationMs
+                                            - panel.positionSeconds * 1000)) / 60000)
+        : -1
+    readonly property string endsAt: panel.endsAtEpochMinute >= 0
+        ? Qt.formatTime(new Date(panel.endsAtEpochMinute * 60000), Locale.ShortFormat) : ""
 
     // ── Keyboard entry points, used by the page ─────────────────────────────
     // Nothing in this file calls them by itself: focus enters on a click or
@@ -358,7 +359,8 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                         text: (PlayerCtl.paused === true ? qsTr("Paused") + "  ·  " : "")
                               + panel.formatTime(positionLabel.scrubMs >= 0
-                                                 ? positionLabel.scrubMs : panel.positionMs)
+                                                 ? positionLabel.scrubMs
+                                                 : panel.positionSeconds * 1000)
                               + "  /  " + panel.formatTime(panel.durationMs)
                         color: Theme.textPrimaryColor
                         font.family: Theme.fontMono

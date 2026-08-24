@@ -66,6 +66,8 @@ Item {
         return (list !== undefined && list !== null) ? list : [];
     }
     readonly property bool hasChapters: osd.chapters.length > 0
+    readonly property int currentChapter: PlayerCtl.currentChapter !== undefined
+                                          ? Number(PlayerCtl.currentChapter) : -1
 
     readonly property var chapterMarkers: {
         const out = [];
@@ -77,12 +79,7 @@ Item {
         return out;
     }
 
-    readonly property real bufferedPosition: {
-        const ahead = osd.backend.bufferedMs;
-        // bufferedMs is measured *ahead of the playhead*; StrmSlider wants an
-        // absolute value on the same axis as `value`.
-        return (ahead !== undefined ? Number(ahead) : 0) + PlayerCtl.positionMs;
-    }
+    readonly property real bufferedPosition: Number(PlayerCtl.bufferedEndMs)
 
     // Structured queue roles, never punctuation parsed back out of a rendered
     // label. MiniPlayer and the audio page consume this same presentation.
@@ -93,12 +90,15 @@ Item {
     // one grey line at the top right.
     readonly property var techChips: NowPlayingInfo.videoTechChips
 
-    readonly property string endsAt: {
-        if (PlayerCtl.durationMs <= 0)
-            return "";
-        const remaining = Math.max(0, PlayerCtl.durationMs - PlayerCtl.positionMs);
-        return Qt.formatTime(new Date(Date.now() + remaining), Locale.ShortFormat);
-    }
+    // The cheap integer expression may be checked once a second, but the Date
+    // allocation and formatting below only wake when the minute printed on
+    // screen actually changes (including after a seek).
+    readonly property real endsAtEpochMinute: PlayerCtl.durationMs > 0
+        ? Math.floor((Date.now() + Math.max(0, PlayerCtl.durationMs
+                                            - PlayerCtl.positionSeconds * 1000)) / 60000)
+        : -1
+    readonly property string endsAt: osd.endsAtEpochMinute >= 0
+        ? Qt.formatTime(new Date(osd.endsAtEpochMinute * 60000), Locale.ShortFormat) : ""
 
     // ── API used by the page ────────────────────────────────────────────────
     function wake(): void {
@@ -224,6 +224,10 @@ Item {
 
     function chapterNameAt(ms: real): string {
         const index = osd.chapterIndexAt(ms);
+        return osd.chapterName(index);
+    }
+
+    function chapterName(index: int): string {
         if (index < 0)
             return "";
         const name = osd.chapters[index].name;
@@ -442,7 +446,7 @@ Item {
                         // timecode is worse than four extra characters.
                         text: (PlayerCtl.paused ? qsTr("Paused") + "  ·  " : "")
                               + osd.formatTime(positionLabel.scrubMs >= 0 ? positionLabel.scrubMs
-                                                                          : PlayerCtl.positionMs)
+                                                                          : PlayerCtl.positionSeconds * 1000)
                               + "  /  " + osd.formatTime(PlayerCtl.durationMs)
                         color: Theme.textPrimaryColor
                         font.family: Theme.fontMono
@@ -455,7 +459,7 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.verticalCenter: parent.verticalCenter
                         visible: chapterHere.text.length > 0
-                        text: osd.chapterNameAt(PlayerCtl.positionMs)
+                        text: osd.chapterName(osd.currentChapter)
                         color: Theme.textSecondaryColor
                         font.family: Theme.fontBody
                         font.pixelSize: Theme.fontSmall
@@ -688,7 +692,7 @@ Item {
 
         ChapterPanel {
             chapters: osd.chapters
-            positionMs: PlayerCtl.positionMs
+            currentChapter: osd.currentChapter
             onCloseRequested: osd.closePanel()
         }
     }

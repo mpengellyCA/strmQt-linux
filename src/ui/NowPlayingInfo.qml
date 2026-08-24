@@ -64,17 +64,13 @@ QtObject {
                                                || field("backdropUrl").length > 0)
 
     readonly property real positionMs: Number(PlayerCtl.positionMs)
+    readonly property real positionSeconds: Number(PlayerCtl.positionSeconds)
     readonly property real durationMs: Number(PlayerCtl.durationMs)
     readonly property bool seekable: info.durationMs > 0
-    readonly property real bufferedPosition: {
-        const backend = PlayerCtl.backend;
-        if (backend === undefined || backend === null || backend.bufferedMs === undefined)
-            return 0;
-        return Number(backend.bufferedMs) + info.positionMs;
-    }
-    readonly property string elapsedText: formatTime(info.positionMs)
+    readonly property real bufferedPosition: Number(PlayerCtl.bufferedEndMs)
+    readonly property string elapsedText: formatTime(info.positionSeconds * 1000)
     readonly property string remainingText: info.seekable
-        ? "−" + formatTime(Math.max(0, info.durationMs - info.positionMs)) : "--:--"
+        ? "−" + formatTime(Math.max(0, info.durationMs - info.positionSeconds * 1000)) : "--:--"
     readonly property string timeText: info.elapsedText + "  /  " + info.remainingText
     readonly property string queueContext: info.queue !== null
                                            ? String(info.queue.contextLabel) : ""

@@ -293,7 +293,8 @@ FocusScope {
     // taken verbatim when there is no remaining time to show, because "--:--"
     // is what is drawn there and it is shorter than the clock it replaces.
     readonly property string timeTemplate: {
-        const shape = mini.formatTime(Math.max(mini.durationMs, mini.positionMs))
+        const shape = mini.formatTime(Math.max(mini.durationMs,
+                                                NowPlayingInfo.positionSeconds * 1000))
                           .replace(/[0-9]/g, "0");
         return shape + "  /  " + (mini.seekable ? "−" + shape : mini.remainingText);
     }
