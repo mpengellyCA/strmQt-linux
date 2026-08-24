@@ -43,6 +43,11 @@ Item {
     // Every row is { label, value }; empty values are dropped by the builder,
     // so the table never shows a label with nothing beside it.
     readonly property var rows: {
+        // Dynamic binding dependencies are only the values read on this pass.
+        // Returning before touching backend state makes the hidden overlay
+        // inert instead of rebuilding an invisible delegate tree.
+        if (!stats.shown)
+            return [];
         const out = [];
         const s = stats.videoStats;
         const push = (label, value) => {
@@ -88,12 +93,53 @@ Item {
             audioBits.push(stats.formatBitrate(Number(s.audioBitrate)));
         push(qsTr("Audio"), audioBits.join("  ·  "));
 
-        const ahead = stats.backend.bufferedMs;
-        if (ahead !== undefined)
-            push(qsTr("Buffered ahead"), (Number(ahead) / 1000).toFixed(1) + " s");
-
         push(qsTr("Engine"), stats.backend.engineName);
         return out;
+    }
+
+    readonly property string bufferedAhead: {
+        if (!stats.shown)
+            return "";
+        const ahead = stats.backend.bufferedMs;
+        return ahead !== undefined ? (Number(ahead) / 1000).toFixed(1) + " s" : "";
+    }
+
+    component StatRow: Item {
+        id: statRow
+
+        required property string rowLabel
+        required property string rowValue
+
+        width: parent.width
+        implicitHeight: Math.max(labelText.contentHeight, valueLabel.contentHeight)
+        height: implicitHeight
+
+        Text {
+            id: labelText
+
+            anchors.left: parent.left
+            anchors.top: parent.top
+            width: Theme.scale(140)
+            text: statRow.rowLabel
+            color: Theme.textTertiary
+            font.family: Theme.fontMono
+            font.pixelSize: Theme.fontCaption
+            elide: Text.ElideRight
+        }
+
+        Text {
+            id: valueLabel
+
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.scale(146)
+            anchors.right: parent.right
+            anchors.top: parent.top
+            text: statRow.rowValue
+            color: Theme.textPrimaryColor
+            font.family: Theme.fontMono
+            font.pixelSize: Theme.fontCaption
+            wrapMode: Text.WordWrap
+        }
     }
 
     implicitHeight: surface.implicitHeight
@@ -153,41 +199,21 @@ Item {
             Repeater {
                 model: stats.rows
 
-                delegate: Item {
-                    id: statRow
-
+                delegate: StatRow {
                     required property var modelData
-
-                    width: parent.width
-                    height: Math.max(labelText.contentHeight, valueLabel.contentHeight)
-
-                    Text {
-                        id: labelText
-
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        width: Theme.scale(140)
-                        text: statRow.modelData.label
-                        color: Theme.textTertiary
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        id: valueLabel
-
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.scale(146)
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        text: statRow.modelData.value
-                        color: Theme.textPrimaryColor
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        wrapMode: Text.WordWrap
-                    }
+                    rowLabel: String(modelData.label)
+                    rowValue: String(modelData.value)
                 }
+            }
+
+            // The buffered counter is the only value that ticks every few
+            // hundred milliseconds. Updating one row avoids replacing the
+            // Repeater's complete model on every cache notification.
+            StatRow {
+                visible: stats.bufferedAhead.length > 0
+                height: visible ? implicitHeight : 0
+                rowLabel: qsTr("Buffered ahead")
+                rowValue: stats.bufferedAhead
             }
         }
     }
