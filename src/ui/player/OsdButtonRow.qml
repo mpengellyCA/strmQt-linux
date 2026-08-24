@@ -81,7 +81,7 @@ FocusScope {
     // Previous is live whenever it can do something: with no earlier queue entry
     // it still restarts the current item, which is the universal convention.
     readonly property bool canGoPrevious: PlayerCtl.hasPrevious === true
-                                          || PlayerCtl.positionSeconds > 5
+                                          || PlayerCtl.positionSeconds >= 5
 
     readonly property string volumeIcon: PlayerCtl.muted ? "volume-mute"
                                        : PlayerCtl.volume <= 0 ? "volume-mute"
