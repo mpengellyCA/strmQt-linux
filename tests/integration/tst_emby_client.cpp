@@ -49,6 +49,7 @@ private slots:
     void sessionChangeCancelsOutstandingRequests();
     void authenticationAdoptionCancelsOutstandingRequests();
     void reassertingTheSameIdentityKeepsRequestsAlive();
+    void renamePreservesTheFetchedItemMetadata();
     void renameCannotChainAWriteAcrossServers();
 
 private:
@@ -415,6 +416,45 @@ void EmbyClientTest::reassertingTheSameIdentityKeepsRequestsAlive()
     const auto canceled = waitFor(std::move(retired));
     QVERIFY(!canceled.ok());
     QCOMPARE(canceled.error, QStringLiteral("request canceled"));
+}
+
+void EmbyClientTest::renamePreservesTheFetchedItemMetadata()
+{
+    m_client->setSession(kToken, kUserId);
+    const QString itemId = QStringLiteral("playlist-with-metadata");
+    const QJsonObject original{
+        {QStringLiteral("Id"), itemId},
+        {QStringLiteral("Name"), QStringLiteral("Old name")},
+        {QStringLiteral("Overview"), QStringLiteral("Keep this description")},
+        {QStringLiteral("Tags"), QJsonArray{QStringLiteral("road-trip")}},
+        {QStringLiteral("ProviderIds"), QJsonObject{{QStringLiteral("Custom"), QStringLiteral("7")}}},
+        {QStringLiteral("LockedFields"), QJsonArray{QStringLiteral("Overview")}},
+        {QStringLiteral("LockData"), true},
+        {QStringLiteral("ForcedSortName"), QStringLiteral("Old name")},
+        {QStringLiteral("SortName"), QStringLiteral("Old name")},
+    };
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/%2").arg(kUserId, itemId), 200,
+                     QJsonDocument(original).toJson(QJsonDocument::Compact));
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Items/%1").arg(itemId), 204, {});
+
+    const Result<bool> result = waitFor(m_client->renameItem(itemId, QStringLiteral("New name")));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+
+    const auto request =
+        m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Items/%1").arg(itemId));
+    QJsonObject posted = QJsonDocument::fromJson(request.body).object();
+    QCOMPARE(posted.take(QStringLiteral("Name")).toString(), QStringLiteral("New name"));
+    // Sort fields are intentionally removed so Emby derives them from the new
+    // name. Every other field returned by the single-item endpoint is posted
+    // back verbatim: UpdateItem is a whole-object operation.
+    QVERIFY(!posted.contains(QStringLiteral("ForcedSortName")));
+    QVERIFY(!posted.contains(QStringLiteral("SortName")));
+    QJsonObject expected = original;
+    expected.remove(QStringLiteral("Name"));
+    expected.remove(QStringLiteral("ForcedSortName"));
+    expected.remove(QStringLiteral("SortName"));
+    QCOMPARE(posted, expected);
 }
 
 void EmbyClientTest::renameCannotChainAWriteAcrossServers()
