@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
+
+class QProcess;
 
 namespace strmqt {
 
@@ -15,6 +18,7 @@ class HdrSupport : public QObject
 
 public:
     explicit HdrSupport(QObject *parent = nullptr);
+    ~HdrSupport() override;
 
     // Runs the probe asynchronously; emits probed() when done.
     void probe();
@@ -26,8 +30,13 @@ signals:
     void probed();
 
 private:
+    void finishProbe(QProcess *process, int exitCode, bool normalExit);
+
     bool m_probed = false;
     bool m_hdrActive = false;
+    bool m_probeTimedOut = false;
+    QProcess *m_process = nullptr;
+    QTimer m_timeout;
 };
 
 } // namespace strmqt
