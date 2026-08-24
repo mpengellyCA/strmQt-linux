@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 import StrmQt
 
 // The application shell (ARCHITECTURE.md).
@@ -158,6 +159,21 @@ ApplicationWindow {
             root.liftSleeve();
         stack.push(playerComponent);
         Qt.callLater(root.focusCurrentPage);
+    }
+
+    // The plane belongs to whichever surface is showing the film: the player
+    // page while it is up, the floating frame otherwise. Called whenever the
+    // top of the stack changes, which covers both directions — and on the
+    // page's own destruction, as a backstop.
+    // Published by the player page while it exists, so nothing here has to
+    // read a property off an untyped stack item.
+    property Item playerVideoSlot: null
+
+    function reseatVideoPlane(): void {
+        const slot = (root.playerOnTop && root.playerVideoSlot !== null) ? root.playerVideoSlot
+                                                                        : pipSlot;
+        if (videoPlane.parent !== slot)
+            videoPlane.parent = slot;
     }
 
     // Leave the player WITHOUT stopping it, so playback continues under the
@@ -513,6 +529,8 @@ ApplicationWindow {
         // restore at that depth reads a dead object and throws (masked by the
         // try/catch in restoreFocusToPage). Anything deeper than the stack is by
         // definition gone, so this is where it gets dropped.
+        onCurrentItemChanged: root.reseatVideoPlane()
+
         onDepthChanged: {
             for (const key in root.focusMemory) {
                 if (Number(key) > stack.depth)
@@ -603,6 +621,157 @@ ApplicationWindow {
     // coerces to null, mapToItem quietly falls back to scene coordinates, and
     // the two spaces coincide only while the window has no header or footer.
     // Adding either would have offset every endpoint by its height.
+    // ── The video plane (one, for the life of the app) ──────────────────────
+    // Same reason the sleeve below lives here rather than on a page, with a
+    // harder consequence. Freeing mpv's render context disables video for the
+    // file that is loaded, and mpv does not give it back: a recreated context
+    // renders black, and neither vid=auto nor video-reload recovers it
+    // (measured). A plane owned by the player page was therefore destroyed
+    // every time the page was left, and coming back gave a black screen with
+    // sound — which is exactly what leaving a film and returning to it did.
+    //
+    // So the plane is never destroyed. It is moved: into the page's slot while
+    // the player is up, and into the floating frame below the rest of the
+    // time. Reparenting and hiding are both safe — verified against Qt: one
+    // renderer, never destroyed, across a reparent, a hidden item and a hidden
+    // parent.
+    //
+    // Loaded by URL rather than as an inline Component: a build without libvlc
+    // never registers the VlcVideo type, and an inline reference to it would
+    // make this file unresolvable. engineName is CONSTANT, so it resolves once.
+    Loader {
+        id: videoPlane
+
+        parent: pipSlot
+        anchors.fill: parent
+        Component.onCompleted: setSource(
+            PlayerCtl.backend.engineName === "vlc" ? "components/VlcVideoPlane.qml"
+                                                   : "components/MpvVideoPlane.qml",
+            { player: PlayerCtl.backend })
+    }
+
+    // ── Picture-in-picture ──────────────────────────────────────────────────
+    // Where a film goes when you leave the player without stopping it. It sits
+    // above the docked bar and moves with it, so the two read as one stack of
+    // now-playing chrome rather than two things that happen to overlap.
+    Item {
+        id: pip
+
+        readonly property int frameWidth:
+            Math.round(Math.min(Theme.scale(360),
+                                Math.max(Theme.scale(200), root.width * 0.22)))
+
+        width: pip.frameWidth
+        height: Math.round(pip.frameWidth * 9 / 16)
+        anchors.right: parent.right
+        anchors.rightMargin: Theme.spacingValue
+        anchors.bottom: parent.bottom
+        // The bar's reserved strip is animated, so this rides it up and down
+        // instead of jumping when the bar arrives.
+        anchors.bottomMargin: miniPlayer.reservedHeight + Theme.spacingValue
+        // Below the bar and the rail, above the pages: it floats over content,
+        // never over the chrome that controls it.
+        z: 17
+        visible: pip.shown || pip.reveal > 0.001
+        enabled: pip.shown
+
+        readonly property bool shown: Session.authenticated && PlayerCtl.active === true
+                                      && PlayerCtl.isAudio !== true && !root.playerOnTop
+        property real reveal: pip.shown ? 1 : 0
+
+        Behavior on reveal {
+            NumberAnimation {
+                duration: Theme.animNormalMs
+                easing.type: Theme.easeStandard
+            }
+        }
+
+        opacity: pip.reveal
+        scale: 0.94 + 0.06 * pip.reveal
+
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Picture in picture: %1").arg(PlayerCtl.title)
+        Accessible.description: qsTr("Open the player")
+        Accessible.onPressAction: root.showPlayer(false)
+
+        MultiEffect {
+            anchors.fill: frame
+            source: frame
+            autoPaddingEnabled: true
+            shadowEnabled: true
+            shadowColor: Theme.shadowColor
+            shadowBlur: Theme.elevation3.blur
+            shadowVerticalOffset: Theme.elevation3.y
+            shadowOpacity: Theme.elevation3.opacity
+        }
+
+        Rectangle {
+            id: frame
+
+            anchors.fill: parent
+            layer.enabled: true // so MultiEffect above can sample it
+            radius: Theme.radiusCardValue
+            color: "black" // a film's letterbox, not a themed surface
+            border.width: 1
+            border.color: pipHover.hovered ? Theme.accentColor : Theme.hairline
+            clip: true
+
+            Behavior on border.color {
+                ColorAnimation {
+                    duration: Theme.animFastMs
+                    easing.type: Theme.easeStandard
+                }
+            }
+
+            // The plane is parented here, and to the player page while that is
+            // up. Nothing else may occupy it.
+            Item {
+                id: pipSlot
+
+                anchors.fill: parent
+            }
+
+            // Says what a click does, without covering the picture until the
+            // pointer is on it.
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.scrimColor
+                opacity: pipHover.hovered ? 0.55 : 0
+                visible: opacity > 0.001
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Theme.animFastMs
+                        easing.type: Theme.easeStandard
+                    }
+                }
+
+                StrmIcon {
+                    anchors.centerIn: parent
+                    name: "fullscreen"
+                    size: Math.round(Theme.iconSize * 1.6)
+                    color: Theme.textPrimaryColor
+                }
+            }
+        }
+
+        HoverHandler {
+            id: pipHover
+
+            cursorShape: Qt.PointingHandCursor
+        }
+
+        // A MouseArea, not a TapHandler: a handler takes a passive grab and
+        // lets the press through to the grid behind, which is the bug the
+        // docked bar had. This floats over content, so it must absorb.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton
+            onClicked: root.showPlayer(false)
+            onWheel: wheel => wheel.accepted = true
+        }
+    }
+
     SleeveFlight {
         id: sleeveFlight
 
@@ -793,6 +962,15 @@ ApplicationWindow {
     Component {
         id: playerComponent
         PlayerPage {
+            onVideoSlotReady: slot => {
+                root.playerVideoSlot = slot;
+                root.reseatVideoPlane();
+            }
+            // Before the page goes away with the plane still inside it.
+            onVideoSlotReleasing: {
+                root.playerVideoSlot = null;
+                root.reseatVideoPlane();
+            }
             sleeveInFlight: sleeveFlight.active
             onMinimizeRequested: root.minimizePlayer()
         }

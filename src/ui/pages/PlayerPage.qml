@@ -34,6 +34,15 @@ FocusScope {
     // Leave the player but keep playing (ARCHITECTURE.md).
     signal minimizeRequested
 
+    // The page announces its slot rather than the owner reaching in for it:
+    // `stack.currentItem` is a bare QQuickItem, so anything read off it is
+    // invisible to qmllint and unchecked until it fails at runtime.
+    signal videoSlotReady(Item slot)
+    // The owner has to take the video plane back before this page goes away,
+    // or it is destroyed with it and the picture does not come back. Ordinary
+    // navigation reseats it earlier than this; this is the backstop.
+    signal videoSlotReleasing
+
     // The shared sleeve is in the air (MUSIC.md §4). Passed through to the
     // now-playing panel, which owns the square this hides.
     property bool sleeveInFlight: false
@@ -51,6 +60,9 @@ FocusScope {
     readonly property real sleeveRadius: nowPlaying.heroArtRadius
 
     objectName: "playerPage" // Main.qml tests this to hide the chrome and to pop on stopped()
+
+    Component.onCompleted: page.videoSlotReady(videoSlot)
+    Component.onDestruction: page.videoSlotReleasing()
 
     focus: true
 
@@ -131,22 +143,20 @@ FocusScope {
         color: "black" // The film's own letterbox, not a themed surface.
     }
 
-    // Video plane matching the configured engine (PlayerCtl.backend type).
-    // Loaded by URL rather than as an inline Component: a build without libvlc
-    // never registers the VlcVideo type, and an inline reference to it would make
-    // PlayerPage itself unresolvable. engineName is CONSTANT, so this resolves once.
-    Loader {
+    // Where the video plane sits while this page is up. The plane itself lives
+    // in Main.qml and is moved in and out of here, because it must outlive the
+    // page: freeing mpv's render context disables video for the file that is
+    // loaded and mpv does not bring it back — a recreated context renders a
+    // black frame, and neither vid=auto nor video-reload recovers it. A page
+    // that owned the plane therefore cost the picture every time it was left.
+    //
+    // Still occupied while a record plays, only not drawn: there is nothing on
+    // it, and hiding costs nothing where destroying costs the session.
+    Item {
+        id: videoSlot
+
         anchors.fill: parent
-        // Still constructed, still holding the engine's surface — only not
-        // drawn while a record is playing, where there is nothing on it. The
-        // Loader is deliberately NOT deactivated: tearing the render surface
-        // down and back up around a queue that mixes tracks and videos is a
-        // far bigger change to the video path than not painting it.
         visible: !page.audioMode
-        Component.onCompleted: setSource(
-            PlayerCtl.backend.engineName === "vlc" ? "../components/VlcVideoPlane.qml"
-                                                   : "../components/MpvVideoPlane.qml",
-            { player: PlayerCtl.backend })
     }
 
     // ── Pointer (ARCHITECTURE.md) ──────────────────────────────────────────────

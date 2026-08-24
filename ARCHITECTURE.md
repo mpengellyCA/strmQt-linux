@@ -149,6 +149,16 @@ Auto-advance has a precedence rule:
 decoding is verified live per release. `VlcPlayer` exists as an escape hatch behind
 `STRMQT_WITH_VLC` and has a known video-output defect.
 
+**The video plane belongs to the shell, not to the player page.** Freeing mpv's
+render context disables video for the file that is loaded, and mpv does not give
+it back: a recreated context renders black, and neither `vid=auto` nor
+`video-reload` recovers it (measured against libmpv 2.5). A plane owned by the
+player page was therefore destroyed every time the page was left, so returning
+to a film gave a black screen with sound. `Main.qml` owns one plane for the life
+of the app and moves it between the page's slot and the picture-in-picture frame
+that floats above the docked bar; reparenting and hiding both keep the renderer
+alive, which is what makes that safe.
+
 ---
 
 ## 4. User interface

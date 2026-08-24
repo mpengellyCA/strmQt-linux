@@ -2,6 +2,7 @@ src/ui/Main.qml: Member "sleeveRadius" not found on type "QQuickItem" [missing-p
 src/ui/Main.qml: Member "sleeveRadius" not found on type "QQuickItem" [missing-property]	stack.currentItem.sleeveRadius,
 src/ui/Main.qml: Member "sleeveRect" not found on type "QQuickItem" [missing-property]	const target = page.sleeveRect(root.contentItem);
 src/ui/Main.qml: Member "sleeveRect" not found on type "QQuickItem" [missing-property]	root.startSleeveFlight(stack.currentItem.sleeveRect(root.contentItem),
+src/ui/Main.qml: Unqualified access [unqualified]	&& PlayerCtl.isAudio !== true && !root.playerOnTop
 src/ui/Main.qml: Unqualified access [unqualified]	() => LibraryCtl.open(libraryId, name, collectionType),
 src/ui/Main.qml: Unqualified access [unqualified]	() => LibraryCtl.openFavorites(),
 src/ui/Main.qml: Unqualified access [unqualified]	() => LibraryCtl.openPerson(id, name), key, name);
@@ -9,6 +10,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	() => MusicCtl.openAlbum(item.
 src/ui/Main.qml: Unqualified access [unqualified]	() => MusicCtl.openArtist(item.itemId, item.name),
 src/ui/Main.qml: Unqualified access [unqualified]	() => SeriesCtl.open(seriesId, seriesName),
 src/ui/Main.qml: Unqualified access [unqualified]	: !Session.authenticated ? "login"
+src/ui/Main.qml: Unqualified access [unqualified]	Accessible.name: qsTr("Picture in picture: %1").arg(PlayerCtl.title)
 src/ui/Main.qml: Unqualified access [unqualified]	HomeCtl.refresh();
 src/ui/Main.qml: Unqualified access [unqualified]	HomeCtl.refresh();
 src/ui/Main.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
@@ -26,6 +28,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openAlbum(item.itemId
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openArtist(item.itemId, item.name);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.setLibrary(libraryId);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.setLibrary(libraryId);
+src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.backend.engineName === "vlc" ? "components/VlcVideoPlane.qml"
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.clearCrashResume();
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.playItem(info.itemId, info.title, info.positionMs);
 src/ui/Main.qml: Unqualified access [unqualified]	PlaylistCtl.open(playlistId, name);
@@ -49,8 +52,14 @@ src/ui/Main.qml: Unqualified access [unqualified]	onMinimizeRequested: root.mini
 src/ui/Main.qml: Unqualified access [unqualified]	onPointChanged: Input.noteInput("mouse")
 src/ui/Main.qml: Unqualified access [unqualified]	onSignOutRequested: Session.logout()
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
+src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
+src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	root.openLibrary(libraryId, name, collectionType)
+src/ui/Main.qml: Unqualified access [unqualified]	root.playerVideoSlot = null;
+src/ui/Main.qml: Unqualified access [unqualified]	root.playerVideoSlot = slot;
 src/ui/Main.qml: Unqualified access [unqualified]	root.pushPage(playlistComponent, ({}), () => PlaylistCtl.refresh(),
+src/ui/Main.qml: Unqualified access [unqualified]	root.reseatVideoPlane();
+src/ui/Main.qml: Unqualified access [unqualified]	root.reseatVideoPlane();
 src/ui/Main.qml: Unqualified access [unqualified]	running: typeof SelfTest !== "undefined" && SelfTest
 src/ui/Main.qml: Unqualified access [unqualified]	sleeveInFlight: sleeveFlight.active
 src/ui/Main.qml: Unqualified access [unqualified]	target: Actions
@@ -64,6 +73,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
 src/ui/Main.qml: Unqualified access [unqualified]	userName: Session.username
 src/ui/Main.qml: Unqualified access [unqualified]	var crash = PlayerCtl.crashResumeInfo();
+src/ui/Main.qml: Unqualified access [unqualified]	{ player: PlayerCtl.backend })
 src/ui/NowPlayingInfo.qml: Unqualified access [unqualified]	? field("name") : String(PlayerCtl.title || "")
 src/ui/NowPlayingInfo.qml: Unqualified access [unqualified]	const backend = PlayerCtl.backend;
 src/ui/NowPlayingInfo.qml: Unqualified access [unqualified]	const backend = PlayerCtl.backend;
@@ -478,7 +488,6 @@ src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Input.noteInput("m
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.adjustVolume(-5);
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.adjustVolume(5);
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.adjustVolume(delta > 0 ? 5 : -5);
-src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.backend.engineName === "vlc" ? "../components/VlcVideoPlane.qml"
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.cycleAudioTrack();
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.cycleSubtitleTrack();
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.frameStep(-1);
@@ -512,7 +521,6 @@ src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	text: qsTr("%1 —
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.busy || PlayerCtl.buffering
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.busy || PlayerCtl.buffering
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl.errorMessage.length > 0
-src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	{ player: PlayerCtl.backend })
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	&& browseRow.record.id === PlaylistCtl.currentId
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	.arg(PlaylistCtl.currentName)
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, 0);
