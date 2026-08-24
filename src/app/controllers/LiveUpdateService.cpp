@@ -135,6 +135,7 @@ void LiveUpdateService::stop()
     m_pendingLibraryIds.clear();
     m_pendingUserDataIds.clear();
     m_pendingLibraryAll = false;
+    m_pendingUserDataAll = false;
     m_heldWhileSuspended = false;
     setConnected(false);
     setTransport(kTransportOff);
@@ -259,7 +260,13 @@ void LiveUpdateService::onUserDataEntries(
         map.insert(QStringLiteral("positionTicks"), entry.playbackPositionTicks);
         map.insert(QStringLiteral("playCount"), entry.playCount);
         payload.append(map);
-        m_pendingUserDataIds.insert(entry.itemId);
+        if (!m_pendingUserDataAll) {
+            m_pendingUserDataIds.insert(entry.itemId);
+            if (m_pendingUserDataIds.size() > kIdTrackingCeiling) {
+                m_pendingUserDataAll = true;
+                m_pendingUserDataIds.clear();
+            }
+        }
     }
     emit userDataPatched(payload);
 
@@ -320,11 +327,15 @@ void LiveUpdateService::flushUserData()
 {
     m_userDataDebounce.stop();
     m_userDataBurst.invalidate();
-    if (m_pendingUserDataIds.isEmpty())
+    if (!m_pendingUserDataAll && m_pendingUserDataIds.isEmpty())
         return;
 
-    const QStringList ids(m_pendingUserDataIds.cbegin(), m_pendingUserDataIds.cend());
+    const QStringList ids = m_pendingUserDataAll
+                                ? QStringList()
+                                : QStringList(m_pendingUserDataIds.cbegin(),
+                                              m_pendingUserDataIds.cend());
     m_pendingUserDataIds.clear();
+    m_pendingUserDataAll = false;
     qCDebug(logApp) << "live: user data invalidated," << ids.size() << "id(s)";
     emit userDataInvalidated(ids);
 }

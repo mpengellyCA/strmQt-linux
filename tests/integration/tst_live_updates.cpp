@@ -73,6 +73,7 @@ private slots:
     void socketConnectsAndDispatches();
     void socketReconnectsAfterServerDrop();
     void libraryBurstCoalescesIntoOneInvalidation();
+    void suspendedUserDataBurstFallsBackToFullInvalidation();
     void pollingFallbackEngagesAndSuspends();
     void suspensionDisarmsAnArmedDebounce();
     void transportGoesOffWhenDisabled();
@@ -284,6 +285,28 @@ void LiveUpdatesTest::libraryBurstCoalescesIntoOneInvalidation()
         QTest::qWait(20);
     }
     QVERIFY2(!invalidated.isEmpty(), "a continuous storm deferred delivery forever");
+}
+
+void LiveUpdatesTest::suspendedUserDataBurstFallsBackToFullInvalidation()
+{
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(20, 10, 500);
+    QSignalSpy invalidated(&live, &LiveUpdateService::userDataInvalidated);
+    QSignalSpy patched(&live, &LiveUpdateService::userDataPatched);
+
+    live.setSuspended(true);
+    for (int i = 0; i <= 200; ++i)
+        live.socket()->handleTextMessage(
+            userDataFrame(QStringLiteral("item-%1").arg(i), true, false));
+
+    // Lightweight role patches are immediate, but the retained reconciliation
+    // state is capped while playback or an unfocused window suspends refreshes.
+    QCOMPARE(patched.size(), 201);
+    QCOMPARE(invalidated.size(), 0);
+
+    live.setSuspended(false);
+    QCOMPARE(invalidated.size(), 1);
+    QVERIFY(invalidated.first().at(0).toStringList().isEmpty());
 }
 
 void LiveUpdatesTest::pollingFallbackEngagesAndSuspends()

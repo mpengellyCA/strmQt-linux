@@ -123,6 +123,7 @@ private:
     QSet<QString> m_pendingLibraryIds;
     QSet<QString> m_pendingUserDataIds;
     bool m_pendingLibraryAll = false; // the burst grew past the point of tracking ids
+    bool m_pendingUserDataAll = false;
     bool m_heldWhileSuspended = false;
 
     QString m_transport = QStringLiteral("off");
