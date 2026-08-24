@@ -467,6 +467,27 @@ FocusScope {
         color: Theme.surfaceColor
         opacity: mini.slide
 
+        // ── Input floor ─────────────────────────────────────────────────
+        // Every control on this bar is a TapHandler on a plain Item, and a
+        // TapHandler takes only a PASSIVE grab on press: it never accepts the
+        // event on its item's behalf. A plain Rectangle accepts no mouse events
+        // at all. So a press anywhere on the bar carried on to whatever was
+        // behind it — clicking the now-playing bar played the card underneath
+        // it and followed entries in the rail.
+        //
+        // Declared FIRST so it is at the bottom of the bar's stacking order:
+        // every control above still gets the press before this ever sees it,
+        // and this only swallows what none of them claimed. The wheel goes with
+        // it, because a bar that scrolled the grid behind it is the same bug
+        // wearing a different hat.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            // Deliberately not hoverEnabled: the bar must not take hover away
+            // from anything, it only has to stop events falling through it.
+            onWheel: wheel => wheel.accepted = true
+        }
+
         Rectangle {
             id: edge
 
