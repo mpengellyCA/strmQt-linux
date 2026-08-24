@@ -4,6 +4,7 @@
 
 #include <QRegularExpression>
 #include <QCryptographicHash>
+#include <QSet>
 
 #include <QUuid>
 
@@ -44,6 +45,12 @@ constexpr int kMaxVolume = 130; // PlayerBackend::setVolume contract
 constexpr int kDefaultPollSeconds = 60;
 constexpr int kMinPollSeconds = 15;
 constexpr int kMaxPollSeconds = 3600;
+// Track/source choices and per-item versions are conveniences, not an audit
+// log. Bounding each lane prevents the INI rewrite cost from growing forever.
+constexpr int kMaxRetainedPlaybackEntries = 256;
+// Persist the first crash-resume checkpoint immediately, then at most once per
+// minute. Pause/failure/clean-stop boundaries explicitly flush below.
+constexpr qint64 kResumeSyncIntervalMs = 60'000;
 } // namespace
 
 Settings::Settings(QObject *parent) : QObject(parent) {}
@@ -73,34 +80,42 @@ QString Settings::sessionScope() const
 void Settings::migrateLegacySessionData()
 {
     const QString scope = sessionScope();
-    if (scope.isEmpty() || m_store.value(kScopeMigratedKey, false).toBool())
+    if (scope.isEmpty())
         return;
-    m_store.setValue(kScopeMigratedKey, true);
 
-    QStringList legacyKeys{kLastItemKey, kLastTitleKey, kLastPositionKey};
-    for (const QString &group : {QStringLiteral("libraryView"), QStringLiteral("tracks"),
-                                 QStringLiteral("versions")}) {
-        m_store.beginGroup(group);
-        const QStringList keys = m_store.allKeys();
-        m_store.endGroup();
-        for (const QString &key : keys)
-            legacyKeys.append(group + QLatin1Char('/') + key);
-    }
+    if (!m_store.value(kScopeMigratedKey, false).toBool()) {
+        m_store.setValue(kScopeMigratedKey, true);
 
-    int adopted = 0;
-    for (const QString &legacyKey : std::as_const(legacyKeys)) {
-        if (!m_store.contains(legacyKey))
-            continue;
-        const QString scoped = QStringLiteral("sessions/%1/%2").arg(scope, legacyKey);
-        if (!m_store.contains(scoped)) {
-            m_store.setValue(scoped, m_store.value(legacyKey));
-            ++adopted;
+        QStringList legacyKeys{kLastItemKey, kLastTitleKey, kLastPositionKey};
+        for (const QString &group : {QStringLiteral("libraryView"), QStringLiteral("tracks"),
+                                     QStringLiteral("versions")}) {
+            m_store.beginGroup(group);
+            const QStringList keys = m_store.allKeys();
+            m_store.endGroup();
+            for (const QString &key : keys)
+                legacyKeys.append(group + QLatin1Char('/') + key);
         }
-        m_store.remove(legacyKey);
+
+        int adopted = 0;
+        for (const QString &legacyKey : std::as_const(legacyKeys)) {
+            if (!m_store.contains(legacyKey))
+                continue;
+            const QString scoped = QStringLiteral("sessions/%1/%2").arg(scope, legacyKey);
+            if (!m_store.contains(scoped)) {
+                m_store.setValue(scoped, m_store.value(legacyKey));
+                ++adopted;
+            }
+            m_store.remove(legacyKey);
+        }
+        if (adopted > 0)
+            qCInfo(logCore) << "adopted" << adopted
+                            << "pre-scoping settings into the current session";
+        m_store.sync();
     }
-    if (adopted > 0)
-        qCInfo(logCore) << "adopted" << adopted << "pre-scoping settings into the current session";
-    m_store.sync();
+
+    // This entry point runs whenever a restored or newly authenticated
+    // identity becomes complete, including installs past the migration above.
+    pruneRetainedPlaybackState();
 }
 
 QString Settings::scopedKey(const QString &key) const
@@ -466,6 +481,8 @@ void Settings::rememberTracks(const QString &itemId, const QString &mediaSourceI
     if (itemId.isEmpty() || key.isEmpty())
         return;
     m_store.setValue(key, QStringLiteral("%1,%2").arg(audioId).arg(subtitleId));
+    touchRetainedPlaybackKey(QStringLiteral("tracks"),
+                             QStringLiteral("%1_%2").arg(itemId, mediaSourceId));
 }
 
 bool Settings::hasRememberedTracks(const QString &itemId, const QString &mediaSourceId) const
@@ -506,6 +523,61 @@ void Settings::rememberVersion(const QString &itemId, const QString &mediaSource
     if (itemId.isEmpty() || key.isEmpty())
         return;
     m_store.setValue(key, mediaSourceId);
+    touchRetainedPlaybackKey(QStringLiteral("versions"), itemId);
+}
+
+void Settings::touchRetainedPlaybackKey(const QString &group, const QString &entry)
+{
+    pruneRetainedPlaybackGroup(group, entry);
+}
+
+void Settings::pruneRetainedPlaybackState()
+{
+    pruneRetainedPlaybackGroup(QStringLiteral("tracks"));
+    pruneRetainedPlaybackGroup(QStringLiteral("versions"));
+}
+
+void Settings::pruneRetainedPlaybackGroup(const QString &group, const QString &touched)
+{
+    const QString valueGroup = scopedKey(group);
+    const QString orderKey = scopedKey(QStringLiteral("retainedOrder/%1").arg(group));
+    if (valueGroup.isEmpty() || orderKey.isEmpty())
+        return;
+
+    m_store.beginGroup(valueGroup);
+    const QStringList existing = m_store.childKeys();
+    m_store.endGroup();
+    const QSet<QString> existingSet(existing.cbegin(), existing.cend());
+
+    QStringList order;
+    QSet<QString> ordered;
+    const QStringList storedOrder = m_store.value(orderKey).toStringList();
+    for (const QString &entry : storedOrder) {
+        if (existingSet.contains(entry) && !ordered.contains(entry)) {
+            order.append(entry);
+            ordered.insert(entry);
+        }
+    }
+
+    // Entries predating the LRU metadata have unknown age. Put them before the
+    // known order so they are the first candidates for eviction.
+    QStringList unknown;
+    for (const QString &entry : existing) {
+        if (!ordered.contains(entry))
+            unknown.append(entry);
+    }
+    order = unknown + order;
+
+    if (!touched.isEmpty() && existingSet.contains(touched)) {
+        order.removeAll(touched);
+        order.append(touched);
+    }
+
+    while (order.size() > kMaxRetainedPlaybackEntries) {
+        const QString oldest = order.takeFirst();
+        m_store.remove(valueGroup + QLatin1Char('/') + oldest);
+    }
+    m_store.setValue(orderKey, order);
 }
 
 bool Settings::muted() const
@@ -565,7 +637,16 @@ void Settings::setLastPlayback(const QString &itemId, const QString &title, qint
     m_store.setValue(itemKey, itemId);
     m_store.setValue(scopedKey(kLastTitleKey), title);
     m_store.setValue(scopedKey(kLastPositionKey), positionMs);
-    m_store.sync(); // must survive a crash — flush now
+    if (!m_lastPlaybackSync.isValid() ||
+        m_lastPlaybackSync.elapsed() >= kResumeSyncIntervalMs) {
+        flush();
+    }
+}
+
+void Settings::flush()
+{
+    m_store.sync();
+    m_lastPlaybackSync.restart();
 }
 
 QVariantMap Settings::lastPlayback() const
@@ -595,7 +676,7 @@ void Settings::clearLastPlayback()
     // A clean stop must be as durable as the crash-resume write. Otherwise a
     // power loss immediately after Stop can resurrect an already-cleared item
     // on the next launch.
-    m_store.sync();
+    flush();
 }
 
 QString Settings::deviceId()

@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -426,6 +427,10 @@ void PlayerControllerTest::seekAndPauseReportProgress()
             .value(QLatin1String("IsPaused"))
             .toBool();
     }());
+
+    QFile durable(m_dir->filePath(QStringLiteral("settings.ini")));
+    QVERIFY(durable.open(QIODevice::ReadOnly));
+    QVERIFY(durable.readAll().contains("positionMs=30000"));
 }
 
 // The controller's idea of "where we are" has to move with the seek, not wait

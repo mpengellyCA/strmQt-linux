@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QObject>
 #include <QPair>
@@ -210,6 +211,9 @@ public:
     // Crash-resume record: written during playback, cleared on clean stop.
     // lastPlayback() returns {} when the previous session ended cleanly.
     void setLastPlayback(const QString &itemId, const QString &title, qint64 positionMs);
+    // Force pending settings to durable storage at lifecycle boundaries. The
+    // five-second playback checkpoint path is deliberately debounced.
+    void flush();
     // Call once a server and user are both known: moves the pre-scoping keys
     // into that session's scope. A no-op afterwards, and for every session but
     // the first one to run it.
@@ -237,7 +241,11 @@ signals:
 private:
     QString sessionScope() const;
     QString scopedKey(const QString &key) const;
+    void touchRetainedPlaybackKey(const QString &group, const QString &entry);
+    void pruneRetainedPlaybackState();
+    void pruneRetainedPlaybackGroup(const QString &group, const QString &touched = {});
     QSettings m_store;
+    QElapsedTimer m_lastPlaybackSync;
 };
 
 } // namespace strmqt

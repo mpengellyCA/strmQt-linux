@@ -1,3 +1,4 @@
+#include <QFile>
 #include <QSettings>
 #include <QtTest>
 
@@ -14,6 +15,9 @@ private slots:
     void serverUrlRoundTrip();
     void retainedPlaybackStateIsSessionScoped();
     void preScopingKeysAreAdoptedByTheFirstSessionOnly();
+    void crashResumeWritesAreDebouncedUntilFlush();
+    void retainedPlaybackChoicesAreBoundedAndKeepRecentEntries();
+    void oversizedLegacyChoicesArePrunedWhenSessionRestores();
 };
 
 void SettingsTest::defaultServerUrl()
@@ -119,6 +123,90 @@ void SettingsTest::preScopingKeysAreAdoptedByTheFirstSessionOnly()
     settings.migrateLegacySessionData();
     QVERIFY(settings.lastPlayback().isEmpty());
     QVERIFY(settings.libraryViewMode(QStringLiteral("movies")).isEmpty());
+}
+
+void SettingsTest::crashResumeWritesAreDebouncedUntilFlush()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("resume.ini"));
+    Settings settings(path);
+    settings.setServerUrl(QUrl(QStringLiteral("https://one.example")));
+    settings.setUserId(QStringLiteral("alice"));
+
+    settings.setLastPlayback(QStringLiteral("item"), QStringLiteral("Film"), 1000);
+    const auto durableContents = [&path] {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            return QByteArray();
+        return file.readAll();
+    };
+    QVERIFY(durableContents().contains("positionMs=1000"));
+
+    settings.setLastPlayback(QStringLiteral("item"), QStringLiteral("Film"), 2000);
+    QVERIFY(durableContents().contains("positionMs=1000"));
+    QVERIFY(!durableContents().contains("positionMs=2000"));
+
+    settings.flush();
+    QVERIFY(durableContents().contains("positionMs=2000"));
+}
+
+void SettingsTest::retainedPlaybackChoicesAreBoundedAndKeepRecentEntries()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("retained.ini"));
+    Settings settings(path);
+    settings.setServerUrl(QUrl(QStringLiteral("https://one.example")));
+    settings.setUserId(QStringLiteral("alice"));
+
+    for (int i = 0; i < 300; ++i) {
+        const QString item = QStringLiteral("item-%1").arg(i, 3, 10, QLatin1Char('0'));
+        settings.rememberTracks(item, QStringLiteral("source"), i, -1);
+        settings.rememberVersion(item, QStringLiteral("source"));
+    }
+    settings.flush();
+
+    QSettings raw(path, QSettings::IniFormat);
+    const QStringList keys = raw.allKeys();
+    QCOMPARE(keys.filter(QStringLiteral("/tracks/")).size(), 256);
+    QCOMPARE(keys.filter(QStringLiteral("/versions/")).size(), 256);
+    QVERIFY(!settings.hasRememberedTracks(QStringLiteral("item-000"),
+                                          QStringLiteral("source")));
+    QVERIFY(settings.hasRememberedTracks(QStringLiteral("item-299"),
+                                         QStringLiteral("source")));
+    QVERIFY(settings.rememberedVersion(QStringLiteral("item-000")).isEmpty());
+    QCOMPARE(settings.rememberedVersion(QStringLiteral("item-299")),
+             QStringLiteral("source"));
+}
+
+void SettingsTest::oversizedLegacyChoicesArePrunedWhenSessionRestores()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("legacy-retained.ini"));
+    {
+        Settings seed(path);
+        seed.setServerUrl(QUrl(QStringLiteral("https://one.example")));
+        seed.setUserId(QStringLiteral("alice"));
+        seed.rememberVersion(QStringLiteral("seed"), QStringLiteral("source"));
+        seed.flush();
+    }
+
+    QSettings raw(path, QSettings::IniFormat);
+    const QString seedKey = raw.allKeys().filter(QStringLiteral("/versions/seed")).value(0);
+    QVERIFY(!seedKey.isEmpty());
+    const QString prefix = seedKey.left(seedKey.indexOf(QStringLiteral("versions/")));
+    raw.remove(prefix + QStringLiteral("retainedOrder/versions"));
+    raw.setValue(QStringLiteral("migration/sessionScopeAdopted"), true);
+    for (int i = 0; i < 300; ++i)
+        raw.setValue(prefix + QStringLiteral("versions/legacy-%1").arg(i),
+                     QStringLiteral("source"));
+    raw.sync();
+
+    Settings restored(path);
+    restored.migrateLegacySessionData();
+    restored.flush();
+
+    QSettings pruned(path, QSettings::IniFormat);
+    QCOMPARE(pruned.allKeys().filter(QStringLiteral("/versions/")).size(), 256);
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)

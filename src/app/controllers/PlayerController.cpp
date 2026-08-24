@@ -696,12 +696,19 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
             m_progressTimer.start();
             m_persistTimer.start();
             persistResume();
+            if (state == PlayerBackend::State::Paused && m_settings)
+                m_settings->flush();
         }
     } else if (m_started && ready) {
         if (state == PlayerBackend::State::Playing)
             m_watchdog.start();
-        if (m_reporting)
+        if (m_reporting) {
             reportProgress();
+            if (state == PlayerBackend::State::Paused && m_settings) {
+                persistResume();
+                m_settings->flush();
+            }
+        }
     }
 }
 
@@ -1530,8 +1537,11 @@ void PlayerController::finishSession(TerminationReason reason)
         ++m_resumeToken;
         m_suspendedAudio = {};
     }
-    if (reason == TerminationReason::Failure && m_started)
+    if (reason == TerminationReason::Failure && m_started) {
         persistResume();
+        if (m_settings)
+            m_settings->flush();
+    }
     closeCurrentSession();
     ++m_generation;
     m_expectedLoadId = 0;
