@@ -651,7 +651,6 @@ FocusScope {
         anchors.rightMargin: Theme.pageMarginValue
         height: page.hasTopTracks ? page.topTracksRows * page.topTrackRowHeight : 0
         visible: page.hasTopTracks
-        enabled: page.hasTopTracks
 
         model: MusicCtl.artistTracks
         rowHeight: page.topTrackRowHeight

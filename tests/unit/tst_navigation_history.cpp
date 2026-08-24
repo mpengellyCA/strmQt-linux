@@ -65,6 +65,7 @@ Item {
     property int progressFallbackCount: 0
     readonly property bool progressRestorePending: progressRestorer.pending
     property bool searchTrackRefillActive: false
+    property bool searchTrackOwnerEnabled: true
     property int searchTrackResolutionCount: 0
     readonly property int searchTrackCount: searchTrackRows.count
 
@@ -271,6 +272,13 @@ Item {
     }
     function clearSearchTracks(): void { searchTrackRows.clear(); }
     function setSearchTrackRefill(active): void { root.searchTrackRefillActive = active === true; }
+    function setSearchTrackOwnerEnabled(active): void {
+        root.searchTrackOwnerEnabled = active === true;
+    }
+    function applySearchQueryFromUser(query): void {
+        if (history.currentItem && history.currentItem.applyUserQuery)
+            history.currentItem.applyUserQuery(String(query));
+    }
     function focusSearchTrack(index): void {
         if (history.currentItem && history.currentItem.focusTrack)
             history.currentItem.focusTrack(Number(index));
@@ -537,11 +545,30 @@ Item {
         readonly property bool trackRestorePending: searchTrackFocus.pending
         readonly property bool trackFocused: searchTrackList.activeFocus
         readonly property bool trackOwnerVisible: searchTracks.visible
+        readonly property var navSections: [searchTracks]
         objectName: routeId
         focus: true
+        signal focusRestoreOverrideRequested()
 
         function focusTrack(index): void { searchTracks._applyNavigationFocus(index); }
         function focusOverride(): void { searchFirst.forceActiveFocus(Qt.TabFocusReason); }
+        function cancelResultFocusRestoresForUserQuery(): void {
+            const count = Math.min(navSections.length, 32);
+            for (let i = 0; i < count; ++i) {
+                const section = navSections[i];
+                if (section
+                        && typeof section["cancelNavigationFocusRestore"] === "function")
+                    section["cancelNavigationFocusRestore"]();
+            }
+            focusRestoreOverrideRequested();
+        }
+        function applyUserQuery(query): void {
+            cancelResultFocusRestoresForUserQuery();
+            root.searchQuery = String(query);
+            searchFirst.text = root.searchQuery;
+            searchFirst.forceActiveFocus(Qt.OtherFocusReason);
+        }
+        onFocusRestoreOverrideRequested: StackView.view.retireFocusRestoreOwnership()
 
         Component.onCompleted: {
             queryAtCreation = root.searchQuery;
@@ -566,6 +593,7 @@ Item {
                 property bool navigationFocusRefillActive: root.searchTrackRefillActive
                 readonly property bool navigationFocusRestorePending: searchTrackFocus.pending
                 property bool _navigationFocusWriting: false
+                enabled: root.searchTrackOwnerEnabled
                 width: 300
                 height: searchTrackRows.count > 0 ? 100 : 0
                 visible: searchTrackRows.count > 0
@@ -1156,6 +1184,26 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QFile searchPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/SearchPage.qml"));
     QVERIFY(searchPage.open(QIODevice::ReadOnly));
     const QByteArray source = searchPage.readAll();
+    for (const QByteArray &queryOverrideContract : {
+             QByteArrayLiteral("function cancelResultFocusRestoresForUserQuery()"),
+             QByteArrayLiteral("Math.min(page.navSections.length, 32)"),
+             QByteArrayLiteral("section[\"cancelNavigationFocusRestore\"]()"),
+             QByteArrayLiteral("page.focusRestoreOverrideRequested()"),
+             QByteArrayLiteral("onTextEdited: page.applyQuery(searchField.text)"),
+             QByteArrayLiteral("onCleared: page.applyQuery(\"\")"),
+             QByteArrayLiteral("page.applyQuery(String(chip.name))"),
+             QByteArrayLiteral("onActionTriggered: page.applyQuery(\"\")")}) {
+        QVERIFY2(source.contains(queryOverrideContract), queryOverrideContract.constData());
+    }
+    QCOMPARE(source.count(QByteArrayLiteral("SearchCtl.query =")), qsizetype{1});
+    QVERIFY(source.count(QByteArrayLiteral("page.applyQuery(\"\")")) >= 3);
+
+    QFile mainPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
+    QVERIFY(mainPage.open(QIODevice::ReadOnly));
+    const QByteArray mainSource = mainPage.readAll();
+    QVERIFY(mainSource.contains(
+        "onFocusRestoreOverrideRequested: stack.retireFocusRestoreOwnership()"));
+
     const qsizetype componentBegin = source.indexOf("component TrackList: FocusScope");
     const qsizetype instanceBegin = source.indexOf("            TrackList {", componentBegin + 1);
     QVERIFY(componentBegin >= 0);
@@ -1174,6 +1222,25 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QVERIFY(instance.contains("navigationFocusKey: \"search-tracks\""));
     QVERIFY(instance.contains("navigationFocusFallbackItem: searchField"));
     QVERIFY(instance.contains("navigationFocusRefillActive: SearchCtl.searching"));
+
+    // Artist top tracks use the same initially-empty active-refill handoff.
+    // Visibility follows content, but enabled must remain the default so an
+    // active empty owner can consume its terminal edge.
+    QFile artistPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/ArtistPage.qml"));
+    QVERIFY(artistPage.open(QIODevice::ReadOnly));
+    const QByteArray artistSource = artistPage.readAll();
+    const qsizetype topTracksBegin =
+        artistSource.indexOf("navigationFocusKey: \"artist-top-tracks\"");
+    const qsizetype topTracksModel =
+        artistSource.indexOf("model: MusicCtl.artistTracks", topTracksBegin);
+    QVERIFY(topTracksBegin >= 0);
+    QVERIFY(topTracksModel > topTracksBegin);
+    const QByteArray topTracksOwner =
+        artistSource.mid(topTracksBegin, topTracksModel - topTracksBegin);
+    QVERIFY(topTracksOwner.contains("navigationFocusRefillActive:"));
+    QVERIFY(topTracksOwner.contains("MusicCtl.artistTracksLoading"));
+    QVERIFY(topTracksOwner.contains("visible: page.hasTopTracks"));
+    QVERIFY(!topTracksOwner.contains("enabled: page.hasTopTracks"));
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1227,11 +1294,44 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QCOMPARE(currentItem(history)->property("focusedTrackIndex").toInt(), 0);
     QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-row-track-b"));
 
+    // Editing the query is a user override even when the fallback field is
+    // already focused, so there is no focus transition for the stack to infer
+    // it from. The page must cancel both halves of semantic ownership before
+    // the controller mutation can publish a matching row for the new query.
+    QVERIFY(invoke(root, "pushRoute", 92));
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
+    QVERIFY(invoke(root, "clearSearchTracks"));
+    QVERIFY(invoke(root, "goBack"));
+    // Plant the production fallback before the deferred stack restore runs;
+    // the subsequent query edit must therefore be observable without relying
+    // on another focus transition.
+    QVERIFY(invoke(root, "focusSearchTrackOverride"));
+    QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+    QCOMPARE(history->property("_pendingSemanticToken").toInt(),
+             searchRoute.value(QStringLiteral("token")).toInt());
+    const int resolutionCountBeforeQueryEdit =
+        root->property("searchTrackResolutionCount").toInt();
+    QVERIFY(invoke(root, "applySearchQueryFromUser", QStringLiteral("edited query")));
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+    QTRY_VERIFY(!currentItem(history)->property("trackRestorePending").toBool());
+    QCOMPARE(history->property("_pendingSemanticToken").toInt(), -1);
+    QCOMPARE(history->property("_focusRetryToken").toInt(), -1);
+    QVERIFY(invoke(root, "replaceSearchTracksReordered"));
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
+    QTest::qWait(100);
+    QCOMPARE(root->property("searchTrackResolutionCount").toInt(),
+             resolutionCountBeforeQueryEdit);
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
+
     // A terminal empty result has no eligible row. Start from the same
     // production ordering so the invisible owner, not the stack retry, owns
     // the terminal edge. It must retire the locator and hand focus to the
     // SearchPage field.
-    QVERIFY(invoke(root, "pushRoute", 92));
+    QVERIFY(invoke(root, "seedSearchTracks"));
+    QVERIFY(invoke(root, "focusSearchTrack", 1));
+    QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
+    QVERIFY(invoke(root, "pushRoute", 93));
     QVERIFY(invoke(root, "setSearchTrackRefill", true));
     QVERIFY(invoke(root, "clearSearchTracks"));
     QVERIFY(invoke(root, "goBack"));
@@ -1258,7 +1358,7 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QVERIFY(invoke(root, "seedSearchTracks"));
     QVERIFY(invoke(root, "focusSearchTrack", 1));
     QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
-    QVERIFY(invoke(root, "pushRoute", 93));
+    QVERIFY(invoke(root, "pushRoute", 94));
     QVERIFY(invoke(root, "setSearchTrackRefill", true));
     QVERIFY(invoke(root, "goBack"));
     QTRY_VERIFY(currentItem(history)->property("trackRestorePending").toBool());
@@ -1270,14 +1370,17 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     QTest::qWait(100);
     QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("search-track-fallback"));
 
-    // Merely being a semantic control does not make an ordinary hidden owner
-    // eligible. Without an explicit active refill, the stack keeps the bounded
-    // route retry until a user override cancels it.
+    // A disabled semantic owner remains ineligible even while it reports an
+    // active refill. The Artist top-tracks repair removes a redundant
+    // content-coupled disable; this negative case ensures the generic stack
+    // does not relax the disabled-control rule itself.
     QVERIFY(invoke(root, "seedSearchTracks"));
     QVERIFY(invoke(root, "focusSearchTrack", 1));
     QTRY_VERIFY(currentItem(history)->property("trackFocused").toBool());
-    QVERIFY(invoke(root, "pushRoute", 94));
+    QVERIFY(invoke(root, "pushRoute", 95));
+    QVERIFY(invoke(root, "setSearchTrackRefill", true));
     QVERIFY(invoke(root, "clearSearchTracks"));
+    QVERIFY(invoke(root, "setSearchTrackOwnerEnabled", false));
     QVERIFY(invoke(root, "goBack"));
     QTRY_VERIFY(!currentItem(history)->property("trackOwnerVisible").toBool());
     QVERIFY(!currentItem(history)->property("trackRestorePending").toBool());
@@ -1285,6 +1388,8 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
                  searchRoute.value(QStringLiteral("token")).toInt());
     QVERIFY(invoke(root, "focusSearchTrackOverride"));
     QTRY_COMPARE(history->property("_focusRetryToken").toInt(), -1);
+    QVERIFY(invoke(root, "setSearchTrackOwnerEnabled", true));
+    QVERIFY(invoke(root, "setSearchTrackRefill", false));
 }
 
 void NavigationHistoryTest::restoresVirtualFocusAcrossDelayedRefill()

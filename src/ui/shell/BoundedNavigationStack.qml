@@ -553,6 +553,15 @@ StackView {
         navigation.clearPendingSemanticRestore();
     }
 
+    // A page can cancel its own bounded set of semantic owners without moving
+    // focus (for example, editing a query while its fallback field is already
+    // focused). Retire the stack half of that ownership explicitly so neither
+    // a semantic token nor a route-level retry can outlive the user override.
+    function retireFocusRestoreOwnership(): void {
+        navigation.cancelFocusRetry();
+        navigation.clearPendingSemanticRestore();
+    }
+
     function armFocusRetry(token, locator): void {
         navigation._focusRetryToken = Number(token);
         navigation._focusRetryLocator = locator;

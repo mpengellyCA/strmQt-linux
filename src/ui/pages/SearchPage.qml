@@ -44,6 +44,7 @@ FocusScope {
     id: page
     objectName: "searchPage"
     signal backRequested()
+    signal focusRestoreOverrideRequested()
 
     readonly property bool hasQuery: SearchCtl.query.length > 0
     readonly property bool failed: SearchCtl.errorMessage.length > 0
@@ -222,9 +223,28 @@ FocusScope {
         return out
     }
 
+    // A user query edit supersedes every retained result identity, even when
+    // the search field already owns focus and therefore produces no focus
+    // transition for the navigation stack to observe. The list is fixed by the
+    // page, but cap the walk as a defensive bound if that presentation list is
+    // ever made dynamic.
+    function cancelResultFocusRestoresForUserQuery() {
+        const count = Math.min(page.navSections.length, 32)
+        for (var i = 0; i < count; ++i) {
+            const section = page.navSections[i]
+            if (section
+                    && typeof section["cancelNavigationFocusRestore"] === "function")
+                section["cancelNavigationFocusRestore"]()
+        }
+        page.focusRestoreOverrideRequested()
+    }
+
     function applyQuery(text) {
-        searchField.text = text
-        SearchCtl.query = text
+        const query = String(text)
+        page.cancelResultFocusRestoresForUserQuery()
+        if (searchField.text !== query)
+            searchField.text = query
+        SearchCtl.query = query
         searchField.forceActiveFocus()
     }
 
@@ -1136,8 +1156,8 @@ FocusScope {
 
         Component.onCompleted: searchField.text = SearchCtl.query
 
-        onTextEdited: SearchCtl.query = searchField.text
-        onCleared: SearchCtl.query = ""
+        onTextEdited: page.applyQuery(searchField.text)
+        onCleared: page.applyQuery("")
         onAccepted: {
             const first = page.sectionBelow(0)
             if (first)
@@ -1148,8 +1168,7 @@ FocusScope {
             // field consumes Esc (StrmSearchField accepts it), so the pop that
             // Main.qml's StackView would otherwise do has to happen here.
             if (searchField.text.length > 0) {
-                searchField.text = ""
-                SearchCtl.query = ""
+                page.applyQuery("")
                 return
             }
             page.backRequested()
@@ -1554,10 +1573,6 @@ FocusScope {
         body: qsTr("Check the spelling, or try a shorter search.")
         actionText: qsTr("Clear search")
         actionIcon: "close"
-        onActionTriggered: {
-            searchField.text = ""
-            SearchCtl.query = ""
-            searchField.forceActiveFocus()
-        }
+        onActionTriggered: page.applyQuery("")
     }
 }

@@ -1083,7 +1083,9 @@ ApplicationWindow {
 
     Component {
         id: searchComponent
-        SearchPage {}
+        SearchPage {
+            onFocusRestoreOverrideRequested: stack.retireFocusRestoreOwnership()
+        }
     }
 
     Component {
