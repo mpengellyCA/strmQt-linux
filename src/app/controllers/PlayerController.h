@@ -270,6 +270,13 @@ signals:
     void seeked(qint64 positionMs);
 
 private:
+    enum class TerminationReason
+    {
+        CleanEnd,
+        UserStop,
+        Failure,
+    };
+
     // PlayerBackend::setVolume() contract; mirrored in Settings.
     static constexpr int kMaxVolume = 130;
 
@@ -298,9 +305,9 @@ private:
     // changes and again on every load, because an engine that was recreated (or
     // an engine whose volume a ladder reload reset) must not come back loud.
     void applyVolume();
-    void onBackendState(PlayerBackend::State state);
-    void onBackendError(const QString &message);
-    void onEndReached();
+    void onBackendState(PlayerBackend::State state, PlayerBackend::LoadId loadId);
+    void onBackendError(const QString &message, PlayerBackend::LoadId loadId);
+    void onEndReached(PlayerBackend::LoadId loadId);
     void onWatchdogTick();
     void escalateStall();
     void recoverMidStream();
@@ -311,7 +318,7 @@ private:
     // is never told the old item stopped and the progress timer keeps running
     // into the next one (see the comment on the definition).
     void closeCurrentSession();
-    void finishSession();
+    void finishSession(TerminationReason reason);
     void persistResume();
     void setActive(bool active);
     void fetchChapters(const QString &itemId, int generation);
@@ -382,6 +389,8 @@ private:
     bool m_started = false;   // current rung got to Playing at least once
     bool m_reporting = false; // this session reports to the server
     int m_generation = 0;
+    PlayerBackend::LoadId m_nextLoadId = 0;
+    PlayerBackend::LoadId m_expectedLoadId = 0;
     QString m_errorMessage;
     QVariantList m_chapters;
 

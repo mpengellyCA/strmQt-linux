@@ -16,12 +16,15 @@ public:
 
     QString engineName() const override { return QStringLiteral("fake"); }
 
-    void load(const QUrl &url, qint64 startMs) override
+    void load(const QUrl &url, qint64 startMs, LoadId loadId) override
     {
         loadedUrls.append(url);
         loadedStarts.append(startMs);
+        loadedIds.append(loadId);
+        m_loadId = loadId;
+        resetPerLoadState(loadId);
         m_state = State::Loading;
-        emit stateChanged(m_state);
+        emit stateChanged(m_state, loadId);
     }
 
     void setPaused(bool paused) override
@@ -34,7 +37,9 @@ public:
     void stop() override
     {
         stopCalls++;
-        simulateState(State::Idle);
+        m_loadId = 0;
+        resetPerLoadState(0);
+        simulateState(State::Idle, 0);
     }
 
     void seekTo(qint64 positionMs) override
@@ -113,37 +118,49 @@ public:
     qint64 durationMs() const override { return m_durationMs; }
 
     // Test drivers
-    void simulateBuffering(bool buffering)
+    void simulateBuffering(bool buffering, LoadId loadId = 0)
     {
-        m_buffering = buffering;
-        emit bufferingChanged(buffering);
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_buffering = buffering;
+        emit bufferingChanged(buffering, loadId);
     }
-    void simulateState(State state)
+    void simulateState(State state, LoadId loadId = 0)
     {
-        m_state = state;
-        emit stateChanged(state);
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_state = state;
+        emit stateChanged(state, loadId);
     }
-    void simulatePosition(qint64 ms)
+    void simulatePosition(qint64 ms, LoadId loadId = 0)
     {
-        m_positionMs = ms;
-        emit positionChanged(ms);
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_positionMs = ms;
+        emit positionChanged(ms, loadId);
     }
-    void simulateDuration(qint64 ms)
+    void simulateDuration(qint64 ms, LoadId loadId = 0)
     {
-        m_durationMs = ms;
-        emit durationChanged(ms);
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_durationMs = ms;
+        emit durationChanged(ms, loadId);
     }
-    void simulateError(const QString &message)
+    void simulateError(const QString &message, LoadId loadId = 0)
     {
-        m_state = State::Error;
-        emit stateChanged(m_state);
-        emit errorOccurred(message);
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_state = State::Error;
+        emit stateChanged(State::Error, loadId);
+        emit errorOccurred(message, loadId);
     }
-    void simulateEnd()
+    void simulateEnd(LoadId loadId = 0)
     {
-        m_state = State::Ended;
-        emit stateChanged(m_state);
-        emit endReached();
+        loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId)
+            m_state = State::Ended;
+        emit stateChanged(State::Ended, loadId);
+        emit endReached(loadId);
     }
 
     void simulateTracks(const QVariantList &audio, const QVariantList &subtitles)
@@ -167,6 +184,7 @@ public:
 
     QList<QUrl> loadedUrls;
     QList<qint64> loadedStarts;
+    QList<LoadId> loadedIds;
     QList<qint64> seeks;
     QList<int> audioTrackRequests;
     QList<int> subtitleTrackRequests;
@@ -175,6 +193,39 @@ public:
     int stopCalls = 0;
 
 private:
+    LoadId resolvedLoadId(LoadId loadId) const { return loadId == 0 ? m_loadId : loadId; }
+
+    void resetPerLoadState(LoadId loadId)
+    {
+        if (m_positionMs != 0) {
+            m_positionMs = 0;
+            emit positionChanged(0, loadId);
+        }
+        if (m_durationMs != 0) {
+            m_durationMs = 0;
+            emit durationChanged(0, loadId);
+        }
+        if (m_buffering) {
+            m_buffering = false;
+            emit bufferingChanged(false, loadId);
+        }
+        if (!m_audioTracks.isEmpty() || !m_subtitleTracks.isEmpty()) {
+            m_audioTracks.clear();
+            m_subtitleTracks.clear();
+            m_audioTrackId = -1;
+            m_subtitleTrackId = -1;
+            emit tracksChanged();
+        }
+        if (m_bufferedMs != 0) {
+            m_bufferedMs = 0;
+            emit bufferedMsChanged();
+        }
+        if (!m_videoStats.isEmpty()) {
+            m_videoStats.clear();
+            emit videoStatsChanged();
+        }
+    }
+
     static int selectedIdOf(const QVariantList &tracks)
     {
         for (const QVariant &entry : tracks) {
@@ -202,6 +253,7 @@ private:
     }
 
     State m_state = State::Idle;
+    LoadId m_loadId = 0;
     bool m_buffering = false;
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;

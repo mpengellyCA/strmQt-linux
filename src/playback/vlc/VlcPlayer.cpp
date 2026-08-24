@@ -136,49 +136,52 @@ void VlcPlayer::eventCb(const libvlc_event_t *event, void *opaque)
     default:
         return;
     }
+    const quint64 loadId = self->m_loadId;
     QMetaObject::invokeMethod(self, "handleEvent", Qt::QueuedConnection, Q_ARG(int, code),
-                              Q_ARG(qint64, value));
+                              Q_ARG(qint64, value), Q_ARG(quint64, loadId));
 }
 
-void VlcPlayer::handleEvent(int type, qint64 value)
+void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
 {
+    if (loadId != m_loadId)
+        return;
     switch (type) {
     case EvPlaying:
         if (m_pendingStartMs > 0) {
             libvlc_media_player_set_time(m_player, m_pendingStartMs);
             m_pendingStartMs = 0;
         }
-        setState(State::Playing);
+        setState(State::Playing, loadId);
         break;
     case EvPaused:
-        setState(State::Paused);
+        setState(State::Paused, loadId);
         break;
     case EvStopped:
         if (m_state != State::Ended && m_state != State::Error)
-            setState(State::Idle);
+            setState(State::Idle, loadId);
         break;
     case EvEnd:
-        setState(State::Ended);
-        emit endReached();
+        setState(State::Ended, loadId);
+        emit endReached(loadId);
         break;
     case EvError:
-        setState(State::Error);
-        emit errorOccurred(QStringLiteral("libvlc: playback error"));
+        setState(State::Error, loadId);
+        emit errorOccurred(QStringLiteral("libvlc: playback error"), loadId);
         break;
     case EvTime:
         m_positionMs = value;
-        emit positionChanged(value);
+        emit positionChanged(value, loadId);
         break;
     case EvLength:
         m_durationMs = value;
-        emit durationChanged(value);
+        emit durationChanged(value, loadId);
         break;
     case EvBuffering:
     case EvBufferingDone: {
         const bool buffering = type == EvBuffering;
         if (buffering != m_buffering) {
             m_buffering = buffering;
-            emit bufferingChanged(buffering);
+            emit bufferingChanged(buffering, loadId);
         }
         break;
     }
@@ -187,26 +190,31 @@ void VlcPlayer::handleEvent(int type, qint64 value)
     }
 }
 
-void VlcPlayer::load(const QUrl &url, qint64 startMs)
+void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
 {
+    m_loadId = loadId;
+    resetPerLoadState(loadId);
     if (!m_player) {
-        setState(State::Error);
-        emit errorOccurred(QStringLiteral("libvlc unavailable"));
+        setState(State::Error, loadId);
+        emit errorOccurred(QStringLiteral("libvlc unavailable"), loadId);
         return;
     }
 
     libvlc_media_t *media =
         libvlc_media_new_location(m_vlc, url.toString(QUrl::FullyEncoded).toUtf8().constData());
     if (!media) {
-        setState(State::Error);
-        emit errorOccurred(QStringLiteral("libvlc: cannot open media"));
+        setState(State::Error, loadId);
+        emit errorOccurred(QStringLiteral("libvlc: cannot open media"), loadId);
         return;
     }
     libvlc_media_add_option(media, ":http-user-agent=StrmQt");
 
     m_pendingStartMs = startMs;
-    m_positionMs = startMs;
-    setState(State::Loading);
+    if (startMs != 0) {
+        m_positionMs = startMs;
+        emit positionChanged(startMs, loadId);
+    }
+    setState(State::Loading, loadId);
     libvlc_media_player_set_media(m_player, media);
     libvlc_media_release(media);
     libvlc_media_player_play(m_player);
@@ -220,11 +228,35 @@ void VlcPlayer::setPaused(bool paused)
 
 void VlcPlayer::stop()
 {
-    if (!m_player)
-        return;
-    libvlc_media_player_stop(m_player);
-    m_positionMs = 0;
-    setState(State::Idle);
+    if (m_player)
+        libvlc_media_player_stop(m_player);
+    m_loadId = 0;
+    resetPerLoadState(0);
+    setState(State::Idle, 0);
+}
+
+void VlcPlayer::resetPerLoadState(LoadId loadId)
+{
+    m_pendingStartMs = 0;
+    m_sawFirstFrame = false;
+    if (m_positionMs != 0) {
+        m_positionMs = 0;
+        emit positionChanged(0, loadId);
+    }
+    if (m_durationMs != 0) {
+        m_durationMs = 0;
+        emit durationChanged(0, loadId);
+    }
+    if (m_buffering) {
+        m_buffering = false;
+        emit bufferingChanged(false, loadId);
+    }
+    {
+        QMutexLocker lock(&m_frameMutex);
+        m_frontFrame = {};
+        m_backFrame = {};
+    }
+    emit frameReady();
 }
 
 void VlcPlayer::seekTo(qint64 positionMs)
@@ -239,12 +271,14 @@ void VlcPlayer::setVolume(int percent)
         libvlc_audio_set_volume(m_player, qBound(0, percent, 130));
 }
 
-void VlcPlayer::setState(State state)
+void VlcPlayer::setState(State state, LoadId loadId)
 {
+    if (loadId != m_loadId)
+        return;
     if (m_state == state)
         return;
     m_state = state;
-    emit stateChanged(state);
+    emit stateChanged(state, loadId);
 }
 
 } // namespace strmqt

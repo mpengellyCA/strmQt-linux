@@ -95,17 +95,27 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(m_backend, &PlayerBackend::stateChanged, this, &PlayerController::onBackendState);
     connect(m_backend, &PlayerBackend::errorOccurred, this, &PlayerController::onBackendError);
     connect(m_backend, &PlayerBackend::endReached, this, &PlayerController::onEndReached);
-    connect(m_backend, &PlayerBackend::positionChanged, this, [this](qint64 ms) {
+    connect(m_backend, &PlayerBackend::positionChanged, this,
+            [this](qint64 ms, PlayerBackend::LoadId loadId) {
+        if (loadId != m_expectedLoadId)
+            return;
         m_lastPositionMs = ms;
         emit positionChanged();
         updateUpNext();
     });
-    connect(m_backend, &PlayerBackend::durationChanged, this, [this] {
+    connect(m_backend, &PlayerBackend::durationChanged, this,
+            [this](qint64, PlayerBackend::LoadId loadId) {
+        if (loadId != m_expectedLoadId)
+            return;
         emit durationChanged();
         updateUpNext();
     });
 
-    connect(m_backend, &PlayerBackend::bufferingChanged, this, &PlayerController::bufferingChanged);
+    connect(m_backend, &PlayerBackend::bufferingChanged, this,
+            [this](bool, PlayerBackend::LoadId loadId) {
+        if (loadId == m_expectedLoadId)
+            emit bufferingChanged();
+    });
 
     m_progressTimer.setInterval(kProgressIntervalMs);
     connect(&m_progressTimer, &QTimer::timeout, this, &PlayerController::reportProgress);
@@ -316,9 +326,15 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
                                  qint64 startPositionMs, int preferredSourceIndex, bool fromQueue,
                                  const QString &itemType)
 {
-    // Every entry point into a new item funnels through here, so this is the one
-    // place that can guarantee the outgoing one was closed off properly.
+    // Resolve starts from a quiescent engine. This makes the intermediate
+    // snapshot coherent (pending metadata plus an empty timeline) and means a
+    // failed handoff cannot leave the outgoing file playing behind an inactive
+    // controller.
     closeCurrentSession();
+    m_expectedLoadId = 0;
+    if (m_backend->state() != PlayerBackend::State::Idle)
+        m_backend->stop();
+    clearAbLoop();
 
     if (!fromQueue) {
         // A bare play verb replaces the queue with just this item, so that a
@@ -343,9 +359,13 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     const int generation = m_generation;
 
     m_itemId = itemId;
-    // The ticket in hand is still the OUTGOING item's — it is only replaced when
-    // the reply below lands — so it stops describing what is playing here.
+    m_ticket = {};
     m_ticketItemId.clear();
+    m_sourceIndex = -1;
+    m_rung = 0;
+    emit sourcesChanged();
+    emit sourceIndexChanged();
+    emit streamMethodChanged();
     m_title = title;
     emit titleChanged();
     if (!m_chapters.isEmpty()) {
@@ -358,7 +378,8 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // Cleared before the fetch that refills them, so a failed lookup cannot
     // leave the previous episode's series attached to this one.
     m_currentSeriesId.clear();
-    m_currentItemType.clear();
+    m_currentItemType = itemType;
+    updateIsAudio();
     if (!itemId.isEmpty())
         fetchChapters(itemId, generation);
     setError({});
@@ -383,7 +404,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
             if (!result.ok()) {
                 setBusy(false);
                 setError(result.error);
-                finishSession();
+                finishSession(TerminationReason::Failure);
                 return;
             }
             m_ticket = result.value;
@@ -478,6 +499,10 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     // A raw URL replaces the playing item like any other start does, and the
     // server session it replaces still has to be closed.
     closeCurrentSession();
+    m_expectedLoadId = 0;
+    if (m_backend->state() != PlayerBackend::State::Idle)
+        m_backend->stop();
+    clearAbLoop();
     {
         // Nothing about a raw URL belongs in a server-item queue, and a stale
         // queue must not auto-advance out of it.
@@ -503,7 +528,8 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     setBusy(true);
     m_started = false;
     m_lastPositionMs = 0;
-    m_backend->load(url, 0);
+    m_expectedLoadId = ++m_nextLoadId;
+    m_backend->load(url, 0, m_expectedLoadId);
     applyVolume();
     applyReplayGain();
 }
@@ -513,7 +539,7 @@ void PlayerController::startAttempt(qint64 startMs)
     if (!hasTicket()) {
         setBusy(false);
         setError(QStringLiteral("no playable stream"));
-        finishSession();
+        finishSession(TerminationReason::Failure);
         return;
     }
 
@@ -527,14 +553,17 @@ void PlayerController::startAttempt(qint64 startMs)
     // escalation ladder must keep climbing, not restart at "nudge".
     setBusy(true);
     emit streamMethodChanged();
-    m_backend->load(candidate.url, startMs);
+    m_expectedLoadId = ++m_nextLoadId;
+    m_backend->load(candidate.url, startMs, m_expectedLoadId);
     // Some engines reset their audio state per media; re-assert ours.
     applyVolume();
     applyReplayGain();
 }
 
-void PlayerController::onBackendState(PlayerBackend::State state)
+void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend::LoadId loadId)
 {
+    if (loadId != m_expectedLoadId)
+        return;
     emit pausedChanged();
 
     if (state == PlayerBackend::State::Playing && !m_started) {
@@ -614,7 +643,7 @@ void PlayerController::escalateStall()
             setError(QStringLiteral("Playback stalled and could not recover"));
             closeCurrentSession();
             m_backend->stop();
-            finishSession();
+            finishSession(TerminationReason::Failure);
         }
         break;
     }
@@ -638,7 +667,7 @@ void PlayerController::recoverMidStream()
                 if (generation != m_generation || !m_active)
                     return;
                 if (!result.ok()) {
-                    onBackendError(result.error);
+                    onBackendError(result.error, m_expectedLoadId);
                     return;
                 }
                 const QString previousSourceId = hasTicket() ? currentCandidate()->mediaSourceId
@@ -732,11 +761,11 @@ void PlayerController::previousChapter()
     seekToChapter(positionMs() - start > kRestartWindowMs ? current : qMax(0, current - 1));
 }
 
-void PlayerController::onBackendError(const QString &message)
+void PlayerController::onBackendError(const QString &message, PlayerBackend::LoadId loadId)
 {
     // Same rule as onEndReached(): an engine that reports a failure *after* the
     // session was torn down must not restart the ladder into a stopped player.
-    if (!m_active)
+    if (!m_active || loadId != m_expectedLoadId)
         return;
     m_progressTimer.stop();
 
@@ -744,7 +773,7 @@ void PlayerController::onBackendError(const QString &message)
     // end of the file is a clean end, never a frozen failure (PLAN §3.5).
     if (m_started && nearEnd()) {
         qCInfo(logPlayback) << "error within tail epsilon of EOF; treating as clean end";
-        onEndReached();
+        onEndReached(loadId);
         return;
     }
 
@@ -765,8 +794,7 @@ void PlayerController::onBackendError(const QString &message)
 
     setBusy(false);
     setError(QStringLiteral("Playback failed: %1").arg(message));
-    closeCurrentSession();
-    finishSession();
+    finishSession(TerminationReason::Failure);
 }
 
 // A clean end is now a queue event, not the end of the session: the item is
@@ -775,11 +803,11 @@ void PlayerController::onBackendError(const QString &message)
 // this — the engine's endReached, and the broken-tail branch of onBackendError
 // that treats an error within the tail epsilon as a clean end — gets the
 // auto-advance for free.
-void PlayerController::onEndReached()
+void PlayerController::onEndReached(PlayerBackend::LoadId loadId)
 {
     // An engine that reports the end of a file *after* the session was torn
     // down (some do, on stop()) must not resurrect it into the next item.
-    if (!m_active)
+    if (!m_active || loadId != m_expectedLoadId)
         return;
     // Report the full runtime so the server marks the item played.
     if (m_reporting)
@@ -794,7 +822,7 @@ void PlayerController::onEndReached()
     // choice the user made.
     if (tryAutoPlayNextEpisode())
         return;
-    finishSession();
+    finishSession(TerminationReason::CleanEnd);
 }
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
@@ -824,7 +852,8 @@ bool PlayerController::startQueueCurrent(bool force)
     const qint64 startMs = item.value(QStringLiteral("resumable")).toBool()
                                ? item.value(QStringLiteral("positionMs")).toLongLong()
                                : 0;
-    startItem(itemId, title, qMax<qint64>(0, startMs), -1, true);
+    startItem(itemId, title, qMax<qint64>(0, startMs), -1, true,
+              item.value(QStringLiteral("type")).toString());
     return true;
 }
 
@@ -855,7 +884,8 @@ bool PlayerController::tryAutoPlayNextEpisode()
                 return;
             if (!result.ok() || result.value.isEmpty()) {
                 qCInfo(logPlayback) << "auto-play: end of series";
-                finishSession();
+                finishSession(result.ok() ? TerminationReason::CleanEnd
+                                          : TerminationReason::Failure);
                 return;
             }
             const MediaItem next = result.value.first();
@@ -1024,12 +1054,9 @@ void PlayerController::setPaused(bool paused)
 
 void PlayerController::stop()
 {
-    if (!m_active)
+    if (!m_active && !m_busy && m_backend->state() == PlayerBackend::State::Idle)
         return;
-    ++m_generation; // cancel any in-flight ticket fetch
-    closeCurrentSession();
-    m_backend->stop();
-    finishSession();
+    finishSession(TerminationReason::UserStop);
 }
 
 void PlayerController::seekTo(qint64 positionMs)
@@ -1281,13 +1308,45 @@ void PlayerController::closeCurrentSession()
     m_started = false;
 }
 
-void PlayerController::finishSession()
+void PlayerController::finishSession(TerminationReason reason)
 {
+    if (reason == TerminationReason::Failure && m_started)
+        persistResume();
+    closeCurrentSession();
+    ++m_generation;
+    m_expectedLoadId = 0;
+    m_backend->stop();
     setUpNext(false, 0);
     m_progressTimer.stop();
     m_watchdog.stop();
     m_persistTimer.stop();
-    clearCrashResume();
+    if (reason != TerminationReason::Failure)
+        clearCrashResume();
+    m_started = false;
+    m_reporting = false;
+    m_ticket = {};
+    m_ticketItemId.clear();
+    m_itemId.clear();
+    if (!m_title.isEmpty()) {
+        m_title.clear();
+        emit titleChanged();
+    }
+    m_currentSeriesId.clear();
+    m_currentItemType.clear();
+    m_tracksRestored = false;
+    m_sourceIndex = -1;
+    m_rung = 0;
+    m_preferredSourceIndex = -1;
+    m_lastPositionMs = 0;
+    if (!m_chapters.isEmpty()) {
+        m_chapters.clear();
+        emit chaptersChanged();
+    }
+    emit sourcesChanged();
+    emit sourceIndexChanged();
+    emit streamMethodChanged();
+    setBusy(false);
+    clearAbLoop();
     setActive(false);
     emit stopped();
 }
@@ -1351,14 +1410,13 @@ bool PlayerController::computeIsAudio() const
 {
     if (!m_active)
         return false;
-    const MediaItem current = m_queue->current();
-    const QString type = current.type;
+    const QString type = m_currentItemType;
     if (type.compare(QLatin1String("Audio"), Qt::CaseInsensitive) == 0
         || type.compare(QLatin1String("AudioBook"), Qt::CaseInsensitive) == 0)
         return true;
     if (!type.isEmpty())
         return false;
-    if (m_ticketItemId.isEmpty() || m_ticketItemId != current.id)
+    if (m_ticketItemId.isEmpty() || m_ticketItemId != m_itemId)
         return false;
     const MediaSourceCandidates *entry = m_ticket.source(m_sourceIndex);
     return entry != nullptr && entry->source.videoStream() == nullptr;

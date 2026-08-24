@@ -158,11 +158,14 @@ void MpvPlayer::command(const char *args[])
         qCWarning(logPlayback) << "mpv command" << args[0] << "failed:" << mpv_error_string(rc);
 }
 
-void MpvPlayer::load(const QUrl &url, qint64 startMs)
+void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId)
 {
+    m_loadId = loadId;
+    m_pendingLoadId = loadId;
+    resetPerLoadState(loadId);
     if (!m_mpv) {
-        setState(State::Error);
-        emit errorOccurred(QStringLiteral("mpv core unavailable"));
+        setState(State::Error, loadId);
+        emit errorOccurred(QStringLiteral("mpv core unavailable"), loadId);
         return;
     }
 
@@ -170,9 +173,7 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs)
     mpv_set_option_string(m_mpv, "start", startMs > 0 ? start.constData() : "0");
 
     m_loadInFlight = true;
-    // The previous file's cache figure must not colour the new file's scrubber.
-    m_cacheEndMs = -1;
-    setState(State::Loading);
+    setState(State::Loading, loadId);
     const QByteArray urlUtf8 = url.toString(QUrl::FullyEncoded).toUtf8();
     const char *args[] = {"loadfile", urlUtf8.constData(), "replace", nullptr};
     command(args);
@@ -190,24 +191,48 @@ void MpvPlayer::setPaused(bool paused)
 
 void MpvPlayer::stop()
 {
-    if (!m_mpv)
-        return;
-    const char *args[] = {"stop", nullptr};
-    command(args);
-    m_positionMs = 0;
+    if (m_mpv) {
+        const char *args[] = {"stop", nullptr};
+        command(args);
+    }
+    m_loadId = 0;
+    m_pendingLoadId = 0;
+    resetPerLoadState(0);
+    setState(State::Idle, 0);
+}
+
+void MpvPlayer::resetPerLoadState(LoadId loadId)
+{
+    if (m_positionMs != 0) {
+        m_positionMs = 0;
+        emit positionChanged(0, loadId);
+    }
+    if (m_durationMs != 0) {
+        m_durationMs = 0;
+        emit durationChanged(0, loadId);
+    }
     m_cacheEndMs = -1;
     if (m_lastBufferedMs != 0) {
         m_lastBufferedMs = 0;
         emit bufferedMsChanged();
     }
-    if (!m_audioTracks.isEmpty() || !m_subtitleTracks.isEmpty()) {
+    if (m_buffering) {
+        m_buffering = false;
+        emit bufferingChanged(false, loadId);
+    }
+    if (!m_audioTracks.isEmpty() || !m_subtitleTracks.isEmpty() || m_audioTrackId >= 0 ||
+        m_subtitleTrackId >= 0) {
         m_audioTracks.clear();
         m_subtitleTracks.clear();
         m_audioTrackId = -1;
         m_subtitleTrackId = -1;
         emit tracksChanged();
     }
-    setState(State::Idle);
+    if (!m_hwdecCurrent.isEmpty()) {
+        m_hwdecCurrent.clear();
+        emit decoderInfoChanged();
+    }
+    emit videoStatsChanged();
 }
 
 void MpvPlayer::seekTo(qint64 positionMs)
@@ -509,12 +534,16 @@ void MpvPlayer::setMuted(bool muted)
     mpv_set_property(m_mpv, "mute", MPV_FORMAT_FLAG, &flag);
 }
 
-void MpvPlayer::setState(State state)
+void MpvPlayer::setState(State state, LoadId loadId)
 {
+    if (loadId != m_loadId) {
+        emit stateChanged(state, loadId);
+        return;
+    }
     if (m_state == state)
         return;
     m_state = state;
-    emit stateChanged(state);
+    emit stateChanged(state, loadId);
 }
 
 void MpvPlayer::drainEvents()
@@ -528,11 +557,16 @@ void MpvPlayer::drainEvents()
             break;
 
         switch (event->event_id) {
+        case MPV_EVENT_START_FILE:
+            m_eventLoadId = m_pendingLoadId;
+            break;
         case MPV_EVENT_FILE_LOADED: {
+            if (m_eventLoadId != m_loadId)
+                break;
             m_loadInFlight = false;
             int paused = 0;
             mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &paused);
-            setState(paused ? State::Paused : State::Playing);
+            setState(paused ? State::Paused : State::Playing, m_eventLoadId);
             refreshTracks();
             emit videoStatsChanged();
             break;
@@ -542,24 +576,26 @@ void MpvPlayer::drainEvents()
             if (end->reason == MPV_END_FILE_REASON_ERROR) {
                 const QString message = QString::fromUtf8(mpv_error_string(end->error));
                 qCWarning(logPlayback) << "playback failed:" << message;
-                setState(State::Error);
-                emit errorOccurred(message);
+                setState(State::Error, m_eventLoadId);
+                emit errorOccurred(message, m_eventLoadId);
             } else if (end->reason == MPV_END_FILE_REASON_EOF) {
-                setState(State::Ended);
-                emit endReached();
+                setState(State::Ended, m_eventLoadId);
+                emit endReached(m_eventLoadId);
             }
             // STOP/REDIRECT/QUIT: state handled by the caller (stop()).
             break;
         }
         case MPV_EVENT_PROPERTY_CHANGE: {
+            if (m_eventLoadId != m_loadId)
+                break;
             const auto *change = static_cast<mpv_event_property *>(event->data);
             if (qstrcmp(change->name, "time-pos") == 0 && change->format == MPV_FORMAT_DOUBLE) {
                 m_positionMs = msFromSeconds(*static_cast<double *>(change->data));
-                emit positionChanged(m_positionMs);
+                emit positionChanged(m_positionMs, m_eventLoadId);
             } else if (qstrcmp(change->name, "duration") == 0 &&
                        change->format == MPV_FORMAT_DOUBLE) {
                 m_durationMs = msFromSeconds(*static_cast<double *>(change->data));
-                emit durationChanged(m_durationMs);
+                emit durationChanged(m_durationMs, m_eventLoadId);
             } else if (qstrcmp(change->name, "hwdec-current") == 0 &&
                        change->format == MPV_FORMAT_STRING) {
                 const QString hwdec = QString::fromUtf8(*static_cast<char **>(change->data));
@@ -651,11 +687,12 @@ void MpvPlayer::drainEvents()
                 const bool buffering = *static_cast<int *>(change->data) != 0;
                 if (buffering != m_buffering) {
                     m_buffering = buffering;
-                    emit bufferingChanged(buffering);
+                    emit bufferingChanged(buffering, m_eventLoadId);
                 }
             } else if (qstrcmp(change->name, "pause") == 0 && change->format == MPV_FORMAT_FLAG &&
                        !m_loadInFlight && (m_state == State::Playing || m_state == State::Paused)) {
-                setState(*static_cast<int *>(change->data) ? State::Paused : State::Playing);
+                setState(*static_cast<int *>(change->data) ? State::Paused : State::Playing,
+                         m_eventLoadId);
             }
             break;
         }

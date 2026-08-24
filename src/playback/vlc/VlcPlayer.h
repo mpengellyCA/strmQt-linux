@@ -25,7 +25,7 @@ public:
 
     QString engineName() const override { return QStringLiteral("vlc"); }
 
-    void load(const QUrl &url, qint64 startMs = 0) override;
+    void load(const QUrl &url, qint64 startMs, LoadId loadId) override;
     void setPaused(bool paused) override;
     void stop() override;
     void seekTo(qint64 positionMs) override;
@@ -51,10 +51,11 @@ private:
                              unsigned *pitches, unsigned *lines);
 
     // libvlc event thread → GUI thread marshalling
-    Q_INVOKABLE void handleEvent(int type, qint64 value);
+    Q_INVOKABLE void handleEvent(int type, qint64 value, quint64 loadId);
     static void eventCb(const libvlc_event_t *event, void *opaque);
 
-    void setState(State state);
+    void setState(State state, LoadId loadId);
+    void resetPerLoadState(LoadId loadId);
 
     libvlc_instance_t *m_vlc = nullptr;
     libvlc_media_player_t *m_player = nullptr;
@@ -65,6 +66,7 @@ private:
     qint64 m_pendingStartMs = 0;
     bool m_buffering = false;
     bool m_sawFirstFrame = false;
+    LoadId m_loadId = 0;
 
     mutable QMutex m_frameMutex;
     QImage m_frontFrame; // last displayed frame

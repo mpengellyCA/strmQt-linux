@@ -106,7 +106,7 @@ public:
 
     QString engineName() const override { return QStringLiteral("mpv"); }
 
-    void load(const QUrl &url, qint64 startMs = 0) override;
+    void load(const QUrl &url, qint64 startMs, LoadId loadId) override;
     void setPaused(bool paused) override;
     void stop() override;
     void seekTo(qint64 positionMs) override;
@@ -157,7 +157,8 @@ public:
 
 private:
     Q_INVOKABLE void drainEvents();
-    void setState(State state);
+    void setState(State state, LoadId loadId);
+    void resetPerLoadState(LoadId loadId);
     void command(const char *args[]);
     // Re-read `track-list` and rebuild both lists; emits tracksChanged on change.
     void refreshTracks();
@@ -168,6 +169,9 @@ private:
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
     bool m_loadInFlight = false;
+    LoadId m_loadId = 0;
+    LoadId m_eventLoadId = 0;
+    LoadId m_pendingLoadId = 0;
     bool m_buffering = false;
     QString m_hwdecCurrent;
 

@@ -50,6 +50,9 @@ private slots:
     void allRungsFailingSurfacesError();
     void endReachedReportsFullRuntime();
     void stopReportsAndDeactivates();
+    void staleEventsCannotControlAReplacement();
+    void failedHandoffIsIdleAndPreservesCrashResume();
+    void stopWhileResolvingCancelsTheLoad();
     void seekAndPauseReportProgress();
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
@@ -215,6 +218,90 @@ void PlayerControllerTest::stopReportsAndDeactivates()
         !m_mock->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"))
              .method.isEmpty());
     expectReport(QStringLiteral("/Sessions/Playing/Stopped"), QStringLiteral("DirectPlay"));
+}
+
+void PlayerControllerTest::staleEventsCannotControlAReplacement()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0,
+                           -1, QStringLiteral("Movie"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    const PlayerBackend::LoadId oldLoad = m_backend->loadedIds.constFirst();
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(8'184'000);
+    m_backend->simulatePosition(120'000);
+
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/4242/PlaybackInfo"),
+                          250);
+    QSignalSpy stoppedSpy(m_controller, &PlayerController::stopped);
+    m_controller->playItem(QStringLiteral("4242"), QStringLiteral("Dune"), 0, -1,
+                           QStringLiteral("Movie"));
+
+    // Replacement resolution owns no backend load. The outgoing engine and all
+    // of its item-scoped observables are already quiescent.
+    QVERIFY(m_controller->active());
+    QVERIFY(m_controller->busy());
+    QCOMPARE(m_backend->state(), PlayerBackend::State::Idle);
+    QCOMPARE(m_controller->durationMs(), Q_INT64_C(0));
+    QCOMPARE(m_controller->positionMs(), Q_INT64_C(0));
+    QCOMPARE(m_controller->sourceCount(), 0);
+
+    // Events queued by the outgoing load cannot advance, recover, or repopulate
+    // the pending item's timeline.
+    m_backend->simulatePosition(777'000, oldLoad);
+    m_backend->simulateDuration(999'000, oldLoad);
+    m_backend->simulateState(PlayerBackend::State::Playing, oldLoad);
+    m_backend->simulateError(QStringLiteral("late A error"), oldLoad);
+    m_backend->simulateEnd(oldLoad);
+    QCOMPARE(stoppedSpy.count(), 0);
+    QVERIFY(m_controller->active());
+    QVERIFY(m_controller->busy());
+    QCOMPARE(m_controller->positionMs(), Q_INT64_C(0));
+    QCOMPARE(m_controller->durationMs(), Q_INT64_C(0));
+
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    const PlayerBackend::LoadId newLoad = m_backend->loadedIds.constLast();
+    QVERIFY(newLoad != oldLoad);
+    m_backend->simulateEnd(oldLoad);
+    QCOMPARE(stoppedSpy.count(), 0);
+    QVERIFY(m_controller->active());
+    QCOMPARE(m_backend->loadedUrls.size(), 2);
+}
+
+void PlayerControllerTest::failedHandoffIsIdleAndPreservesCrashResume()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(300'000);
+    QCOMPARE(m_controller->crashResumeInfo().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+
+    // No PlaybackInfo route exists for this id, so the handoff fails after the
+    // outgoing load was stopped.
+    m_controller->playItem(QStringLiteral("missing"), QStringLiteral("Missing"), 0);
+    QTRY_VERIFY(!m_controller->active());
+    QCOMPARE(m_backend->state(), PlayerBackend::State::Idle);
+    QVERIFY(!m_controller->busy());
+    QCOMPARE(m_controller->sourceCount(), 0);
+    QCOMPARE(m_controller->durationMs(), Q_INT64_C(0));
+    QCOMPARE(m_controller->crashResumeInfo().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("301001"));
+}
+
+void PlayerControllerTest::stopWhileResolvingCancelsTheLoad()
+{
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/301001/PlaybackInfo"),
+                          200);
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QVERIFY(m_controller->active());
+    QVERIFY(m_controller->busy());
+
+    m_controller->stop();
+    QVERIFY(!m_controller->active());
+    QVERIFY(!m_controller->busy());
+    QCOMPARE(m_backend->state(), PlayerBackend::State::Idle);
+    QTest::qWait(250);
+    QCOMPARE(m_backend->loadedUrls.size(), 0);
 }
 
 void PlayerControllerTest::seekAndPauseReportProgress()

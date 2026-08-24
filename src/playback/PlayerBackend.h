@@ -37,6 +37,8 @@ class PlayerBackend : public QObject
     Q_PROPERTY(QVariantMap videoStats READ videoStats NOTIFY videoStatsChanged)
 
 public:
+    using LoadId = quint64;
+
     enum class State
     {
         Idle,    // nothing loaded
@@ -53,7 +55,10 @@ public:
 
     virtual QString engineName() const = 0;
 
-    virtual void load(const QUrl &url, qint64 startMs = 0) = 0;
+    // Every load receives an identity chosen by PlayerController. Engines echo
+    // it on every item-scoped event, allowing a replacement to reject events
+    // already queued by the outgoing file.
+    virtual void load(const QUrl &url, qint64 startMs, LoadId loadId) = 0;
     virtual void setPaused(bool paused) = 0;
     virtual void stop() = 0;
     virtual void seekTo(qint64 positionMs) = 0;
@@ -167,14 +172,14 @@ public:
     }
 
 signals:
-    void stateChanged(strmqt::PlayerBackend::State state);
-    void positionChanged(qint64 positionMs);
-    void durationChanged(qint64 durationMs);
+    void stateChanged(strmqt::PlayerBackend::State state, strmqt::PlayerBackend::LoadId loadId);
+    void positionChanged(qint64 positionMs, strmqt::PlayerBackend::LoadId loadId);
+    void durationChanged(qint64 durationMs, strmqt::PlayerBackend::LoadId loadId);
     // Media ended without a fatal error (State::Ended is set first).
-    void endReached();
+    void endReached(strmqt::PlayerBackend::LoadId loadId);
     // Fatal playback failure; message is human-readable (State::Error is set first).
-    void errorOccurred(const QString &message);
-    void bufferingChanged(bool buffering);
+    void errorOccurred(const QString &message, strmqt::PlayerBackend::LoadId loadId);
+    void bufferingChanged(bool buffering, strmqt::PlayerBackend::LoadId loadId);
     void decoderInfoChanged();
     void trackChanged(const QString &description);
     // The engine's volume/mute moved, whoever moved it.
