@@ -32,6 +32,7 @@ target_compile_definitions(strmqt_core PUBLIC STRMQT_VERSION="${PROJECT_VERSION}
 qt_add_library(strmqt_app STATIC
     app/models/HomeRailModel.h app/models/HomeRailModel.cpp
     app/models/MediaItemModel.h app/models/MediaItemModel.cpp
+    app/models/SearchSectionModel.h app/models/SearchSectionModel.cpp
     app/models/LibraryListModel.h app/models/LibraryListModel.cpp
     app/controllers/SessionController.h app/controllers/SessionController.cpp
     app/controllers/HomeController.h app/controllers/HomeController.cpp

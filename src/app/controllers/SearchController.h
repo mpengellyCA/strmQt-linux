@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/models/MediaItemModel.h"
+#include "app/models/SearchSectionModel.h"
 #include "server/emby/RequestHandle.h"
 
 #include <QObject>
@@ -22,6 +23,14 @@ class SearchController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(strmqt::MediaItemModel *model READ model CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *movies READ movies CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *series READ series CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *episodes READ episodes CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *collections READ collections CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *artists READ artists CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *albums READ albums CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *tracks READ tracks CONSTANT)
+    Q_PROPERTY(strmqt::SearchSectionModel *other READ other CONSTANT)
     Q_PROPERTY(QString query READ query WRITE setQuery NOTIFY queryChanged)
     Q_PROPERTY(bool searching READ searching NOTIFY searchingChanged)
     // People and genres matching the query, {id, name, imageUrl} (ARCHITECTURE.md).
@@ -40,6 +49,14 @@ public:
     ~SearchController() override;
 
     MediaItemModel *model() const { return m_model; }
+    SearchSectionModel *movies() const { return m_movies; }
+    SearchSectionModel *series() const { return m_series; }
+    SearchSectionModel *episodes() const { return m_episodes; }
+    SearchSectionModel *collections() const { return m_collections; }
+    SearchSectionModel *artists() const { return m_artists; }
+    SearchSectionModel *albums() const { return m_albums; }
+    SearchSectionModel *tracks() const { return m_tracks; }
+    SearchSectionModel *other() const { return m_other; }
     QString query() const { return m_query; }
     void setQuery(const QString &query);
     bool searching() const { return m_searching; }
@@ -68,6 +85,14 @@ private:
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_model;
+    SearchSectionModel *m_movies;
+    SearchSectionModel *m_series;
+    SearchSectionModel *m_episodes;
+    SearchSectionModel *m_collections;
+    SearchSectionModel *m_artists;
+    SearchSectionModel *m_albums;
+    SearchSectionModel *m_tracks;
+    SearchSectionModel *m_other;
     QTimer m_debounce;
     QString m_query;
     bool m_searching = false;

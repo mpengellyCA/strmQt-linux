@@ -20,13 +20,6 @@ import StrmQt
 //  * Music is three sections of its own (ARCHITECTURE.md): artists and albums as
 //    square art, tracks as a dense table. On this server that is 4,871 + 5,037
 //    + 56,283 items that were previously unreachable from here.
-//
-//    They are drawn and dormant *today*: `SearchController::runSearch()` pins
-//    `IncludeItemTypes` to {Movie, Series, Episode, BoxSet}, so no music row can
-//    arrive however correct this page is. Adding the three type names to that
-//    list is the whole fix, and this page needs no further change when it lands
-//    — the same shape the Collections section shipped in, one wave before
-//    BoxSet joined that query.
 //  * An empty query is no longer a blank page. Recent searches — which the
 //    controller has always persisted and nothing ever showed — are the page's
 //    content when there is nothing typed.
@@ -61,10 +54,22 @@ FocusScope {
         + (SearchCtl.genres ? SearchCtl.genres.length : 0)
     readonly property int resultCount: SearchCtl.model ? SearchCtl.model.count : 0
 
+    // Live filtered views over SearchCtl.model. The controller owns the type
+    // taxonomy and the proxies preserve source roles and user-state changes;
+    // this page chooses only how each section is presented.
+    readonly property var movieModel: SearchCtl.movies
+    readonly property var seriesModel: SearchCtl.series
+    readonly property var episodeModel: SearchCtl.episodes
+    readonly property var collectionModel: SearchCtl.collections
+    readonly property var artistModel: SearchCtl.artists
+    readonly property var albumModel: SearchCtl.albums
+    readonly property var trackModel: SearchCtl.tracks
+    readonly property var otherModel: SearchCtl.other
+
     // ── Item verbs ─────────────────────────────────────────────────────────
-    // Always read back through the live model rather than through a section's
-    // display copy: the copy exists to be drawn, the model is what the verbs
-    // are about, and `resolve()` wants the full record (seriesId included).
+    // Always read back through the source model. The section proxy is what is
+    // drawn, while `resolve()` wants the complete source record (seriesId
+    // included); sourceRow() keeps that mapping stable across mixed types.
     function itemAt(index) {
         const model = SearchCtl.model
         if (!model || index < 0 || index >= model.count)
@@ -75,7 +80,7 @@ FocusScope {
     function sourceRow(sectionModel, index) {
         if (!sectionModel || index < 0 || index >= sectionModel.count)
             return -1
-        return sectionModel.get(index).srcRow
+        return sectionModel.sourceRow(index)
     }
 
     function itemIn(sectionModel, index) {
@@ -154,141 +159,16 @@ FocusScope {
         itemMenu.popupForItem(page.itemIn(sectionModel, index), sceneX, sceneY)
     }
 
-    // ── Grouping ───────────────────────────────────────────────────────────
-    // The controller hands back one MediaItemModel holding every type at once,
-    // and QML has no way to filter a QAbstractItemModel into four views of
-    // itself. So each section owns a small display copy, rebuilt whenever the
-    // result set changes, carrying `srcRow` back to the row it came from —
-    // which is why nothing here ever has to trust its own copy for a verb.
-    //
-    // The copy holds only the roles a card draws. Narrowing it is not a
-    // micro-optimisation: ListModel fixes a role's type on first append, and a
-    // role that is absent on the first row and present on the tenth is a
-    // runtime warning rather than a compile error.
-    // `artists` is a QStringList role. It reaches QML as a JS array, but the
-    // engine also has a sequence wrapper for list-ish QVariants that is indexed
-    // like an array without being one, so this walks `length` rather than
-    // calling `join` — and a bare string (a server that sent one name, not a
-    // list) is returned as itself instead of becoming "[object Object]".
-    function joinNames(value) {
-        if (value === undefined || value === null)
-            return ""
-        if (typeof value === "string")
-            return value
-        if (value.length === undefined)
-            return String(value)
-        var parts = []
-        for (var i = 0; i < value.length; ++i) {
-            const name = String(value[i])
-            if (name.length > 0)
-                parts.push(name)
-        }
-        return parts.join(", ")
-    }
-
-    function displayRecord(item, row) {
-        // A track credits its performers; an album is filed under one album
-        // artist and often has no `artists` at all.
-        const performers = page.joinNames(item.artists)
-        const credit = performers.length > 0
-                       ? performers
-                       : (item.albumArtist !== undefined && item.albumArtist !== null
-                          ? String(item.albumArtist) : "")
-        return {
-            srcRow: row,
-            itemId: item.itemId !== undefined ? String(item.itemId) : "",
-            name: item.name !== undefined ? String(item.name) : "",
-            label: item.label !== undefined ? String(item.label) : "",
-            subtitle: item.subtitle !== undefined ? String(item.subtitle) : "",
-            posterUrl: item.posterUrl !== undefined ? String(item.posterUrl) : "",
-            thumbUrl: item.thumbUrl !== undefined ? String(item.thumbUrl) : "",
-            progress: item.progress !== undefined ? Number(item.progress) : 0,
-            played: item.played === true,
-            favorite: item.favorite === true,
-            unplayedCount: item.unplayedCount !== undefined ? Number(item.unplayedCount) : 0,
-            // Music fields, on every record rather than only on the music ones:
-            // ListModel fixes a role's type on the first append, and a role that
-            // is absent on row 0 and present on row 10 is a runtime warning.
-            // A film simply carries three empty ones.
-            artistText: credit,
-            albumText: item.album !== undefined ? String(item.album) : "",
-            runtimeMs: item.runtimeMs !== undefined ? Number(item.runtimeMs) : 0
-        }
-    }
-
-    function fill(target, records) {
-        target.clear()
-        for (var i = 0; i < records.length; ++i)
-            target.append(records[i])
-    }
-
-    function appendAll(target, records) {
-        for (var i = 0; i < records.length; ++i)
-            target.append(records[i])
-    }
-
-    // Sorts model rows [from, to) into one bucket per section, in the order the
-    // model holds them. Split out of rebuildSections() so that a full rebuild
-    // and an append of only the rows that just arrived group them by exactly the
-    // same rules — two copies of this chain would drift the first time a type is
-    // added to one of them.
-    function bucketRows(from, to) {
-        const model = SearchCtl.model
-        const buckets = { movies: [], series: [], episodes: [], sets: [],
-                          artists: [], albums: [], tracks: [], other: [] }
-        if (!model)
-            return buckets
-
-        for (var row = from; row < to; ++row) {
-            const item = model.get(row)
-            const record = page.displayRecord(item, row)
-            const type = item.type !== undefined ? String(item.type) : ""
-            if (type === "Movie")
-                buckets.movies.push(record)
-            else if (type === "Series")
-                buckets.series.push(record)
-            else if (type === "Episode")
-                buckets.episodes.push(record)
-            else if (type === "BoxSet")
-                buckets.sets.push(record)
-            else if (type === "MusicArtist")
-                buckets.artists.push(record)
-            else if (type === "MusicAlbum")
-                buckets.albums.push(record)
-            else if (type === "Audio")
-                buckets.tracks.push(record)
-            else
-                // A type the buckets above do not name still gets drawn. The
-                // grouped page must never show fewer results than the flat grid
-                // it replaced, whatever the server decides to return next.
-                buckets.other.push(record)
-        }
-        return buckets
-    }
-
     // The query the sections currently on screen were built from. Not for
     // display: it is what tells a *replaced* result set apart from the same
     // one arriving again, and only the first has any business moving the
     // viewport the user is reading from.
     property string builtQuery: ""
 
-    function rebuildSections() {
-        const model = SearchCtl.model
-        const buckets = page.bucketRows(0, model ? model.count : 0)
-
-        page.fill(movieModel, buckets.movies)
-        page.fill(seriesModel, buckets.series)
-        page.fill(episodeModel, buckets.episodes)
-        page.fill(collectionModel, buckets.sets)
-        page.fill(artistModel, buckets.artists)
-        page.fill(albumModel, buckets.albums)
-        page.fill(trackModel, buckets.tracks)
-        page.fill(otherModel, buckets.other)
-
+    function noteResultReset() {
         // A new QUERY is a new page: staying at the old scroll offset would land
         // the user in the middle of results they have not seen the top of. The
-        // same query's rows landing again is not that — the page they are
-        // reading is still the page they asked for — so the viewport stays put.
+        // same query's model reset is not that, so the viewport stays put.
         if (page.builtQuery !== SearchCtl.query) {
             page.builtQuery = SearchCtl.query
             scrollAnim.stop()
@@ -297,24 +177,6 @@ FocusScope {
         // Deferred: the sections' visibility settles after this frame's
         // bindings, so "is anything still focusable" is not answerable yet.
         Qt.callLater(page.restoreFocus)
-    }
-
-    // Rows [first, last] arrived on top of what is already drawn. Nothing is
-    // cleared, so the scroll offset, every rail's currentIndex and the track
-    // list's row all survive — which is the whole point: a display copy that is
-    // emptied and refilled hands its rail a currentIndex of 0, and StrmRail
-    // publishes currentIndex read-only, so no caller can put the keyboard back.
-    function appendSections(first, last) {
-        const buckets = page.bucketRows(first, last + 1)
-
-        page.appendAll(movieModel, buckets.movies)
-        page.appendAll(seriesModel, buckets.series)
-        page.appendAll(episodeModel, buckets.episodes)
-        page.appendAll(collectionModel, buckets.sets)
-        page.appendAll(artistModel, buckets.artists)
-        page.appendAll(albumModel, buckets.albums)
-        page.appendAll(trackModel, buckets.tracks)
-        page.appendAll(otherModel, buckets.other)
     }
 
     // A section that disappears takes the keyboard with it: Qt clears active
@@ -331,74 +193,17 @@ FocusScope {
         searchField.forceActiveFocus()
     }
 
-    // Played/favourite state lives in ItemActions, and the display copies would
-    // otherwise keep drawing whatever was true when they were built. Patching
-    // the one row that changed — rather than rebuilding — is what stops a tick
-    // on a card from resetting every shelf's keyboard position.
-    function syncUserState(itemId, key, value) {
-        const models = [movieModel, seriesModel, episodeModel, collectionModel,
-                        artistModel, albumModel, trackModel, otherModel]
-        for (var m = 0; m < models.length; ++m) {
-            for (var i = 0; i < models[m].count; ++i) {
-                if (models[m].get(i).itemId === itemId)
-                    models[m].setProperty(i, key, value)
-            }
-        }
-    }
-
-    ListModel { id: movieModel }
-    ListModel { id: seriesModel }
-    ListModel { id: episodeModel }
-    ListModel { id: collectionModel }
-    ListModel { id: artistModel }
-    ListModel { id: albumModel }
-    ListModel { id: trackModel }
-    ListModel { id: otherModel }
-
-    // `count` changing says only that the number of results moved; it cannot
-    // tell "the user asked something else" from "more of what is already here
-    // arrived", and treating both as the first is what empties eight display
-    // copies — and with them the scroll offset and every rail's cursor —
-    // underneath someone who is still reading. The model's own reset/insert
-    // signals do draw that line:
-    //
-    //  * a RESET is the result set being replaced, which is the only thing
-    //    SearchController does for a new query (runSearch() calls setItems(),
-    //    and an emptied query calls clear(), which is setItems({}));
-    //  * INSERTED rows are an addition to the set already on screen — what
-    //    MediaItemModel::appendItems() emits — and are appended here too.
+    // Section contents and incremental changes are owned by the C++ proxies.
+    // The source reset still tells presentation that a replaced query may need
+    // its viewport and focus repaired.
     Connections {
         target: SearchCtl.model
-
-        function onModelReset() { page.rebuildSections() }
-
-        // `parentIndex` rather than the signal's own `parent`, which would
-        // shadow this item's parent property inside the handler; the model is
-        // flat, so it is never anything but an invalid index anyway.
-        function onRowsInserted(parentIndex, first, last) {
-            // Only a true append keeps `srcRow` honest. Rows inserted anywhere
-            // else shift every row after them, and a display copy built before
-            // the shift would then point a card's verbs at a different item
-            // from the one it draws — a silently wrong play, not a visible bug.
-            if (first !== SearchCtl.model.count - (last - first + 1)) {
-                page.rebuildSections()
-                return
-            }
-            page.appendSections(first, last)
-        }
-    }
-
-    Connections {
-        target: Actions
-        function onPlayedChanged(itemId, played) { page.syncUserState(itemId, "played", played) }
-        function onFavoriteChanged(itemId, favorite) {
-            page.syncUserState(itemId, "favorite", favorite)
-        }
+        function onModelReset() { page.noteResultReset() }
     }
 
     // The query survives leaving and re-entering the page, so the results may
     // already be there when this one is built.
-    Component.onCompleted: page.rebuildSections()
+    Component.onCompleted: page.builtQuery = SearchCtl.query
 
     // ── Recent searches ────────────────────────────────────────────────────
     // Rendered as chips through the same strip the genres use. The trailing
@@ -1369,9 +1174,9 @@ FocusScope {
                 navigationFocusKey: "search-movies"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: movieModel.count > 0
+                visible: page.movieModel.count > 0
                 title: qsTr("Movies")
-                railModel: movieModel
+                railModel: page.movieModel
                 cardVariant: "poster"
                 emptyText: ""
 
@@ -1379,11 +1184,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(0)
                 KeyNavigation.down: page.sectionBelow(2)
 
-                onItemActivated: index => page.openResult(movieModel, index)
-                onItemPlayRequested: index => page.playResult(movieModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(movieModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(movieModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(movieModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.movieModel, index)
+                onItemPlayRequested: index => page.playResult(page.movieModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.movieModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.movieModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.movieModel, index, mx, my)
             }
 
             // ── Series ─────────────────────────────────────────────────────
@@ -1392,9 +1197,9 @@ FocusScope {
                 navigationFocusKey: "search-series"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: seriesModel.count > 0
+                visible: page.seriesModel.count > 0
                 title: qsTr("Series")
-                railModel: seriesModel
+                railModel: page.seriesModel
                 cardVariant: "poster"
                 emptyText: ""
 
@@ -1402,11 +1207,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(1)
                 KeyNavigation.down: page.sectionBelow(3)
 
-                onItemActivated: index => page.openResult(seriesModel, index)
-                onItemPlayRequested: index => page.playResult(seriesModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(seriesModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(seriesModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(seriesModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.seriesModel, index)
+                onItemPlayRequested: index => page.playResult(page.seriesModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.seriesModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.seriesModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.seriesModel, index, mx, my)
             }
 
             // ── Episodes ───────────────────────────────────────────────────
@@ -1418,9 +1223,9 @@ FocusScope {
                 navigationFocusKey: "search-episodes"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: episodeModel.count > 0
+                visible: page.episodeModel.count > 0
                 title: qsTr("Episodes")
-                railModel: episodeModel
+                railModel: page.episodeModel
                 cardVariant: "still"
                 emptyText: ""
 
@@ -1431,11 +1236,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(2)
                 KeyNavigation.down: page.sectionBelow(4)
 
-                onItemActivated: index => page.openResult(episodeModel, index)
-                onItemPlayRequested: index => page.playResult(episodeModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(episodeModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(episodeModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(episodeModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.episodeModel, index)
+                onItemPlayRequested: index => page.playResult(page.episodeModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.episodeModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.episodeModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.episodeModel, index, mx, my)
             }
 
             // ── Collections ────────────────────────────────────────────────
@@ -1446,9 +1251,9 @@ FocusScope {
                 navigationFocusKey: "search-collections"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: collectionModel.count > 0
+                visible: page.collectionModel.count > 0
                 title: qsTr("Collections")
-                railModel: collectionModel
+                railModel: page.collectionModel
                 cardVariant: "poster"
                 emptyText: ""
 
@@ -1459,11 +1264,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(3)
                 KeyNavigation.down: page.sectionBelow(5)
 
-                onItemActivated: index => page.openResult(collectionModel, index)
-                onItemPlayRequested: index => page.playResult(collectionModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(collectionModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(collectionModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(collectionModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.collectionModel, index)
+                onItemPlayRequested: index => page.playResult(page.collectionModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.collectionModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.collectionModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.collectionModel, index, mx, my)
             }
 
             // ── Artists ────────────────────────────────────────────────────
@@ -1475,9 +1280,9 @@ FocusScope {
                 navigationFocusKey: "search-artists"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: artistModel.count > 0
+                visible: page.artistModel.count > 0
                 title: qsTr("Artists")
-                railModel: artistModel
+                railModel: page.artistModel
                 cardVariant: "square"
                 emptyText: ""
 
@@ -1485,16 +1290,16 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(4)
                 KeyNavigation.down: page.sectionBelow(6)
 
-                onItemActivated: index => page.openResult(artistModel, index)
+                onItemActivated: index => page.openResult(page.artistModel, index)
                 // An artist has no ParentId a play query can address — see the
                 // note in ItemMenu — so ▸ opens the artist rather than logging
                 // and doing nothing. It is the card's own verb, one click
                 // earlier. The day an artist-scoped Audio query exists this
                 // becomes a real play and nothing else here changes.
-                onItemPlayRequested: index => page.openResult(artistModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(artistModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(artistModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(artistModel, index, mx, my)
+                onItemPlayRequested: index => page.openResult(page.artistModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.artistModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.artistModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.artistModel, index, mx, my)
             }
 
             // ── Albums ─────────────────────────────────────────────────────
@@ -1503,9 +1308,9 @@ FocusScope {
                 navigationFocusKey: "search-albums"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: albumModel.count > 0
+                visible: page.albumModel.count > 0
                 title: qsTr("Albums")
-                railModel: albumModel
+                railModel: page.albumModel
                 cardVariant: "square"
                 emptyText: ""
 
@@ -1513,11 +1318,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(5)
                 KeyNavigation.down: page.sectionBelow(7)
 
-                onItemActivated: index => page.openResult(albumModel, index)
-                onItemPlayRequested: index => page.playAlbumResult(albumModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(albumModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(albumModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(albumModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.albumModel, index)
+                onItemPlayRequested: index => page.playAlbumResult(page.albumModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.albumModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.albumModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.albumModel, index, mx, my)
             }
 
             // ── Tracks ─────────────────────────────────────────────────────
@@ -1527,14 +1332,14 @@ FocusScope {
             TrackList {
                 id: trackList
                 title: qsTr("Tracks")
-                trackListModel: trackModel
+                trackListModel: page.trackModel
 
                 onActiveFocusChanged: { if (trackList.activeFocus) page.ensureVisible(trackList) }
                 KeyNavigation.up: page.sectionAbove(6)
                 KeyNavigation.down: page.sectionBelow(8)
 
-                onTrackActivated: index => page.playResult(trackModel, index)
-                onTrackMenuRequested: (index, mx, my) => page.showMenu(trackModel, index, mx, my)
+                onTrackActivated: index => page.playResult(page.trackModel, index)
+                onTrackMenuRequested: (index, mx, my) => page.showMenu(page.trackModel, index, mx, my)
                 onRowFocused: (y, h) => page.ensureRowVisible(trackList, y, h)
             }
 
@@ -1544,9 +1349,9 @@ FocusScope {
                 navigationFocusKey: "search-other"
                 navigationFocusFallbackItem: searchField
                 navigationFocusRefillActive: SearchCtl.searching
-                visible: otherModel.count > 0
+                visible: page.otherModel.count > 0
                 title: qsTr("Other results")
-                railModel: otherModel
+                railModel: page.otherModel
                 cardVariant: "poster"
                 emptyText: ""
 
@@ -1554,11 +1359,11 @@ FocusScope {
                 KeyNavigation.up: page.sectionAbove(7)
                 KeyNavigation.down: page.sectionBelow(9)
 
-                onItemActivated: index => page.openResult(otherModel, index)
-                onItemPlayRequested: index => page.playResult(otherModel, index)
-                onItemPlayedToggled: index => page.togglePlayedResult(otherModel, index)
-                onItemFavoriteToggled: index => page.toggleFavoriteResult(otherModel, index)
-                onMenuRequested: (index, mx, my) => page.showMenu(otherModel, index, mx, my)
+                onItemActivated: index => page.openResult(page.otherModel, index)
+                onItemPlayRequested: index => page.playResult(page.otherModel, index)
+                onItemPlayedToggled: index => page.togglePlayedResult(page.otherModel, index)
+                onItemFavoriteToggled: index => page.toggleFavoriteResult(page.otherModel, index)
+                onMenuRequested: (index, mx, my) => page.showMenu(page.otherModel, index, mx, my)
             }
 
             // ── People ─────────────────────────────────────────────────────

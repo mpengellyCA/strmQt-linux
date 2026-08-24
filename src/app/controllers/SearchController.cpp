@@ -40,7 +40,16 @@ QVariantList facetList(const QList<MediaItem> &items)
 } // namespace
 
 SearchController::SearchController(emby::EmbyClient *client, QObject *parent)
-    : QObject(parent), m_client(client), m_model(new MediaItemModel(this))
+    : QObject(parent), m_client(client), m_model(new MediaItemModel(this)),
+      m_movies(new SearchSectionModel(SearchSectionModel::Section::Movies, m_model, this)),
+      m_series(new SearchSectionModel(SearchSectionModel::Section::Series, m_model, this)),
+      m_episodes(new SearchSectionModel(SearchSectionModel::Section::Episodes, m_model, this)),
+      m_collections(
+          new SearchSectionModel(SearchSectionModel::Section::Collections, m_model, this)),
+      m_artists(new SearchSectionModel(SearchSectionModel::Section::Artists, m_model, this)),
+      m_albums(new SearchSectionModel(SearchSectionModel::Section::Albums, m_model, this)),
+      m_tracks(new SearchSectionModel(SearchSectionModel::Section::Tracks, m_model, this)),
+      m_other(new SearchSectionModel(SearchSectionModel::Section::Other, m_model, this))
 {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(kDebounceMs);
