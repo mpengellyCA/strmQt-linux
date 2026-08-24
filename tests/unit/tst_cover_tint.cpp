@@ -23,6 +23,7 @@
 #include "app/CoverTint.h"
 #include "app/CoverTintService.h"
 #include "app/EmbyImageProvider.h"
+#include "server/emby/EmbyClient.h"
 
 #include <QImage>
 #include <QLinearGradient>
@@ -113,6 +114,7 @@ private slots:
     void serviceKeepsTheSleeveThatIsStillOnScreen();
     void serviceKeepsTheSleeveThroughSilentFailures();
     void serviceStaysBounded();
+    void serviceRejectsAStaleDecodeAfterIdentitySwitch();
 };
 
 // ── The adversarial covers ──────────────────────────────────────────────────
@@ -365,6 +367,11 @@ bool isRemembered(const strmqt::CoverTintService &service, const QString &id)
     return service.tintFor(id).alpha() > 0;
 }
 
+void publish(strmqt::EmbyImageFetcher &fetcher, const QString &id, const QImage &image)
+{
+    emit fetcher.imageDecoded(id, image, fetcher.cachePartitionGeneration());
+}
+
 } // namespace
 
 void TestCoverTint::serviceRemembersOneTintPerCover()
@@ -376,7 +383,7 @@ void TestCoverTint::serviceRemembersOneTintPerCover()
     QCOMPARE(service.tintFor(coverId(1)), QColor(Qt::transparent));
 
     QSignalSpy revisions(&service, &strmqt::CoverTintService::revisionChanged);
-    emit fetcher.imageDecoded(coverId(1), blueSleeve());
+    publish(fetcher, coverId(1), blueSleeve());
     QCOMPARE(revisions.count(), 1);
 
     const QColor tint = service.tintFor(coverId(1));
@@ -388,7 +395,7 @@ void TestCoverTint::serviceRemembersOneTintPerCover()
 
     // A cover that cannot meet the clamp is remembered as a failure, and a
     // remembered failure changes nothing on screen, so it wakes no bindings.
-    emit fetcher.imageDecoded(coverId(2), greySleeve());
+    publish(fetcher, coverId(2), greySleeve());
     QCOMPARE(revisions.count(), 1);
     QCOMPARE(service.tintFor(coverId(2)), QColor(Qt::transparent));
 }
@@ -403,7 +410,7 @@ void TestCoverTint::serviceEvictsTheLeastRecentlyUsed()
 
     constexpr int kMax = strmqt::CoverTintService::kMaxEntries;
     for (int i = 0; i < kMax; ++i)
-        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+        publish(fetcher, coverId(i), blueSleeve());
     // Cover 0 is the oldest insertion; asking for it makes it the youngest use.
     // Cover 2 is asked for afterwards so that the pin is on 2 rather than on 0:
     // what keeps 0 alive below is access order and nothing else. Cover 1 has
@@ -411,7 +418,7 @@ void TestCoverTint::serviceEvictsTheLeastRecentlyUsed()
     QVERIFY(isRemembered(service, coverId(0)));
     QVERIFY(isRemembered(service, coverId(2)));
 
-    emit fetcher.imageDecoded(coverId(kMax), blueSleeve());
+    publish(fetcher, coverId(kMax), blueSleeve());
 
     QVERIFY2(isRemembered(service, coverId(0)), "the entry just used was evicted");
     QVERIFY2(!isRemembered(service, coverId(1)), "the least recently used entry survived");
@@ -426,14 +433,14 @@ void TestCoverTint::serviceKeepsTheSleeveThatIsStillOnScreen()
     strmqt::CoverTintService service(&fetcher);
 
     const QString sleeve = QStringLiteral("nowplaying/Primary/tag");
-    emit fetcher.imageDecoded(sleeve, blueSleeve());
+    publish(fetcher, sleeve, blueSleeve());
     const QColor tint = service.tintFor(sleeve);
     QVERIFY(tint.isValid());
 
     // Four times the cache. Every decode bumps the revision, CoverWash's
     // binding re-runs, and re-running it is this tintFor call.
     for (int i = 0; i < strmqt::CoverTintService::kMaxEntries * 4; ++i) {
-        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+        publish(fetcher, coverId(i), blueSleeve());
         QCOMPARE(service.tintFor(sleeve), tint);
     }
 
@@ -450,13 +457,13 @@ void TestCoverTint::serviceKeepsTheSleeveThroughSilentFailures()
     strmqt::CoverTintService service(&fetcher);
 
     const QString sleeve = QStringLiteral("nowplaying/Primary/tag");
-    emit fetcher.imageDecoded(sleeve, blueSleeve());
+    publish(fetcher, sleeve, blueSleeve());
     const QColor tint = service.tintFor(sleeve);
     QVERIFY(tint.isValid());
 
     QSignalSpy revisions(&service, &strmqt::CoverTintService::revisionChanged);
     for (int i = 0; i < strmqt::CoverTintService::kMaxEntries * 2; ++i)
-        emit fetcher.imageDecoded(coverId(i), greySleeve());
+        publish(fetcher, coverId(i), greySleeve());
     QCOMPARE(revisions.count(), 0);
 
     QCOMPARE(service.tintFor(sleeve), tint);
@@ -472,7 +479,7 @@ void TestCoverTint::serviceStaysBounded()
 
     constexpr int kMax = strmqt::CoverTintService::kMaxEntries;
     for (int i = 0; i < kMax * 3; ++i)
-        emit fetcher.imageDecoded(coverId(i), blueSleeve());
+        publish(fetcher, coverId(i), blueSleeve());
 
     int remembered = 0;
     for (int i = 0; i < kMax * 3; ++i) {
@@ -480,6 +487,38 @@ void TestCoverTint::serviceStaysBounded()
             ++remembered;
     }
     QCOMPARE(remembered, kMax);
+}
+
+void TestCoverTint::serviceRejectsAStaleDecodeAfterIdentitySwitch()
+{
+    strmqt::emby::EmbyClient client;
+    client.setSession(QStringLiteral("fixture-token"), QStringLiteral("first-user"));
+    strmqt::EmbyImageFetcher fetcher(&client);
+    strmqt::CoverTintService service(&fetcher);
+    const QString id = coverId(1);
+    const quint64 oldGeneration = fetcher.cachePartitionGeneration();
+
+    publish(fetcher, id, blueSleeve());
+    const QColor oldTint = service.tintFor(id);
+    QVERIFY(oldTint.isValid());
+
+    QSignalSpy revisions(&service, &strmqt::CoverTintService::revisionChanged);
+    client.setSession(QStringLiteral("fixture-token"), QStringLiteral("second-user"));
+    const quint64 currentGeneration = fetcher.cachePartitionGeneration();
+    QVERIFY(currentGeneration > oldGeneration);
+    QCOMPARE(revisions.count(), 1);
+    QCOMPARE(service.tintFor(id), QColor(Qt::transparent));
+
+    // A completion already queued by the old partition must not repopulate the
+    // freshly cleared cache even when the item id and image tag collide.
+    emit fetcher.imageDecoded(id, blueSleeve(), oldGeneration);
+    QCOMPARE(service.tintFor(id), QColor(Qt::transparent));
+
+    const QImage currentSleeve = solid(QColor(210, 70, 65));
+    emit fetcher.imageDecoded(id, currentSleeve, currentGeneration);
+    const QColor currentTint = service.tintFor(id);
+    QVERIFY(currentTint.isValid());
+    QVERIFY(currentTint != oldTint);
 }
 
 QTEST_GUILESS_MAIN(TestCoverTint)

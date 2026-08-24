@@ -1,10 +1,14 @@
 #include <QBuffer>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QtTest>
 
 #include "MockEmbyServer.h"
 #include "app/EmbyImageProvider.h"
+#include "app/ImageLimits.h"
 #include "server/emby/EmbyClient.h"
 
 using namespace strmqt;
@@ -15,10 +19,10 @@ const auto kUserId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
 const auto kToken = QStringLiteral("not-a-real-token-fixture-only");
 const auto kImageId = QStringLiteral("301001/Primary/tag-one");
 
-QByteArray pngBytes(int width, int height)
+QByteArray pngBytes(int width, int height, const QColor &colour = Qt::darkCyan)
 {
     QImage image(width, height, QImage::Format_RGB32);
-    image.fill(Qt::darkCyan);
+    image.fill(colour);
     QByteArray bytes;
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
@@ -41,6 +45,10 @@ private slots:
     void artworkIsServedFromDiskOnTheSecondAsk();
     void aCorruptCacheEntryFallsBackToTheServer();
     void fetchReturnsBeforeTheImageIsDecoded();
+    void largeSourceIsDecodedNearTheRequestedSize();
+    void canceledResponseAbortsAndSuppressesDecode();
+    void identitySwitchRejectsDelayedOldWork();
+    void startupPrunesAnOversizedAssetPartition();
 
 private:
     // Drives one fetch to completion and hands back the image it produced.
@@ -163,6 +171,90 @@ void ImageCacheTest::fetchReturnsBeforeTheImageIsDecoded()
     QVERIFY(finished.wait(5000));
     // ...and the completion still lands on the thread its listeners expect.
     QCOMPARE(decodedOn, caller);
+}
+
+void ImageCacheTest::largeSourceIsDecodedNearTheRequestedSize()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"),
+                     200, pngBytes(5'000, 4'000), "image/png");
+
+    const QImage image = fetchBlocking(kImageId, QSize(200, 0));
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.size(), QSize(200, 160));
+    QVERIFY(qint64(image.width()) * image.height() <= imagelimits::kMaxTargetPixels);
+}
+
+void ImageCacheTest::canceledResponseAbortsAndSuppressesDecode()
+{
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Items/301001/Images/Primary"), 500);
+    QSignalSpy decoded(m_fetcher, &EmbyImageFetcher::imageDecoded);
+    EmbyImageResponse response;
+    QSignalSpy finished(&response, &QQuickImageResponse::finished);
+    m_fetcher->fetch(&response, kImageId, QSize(200, 0));
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+
+    response.cancel();
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(response.errorString(), QStringLiteral("request canceled"));
+    QTest::qWait(600);
+    QCOMPARE(decoded.count(), 0);
+}
+
+void ImageCacheTest::identitySwitchRejectsDelayedOldWork()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"),
+                     200, pngBytes(120, 80, Qt::red), "image/png");
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Items/301001/Images/Primary"), 500);
+    QSignalSpy decoded(m_fetcher, &EmbyImageFetcher::imageDecoded);
+    EmbyImageResponse oldResponse;
+    QSignalSpy oldFinished(&oldResponse, &QQuickImageResponse::finished);
+    m_fetcher->fetch(&oldResponse, kImageId, QSize(200, 0));
+    QTRY_COMPARE(m_mock->requestCount(), 1);
+
+    m_client->setSession(kToken, QStringLiteral("second-user"));
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Items/301001/Images/Primary"), 0);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"),
+                     200, pngBytes(120, 80, Qt::blue), "image/png");
+    const QImage current = fetchBlocking(kImageId);
+
+    QVERIFY(!current.isNull());
+    QCOMPARE(current.pixelColor(0, 0), QColor(Qt::blue));
+    QTRY_COMPARE(oldFinished.count(), 1);
+    QCOMPARE(decoded.count(), 1);
+    QCOMPARE(decoded.at(0).at(2).toULongLong(), m_fetcher->cachePartitionGeneration());
+}
+
+void ImageCacheTest::startupPrunesAnOversizedAssetPartition()
+{
+    delete m_fetcher;
+    m_fetcher = nullptr;
+
+    const QByteArray identity =
+        m_client->baseUrl().toString(QUrl::FullyEncoded).toUtf8() + '\0' + kUserId.toUtf8();
+    const QString partition = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+    QDir assets(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                QStringLiteral("/images/") + partition + QStringLiteral("/assets"));
+    QVERIFY(assets.mkpath(QStringLiteral(".")));
+    for (int i = 0; i < 2; ++i) {
+        QFile file(assets.filePath(QStringLiteral("sparse-%1").arg(i)));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.resize(300LL * 1024 * 1024));
+        QVERIFY(file.setFileTime(QDateTime::currentDateTime().addSecs(-60 * (i + 1)),
+                                 QFileDevice::FileModificationTime));
+    }
+
+    m_fetcher = new EmbyImageFetcher(m_client, this);
+    const auto totalSize = [&assets] {
+        qint64 total = 0;
+        for (const QFileInfo &info : assets.entryInfoList(QDir::Files))
+            total += info.size();
+        return total;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(totalSize() <= 512LL * 1024 * 1024, 5000);
 }
 
 QTEST_MAIN(ImageCacheTest)

@@ -61,7 +61,8 @@ signals:
     void revisionChanged();
 
 private:
-    void onImageDecoded(const QString &id, const QImage &image);
+    void onImageDecoded(const QString &id, const QImage &image, quint64 generation);
+    void resetForPartition(quint64 generation);
     void remember(const QString &id, const QColor &tint);
     void touch(const QString &id) const;
 
@@ -85,6 +86,7 @@ private:
     // without bumping revision, so nothing would re-ask in time.
     mutable QQueue<QString> m_order;
     mutable QString m_wanted;
+    quint64 m_partitionGeneration = 0;
     int m_revision = 0;
 };
 

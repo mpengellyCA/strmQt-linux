@@ -23,7 +23,10 @@ CoverTintService::CoverTintService(EmbyImageFetcher *fetcher, QObject *parent) :
 {
     if (fetcher == nullptr)
         return;
+    m_partitionGeneration = fetcher->cachePartitionGeneration();
     connect(fetcher, &EmbyImageFetcher::imageDecoded, this, &CoverTintService::onImageDecoded);
+    connect(fetcher, &EmbyImageFetcher::cachePartitionChanged, this,
+            &CoverTintService::resetForPartition);
 }
 
 qreal CoverTintService::maxWashOpacity()
@@ -50,9 +53,9 @@ QColor CoverTintService::tintFor(const QString &source) const
     return entry->isValid() ? *entry : QColor(Qt::transparent);
 }
 
-void CoverTintService::onImageDecoded(const QString &id, const QImage &image)
+void CoverTintService::onImageDecoded(const QString &id, const QImage &image, quint64 generation)
 {
-    if (id.isEmpty())
+    if (id.isEmpty() || generation != m_partitionGeneration)
         return;
     if (m_tints.contains(id)) {
         // Already sampled, and being decoded again means it is back on screen.
@@ -60,6 +63,18 @@ void CoverTintService::onImageDecoded(const QString &id, const QImage &image)
         return;
     }
     remember(id, covertint::dominantWashTint(image));
+}
+
+void CoverTintService::resetForPartition(quint64 generation)
+{
+    if (generation == m_partitionGeneration)
+        return;
+    m_partitionGeneration = generation;
+    m_tints.clear();
+    m_order.clear();
+    m_wanted.clear();
+    ++m_revision;
+    emit revisionChanged();
 }
 
 // Youngest end of the queue. Const because it changes nothing anyone can see:

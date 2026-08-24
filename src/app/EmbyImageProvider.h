@@ -3,11 +3,15 @@
 #include <QImage>
 #include <QMutex>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QThreadPool>
 #include <QQuickAsyncImageProvider>
 #include <QQuickImageResponse>
 #include <QStringList>
 #include <QUrl>
+
+#include <atomic>
+#include <memory>
 
 class QNetworkAccessManager;
 class QNetworkDiskCache;
@@ -23,13 +27,26 @@ class EmbyImageResponse : public QQuickImageResponse
     Q_OBJECT
 
 public:
+    struct State
+    {
+        std::atomic_bool canceled = false;
+        std::atomic_bool completed = false;
+    };
+
+    EmbyImageResponse();
     QQuickTextureFactory *textureFactory() const override;
     QString errorString() const override;
+    void cancel() override;
 
     // Called on the fetcher (GUI) thread; emits finished().
-    void complete(QImage image, const QString &error);
+    bool complete(QImage image, const QString &error);
+    std::shared_ptr<State> state() const { return m_state; }
+
+signals:
+    void cancelRequested();
 
 private:
+    std::shared_ptr<State> m_state;
     QImage m_image;
     QString m_error;
 };
@@ -81,9 +98,15 @@ signals:
     // already drawing the exact image whose colour they want, and exportToFile()
     // above is a genuine second fetch precisely because it could not share one.
     // `id` is the same "{itemId}/{imageType}/{tag}" fetch() takes.
-    void imageDecoded(const QString &id, const QImage &image);
+    void imageDecoded(const QString &id, const QImage &image, quint64 generation);
+    void cachePartitionChanged(quint64 generation);
+
+public:
+    quint64 cachePartitionGeneration() const;
 
 private:
+    struct CachePartition;
+    using CachePartitionPtr = std::shared_ptr<CachePartition>;
     // Decoding used to happen in the reply handler, on the GUI thread: a
     // library page brings dozens of posters in at once and each JPEG decode
     // froze the frame it landed on, which is the whole of the "loading a
@@ -93,18 +116,23 @@ private:
     // Deliberately small: the point is to keep the UI thread free, not to win
     // a decode race, and sixteen concurrent full-size decodes is a memory
     // spike for no gain.
-    void decodeAsync(EmbyImageResponse *response, const QString &id, const QString &cachePath,
+    void decodeAsync(const QPointer<EmbyImageResponse> &response, const QString &id,
+                     const CachePartitionPtr &partition, const QString &cachePath,
                      QByteArray bytes, bool storeToCache, const QSize &requestedSize);
-    void fetchFromNetwork(EmbyImageResponse *response, const QString &id,
-                          const QSize &requestedSize);
+    void fetchFromNetwork(const QPointer<EmbyImageResponse> &response, const QString &id,
+                          const QSize &requestedSize, const CachePartitionPtr &partition);
     // <cache>/images/<identity>/assets/<sha256 of the URL>. The URL carries the
     // item, the image type, the server-side width AND Emby's image tag, so an
     // entry can never be stale: new artwork is a new tag is a new file. That is
     // what makes this cache safe to keep without revalidating, which is the
     // difference between a warm page and one that re-fetches on every visit.
-    QString assetPathFor(const QUrl &url) const;
-    void storeAsset(const QString &path, const QByteArray &bytes);
-    void pruneAssetsIfNeeded();
+    static QString assetPathFor(const CachePartitionPtr &partition, const QUrl &url);
+    static void storeAsset(const CachePartitionPtr &partition, const QString &path,
+                           const QByteArray &bytes);
+    static void pruneAssets(const CachePartitionPtr &partition, bool lockIo);
+    void schedulePartitionMaintenance(const CachePartitionPtr &partition,
+                                      const CachePartitionPtr &outgoing);
+    CachePartitionPtr partitionSnapshot() const;
 
     QNetworkRequest imageRequest(const QUrl &url) const;
     void resetCachePartition();
@@ -112,9 +140,9 @@ private:
     emby::EmbyClient *m_client;
     QNetworkAccessManager *m_nam;
     QNetworkDiskCache *m_cache = nullptr;
-    QString m_assetDir;
-    QMutex m_assetMutex; // serialises pruning and the write counter
-    int m_assetWrites = 0;
+    mutable QMutex m_partitionMutex;
+    CachePartitionPtr m_partition;
+    quint64 m_partitionGeneration = 0; // GUI-thread owned
     QStringList m_exportDirectories;
     // Declared last and drained explicitly in the destructor, so no worker can
     // still be holding this object when its members start going away.
@@ -132,7 +160,7 @@ public:
                                               const QSize &requestedSize) override;
 
 private:
-    EmbyImageFetcher *m_fetcher;
+    QPointer<EmbyImageFetcher> m_fetcher;
 };
 
 } // namespace strmqt
