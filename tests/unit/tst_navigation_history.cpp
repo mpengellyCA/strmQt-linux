@@ -1048,10 +1048,13 @@ void NavigationHistoryTest::progressExtendsRefillWithoutAdmittingStaleRows()
 
     // A controller that never advances and never publishes a terminal edge is
     // still bounded by inactivity rather than hanging for the page lifetime.
+    // Its retained row is not a coherent fallback: leave the virtual owner via
+    // its explicit external fallback without focusing any stale index.
     QVERIFY(invoke(root, "beginProgressRestore"));
     QTRY_VERIFY(root->property("progressRestorePending").toBool());
     QTRY_VERIFY_WITH_TIMEOUT(!root->property("progressRestorePending").toBool(), 1000);
-    QCOMPARE(root->property("progressFocusedIndex").toInt(), 0);
+    QCOMPARE(root->property("progressFocusedIndex").toInt(), -1);
+    QCOMPARE(root->property("progressFallbackCount").toInt(), 1);
 }
 
 void NavigationHistoryTest::stableOwnersAndPlaylistIdentitySurviveReorder()

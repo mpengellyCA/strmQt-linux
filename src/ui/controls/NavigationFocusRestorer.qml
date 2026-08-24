@@ -204,6 +204,15 @@ QtObject {
     function finishWithFallback(generation): void {
         if (!restorer.pending || Number(generation) !== restorer._generation)
             return
+        // An inactivity expiry is not an honest terminal model snapshot. Rows
+        // retained while refillActive is still true may belong to the previous
+        // controller owner, so retire the locator and leave the virtual view
+        // instead of resolving either its identity or its old numeric index.
+        if (restorer.refillActive) {
+            restorer.cancel()
+            restorer.fallbackRequested()
+            return
+        }
         if (restorer.retry())
             return
         const target = restorer.count > 0
