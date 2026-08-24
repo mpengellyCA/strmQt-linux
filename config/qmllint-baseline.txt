@@ -116,9 +116,6 @@ src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	const model = PlaylistCtl.playlists
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	readonly property bool listComplete: PlaylistCtl.playlistsComplete
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	target: PlaylistCtl
-src/ui/controls/StrmMenu.qml: Accessible attached property must be attached to an object deriving from Item or Action [Quick.attached-property-type]	Accessible.name: qsTr("Actions")
-src/ui/controls/StrmMenu.qml: Accessible attached property must be attached to an object deriving from Item or Action [Quick.attached-property-type]	Accessible.role: Accessible.Menu
-src/ui/controls/StrmMenu.qml: Member "Menu" not found on type "QQuickAccessibleAttached" [missing-property]	Accessible.role: Accessible.Menu
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? MusicCtl.tracks.count
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? page.mapString("itemId") : MusicCtl.albumId
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	? page.mapString("name") : MusicCtl.albumName

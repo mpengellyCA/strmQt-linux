@@ -56,7 +56,7 @@ Final integration validation after all repairs:
 - `ctest`: **33/33 passed**;
 - offscreen page construction: **13/13 passed**;
 - focused QML accessibility interaction test: passed;
-- qmllint: **862 normalized existing warnings**, exactly matching the reviewed baseline;
+- qmllint: **859 normalized existing warnings**, exactly matching the reviewed baseline;
 - release workflow and Flatpak YAML parsing/checksum validation: passed.
 
 Manual coverage still requires the corresponding hardware/services: sustained real
