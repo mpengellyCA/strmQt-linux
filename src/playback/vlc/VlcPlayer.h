@@ -5,6 +5,8 @@
 #include <QImage>
 #include <QMutex>
 
+#include <atomic>
+
 struct libvlc_instance_t;
 struct libvlc_media_player_t;
 struct libvlc_event_t;
@@ -66,7 +68,9 @@ private:
     qint64 m_pendingStartMs = 0;
     bool m_buffering = false;
     bool m_sawFirstFrame = false;
-    LoadId m_loadId = 0;
+    // Written by load()/stop() on the GUI thread and read by eventCb() on
+    // libvlc's event thread, which is the whole point of stamping events.
+    std::atomic<LoadId> m_loadId = 0;
 
     mutable QMutex m_frameMutex;
     QImage m_frontFrame; // last displayed frame
