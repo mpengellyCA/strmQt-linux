@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QImage>
+#include <QMutex>
 #include <QNetworkRequest>
+#include <QThreadPool>
 #include <QQuickAsyncImageProvider>
 #include <QQuickImageResponse>
 #include <QStringList>
@@ -40,6 +42,7 @@ class EmbyImageFetcher : public QObject
 
 public:
     explicit EmbyImageFetcher(emby::EmbyClient *client, QObject *parent = nullptr);
+    ~EmbyImageFetcher() override;
 
     Q_INVOKABLE void fetch(strmqt::EmbyImageResponse *response, const QString &id,
                            const QSize &requestedSize);
@@ -81,13 +84,41 @@ signals:
     void imageDecoded(const QString &id, const QImage &image);
 
 private:
+    // Decoding used to happen in the reply handler, on the GUI thread: a
+    // library page brings dozens of posters in at once and each JPEG decode
+    // froze the frame it landed on, which is the whole of the "loading a
+    // library page stutters" complaint. Decode and disk I/O both run here now
+    // and only the finished QImage goes back to the GUI thread.
+    //
+    // Deliberately small: the point is to keep the UI thread free, not to win
+    // a decode race, and sixteen concurrent full-size decodes is a memory
+    // spike for no gain.
+    void decodeAsync(EmbyImageResponse *response, const QString &id, const QString &cachePath,
+                     QByteArray bytes, bool storeToCache, const QSize &requestedSize);
+    void fetchFromNetwork(EmbyImageResponse *response, const QString &id,
+                          const QSize &requestedSize);
+    // <cache>/images/<identity>/assets/<sha256 of the URL>. The URL carries the
+    // item, the image type, the server-side width AND Emby's image tag, so an
+    // entry can never be stale: new artwork is a new tag is a new file. That is
+    // what makes this cache safe to keep without revalidating, which is the
+    // difference between a warm page and one that re-fetches on every visit.
+    QString assetPathFor(const QUrl &url) const;
+    void storeAsset(const QString &path, const QByteArray &bytes);
+    void pruneAssetsIfNeeded();
+
     QNetworkRequest imageRequest(const QUrl &url) const;
     void resetCachePartition();
 
     emby::EmbyClient *m_client;
     QNetworkAccessManager *m_nam;
     QNetworkDiskCache *m_cache = nullptr;
+    QString m_assetDir;
+    QMutex m_assetMutex; // serialises pruning and the write counter
+    int m_assetWrites = 0;
     QStringList m_exportDirectories;
+    // Declared last and drained explicitly in the destructor, so no worker can
+    // still be holding this object when its members start going away.
+    QThreadPool m_decodePool;
 };
 
 // Resolves image://emby/{itemId}/{imageType}/{tag} (see MediaItemModel role URLs).

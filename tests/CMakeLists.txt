@@ -47,6 +47,17 @@ strmqt_add_test(tst_emby_client
 )
 target_include_directories(tst_emby_client PRIVATE mocks)
 
+# EmbyImageProvider lives in the executable rather than strmqt_app (it needs
+# QtGui), so it is compiled into this target the same way CoverTint.cpp is.
+strmqt_add_test(tst_image_cache
+    integration/tst_image_cache.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/EmbyImageProvider.cpp
+)
+target_include_directories(tst_image_cache PRIVATE mocks)
+target_link_libraries(tst_image_cache PRIVATE Qt6::Gui Qt6::Quick)
+set_tests_properties(tst_image_cache PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 strmqt_add_test(tst_controllers
     integration/tst_controllers.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
