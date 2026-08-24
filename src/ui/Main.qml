@@ -46,9 +46,19 @@ ApplicationWindow {
     // up, Ctrl+K used to open the command palette on top of it and "/" pushed
     // Search *behind* it. Anything that opens a destination or a second overlay
     // stands down while one is showing.
-    readonly property bool overlayOpen: shortcutSheet.opened || commandPalette.opened
+    readonly property bool shortcutSheetOpened: shortcutSheetLoader.opened
+    readonly property bool commandPaletteOpened: commandPaletteLoader.opened
+    readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
                                         || resumePrompt.visible
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
+
+    function toggleShortcutSheet(): void {
+        shortcutSheetLoader.toggle();
+    }
+
+    function toggleCommandPalette(): void {
+        commandPaletteLoader.toggle();
+    }
     // Interaction follows the visible surface, not whether media happens to be
     // playing underneath it. This single answer gates the shell shortcuts and
     // is published to Application for gamepad routing.
@@ -578,6 +588,30 @@ ApplicationWindow {
                 } else {
                     console.log("selftest ok   video plane handoff");
                 }
+
+                // Startup-only overlays stay absent until their first verb,
+                // then still expose the same toggle contract through Loader.
+                if (shortcutSheetLoader.active || shortcutSheetLoader.item !== null
+                    || commandPaletteLoader.active || commandPaletteLoader.item !== null) {
+                    console.warn("selftest FAIL lazy overlays: instantiated at startup");
+                    ++failures;
+                } else {
+                    root.toggleShortcutSheet();
+                    root.toggleCommandPalette();
+                    const shortcutReady = shortcutSheetLoader.active
+                                          && shortcutSheetLoader.item !== null
+                                          && shortcutSheetLoader.opened;
+                    const paletteReady = commandPaletteLoader.active
+                                         && commandPaletteLoader.item !== null
+                                         && commandPaletteLoader.opened;
+                    if (!shortcutReady || !paletteReady) {
+                        console.warn("selftest FAIL lazy overlays: shortcut=" + shortcutReady
+                                     + " palette=" + paletteReady);
+                        ++failures;
+                    } else {
+                        console.log("selftest ok   lazy overlays");
+                    }
+                }
                 Qt.exit(failures > 0 ? 1 : 0);
             }
         }
@@ -1044,16 +1078,18 @@ ApplicationWindow {
         actionId: "app.shortcuts"
         fallback: ["?"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
-                || (shortcutSheet.opened && !commandPalette.opened && !resumePrompt.visible)
-        onActivated: shortcutSheet.toggle()
+                || (root.shortcutSheetOpened && !root.commandPaletteOpened
+                    && !resumePrompt.visible)
+        onActivated: root.toggleShortcutSheet()
     }
 
     MappedShortcut {
         actionId: "app.commandPalette"
         fallback: ["Ctrl+K"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
-                || (commandPalette.opened && !shortcutSheet.opened && !resumePrompt.visible)
-        onActivated: commandPalette.toggle()
+                || (root.commandPaletteOpened && !root.shortcutSheetOpened
+                    && !resumePrompt.visible)
+        onActivated: root.toggleCommandPalette()
     }
 
     // The docked bar takes focus by a click or by Tab, which is to say a
@@ -1284,26 +1320,53 @@ ApplicationWindow {
     }
 
     // ── Overlays ───────────────────────────────────────────────────────────
-    ShortcutSheet {
-        id: shortcutSheet
+    Loader {
+        id: shortcutSheetLoader
+        objectName: "shortcutSheetLoader"
+        readonly property ShortcutSheet overlay: item as ShortcutSheet
+        readonly property bool opened: overlay !== null && overlay.opened
+
+        function toggle(): void {
+            active = true;
+            overlay.toggle();
+        }
 
         anchors.fill: parent
         z: 900
-
-        onClosed: root.restoreFocusToPage()
+        active: false
+        sourceComponent: ShortcutSheet {}
     }
 
-    CommandPalette {
-        id: commandPalette
+    Connections {
+        target: shortcutSheetLoader.overlay
+        function onClosed() { root.restoreFocusToPage(); }
+    }
+
+    Loader {
+        id: commandPaletteLoader
+        objectName: "commandPaletteLoader"
+        readonly property CommandPalette overlay: item as CommandPalette
+        readonly property bool opened: overlay !== null && overlay.opened
+
+        function toggle(): void {
+            active = true;
+            overlay.toggle();
+        }
 
         anchors.fill: parent
         z: 910
+        active: false
+        sourceComponent: CommandPalette {}
+    }
 
-        onClosed: root.restoreFocusToPage()
-        onLibraryChosen: (libraryId, name, collectionType) =>
-            root.openLibrary(libraryId, name, collectionType)
-        onItemChosen: item => root.openDetails(item)
-        onActionChosen: actionId => {
+    Connections {
+        target: commandPaletteLoader.overlay
+        function onClosed() { root.restoreFocusToPage(); }
+        function onLibraryChosen(libraryId, name, collectionType) {
+            root.openLibrary(libraryId, name, collectionType);
+        }
+        function onItemChosen(item) { root.openDetails(item); }
+        function onActionChosen(actionId) {
             if (actionId === "library.search")
                 root.openSearch();
             else if (actionId === "app.settings")
