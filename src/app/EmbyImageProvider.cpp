@@ -12,7 +12,6 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QNetworkAccessManager>
-#include <QNetworkDiskCache>
 #include <QNetworkReply>
 #include <QSaveFile>
 #include <QSemaphore>
@@ -199,9 +198,6 @@ EmbyImageFetcher::EmbyImageFetcher(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_nam(new QNetworkAccessManager(this)),
       m_sourceNamespacePrefix(QUuid::createUuid().toString(QUuid::WithoutBraces))
 {
-    m_cache = new QNetworkDiskCache(m_nam);
-    m_cache->setMaximumCacheSize(256 * 1024 * 1024);
-    m_nam->setCache(m_cache);
     m_nam->setAutoDeleteReplies(true);
     if (m_client) {
         connect(m_client, &emby::EmbyClient::identityChanged, this,
@@ -227,8 +223,6 @@ EmbyImageFetcher::~EmbyImageFetcher()
 
 void EmbyImageFetcher::resetCachePartition()
 {
-    if (!m_cache)
-        return;
     QByteArray identity;
     if (m_client) {
         identity = m_client->baseUrl().toString(QUrl::FullyEncoded).toUtf8() + '\0' +
@@ -264,9 +258,6 @@ void EmbyImageFetcher::resetCachePartition()
         if (reply && !reply->isFinished())
             reply->abort();
     }
-    if (!m_cache->cacheDirectory().isEmpty())
-        m_cache->clear();
-    m_cache->setCacheDirectory(root);
     schedulePartitionMaintenance(next, outgoing);
     for (const QString &path : m_exportDirectories) {
         QDir dir(path);
@@ -367,7 +358,6 @@ void EmbyImageFetcher::waitForMaintenanceForTests()
 QNetworkRequest EmbyImageFetcher::imageRequest(const QUrl &url) const
 {
     QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
     request.setTransferTimeout(15'000);
     if (!m_client->accessToken().isEmpty())
         request.setRawHeader("X-Emby-Token", m_client->accessToken().toUtf8());

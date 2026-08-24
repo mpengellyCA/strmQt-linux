@@ -17,7 +17,6 @@
 #include <memory>
 
 class QNetworkAccessManager;
-class QNetworkDiskCache;
 
 namespace strmqt {
 
@@ -55,7 +54,7 @@ private:
 };
 
 // Lives on the GUI thread; performs the actual HTTP fetch with the session token
-// and a disk cache, downscaled server-side via maxWidth.
+// and the content-addressed asset store, downscaled server-side via maxWidth.
 class EmbyImageFetcher : public QObject
 {
     Q_OBJECT
@@ -76,11 +75,10 @@ public:
     // Writes one image to a file another *process* can open, and reports its
     // URL through fileExported().
     //
-    // The disk cache below already holds these bytes, but QNetworkDiskCache's
-    // filenames are an implementation detail — hashed, versioned, and with no
-    // supported way to ask for one — so they cannot be handed out as a file://
-    // URL. MPRIS's mpris:artUrl is exactly that: Plasma's applet, the lock
-    // screen and the notification daemon open the path themselves.
+    // The provider's content-addressed asset store may already hold a different
+    // requested width, but its filenames are internal and cannot be handed out
+    // as a file:// URL. MPRIS's mpris:artUrl is exactly that: Plasma's applet,
+    // the lock screen and the notification daemon open the path themselves.
     //
     // This is a genuine second download, not just a second copy: the export
     // asks for a fixed 512 px while fetch() asks for whatever width the
@@ -157,7 +155,6 @@ private:
 
     emby::EmbyClient *m_client;
     QNetworkAccessManager *m_nam;
-    QNetworkDiskCache *m_cache = nullptr;
     mutable QMutex m_partitionMutex;
     CachePartitionPtr m_partition;
     quint64 m_partitionGeneration = 0; // GUI-thread owned
