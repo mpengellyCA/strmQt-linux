@@ -1392,7 +1392,6 @@ void PlayerController::markLoopPoint()
         return;
     }
     m_backend->setAbLoop(m_loopStartMs, m_loopEndMs);
-    emit abLoopChanged();
 }
 
 void PlayerController::clearAbLoop()
@@ -1403,7 +1402,6 @@ void PlayerController::clearAbLoop()
     m_loopEndMs = -1;
     if (m_backend)
         m_backend->setAbLoop(-1, -1);
-    emit abLoopChanged();
 }
 
 QString PlayerController::takeScreenshot()

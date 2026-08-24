@@ -213,15 +213,6 @@ public:
     // which are the SERVER's. The two describe the same media but number it
     // differently, and anything mapping between them needs both.
     // ── Frame stepping, screenshots, A–B loop (ARCHITECTURE.md) ──────────────
-    Q_PROPERTY(bool canFrameStep READ canFrameStep CONSTANT)
-    // -1 when unset. Both bounds are observable because the scrubber draws them.
-    Q_PROPERTY(qint64 loopStartMs READ loopStartMs NOTIFY abLoopChanged)
-    Q_PROPERTY(qint64 loopEndMs READ loopEndMs NOTIFY abLoopChanged)
-
-    bool canFrameStep() const { return m_backend && m_backend->supportsFrameStep(); }
-    qint64 loopStartMs() const { return m_loopStartMs; }
-    qint64 loopEndMs() const { return m_loopEndMs; }
-
     // +1 forward, -1 back. Pausing is the engine's job and it does it.
     Q_INVOKABLE void frameStep(int direction);
     // One verb, three states: sets A, then B, then clears. A separate "clear"
@@ -288,7 +279,6 @@ signals:
     // it). The UI surfaces this as a toast; without it the picker just snaps
     // back and looks broken.
     void sourceSwitchFailed(const QString &reason);
-    void abLoopChanged();
     // Path of a screenshot just written; the UI confirms with a toast.
     void screenshotSaved(const QString &path);
     void screenshotFailed(const QString &reason);
