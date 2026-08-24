@@ -35,9 +35,11 @@ private slots:
     void searchDebouncesAndClearsOnEmptyQuery();
     void searchFacetsUseTheirOwnEndpoints();
     void staleSearchReplyIsDiscarded();
+    void supersededSearchAbortsEveryLane();
     void detailsExposesEveryEnrichment();
     void detailsPersonImageUsesSessionNamespace();
     void detailsClearsBetweenItems();
+    void supersededDetailsAbortsEveryLane();
     void seriesFetchesItsOwnRecord();
     void seriesNextUnwatchedQueryIsBounded();
     void seriesNextUnwatchedRefetchesAfterPlayedChanges();
@@ -248,6 +250,64 @@ void ContentControllersTest::staleSearchReplyIsDiscarded()
              QStringLiteral("Second"));
 }
 
+void ContentControllersTest::supersededSearchAbortsEveryLane()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old-item\","
+                                       "\"Name\":\"Old Item\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Persons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old-person\","
+                                       "\"Name\":\"Old Person\",\"Type\":\"Person\"}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old-genre\","
+                                       "\"Name\":\"Old Genre\",\"Type\":\"Genre\"}]}"));
+    for (const QString &path : {itemsPath, QStringLiteral("/Persons"),
+                                QStringLiteral("/Genres")})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 1000);
+
+    SearchController search(m_client);
+    search.setQuery(QStringLiteral("old"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(QStringLiteral("/Persons")), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(QStringLiteral("/Genres")), 1, 5000);
+
+    // Each route captures its response when the request arrives. Replacing the
+    // route now makes the second query current while the old bodies stay held.
+    for (const QString &path : {itemsPath, QStringLiteral("/Persons"),
+                                QStringLiteral("/Genres")})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 0);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"current-item\","
+                                       "\"Name\":\"Current Item\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Persons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"current-person\","
+                                       "\"Name\":\"Current Person\","
+                                       "\"Type\":\"Person\"}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"current-genre\","
+                                       "\"Name\":\"Current Genre\","
+                                       "\"Type\":\"Genre\"}]}"));
+
+    search.setQuery(QStringLiteral("current"));
+    for (const QString &path : {itemsPath, QStringLiteral("/Persons"),
+                                QStringLiteral("/Genres")})
+        QTRY_COMPARE_WITH_TIMEOUT(m_mock->abortedResponseCount(path), 1, 5000);
+
+    QTRY_COMPARE_WITH_TIMEOUT(search.model()->rowCount(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(search.people().size(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(search.genres().size(), 1, 5000);
+    QCOMPARE(search.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Current Item"));
+    QCOMPARE(search.people().first().toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Current Person"));
+    QCOMPARE(search.genres().first().toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Current Genre"));
+    QVERIFY(!search.searching());
+}
+
 void ContentControllersTest::detailsExposesEveryEnrichment()
 {
     const QByteArray payload = QByteArrayLiteral(
@@ -344,6 +404,60 @@ void ContentControllersTest::detailsClearsBetweenItems()
     QVERIFY(details.genres().isEmpty());
     QVERIFY(details.trailers().isEmpty());
     QVERIFY(details.collections().isEmpty());
+}
+
+void ContentControllersTest::supersededDetailsAbortsEveryLane()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString oldDetailsPath = QStringLiteral("/Users/%1/Items/old").arg(kUserId);
+    const QString oldSimilarPath = QStringLiteral("/Items/old/Similar");
+    m_mock->addRoute(QStringLiteral("GET"), oldDetailsPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"old\",\"Name\":\"Old\","
+                                       "\"Type\":\"Movie\",\"Taglines\":[\"Old Tag\"]}"));
+    m_mock->addRoute(QStringLiteral("GET"), oldSimilarPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old-similar\","
+                                       "\"Name\":\"Old Similar\",\"Type\":\"Movie\"}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old-collection\","
+                                       "\"Name\":\"Old Collection\",\"Type\":\"BoxSet\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    for (const QString &path : {oldDetailsPath, oldSimilarPath, itemsPath})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 1000);
+
+    DetailsController details(m_client);
+    details.load(QStringLiteral("old"));
+    for (const QString &path : {oldDetailsPath, oldSimilarPath, itemsPath})
+        QTRY_COMPARE_WITH_TIMEOUT(requestsFor(path), 1, 5000);
+
+    const QString currentDetailsPath =
+        QStringLiteral("/Users/%1/Items/current").arg(kUserId);
+    const QString currentSimilarPath = QStringLiteral("/Items/current/Similar");
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_mock->addRoute(QStringLiteral("GET"), currentDetailsPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"current\",\"Name\":\"Current\","
+                                       "\"Type\":\"Movie\","
+                                       "\"Taglines\":[\"Current Tag\"]}"));
+    m_mock->addRoute(
+        QStringLiteral("GET"), currentSimilarPath, 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"current-similar\","
+                          "\"Name\":\"Current Similar\",\"Type\":\"Movie\"}]}"));
+    m_mock->addRoute(
+        QStringLiteral("GET"), itemsPath, 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"current-collection\","
+                          "\"Name\":\"Current Collection\",\"Type\":\"BoxSet\"}],"
+                          "\"TotalRecordCount\":1}"));
+
+    details.load(QStringLiteral("current"));
+    for (const QString &path : {oldDetailsPath, oldSimilarPath, itemsPath})
+        QTRY_COMPARE_WITH_TIMEOUT(m_mock->abortedResponseCount(path), 1, 5000);
+
+    QTRY_COMPARE_WITH_TIMEOUT(details.tagline(), QStringLiteral("Current Tag"), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(details.collections().size(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(details.similar()->rowCount(), 1, 5000);
+    QCOMPARE(details.collections().first().toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Current Collection"));
+    QCOMPARE(details.similar()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Current Similar"));
 }
 
 void ContentControllersTest::seriesFetchesItsOwnRecord()

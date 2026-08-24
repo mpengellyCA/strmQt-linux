@@ -1,6 +1,7 @@
 #include "EmbyClient.h"
 
 #include <memory>
+#include <utility>
 
 #include "EmbyDtoMapper.h"
 #include "core/Log.h"
@@ -9,6 +10,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 
 namespace strmqt::emby {
 
@@ -62,6 +64,46 @@ QString versionString()
 }
 
 } // namespace
+
+struct RequestHandle::State
+{
+    QPointer<QNetworkReply> reply;
+    bool canceled = false;
+};
+
+RequestHandle::~RequestHandle()
+{
+    cancel();
+}
+
+RequestHandle::RequestHandle(RequestHandle &&other) noexcept
+    : m_state(std::move(other.m_state))
+{
+}
+
+RequestHandle &RequestHandle::operator=(RequestHandle &&other) noexcept
+{
+    if (this == &other)
+        return *this;
+    cancel();
+    m_state = std::move(other.m_state);
+    return *this;
+}
+
+void RequestHandle::cancel()
+{
+    const std::shared_ptr<State> state = std::exchange(m_state, {});
+    if (!state)
+        return;
+    state->canceled = true;
+    if (state->reply && !state->reply->isFinished())
+        state->reply->abort();
+}
+
+bool RequestHandle::active() const
+{
+    return m_state && !m_state->canceled && m_state->reply && !m_state->reply->isFinished();
+}
 
 EmbyClient::EmbyClient(QObject *parent) : QObject(parent), m_nam(new QNetworkAccessManager(this))
 {
@@ -203,7 +245,9 @@ QFuture<Result<bool>> EmbyClient::finishStatus(QNetworkReply *reply)
     return future;
 }
 
-QFuture<Result<QJsonDocument>> EmbyClient::finishDocument(QNetworkReply *reply)
+QFuture<Result<QJsonDocument>>
+EmbyClient::finishDocument(QNetworkReply *reply, RequestHandle *handle,
+                           std::shared_ptr<RequestHandle::State> *cancellationOut)
 {
     struct ReplyState
     {
@@ -217,6 +261,15 @@ QFuture<Result<QJsonDocument>> EmbyClient::finishDocument(QNetworkReply *reply)
     const quint64 epoch = m_requestEpoch;
     auto state = std::make_shared<ReplyState>();
     state->bytes.reserve(64 * 1024);
+    std::shared_ptr<RequestHandle::State> cancellation;
+    if (handle) {
+        handle->cancel();
+        cancellation = std::make_shared<RequestHandle::State>();
+        cancellation->reply = reply;
+        handle->m_state = cancellation;
+    }
+    if (cancellationOut)
+        *cancellationOut = cancellation;
 
     // One byte beyond the application limit lets readyRead observe overflow
     // while still applying network backpressure to a chunked response.
@@ -245,14 +298,15 @@ QFuture<Result<QJsonDocument>> EmbyClient::finishDocument(QNetworkReply *reply)
     // Install completion before anything that can abort the reply. A header
     // may already be available when finishDocument() is entered.
     connect(reply, &QNetworkReply::finished, this,
-            [this, reply, promise, state, drain, epoch] {
-        drain();
-        if (epoch != m_requestEpoch) {
+            [this, reply, promise, state, drain, cancellation, epoch] {
+        if (epoch != m_requestEpoch || (cancellation && cancellation->canceled)) {
+            state->bytes.clear();
             promise->addResult(
                 Result<QJsonDocument>::failure(QStringLiteral("request canceled")));
             promise->finish();
             return;
         }
+        drain();
         if (state->oversized) {
             promise->addResult(
                 Result<QJsonDocument>::failure(QStringLiteral("JSON response too large")));
@@ -299,14 +353,18 @@ template<class T> QFuture<Result<T>> EmbyClient::failedFuture(const QString &err
 
 template<class T>
 QFuture<Result<T>> EmbyClient::finishJson(QNetworkReply *reply,
-                                          std::function<Result<T>(const QJsonDocument &)> parse)
+                                          std::function<Result<T>(const QJsonDocument &)> parse,
+                                          RequestHandle *handle)
 {
-    return finishDocument(reply).then(
-        this, [parse = std::move(parse)](const Result<QJsonDocument> &result) {
-        if (!result.ok())
-            return Result<T>::failure(result.error);
-        return parse(result.value);
-    });
+    std::shared_ptr<RequestHandle::State> cancellation;
+    return finishDocument(reply, handle, &cancellation)
+        .then(this, [parse = std::move(parse), cancellation](const Result<QJsonDocument> &result) {
+            if (!result.ok() || (cancellation && cancellation->canceled))
+                return Result<T>::failure(cancellation && cancellation->canceled
+                                              ? QStringLiteral("request canceled")
+                                              : result.error);
+            return parse(result.value);
+        });
 }
 
 QFuture<Result<ServerInfo>> EmbyClient::publicSystemInfo()
@@ -367,8 +425,10 @@ QFuture<Result<QList<Library>>> EmbyClient::userViews()
     });
 }
 
-QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query)
+QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHandle *handle)
 {
+    if (handle)
+        handle->cancel();
     if (!hasSession())
         return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
 
@@ -417,7 +477,7 @@ QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query)
     QNetworkReply *reply = startGet(QStringLiteral("/Users/%1/Items").arg(m_userId), params);
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
         return Result<ItemsPage>::success(parseItemsPage(doc.object()));
-    });
+    }, handle);
 }
 
 QFuture<Result<ItemsPage>> EmbyClient::resumeItems(int limit)
@@ -519,8 +579,11 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::nextEpisode(const QString &seriesI
     });
 }
 
-QFuture<Result<ItemDetails>> EmbyClient::itemDetails(const QString &itemId)
+QFuture<Result<ItemDetails>> EmbyClient::itemDetails(const QString &itemId,
+                                                     RequestHandle *handle)
 {
+    if (handle)
+        handle->cancel();
     if (!hasSession())
         return failedFuture<ItemDetails>(QStringLiteral("not authenticated"));
     QUrlQuery params;
@@ -530,11 +593,14 @@ QFuture<Result<ItemDetails>> EmbyClient::itemDetails(const QString &itemId)
         startGet(QStringLiteral("/Users/%1/Items/%2").arg(m_userId, itemId), params);
     return finishJson<ItemDetails>(reply, [](const QJsonDocument &doc) {
         return Result<ItemDetails>::success(parseItemDetails(doc.object()));
-    });
+    }, handle);
 }
 
-QFuture<Result<QList<MediaItem>>> EmbyClient::similar(const QString &itemId, int limit)
+QFuture<Result<QList<MediaItem>>> EmbyClient::similar(const QString &itemId, int limit,
+                                                      RequestHandle *handle)
 {
+    if (handle)
+        handle->cancel();
     if (!hasSession())
         return failedFuture<QList<MediaItem>>(QStringLiteral("not authenticated"));
     QUrlQuery params;
@@ -544,7 +610,7 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::similar(const QString &itemId, int
     return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
         return Result<QList<MediaItem>>::success(
             parseItemArray(doc.object().value(QLatin1String("Items")).toArray()));
-    });
+    }, handle);
 }
 
 QFuture<Result<ItemsPage>> EmbyClient::instantMix(const QString &itemId, int limit)
@@ -616,8 +682,11 @@ QFuture<Result<ItemsPage>> EmbyClient::albumArtists(const ItemsQuery &query)
     });
 }
 
-QFuture<Result<QList<MediaItem>>> EmbyClient::persons(const QString &searchTerm, int limit)
+QFuture<Result<QList<MediaItem>>> EmbyClient::persons(const QString &searchTerm, int limit,
+                                                      RequestHandle *handle)
 {
+    if (handle)
+        handle->cancel();
     if (!hasSession())
         return failedFuture<QList<MediaItem>>(QStringLiteral("not authenticated"));
     QUrlQuery params;
@@ -629,11 +698,14 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::persons(const QString &searchTerm,
     return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
         return Result<QList<MediaItem>>::success(
             parseItemArray(doc.object().value(QLatin1String("Items")).toArray()));
-    });
+    }, handle);
 }
 
-QFuture<Result<QList<MediaItem>>> EmbyClient::genres(const QString &searchTerm, int limit)
+QFuture<Result<QList<MediaItem>>> EmbyClient::genres(const QString &searchTerm, int limit,
+                                                     RequestHandle *handle)
 {
+    if (handle)
+        handle->cancel();
     if (!hasSession())
         return failedFuture<QList<MediaItem>>(QStringLiteral("not authenticated"));
     QUrlQuery params;
@@ -645,7 +717,7 @@ QFuture<Result<QList<MediaItem>>> EmbyClient::genres(const QString &searchTerm, 
     return finishJson<QList<MediaItem>>(reply, [](const QJsonDocument &doc) {
         return Result<QList<MediaItem>>::success(
             parseItemArray(doc.object().value(QLatin1String("Items")).toArray()));
-    });
+    }, handle);
 }
 
 QFuture<Result<ItemsPage>> EmbyClient::musicGenres(const QString &parentId, int startIndex,

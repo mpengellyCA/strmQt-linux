@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/models/MediaItemModel.h"
+#include "server/emby/RequestHandle.h"
 
 #include <QObject>
 #include <QSettings>
@@ -36,6 +37,7 @@ class SearchController : public QObject
 
 public:
     explicit SearchController(emby::EmbyClient *client, QObject *parent = nullptr);
+    ~SearchController() override;
 
     MediaItemModel *model() const { return m_model; }
     QString query() const { return m_query; }
@@ -60,6 +62,7 @@ signals:
 
 private:
     void runSearch();
+    void cancelRequests();
     QString recentKey() const;
     void reloadRecentQueries();
 
@@ -72,6 +75,9 @@ private:
     QVariantList m_genres;
     QStringList m_recentQueries;
     int m_generation = 0;
+    emby::RequestHandle m_itemsRequest;
+    emby::RequestHandle m_peopleRequest;
+    emby::RequestHandle m_genresRequest;
 };
 
 } // namespace strmqt

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/models/MediaItemModel.h"
+#include "server/emby/RequestHandle.h"
 
 #include <QObject>
 #include <QString>
@@ -62,6 +63,7 @@ class DetailsController : public QObject
 
 public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
+    ~DetailsController() override;
 
     QString tagline() const { return m_tagline; }
     QString genresLine() const { return m_genresLine; }
@@ -99,6 +101,8 @@ signals:
     void personChanged();
 
 private:
+    void cancelRequests();
+
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
     QString m_tagline;
@@ -119,6 +123,9 @@ private:
     QVariantMap m_person;
     double m_criticRating = 0.0;
     int m_generation = 0;
+    emby::RequestHandle m_detailsRequest;
+    emby::RequestHandle m_collectionsRequest;
+    emby::RequestHandle m_similarRequest;
 };
 
 } // namespace strmqt

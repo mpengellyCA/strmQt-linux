@@ -50,9 +50,16 @@ SearchController::SearchController(emby::EmbyClient *client, QObject *parent)
     connect(&m_debounce, &QTimer::timeout, this, &SearchController::runSearch);
 }
 
+SearchController::~SearchController()
+{
+    ++m_generation;
+    cancelRequests();
+}
+
 void SearchController::resetSessionState()
 {
     ++m_generation;
+    cancelRequests();
     m_debounce.stop();
     m_model->clear();
 
@@ -107,9 +114,10 @@ void SearchController::setQuery(const QString &query)
     if (m_query == query)
         return;
     m_query = query;
+    ++m_generation;
+    cancelRequests();
     emit queryChanged();
     if (query.trimmed().isEmpty()) {
-        ++m_generation;
         m_model->clear();
         // Facets are separate lists and would otherwise survive an emptied
         // query, leaving people and genres on screen for a search that is gone.
@@ -117,6 +125,10 @@ void SearchController::setQuery(const QString &query)
         m_genres.clear();
         emit facetsChanged();
         m_debounce.stop();
+        if (m_searching) {
+            m_searching = false;
+            emit searchingChanged();
+        }
         return;
     }
     m_debounce.start();
@@ -124,7 +136,7 @@ void SearchController::setQuery(const QString &query)
 
 void SearchController::runSearch()
 {
-    const int generation = ++m_generation;
+    const int generation = m_generation;
     m_searching = true;
     emit searchingChanged();
 
@@ -150,14 +162,14 @@ void SearchController::runSearch()
     m_genres.clear();
     emit facetsChanged();
     const QString term = m_query.trimmed();
-    m_client->persons(term, kFacetLimit)
+    m_client->persons(term, kFacetLimit, &m_peopleRequest)
         .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
             if (generation != m_generation || !result.ok())
                 return;
             m_people = facetList(result.value);
             emit facetsChanged();
         });
-    m_client->genres(term, kFacetLimit)
+    m_client->genres(term, kFacetLimit, &m_genresRequest)
         .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
             if (generation != m_generation || !result.ok())
                 return;
@@ -165,16 +177,24 @@ void SearchController::runSearch()
             emit facetsChanged();
         });
 
-    m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
-        if (generation != m_generation)
-            return;
-        m_searching = false;
-        emit searchingChanged();
-        if (result.ok())
-            m_model->setItems(result.value.items, result.value.totalRecordCount);
-        else
-            qCWarning(logApp) << "search failed:" << result.error;
-    });
+    m_client->items(query, &m_itemsRequest)
+        .then(this, [this, generation](const Result<ItemsPage> &result) {
+            if (generation != m_generation)
+                return;
+            m_searching = false;
+            emit searchingChanged();
+            if (result.ok())
+                m_model->setItems(result.value.items, result.value.totalRecordCount);
+            else
+                qCWarning(logApp) << "search failed:" << result.error;
+        });
+}
+
+void SearchController::cancelRequests()
+{
+    m_itemsRequest.cancel();
+    m_peopleRequest.cancel();
+    m_genresRequest.cancel();
 }
 
 void SearchController::noteQueryUsed(const QString &query)

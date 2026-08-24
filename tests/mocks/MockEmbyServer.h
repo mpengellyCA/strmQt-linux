@@ -57,6 +57,13 @@ public:
     const QList<ReceivedRequest> &requests() const { return m_requests; }
     ReceivedRequest lastRequestFor(const QString &method, const QString &path) const;
     int requestCount() const { return static_cast<int>(m_requests.size()); }
+    // Number of fully received requests whose client disconnected before this
+    // mock wrote the delayed response. This is stronger than checking that a
+    // stale controller result was ignored: it proves the transport was aborted.
+    int abortedResponseCount(const QString &path) const
+    {
+        return m_abortedResponses.value(path);
+    }
 
     // ── Event socket (Emby's /embywebsocket) ──────────────────────────────────
     // Listens on its own port; EmbyWebSocket derives ws:// from the base URL
@@ -90,6 +97,7 @@ private:
     QTcpServer *m_server = nullptr;
     QHash<QString, Route> m_routes; // key: "METHOD /path"
     QList<ReceivedRequest> m_requests;
+    QHash<QString, int> m_abortedResponses;
 
     QWebSocketServer *m_wsServer = nullptr;
     QList<QWebSocket *> m_wsClients;

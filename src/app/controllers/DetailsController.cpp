@@ -17,9 +17,16 @@ DetailsController::DetailsController(emby::EmbyClient *client, QObject *parent)
 {
 }
 
+DetailsController::~DetailsController()
+{
+    ++m_generation;
+    cancelRequests();
+}
+
 void DetailsController::resetSessionState()
 {
     ++m_generation;
+    cancelRequests();
     m_similar->clear();
     m_tagline.clear();
     m_genresLine.clear();
@@ -46,12 +53,13 @@ void DetailsController::resetSessionState()
 void DetailsController::loadPerson(const QString &personId)
 {
     const int generation = ++m_generation;
+    cancelRequests();
     m_person.clear();
     emit personChanged();
     if (personId.isEmpty())
         return;
 
-    m_client->itemDetails(personId).then(
+    m_client->itemDetails(personId, &m_detailsRequest).then(
         this, [this, generation](const Result<ItemDetails> &result) {
             if (generation != m_generation)
                 return;
@@ -84,6 +92,7 @@ void DetailsController::loadPerson(const QString &personId)
 void DetailsController::load(const QString &itemId)
 {
     const int generation = ++m_generation;
+    cancelRequests();
     m_tagline.clear();
     m_genresLine.clear();
     m_castLine.clear();
@@ -102,7 +111,7 @@ void DetailsController::load(const QString &itemId)
     emit detailsChanged();
     m_similar->clear();
 
-    m_client->itemDetails(itemId).then(this, [this, generation](const Result<ItemDetails> &result) {
+    m_client->itemDetails(itemId, &m_detailsRequest).then(this, [this, generation](const Result<ItemDetails> &result) {
         if (generation != m_generation)
             return;
         if (!result.ok()) {
@@ -189,7 +198,7 @@ void DetailsController::load(const QString &itemId)
     collectionsQuery.listItemIds = {itemId};
     collectionsQuery.recursive = true;
     collectionsQuery.limit = 12;
-    m_client->items(collectionsQuery)
+    m_client->items(collectionsQuery, &m_collectionsRequest)
         .then(this, [this, generation](const Result<ItemsPage> &result) {
             if (generation != m_generation || !result.ok())
                 return;
@@ -203,13 +212,20 @@ void DetailsController::load(const QString &itemId)
             emit collectionsChanged();
         });
 
-    m_client->similar(itemId).then(this,
-                                   [this, generation](const Result<QList<MediaItem>> &result) {
-                                       if (generation != m_generation)
-                                           return;
-                                       if (result.ok())
-                                           m_similar->setItems(result.value);
-                                   });
+    m_client->similar(itemId, 12, &m_similarRequest)
+        .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
+            if (generation != m_generation)
+                return;
+            if (result.ok())
+                m_similar->setItems(result.value);
+        });
+}
+
+void DetailsController::cancelRequests()
+{
+    m_detailsRequest.cancel();
+    m_collectionsRequest.cancel();
+    m_similarRequest.cancel();
 }
 
 } // namespace strmqt

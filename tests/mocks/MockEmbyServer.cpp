@@ -77,7 +77,13 @@ void MockEmbyServer::handleConnection()
 {
     while (QTcpSocket *socket = m_server->nextPendingConnection()) {
         auto buffer = std::make_shared<QByteArray>();
-        connect(socket, &QTcpSocket::readyRead, this, [this, socket, buffer] {
+        struct ResponseState
+        {
+            QString path;
+            bool pending = false;
+        };
+        auto responseState = std::make_shared<ResponseState>();
+        connect(socket, &QTcpSocket::readyRead, this, [this, socket, buffer, responseState] {
             buffer->append(socket->readAll());
 
             const int headerEnd = static_cast<int>(buffer->indexOf("\r\n\r\n"));
@@ -115,6 +121,8 @@ void MockEmbyServer::handleConnection()
 
             request.body = buffer->mid(bodyStart, contentLength);
             m_requests.append(request);
+            responseState->path = request.path;
+            responseState->pending = true;
 
             const QString key = request.method + QLatin1Char(' ') + request.path;
             QByteArray response;
@@ -136,7 +144,8 @@ void MockEmbyServer::handleConnection()
                 response = "HTTP/1.1 404 Not Found\r\n"
                            "Content-Length: 0\r\nConnection: close\r\n\r\n";
             }
-            const auto reply = [socket, response] {
+            const auto reply = [socket, response, responseState] {
+                responseState->pending = false;
                 socket->write(response);
                 socket->disconnectFromHost();
             };
@@ -146,6 +155,12 @@ void MockEmbyServer::handleConnection()
                 QTimer::singleShot(delayMs, socket, reply);
             else
                 reply();
+        });
+        connect(socket, &QTcpSocket::disconnected, this, [this, responseState] {
+            if (responseState->pending) {
+                ++m_abortedResponses[responseState->path];
+                responseState->pending = false;
+            }
         });
         connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
     }

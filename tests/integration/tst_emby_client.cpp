@@ -49,6 +49,7 @@ private slots:
     void sessionChangeCancelsOutstandingRequests();
     void authenticationAdoptionCancelsOutstandingRequests();
     void reassertingTheSameIdentityKeepsRequestsAlive();
+    void requestHandleCancelsOnlyItsOwnedReply();
     void renamePreservesTheFetchedItemMetadata();
     void renameCannotChainAWriteAcrossServers();
 
@@ -416,6 +417,48 @@ void EmbyClientTest::reassertingTheSameIdentityKeepsRequestsAlive()
     const auto canceled = waitFor(std::move(retired));
     QVERIFY(!canceled.ok());
     QCOMPARE(canceled.error, QStringLiteral("request canceled"));
+}
+
+void EmbyClientTest::requestHandleCancelsOnlyItsOwnedReply()
+{
+    m_client->setSession(kToken, kUserId);
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"old\",\"Name\":\"Old\","
+                                       "\"Type\":\"Movie\"}],\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Persons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"peer\",\"Name\":\"Peer\","
+                                       "\"Type\":\"Person\"}]}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 500);
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/Persons"), 150);
+
+    emby::RequestHandle handle;
+    ItemsQuery query;
+    query.limit = 1;
+    QFuture<Result<ItemsPage>> canceledFuture = m_client->items(query, &handle);
+    QFuture<Result<QList<MediaItem>>> peerFuture = m_client->persons(QString(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 2, 5000);
+    QVERIFY(handle.active());
+
+    handle.cancel();
+    const Result<ItemsPage> canceled = waitFor(std::move(canceledFuture));
+    QVERIFY(!canceled.ok());
+    QCOMPARE(canceled.error, QStringLiteral("request canceled"));
+    QVERIFY(!handle.active());
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->abortedResponseCount(itemsPath), 1, 5000);
+
+    // Per-request cancellation must not retire a simultaneous independent lane.
+    const Result<QList<MediaItem>> peer = waitFor(std::move(peerFuture));
+    QVERIFY2(peer.ok(), qPrintable(peer.error));
+    QCOMPARE(peer.value.first().id, QStringLiteral("peer"));
+    QCOMPARE(m_mock->abortedResponseCount(QStringLiteral("/Persons")), 0);
+
+    // A canceled reply remains an ordinary completed future, and the same
+    // client can immediately parse a subsequent response.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    const Result<ItemsPage> current = waitFor(m_client->items(query));
+    QVERIFY2(current.ok(), qPrintable(current.error));
+    QCOMPARE(current.value.items.first().id, QStringLiteral("old"));
 }
 
 void EmbyClientTest::renamePreservesTheFetchedItemMetadata()

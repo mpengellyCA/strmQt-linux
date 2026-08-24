@@ -9,6 +9,7 @@
 #include "server/dto/PlaybackTicket.h"
 #include "server/dto/ServerInfo.h"
 #include "server/dto/SessionInfo.h"
+#include "server/emby/RequestHandle.h"
 
 #include <QFuture>
 #include <QJsonDocument>
@@ -79,7 +80,7 @@ public:
     // GET /Users/{uid}/Views
     QFuture<Result<QList<Library>>> userViews();
     // GET /Users/{uid}/Items
-    QFuture<Result<ItemsPage>> items(const ItemsQuery &query);
+    QFuture<Result<ItemsPage>> items(const ItemsQuery &query, RequestHandle *handle = nullptr);
     // GET /Users/{uid}/Items/Resume
     QFuture<Result<ItemsPage>> resumeItems(int limit = 20);
     // GET /Users/{uid}/Items/Latest (bare array on the wire)
@@ -103,7 +104,8 @@ public:
     QFuture<Result<ItemsPage>> episodes(const QString &seriesId, const QString &seasonId);
 
     // GET /Users/{uid}/Items/{id} — full payload for the Details page.
-    QFuture<Result<ItemDetails>> itemDetails(const QString &itemId);
+    QFuture<Result<ItemDetails>> itemDetails(const QString &itemId,
+                                             RequestHandle *handle = nullptr);
     // GET /Persons and /Genres. Both take a SearchTerm and both answer with an
     // ItemsPage whose **TotalRecordCount is 0 even when Items is populated** —
     // measured on 4.9.5.0. Anything that pages on that count renders nothing,
@@ -134,8 +136,10 @@ public:
     QFuture<Result<ItemsPage>> musicArtists(const ItemsQuery &query);
     QFuture<Result<ItemsPage>> albumArtists(const ItemsQuery &query);
 
-    QFuture<Result<QList<MediaItem>>> persons(const QString &searchTerm, int limit = 12);
-    QFuture<Result<QList<MediaItem>>> genres(const QString &searchTerm, int limit = 12);
+    QFuture<Result<QList<MediaItem>>> persons(const QString &searchTerm, int limit = 12,
+                                              RequestHandle *handle = nullptr);
+    QFuture<Result<QList<MediaItem>>> genres(const QString &searchTerm, int limit = 12,
+                                             RequestHandle *handle = nullptr);
 
     // GET /MusicGenres — the genres that actually occur in a music library.
     //
@@ -155,7 +159,8 @@ public:
                                            int limit = 200);
 
     // GET /Items/{id}/Similar — "More like this".
-    QFuture<Result<QList<MediaItem>>> similar(const QString &itemId, int limit = 12);
+    QFuture<Result<QList<MediaItem>>> similar(const QString &itemId, int limit = 12,
+                                              RequestHandle *handle = nullptr);
 
     // ── GET /Items/{id}/InstantMix — a radio station built from one item ──
     // Measured on Emby 4.9.5.0 against the target library, and every line of
@@ -294,10 +299,13 @@ private:
                     const RequestContext &context) const;
 
     // Resolves the reply into Result<T> via parse(QJsonDocument) once finished.
-    QFuture<Result<QJsonDocument>> finishDocument(QNetworkReply *reply);
+    QFuture<Result<QJsonDocument>>
+    finishDocument(QNetworkReply *reply, RequestHandle *handle = nullptr,
+                   std::shared_ptr<RequestHandle::State> *cancellationOut = nullptr);
     template<class T>
     QFuture<Result<T>> finishJson(QNetworkReply *reply,
-                                  std::function<Result<T>(const QJsonDocument &)> parse);
+                                  std::function<Result<T>(const QJsonDocument &)> parse,
+                                  RequestHandle *handle = nullptr);
     template<class T> static QFuture<Result<T>> failedFuture(const QString &error);
 
     QUrl m_baseUrl;
