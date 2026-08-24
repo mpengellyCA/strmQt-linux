@@ -35,6 +35,15 @@ awk -v root="$repo_root/" '
     }
 ' "$log" | LC_ALL=C sort > "$normalized"
 
+# Independent of the baseline, and checked before it: these categories mean a
+# QML type will not resolve at runtime, which is how a broken page ships from a
+# clean build. Comparing to a baseline alone would let one be accepted by an
+# --update, so the fatal set is never baselineable.
+if grep -E 'is not a type|was not found|unavailable|incompatible-type' "$log"; then
+    echo "qmllint found unresolvable QML types (never baselineable)." >&2
+    exit 1
+fi
+
 if [[ ${2:-} == "--update" ]]; then
     mkdir -p "$(dirname -- "$baseline")"
     cp "$normalized" "$baseline"
@@ -49,7 +58,14 @@ if [[ ! -f $baseline ]]; then
 fi
 
 if ! diff -u "$baseline" "$normalized"; then
-    echo "qmllint warning set changed." >&2
+    added=$(comm -13 "$baseline" "$normalized" | wc -l)
+    removed=$(comm -23 "$baseline" "$normalized" | wc -l)
+    baseline_count=$(wc -l < "$baseline")
+    echo "qmllint warning set changed: +$added / -$removed against $baseline_count baselined." >&2
+    if (( added + removed >= baseline_count )); then
+        echo "The entire set moved, which usually means the qmllint version changed" >&2
+        echo "rather than the QML. Confirm the Qt version before re-baselining." >&2
+    fi
     echo "Fix new warnings, or review the complete diff and update the baseline intentionally:" >&2
     echo "  $0 $build_dir --update" >&2
     exit 1
