@@ -704,6 +704,11 @@ void QueuePlaybackTest::aFilmSetsTheRecordAsideAndGivesItBack()
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QCOMPARE(m_backend->loadedStarts.constLast(), Q_INT64_C(97000));
     QVERIFY(m_controller->active());
+
+    // ...and waiting, not playing. Stopping a film is not a request for music,
+    // so the record comes back where it was and holds there.
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QTRY_VERIFY(m_controller->paused());
 }
 
 // The shell brings a playback surface forward when the user chooses something.

@@ -460,6 +460,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     m_healthyTicks = 0;
     m_recoverRetries = 0;
     m_recovering = false;
+    m_startPaused = false;
     ++m_recoveryToken;
     // A fresh item gets a fresh Up Next card, whatever the user did about the
     // previous one.
@@ -661,6 +662,10 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
         setBusy(false);
         updateUpNext();
         m_watchdog.start();
+        if (m_startPaused) {
+            m_startPaused = false;
+            m_backend->setPaused(true);
+        }
         if (m_reporting) {
             report(0);
             m_progressTimer.start();
@@ -1440,6 +1445,10 @@ void PlayerController::resumeSuspendedAudio()
     const QScopedValueRollback<bool> guard(m_transportStart, true);
     startItem(resume.itemId, resume.title, resume.positionMs, -1, /*fromQueue=*/true,
               resume.itemType);
+    // After startItem(), which clears it: the flag belongs to this load and is
+    // spent on its first frame. Engines ignore a pause before a file is open,
+    // so it is applied at the transition to Playing rather than up front.
+    m_startPaused = true;
 }
 
 void PlayerController::finishSession(TerminationReason reason)

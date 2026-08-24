@@ -423,6 +423,10 @@ private:
     // shell that brings a playback surface forward for them would yank the
     // user off the page they are on for a button they pressed to stay there.
     bool m_transportStart = false;
+    // A record put back after a film does not start playing on its own: the
+    // user stopped watching something, they did not ask for music. It comes
+    // back where it was and waits.
+    bool m_startPaused = false;
     SuspendedAudio m_suspendedAudio;
     PlayerBackend::LoadId m_nextLoadId = 0;
     PlayerBackend::LoadId m_expectedLoadId = 0;
