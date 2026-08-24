@@ -175,6 +175,7 @@ FocusScope {
         preferredHighlightEnd: width / 2
         highlightRangeMode: ListView.ApplyRange
         cacheBuffer: rail.cardWidth * 4
+        reuseItems: true
 
         // A6, part 1. WheelHandler filters by axis *before* it grabs: with
         // orientation Qt.Horizontal it declines any event whose angleDelta.x is
@@ -231,6 +232,12 @@ FocusScope {
             }
 
             Component.onDestruction: cell.setHovered(false)
+
+            // Pooling does not destroy the delegate. Clear the external hover
+            // owner at both edges of reuse so it can never describe the row
+            // this cell represented before its model roles were replaced.
+            ListView.onPooled: cell.setHovered(false)
+            ListView.onReused: cell.setHovered(false)
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.

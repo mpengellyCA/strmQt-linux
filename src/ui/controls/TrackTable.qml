@@ -514,6 +514,7 @@ ListView {
     highlightMoveDuration: Theme.animFastMs
     boundsBehavior: Flickable.StopAtBounds
     cacheBuffer: table.rowHeight * 12
+    reuseItems: true
 
     ScrollBar.vertical: StrmScrollBar {}
 

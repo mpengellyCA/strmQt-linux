@@ -821,6 +821,7 @@ FocusScope {
         // which sits outside the card's own bounds.
         cellHeight: page.cardHeight + Theme.spacingLoose
         cacheBuffer: episodeGrid.cellHeight * 3
+        reuseItems: true
         boundsBehavior: Flickable.StopAtBounds
 
         keyNavigationWraps: false

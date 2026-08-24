@@ -257,6 +257,7 @@ FocusScope {
             highlightMoveDuration: Theme.animFastMs
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: Theme.controlHeightLarge * 6
+            reuseItems: true
 
             ScrollBar.vertical: StrmScrollBar {}
 
@@ -321,11 +322,20 @@ FocusScope {
                 // Hover previews the row; it never commits, and it never
                 // takes the caret out of the field being typed in.
                 HoverHandler {
+                    id: pickerHover
                     cursorShape: Qt.PointingHandCursor
                     onHoveredChanged: {
-                        if (hovered)
+                        if (pickerHover.hovered)
                             pickerList.currentIndex = pickerRow.index
                     }
+                }
+
+                // Hover previews by mutating view state rather than by a pure
+                // binding. Re-assert the new index if a hovered cell is reused
+                // underneath a stationary pointer.
+                ListView.onReused: {
+                    if (pickerHover.hovered)
+                        pickerList.currentIndex = pickerRow.index
                 }
 
                 TapHandler {

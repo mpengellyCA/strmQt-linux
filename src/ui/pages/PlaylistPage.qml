@@ -441,6 +441,7 @@ FocusScope {
             highlightMoveDuration: Theme.animFastMs
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: Theme.controlHeightLarge * 6
+            reuseItems: true
 
             ScrollBar.vertical: StrmScrollBar {}
 
