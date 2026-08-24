@@ -7,6 +7,7 @@
 #include "MockEmbyServer.h"
 #include "app/PlayQueue.h"
 #include "app/controllers/PlayerController.h"
+#include "app/models/MediaItemModel.h"
 #include "core/Settings.h"
 #include "server/emby/EmbyClient.h"
 
@@ -90,6 +91,7 @@ private:
 
 void QueuePlaybackTest::init()
 {
+    setEmbyImageSourceNamespace(QStringLiteral("test-session"));
     m_mock = new MockEmbyServer(this);
     QVERIFY(m_mock->start());
     // Three queueable items; one ticket fixture answers for all of them.

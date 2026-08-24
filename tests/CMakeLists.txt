@@ -57,6 +57,7 @@ strmqt_add_test(tst_image_cache
 )
 target_include_directories(tst_image_cache PRIVATE mocks)
 target_link_libraries(tst_image_cache PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_image_cache PRIVATE STRMQT_IMAGE_CACHE_TESTS)
 set_tests_properties(tst_image_cache PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 strmqt_add_test(tst_controllers

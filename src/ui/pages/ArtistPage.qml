@@ -81,17 +81,17 @@ FocusScope {
 
     // Artists have Primary art and nothing else, so there is no thumb/backdrop
     // ladder to walk. When the row carried a finished provider URL it is used;
-    // otherwise one is built, because the provider's id grammar is exactly
-    // "{itemId}/{imageType}/{tag}" and an empty tag is a valid third segment.
+    // otherwise one is built. The opaque provider namespace changes at every
+    // identity boundary; reading it makes this binding follow that boundary.
     // An artist the server has no image for 404s, and the initials behind the
     // image are then what shows — which is the normal case, not an error.
     readonly property string artUrl: {
         const poster = page.artistItem ? page.artistItem.posterUrl : undefined
         if (poster !== undefined && poster !== null && String(poster).length > 0)
             return String(poster)
-        if (page.artistId.length === 0)
+        if (page.artistId.length === 0 || Images.sourceNamespace.length === 0)
             return ""
-        return "image://emby/" + page.artistId + "/Primary/"
+        return Images.sourceFor(page.artistId, "Primary", "")
     }
 
     readonly property int albumCount: page.scopeMine

@@ -12,9 +12,12 @@ namespace {
 
 const auto kItemIdKey = QStringLiteral("itemId");
 
-// image://emby/<id>/<type>/<tag> → the triple. The model turns an item into a
-// URL; a map handed back from QML carries only the URL, so take it apart again
-// rather than losing every poster the moment an item passes through the queue.
+// image://emby/<namespace>/<id>/<type>/<tag> → the trailing image triple. The
+// model turns an item into a URL; a map handed back from QML carries only the
+// URL, so take it apart again rather than losing every poster the moment an
+// item passes through the queue. Ignoring the opaque namespace here is
+// deliberate: the queue stores content identity, then the model applies the
+// current session namespace when exposing it again.
 //
 // The id matters as much as the tag: MediaItem::coverSource() points a track's
 // square at its ALBUM, so a poster URL routinely names an item that is not this

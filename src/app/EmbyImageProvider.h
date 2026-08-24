@@ -9,6 +9,9 @@
 #include <QQuickImageResponse>
 #include <QStringList>
 #include <QUrl>
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+#include <QSemaphore>
+#endif
 
 #include <atomic>
 #include <memory>
@@ -56,6 +59,7 @@ private:
 class EmbyImageFetcher : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString sourceNamespace READ sourceNamespace NOTIFY sourceNamespaceChanged)
 
 public:
     explicit EmbyImageFetcher(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -63,6 +67,11 @@ public:
 
     Q_INVOKABLE void fetch(strmqt::EmbyImageResponse *response, const QString &id,
                            const QSize &requestedSize);
+    // Unlike MediaItemModel's tagged-image helper, this intentionally permits
+    // an empty tag: ArtistPage uses Emby's current Primary image as a fallback.
+    Q_INVOKABLE QString sourceFor(const QString &itemId, const QString &imageType,
+                                  const QString &tag = {}) const;
+    QString sourceNamespace() const;
 
     // Writes one image to a file another *process* can open, and reports its
     // URL through fileExported().
@@ -80,7 +89,8 @@ public:
     // wants the resolution, and with every grid delegate requesting its own
     // size there is no single width to share.
     //
-    // `id` is the same "{itemId}/{imageType}/{tag}" the provider takes. Files
+    // `id` is the unnamespaced "{itemId}/{imageType}/{tag}" MPRIS metadata
+    // carries. Provider requests include an opaque namespace before it. Files
     // land in <CacheLocation>/<subdir>/, one per image tag: reusing a single
     // filename would be smaller, but clients cache thumbnails by URL, so the
     // panel would keep drawing the previous track's sleeve. The directory is
@@ -97,12 +107,18 @@ signals:
     // the sleeve a third time: the hero, the docked bar and the album header are
     // already drawing the exact image whose colour they want, and exportToFile()
     // above is a genuine second fetch precisely because it could not share one.
-    // `id` is the same "{itemId}/{imageType}/{tag}" fetch() takes.
+    // `id` is the namespaced provider id fetch() takes.
     void imageDecoded(const QString &id, const QImage &image, quint64 generation);
     void cachePartitionChanged(quint64 generation);
+    void sourceNamespaceChanged();
 
 public:
     quint64 cachePartitionGeneration() const;
+
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+    void setCleanupGateForTests(QSemaphore *gate);
+    void waitForMaintenanceForTests();
+#endif
 
 private:
     struct CachePartition;
@@ -143,13 +159,17 @@ private:
     mutable QMutex m_partitionMutex;
     CachePartitionPtr m_partition;
     quint64 m_partitionGeneration = 0; // GUI-thread owned
+    QString m_sourceNamespacePrefix;
     QStringList m_exportDirectories;
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+    QSemaphore *m_cleanupGateForTests = nullptr;
+#endif
     // Declared last and drained explicitly in the destructor, so no worker can
     // still be holding this object when its members start going away.
     QThreadPool m_decodePool;
 };
 
-// Resolves image://emby/{itemId}/{imageType}/{tag} (see MediaItemModel role URLs).
+// Resolves image://emby/{namespace}/{itemId}/{imageType}/{tag}.
 class EmbyImageProvider : public QQuickAsyncImageProvider
 {
 public:

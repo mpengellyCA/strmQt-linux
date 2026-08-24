@@ -44,10 +44,11 @@ Item {
         return card.personType === "Actor" ? "" : card.personType;
     }
 
-    // image://emby/<itemId>/<imageType>/<tag> — the provider's whole grammar
-    // (EmbyImageProvider.cpp), with the person's own id as the item.
+    // Images.sourceNamespace is read explicitly so an identity reset
+    // re-evaluates this binding even when id and tag happen to be unchanged.
     readonly property string imageUrl: (card.personId.length > 0 && card.imageTag.length > 0)
-                                       ? "image://emby/" + card.personId + "/Primary/" + card.imageTag
+                                       && Images.sourceNamespace.length > 0
+                                       ? Images.sourceFor(card.personId, "Primary", card.imageTag)
                                        : ""
 
     readonly property string initials: {

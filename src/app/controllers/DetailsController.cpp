@@ -1,5 +1,6 @@
 #include "DetailsController.h"
 
+#include "app/models/MediaItemModel.h"
 #include "core/Log.h"
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
@@ -73,10 +74,8 @@ void DetailsController::loadPerson(const QString &personId)
             // date, which is wrong for anyone who has died.
             map.insert(QStringLiteral("deathDate"), item.endDate);
             map.insert(QStringLiteral("imageUrl"),
-                       item.primaryImageTag.isEmpty()
-                           ? QString()
-                           : QStringLiteral("image://emby/%1/Primary/%2")
-                                 .arg(item.id, item.primaryImageTag));
+                       embyImageSource(item.id, QStringLiteral("Primary"),
+                                       item.primaryImageTag));
             m_person = map;
             emit personChanged();
         });

@@ -55,6 +55,7 @@ class PlayQueueTest : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void rolesMatchMediaItemModel();
     void setItemsEstablishesTheCursor();
     void shuffleKeepsTheCurrentItemAndRestoresTheOriginalOrder();
@@ -75,6 +76,11 @@ private slots:
     void playCountSurvivesTheRoundTrip();
     void contextLabelNamesTheRecordTheQueueCameFrom();
 };
+
+void PlayQueueTest::initTestCase()
+{
+    setEmbyImageSourceNamespace(QStringLiteral("test-session"));
+}
 
 // The whole point of the queue being a model is that the queue panel can use the
 // same delegates as every rail: identical role names *and* identical values.

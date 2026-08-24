@@ -2,6 +2,10 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QtTest>
@@ -18,6 +22,7 @@ namespace {
 const auto kUserId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
 const auto kToken = QStringLiteral("not-a-real-token-fixture-only");
 const auto kImageId = QStringLiteral("301001/Primary/tag-one");
+const auto kImageProviderPrefix = QStringLiteral("image://emby/");
 
 QByteArray pngBytes(int width, int height, const QColor &colour = Qt::darkCyan)
 {
@@ -48,11 +53,15 @@ private slots:
     void largeSourceIsDecodedNearTheRequestedSize();
     void canceledResponseAbortsAndSuppressesDecode();
     void identitySwitchRejectsDelayedOldWork();
+    void qmlPixmapCacheSeparatesIdentityNamespaces();
+    void delayedCleanupCannotDeleteReactivatedPartition();
+    void persistedMprisExportIsRemovedByNewFetcher();
     void startupPrunesAnOversizedAssetPartition();
 
 private:
     // Drives one fetch to completion and hands back the image it produced.
     QImage fetchBlocking(const QString &id, const QSize &size = QSize(200, 0));
+    QString currentProviderId(const QString &id = kImageId) const;
 
     MockEmbyServer *m_mock = nullptr;
     emby::EmbyClient *m_client = nullptr;
@@ -94,13 +103,24 @@ QImage ImageCacheTest::fetchBlocking(const QString &id, const QSize &size)
 {
     EmbyImageResponse response;
     QSignalSpy finished(&response, &QQuickImageResponse::finished);
-    m_fetcher->fetch(&response, id, size);
+    m_fetcher->fetch(&response, currentProviderId(id), size);
     if (!finished.wait(5000))
         return {};
     QQuickTextureFactory *factory = response.textureFactory();
     const QImage image = factory != nullptr ? factory->image() : QImage();
     delete factory;
     return image;
+}
+
+QString ImageCacheTest::currentProviderId(const QString &id) const
+{
+    const QStringList parts = id.split(QLatin1Char('/'), Qt::KeepEmptyParts);
+    if (parts.size() != 3)
+        return {};
+    const QString source = m_fetcher->sourceFor(parts[0], parts[1], parts[2]);
+    return source.startsWith(kImageProviderPrefix)
+               ? source.sliced(kImageProviderPrefix.size())
+               : QString();
 }
 
 // Emby's image URLs carry the image tag, so an entry can never be stale: the
@@ -165,7 +185,7 @@ void ImageCacheTest::fetchReturnsBeforeTheImageIsDecoded()
 
     EmbyImageResponse response;
     QSignalSpy finished(&response, &QQuickImageResponse::finished);
-    m_fetcher->fetch(&response, kImageId, QSize(200, 0));
+    m_fetcher->fetch(&response, currentProviderId(), QSize(200, 0));
     // Nothing has been decoded yet: the fetch only started work.
     QCOMPARE(finished.count(), 0);
     QVERIFY(finished.wait(5000));
@@ -191,7 +211,7 @@ void ImageCacheTest::canceledResponseAbortsAndSuppressesDecode()
     QSignalSpy decoded(m_fetcher, &EmbyImageFetcher::imageDecoded);
     EmbyImageResponse response;
     QSignalSpy finished(&response, &QQuickImageResponse::finished);
-    m_fetcher->fetch(&response, kImageId, QSize(200, 0));
+    m_fetcher->fetch(&response, currentProviderId(), QSize(200, 0));
     QTRY_COMPARE(m_mock->requestCount(), 1);
 
     response.cancel();
@@ -210,7 +230,7 @@ void ImageCacheTest::identitySwitchRejectsDelayedOldWork()
     QSignalSpy decoded(m_fetcher, &EmbyImageFetcher::imageDecoded);
     EmbyImageResponse oldResponse;
     QSignalSpy oldFinished(&oldResponse, &QQuickImageResponse::finished);
-    m_fetcher->fetch(&oldResponse, kImageId, QSize(200, 0));
+    m_fetcher->fetch(&oldResponse, currentProviderId(), QSize(200, 0));
     QTRY_COMPARE(m_mock->requestCount(), 1);
 
     m_client->setSession(kToken, QStringLiteral("second-user"));
@@ -225,6 +245,99 @@ void ImageCacheTest::identitySwitchRejectsDelayedOldWork()
     QTRY_COMPARE(oldFinished.count(), 1);
     QCOMPARE(decoded.count(), 1);
     QCOMPARE(decoded.at(0).at(2).toULongLong(), m_fetcher->cachePartitionGeneration());
+}
+
+// QQmlEngine caches an image provider's pixmap by the complete image:// URL.
+// The provider therefore has to put the session boundary in that URL; its own
+// disk partition is too late when the engine can answer without calling it.
+void ImageCacheTest::qmlPixmapCacheSeparatesIdentityNamespaces()
+{
+    QQmlEngine engine;
+    engine.addImageProvider(QStringLiteral("emby"), new EmbyImageProvider(m_fetcher));
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        Image {
+            width: 200
+            height: 200
+            cache: true
+            asynchronous: true
+            sourceSize.width: 200
+            property bool imageReady: status === Image.Ready
+        }
+    )",
+                      QUrl(QStringLiteral("inline:image-cache-test.qml")));
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, 5000);
+    std::unique_ptr<QObject> imageObject(component.create());
+    QVERIFY2(imageObject, qPrintable(component.errorString()));
+
+    const QString firstSource = m_fetcher->sourceFor(
+        QStringLiteral("301001"), QStringLiteral("Primary"), QStringLiteral("tag-one"));
+    QVERIFY(imageObject->setProperty("source", firstSource));
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(imageObject->property("imageReady").toBool(), 5000);
+
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"),
+                     200, pngBytes(120, 80, Qt::blue), "image/png");
+    m_client->setSession(kToken, QStringLiteral("second-user"));
+    const QString secondSource = m_fetcher->sourceFor(
+        QStringLiteral("301001"), QStringLiteral("Primary"), QStringLiteral("tag-one"));
+    QVERIFY(!secondSource.isEmpty());
+    QVERIFY(firstSource != secondSource);
+    QVERIFY(imageObject->setProperty("source", secondSource));
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(imageObject->property("imageReady").toBool(), 5000);
+}
+
+// A cleanup queued for A1 used to lock only A1's private I/O mutex. If A was
+// activated again before it ran, that mutex could not reveal that its path now
+// belonged to A2, and the worker removed A2's live assets.
+void ImageCacheTest::delayedCleanupCannotDeleteReactivatedPartition()
+{
+    QSemaphore cleanupGate;
+    m_fetcher->setCleanupGateForTests(&cleanupGate);
+    const auto releaseOnFailure = qScopeGuard([&cleanupGate] { cleanupGate.release(8); });
+
+    m_client->setSession(kToken, QStringLiteral("second-user"));
+    m_client->setSession(kToken, kUserId);
+
+    const QByteArray identity =
+        m_client->baseUrl().toString(QUrl::FullyEncoded).toUtf8() + '\0' + kUserId.toUtf8();
+    const QString partition = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+    QDir assets(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                QStringLiteral("/images/") + partition + QStringLiteral("/assets"));
+    QVERIFY(assets.exists());
+    QFile a2Asset(assets.filePath(QStringLiteral("a2-live-asset")));
+    QVERIFY(a2Asset.open(QIODevice::WriteOnly));
+    QCOMPARE(a2Asset.write("A2"), qint64(2));
+    a2Asset.close();
+
+    // Release the A1 and B cleanups only after A2 is current and its asset is
+    // present, then drain the pool so the assertion cannot race maintenance.
+    cleanupGate.release(8);
+    m_fetcher->waitForMaintenanceForTests();
+    m_fetcher->setCleanupGateForTests(nullptr);
+    QVERIFY(QFileInfo::exists(a2Asset.fileName()));
+}
+
+// Export paths were registered only after a successful export in the current
+// process. A freshly constructed fetcher therefore knew nothing about artwork
+// an earlier process left for Plasma and could not remove it at logout.
+void ImageCacheTest::persistedMprisExportIsRemovedByNewFetcher()
+{
+    QSignalSpy exported(m_fetcher, &EmbyImageFetcher::fileExported);
+    m_fetcher->exportToFile(kImageId, QStringLiteral("mpris"));
+    QVERIFY(exported.wait(5000));
+    QCOMPARE(exported.count(), 1);
+    const QString exportedPath = exported.at(0).at(1).toUrl().toLocalFile();
+    QVERIFY(!exportedPath.isEmpty());
+    QVERIFY(QFileInfo::exists(exportedPath));
+
+    delete m_fetcher;
+    m_fetcher = new EmbyImageFetcher(m_client, this);
+    m_client->setSession(kToken, QStringLiteral("second-user"));
+    QVERIFY(!QFileInfo::exists(exportedPath));
 }
 
 void ImageCacheTest::startupPrunesAnOversizedAssetPartition()

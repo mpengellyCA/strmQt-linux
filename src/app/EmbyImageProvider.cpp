@@ -2,6 +2,7 @@
 
 #include "ImageLimits.h"
 #include "core/Log.h"
+#include "models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
 
 #include <QBuffer>
@@ -13,8 +14,10 @@
 #include <QNetworkDiskCache>
 #include <QNetworkReply>
 #include <QSaveFile>
+#include <QSemaphore>
 #include <QStandardPaths>
 #include <QThread>
+#include <QUuid>
 
 #include <atomic>
 #include <memory>
@@ -35,6 +38,7 @@ constexpr qint64 kMaxAssetBytes = 512LL * 1024 * 1024;
 // being stored (itself bounded by kMaxEncodedBytes). This replaces the former
 // 64-image interval whose worst case was about one gigabyte.
 constexpr qint64 kAssetBytesBetweenPrunes = 8LL * 1024 * 1024;
+const auto kMprisExportSubdir = QStringLiteral("mpris");
 struct BoundedReplyState
 {
     QByteArray bytes;
@@ -129,6 +133,7 @@ void pruneExports(const QDir &dir)
 struct EmbyImageFetcher::CachePartition
 {
     QString assetDir;
+    QString sourceNamespace;
     quint64 generation = 0;
     std::atomic_bool active = true;
     QMutex ioMutex;
@@ -173,7 +178,8 @@ void EmbyImageResponse::cancel()
 }
 
 EmbyImageFetcher::EmbyImageFetcher(emby::EmbyClient *client, QObject *parent)
-    : QObject(parent), m_client(client), m_nam(new QNetworkAccessManager(this))
+    : QObject(parent), m_client(client), m_nam(new QNetworkAccessManager(this)),
+      m_sourceNamespacePrefix(QUuid::createUuid().toString(QUuid::WithoutBraces))
 {
     m_cache = new QNetworkDiskCache(m_nam);
     m_cache->setMaximumCacheSize(256 * 1024 * 1024);
@@ -187,6 +193,11 @@ EmbyImageFetcher::EmbyImageFetcher(emby::EmbyClient *client, QObject *parent)
     // UI and the video decoder. Decoding is memory-hungry, not latency-bound.
     m_decodePool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() / 4, 4));
     m_decodePool.setObjectName(QStringLiteral("image-decode"));
+    // MPRIS is the one supported external artwork consumer. Register its
+    // directory before the first identity reset so exports left by an earlier
+    // process are also retired, not only paths exported during this lifetime.
+    m_exportDirectories.append(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                               QLatin1Char('/') + kMprisExportSubdir);
     resetCachePartition();
 }
 
@@ -212,15 +223,22 @@ void EmbyImageFetcher::resetCachePartition()
     auto next = std::make_shared<CachePartition>();
     next->assetDir = root + QStringLiteral("/assets");
     next->generation = ++m_partitionGeneration;
-    QDir().mkpath(next->assetDir);
+    next->sourceNamespace =
+        m_sourceNamespacePrefix + QLatin1Char('-') + QString::number(next->generation);
 
     CachePartitionPtr outgoing;
     {
         QMutexLocker locker(&m_partitionMutex);
+        // Cleanup takes this same mutex across its active-path check and
+        // tombstone rename. Creating the directory here makes the A1-cleanup/A2-
+        // reactivation ordering atomic: cleanup either finishes first and A2
+        // recreates it, or observes A2 as current and leaves it alone.
+        QDir().mkpath(next->assetDir);
         outgoing = std::exchange(m_partition, next);
         if (outgoing)
             outgoing->active.store(false, std::memory_order_release);
     }
+    setEmbyImageSourceNamespace(next->sourceNamespace);
     // Retire the generation before aborting replies: abort may deliver
     // finished() immediately, and that callback must already see itself as
     // stale. No worker can begin a store after this point.
@@ -238,12 +256,29 @@ void EmbyImageFetcher::resetCachePartition()
             dir.remove(file);
     }
     emit cachePartitionChanged(next->generation);
+    emit sourceNamespaceChanged();
 }
 
 quint64 EmbyImageFetcher::cachePartitionGeneration() const
 {
     const CachePartitionPtr partition = partitionSnapshot();
     return partition ? partition->generation : 0;
+}
+
+QString EmbyImageFetcher::sourceNamespace() const
+{
+    const CachePartitionPtr partition = partitionSnapshot();
+    return partition ? partition->sourceNamespace : QString();
+}
+
+QString EmbyImageFetcher::sourceFor(const QString &itemId, const QString &imageType,
+                                    const QString &tag) const
+{
+    const CachePartitionPtr partition = partitionSnapshot();
+    if (!partition || itemId.isEmpty() || imageType.isEmpty())
+        return {};
+    return QStringLiteral("image://emby/%1/%2/%3/%4")
+        .arg(partition->sourceNamespace, itemId, imageType, tag);
 }
 
 EmbyImageFetcher::CachePartitionPtr EmbyImageFetcher::partitionSnapshot() const
@@ -260,11 +295,47 @@ void EmbyImageFetcher::schedulePartitionMaintenance(const CachePartitionPtr &par
     m_decodePool.start([partition] { pruneAssets(partition, /*lockIo=*/true); });
     if (!outgoing || outgoing->assetDir == partition->assetDir)
         return;
-    m_decodePool.start([outgoing] {
-        QMutexLocker locker(&outgoing->ioMutex);
-        QDir(outgoing->assetDir).removeRecursively();
+    QSemaphore *cleanupGate = nullptr;
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+    cleanupGate = m_cleanupGateForTests;
+#endif
+    m_decodePool.start([this, outgoing, cleanupGate] {
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+        if (cleanupGate)
+            cleanupGate->acquire();
+#else
+        Q_UNUSED(cleanupGate);
+#endif
+        QString retiredPath;
+        {
+            QMutexLocker ioLocker(&outgoing->ioMutex);
+            QMutexLocker partitionLocker(&m_partitionMutex);
+            if (m_partition && m_partition->assetDir == outgoing->assetDir)
+                return;
+            // Rename under the partition lock, then do the potentially long
+            // recursive deletion outside it. A reset either publishes A2
+            // first (and this skips A's live path), or recreates A/assets only
+            // after A1 has moved to this generation-unique tombstone.
+            retiredPath = outgoing->assetDir + QStringLiteral(".retired-") +
+                          outgoing->sourceNamespace;
+            if (!QDir().rename(outgoing->assetDir, retiredPath))
+                return;
+        }
+        QDir(retiredPath).removeRecursively();
     });
 }
+
+#ifdef STRMQT_IMAGE_CACHE_TESTS
+void EmbyImageFetcher::setCleanupGateForTests(QSemaphore *gate)
+{
+    m_cleanupGateForTests = gate;
+}
+
+void EmbyImageFetcher::waitForMaintenanceForTests()
+{
+    m_decodePool.waitForDone();
+}
+#endif
 
 QNetworkRequest EmbyImageFetcher::imageRequest(const QUrl &url) const
 {
@@ -412,9 +483,9 @@ void EmbyImageFetcher::fetchFromNetwork(const QPointer<EmbyImageResponse> &respo
             response->complete({}, QStringLiteral("stale image request"));
         return;
     }
-    const QStringList parts = id.split(QLatin1Char('/'));
+    const QStringList parts = id.split(QLatin1Char('/'), Qt::KeepEmptyParts);
     const int maxWidth = imagelimits::boundedRequestWidth(requestedSize.width());
-    const QUrl url = m_client->imageUrl(parts[0], parts[1], maxWidth, parts[2]);
+    const QUrl url = m_client->imageUrl(parts[1], parts[2], maxWidth, parts[3]);
     QNetworkReply *reply = m_nam->get(imageRequest(url));
     const QPointer<QNetworkReply> guardedReply(reply);
     connect(response, &EmbyImageResponse::cancelRequested, this,
@@ -463,9 +534,10 @@ void EmbyImageFetcher::fetch(EmbyImageResponse *response, const QString &id,
     const CachePartitionPtr partition = partitionSnapshot();
     if (response->state()->canceled.load(std::memory_order_acquire))
         return;
-    // id = "{itemId}/{imageType}/{tag}"
-    const QStringList parts = id.split(QLatin1Char('/'));
-    if (parts.size() != 3) {
+    // id = "{opaque namespace}/{itemId}/{imageType}/{tag}"
+    const QStringList parts = id.split(QLatin1Char('/'), Qt::KeepEmptyParts);
+    if (!partition || parts.size() != 4 || parts[0] != partition->sourceNamespace ||
+        parts[1].isEmpty() || parts[2].isEmpty()) {
         response->complete({}, QStringLiteral("bad image id: %1").arg(id));
         return;
     }
@@ -476,7 +548,7 @@ void EmbyImageFetcher::fetch(EmbyImageResponse *response, const QString &id,
     // this thread, instead of a round trip per card.
     const int maxWidth = imagelimits::boundedRequestWidth(requestedSize.width());
     const QString cachePath = assetPathFor(
-        partition, m_client->imageUrl(parts[0], parts[1], maxWidth, parts[2]));
+        partition, m_client->imageUrl(parts[1], parts[2], maxWidth, parts[3]));
     if (!cachePath.isEmpty() && QFileInfo::exists(cachePath)) {
         decodeAsync(guardedResponse, id, partition, cachePath, {}, /*storeToCache=*/false,
                     requestedSize);

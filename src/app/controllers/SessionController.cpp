@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/Settings.h"
+#include "app/models/MediaItemModel.h"
 #include "platform/SecretsStore.h"
 #include "server/emby/EmbyClient.h"
 
@@ -196,10 +197,8 @@ void SessionController::loadPublicUsers()
             map.insert(QStringLiteral("id"), user.id);
             map.insert(QStringLiteral("name"), user.name);
             map.insert(QStringLiteral("imageUrl"),
-                       user.primaryImageTag.isEmpty()
-                           ? QString()
-                           : QStringLiteral("image://emby/%1/Primary/%2")
-                                 .arg(user.id, user.primaryImageTag));
+                       embyImageSource(user.id, QStringLiteral("Primary"),
+                                       user.primaryImageTag));
             users.append(map);
         }
         m_publicUsers = users;

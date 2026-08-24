@@ -30,12 +30,18 @@ class ModelsTest : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void episodeRoles();
     void appendAndReset();
     void getReturnsAllRoles();
     void userDataUpdateEmitsDataChanged();
     void libraryModelRoles();
 };
+
+void ModelsTest::initTestCase()
+{
+    setEmbyImageSourceNamespace(QStringLiteral("test-session"));
+}
 
 void ModelsTest::episodeRoles()
 {
@@ -46,7 +52,7 @@ void ModelsTest::episodeRoles()
     QCOMPARE(model.data(index, MediaItemModel::LabelRole).toString(),
              QStringLiteral("Breaking Bad — S5E14 — Ozymandias"));
     QCOMPARE(model.data(index, MediaItemModel::PosterUrlRole).toString(),
-             QStringLiteral("image://emby/402014/Primary/tag123"));
+             QStringLiteral("image://emby/test-session/402014/Primary/tag123"));
     QCOMPARE(model.data(index, MediaItemModel::BackdropUrlRole).toString(), QString());
     QVERIFY(model.data(index, MediaItemModel::ResumableRole).toBool());
     const double progress = model.data(index, MediaItemModel::ProgressRole).toDouble();
@@ -138,7 +144,7 @@ void ModelsTest::libraryModelRoles()
     QCOMPARE(model.data(model.index(0), LibraryListModel::NameRole).toString(),
              QStringLiteral("Movies"));
     QCOMPARE(model.data(model.index(0), LibraryListModel::ImageUrlRole).toString(),
-             QStringLiteral("image://emby/4/Primary/imgtag"));
+             QStringLiteral("image://emby/test-session/4/Primary/imgtag"));
 }
 
 QTEST_GUILESS_MAIN(ModelsTest)

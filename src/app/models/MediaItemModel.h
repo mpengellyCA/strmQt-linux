@@ -124,4 +124,11 @@ private:
 // Builds the image://emby/... source for an item image; empty when there is no image.
 QString embyImageSource(const QString &itemId, const QString &imageType, const QString &tag);
 
+// The QML engine caches image-provider results by their complete source URL. The
+// fetcher advances this opaque namespace at every server/session boundary so a
+// pixmap decoded for the previous identity can never satisfy a new identity's
+// otherwise-identical item/type/tag URL.
+void setEmbyImageSourceNamespace(const QString &sourceNamespace);
+QString embyImageSourceNamespace();
+
 } // namespace strmqt

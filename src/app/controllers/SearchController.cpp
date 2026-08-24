@@ -3,6 +3,7 @@
 #include <QSettings>
 #include <QCryptographicHash>
 
+#include "app/models/MediaItemModel.h"
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
 
@@ -30,10 +31,8 @@ QVariantList facetList(const QList<MediaItem> &items)
         // to parse the tag back out of it.
         map.insert(QStringLiteral("primaryImageTag"), item.primaryImageTag);
         map.insert(QStringLiteral("imageUrl"),
-                   item.primaryImageTag.isEmpty()
-                       ? QString()
-                       : QStringLiteral("image://emby/%1/Primary/%2")
-                             .arg(item.id, item.primaryImageTag));
+                   embyImageSource(item.id, QStringLiteral("Primary"),
+                                   item.primaryImageTag));
         out.append(map);
     }
     return out;

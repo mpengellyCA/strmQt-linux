@@ -38,8 +38,9 @@ class CoverTintService : public QObject
 public:
     explicit CoverTintService(EmbyImageFetcher *fetcher, QObject *parent = nullptr);
 
-    // `source` is either an image://emby/{itemId}/{imageType}/{tag} URL as the
-    // models publish it, or the bare "{itemId}/{imageType}/{tag}" id.
+    // `source` is either an
+    // image://emby/{namespace}/{itemId}/{imageType}/{tag} URL as the models
+    // publish it, or the bare namespaced provider id.
     //
     // Returns an opaque colour inside the clamp box, or TRANSPARENT when there
     // is no usable tint — because the cover has not been decoded yet, or

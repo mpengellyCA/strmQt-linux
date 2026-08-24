@@ -35,6 +35,7 @@ private slots:
     void searchFacetsUseTheirOwnEndpoints();
     void staleSearchReplyIsDiscarded();
     void detailsExposesEveryEnrichment();
+    void detailsPersonImageUsesSessionNamespace();
     void detailsClearsBetweenItems();
     void seriesFetchesItsOwnRecord();
     void seriesIgnoresAnEmptyId();
@@ -131,6 +132,7 @@ private:
 
 void ContentControllersTest::init()
 {
+    setEmbyImageSourceNamespace(QStringLiteral("test-session"));
     m_mock = new MockEmbyServer(this);
     QVERIFY(m_mock->start());
     m_client = new emby::EmbyClient(this);
@@ -198,7 +200,8 @@ void ContentControllersTest::searchFacetsUseTheirOwnEndpoints()
     // Both image forms, so PersonCard does not have to parse a tag back out of
     // a URL the controller just built from it.
     QCOMPARE(person.value(QStringLiteral("primaryImageTag")).toString(), QStringLiteral("tag"));
-    QVERIFY(person.value(QStringLiteral("imageUrl")).toString().contains(QStringLiteral("tag")));
+    QCOMPARE(person.value(QStringLiteral("imageUrl")).toString(),
+             QStringLiteral("image://emby/test-session/11818/Primary/tag"));
 
     QTRY_VERIFY_WITH_TIMEOUT(!search.genres().isEmpty(), 5000);
     QCOMPARE(search.genres().first().toMap().value(QStringLiteral("name")).toString(),
@@ -296,6 +299,20 @@ void ContentControllersTest::detailsExposesEveryEnrichment()
                       .query)
             .queryItemValue(QStringLiteral("ListItemIds"));
     QCOMPARE(listIds, QStringLiteral("1856141"));
+}
+
+void ContentControllersTest::detailsPersonImageUsesSessionNamespace()
+{
+    m_mock->addRoute(
+        QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/person-1").arg(kUserId), 200,
+        QByteArrayLiteral("{\"Id\":\"person-1\",\"Name\":\"Actor\",\"Type\":\"Person\","
+                          "\"ImageTags\":{\"Primary\":\"headshot-tag\"}}"));
+    DetailsController details(m_client);
+    details.loadPerson(QStringLiteral("person-1"));
+    QTRY_COMPARE_WITH_TIMEOUT(details.person().value(QStringLiteral("id")).toString(),
+                              QStringLiteral("person-1"), 5000);
+    QCOMPARE(details.person().value(QStringLiteral("imageUrl")).toString(),
+             QStringLiteral("image://emby/test-session/person-1/Primary/headshot-tag"));
 }
 
 void ContentControllersTest::detailsClearsBetweenItems()

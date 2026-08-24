@@ -32,6 +32,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("emby"),
                             new strmqt::EmbyImageProvider(app.imageFetcher()));
+    engine.rootContext()->setContextProperty(QStringLiteral("Images"), app.imageFetcher());
     engine.rootContext()->setContextProperty(QStringLiteral("Session"), app.session());
     engine.rootContext()->setContextProperty(QStringLiteral("HomeCtl"), app.home());
     engine.rootContext()->setContextProperty(QStringLiteral("LibraryCtl"), app.library());

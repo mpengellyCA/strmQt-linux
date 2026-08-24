@@ -1,12 +1,48 @@
 #include "MediaItemModel.h"
 
+#include <QMutex>
+
 namespace strmqt {
+
+namespace {
+
+struct ImageSourceState
+{
+    QMutex mutex;
+    QString sourceNamespace;
+};
+
+ImageSourceState &imageSourceState()
+{
+    static ImageSourceState state;
+    return state;
+}
+
+} // namespace
+
+void setEmbyImageSourceNamespace(const QString &sourceNamespace)
+{
+    ImageSourceState &state = imageSourceState();
+    QMutexLocker locker(&state.mutex);
+    state.sourceNamespace = sourceNamespace;
+}
+
+QString embyImageSourceNamespace()
+{
+    ImageSourceState &state = imageSourceState();
+    QMutexLocker locker(&state.mutex);
+    return state.sourceNamespace;
+}
 
 QString embyImageSource(const QString &itemId, const QString &imageType, const QString &tag)
 {
     if (tag.isEmpty())
         return {};
-    return QStringLiteral("image://emby/%1/%2/%3").arg(itemId, imageType, tag);
+    const QString sourceNamespace = embyImageSourceNamespace();
+    if (sourceNamespace.isEmpty())
+        return {};
+    return QStringLiteral("image://emby/%1/%2/%3/%4")
+        .arg(sourceNamespace, itemId, imageType, tag);
 }
 
 namespace {
