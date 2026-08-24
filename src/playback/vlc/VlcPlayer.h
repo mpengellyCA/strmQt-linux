@@ -13,6 +13,87 @@ struct libvlc_event_t;
 
 namespace strmqt {
 
+namespace vlcframes {
+
+// libVLC writes one image while Qt paints another. Swapping the two pre-sized
+// images publishes a frame without an 8 MB deep copy at 1080p. The scratch
+// image deliberately survives clear(): a late decoder lock during teardown can
+// always receive a valid full-sized plane and its display is then discarded.
+class Buffers
+{
+public:
+    void configure(const QSize &size)
+    {
+        QMutexLocker lock(&m_mutex);
+        m_publishToken = 0;
+        m_hasFront = false;
+        m_front = QImage(size, QImage::Format_RGB32);
+        m_back = QImage(size, QImage::Format_RGB32);
+        m_scratch = QImage(size, QImage::Format_RGB32);
+    }
+
+    void clear()
+    {
+        QMutexLocker lock(&m_mutex);
+        m_publishToken = 0;
+        m_hasFront = false;
+        m_front = {};
+        m_back = {};
+    }
+
+    void *lock(void **planes)
+    {
+        m_mutex.lock();
+        QImage *target = !m_back.isNull() ? &m_back : &m_scratch;
+        // formatCb always precedes decoder locks, so scratch is full-sized. A
+        // defensive one-pixel allocation still makes a contract violation
+        // non-null rather than handing VLC a null plane immediately.
+        if (target->isNull())
+            m_scratch = QImage(1, 1, QImage::Format_RGB32);
+        planes[0] = target->bits();
+        do {
+            ++m_nextToken;
+        } while (m_nextToken == 0);
+        m_publishToken = target == &m_back ? m_nextToken : 0;
+        // libVLC treats the returned picture as an opaque cookie. A unique
+        // integer token prevents a delayed display from an earlier configure()
+        // from publishing the new load's back buffer merely because the member
+        // QImage occupies the same address.
+        return reinterpret_cast<void *>(m_nextToken);
+    }
+
+    void unlock() { m_mutex.unlock(); }
+
+    bool display(void *picture)
+    {
+        QMutexLocker lock(&m_mutex);
+        const auto token = reinterpret_cast<quintptr>(picture);
+        if (token == 0 || token != m_publishToken || m_back.isNull())
+            return false;
+        m_front.swap(m_back);
+        m_publishToken = 0;
+        m_hasFront = true;
+        return true;
+    }
+
+    QImage current() const
+    {
+        QMutexLocker lock(&m_mutex);
+        return m_hasFront ? m_front : QImage{}; // implicit sharing: no pixel copy
+    }
+
+private:
+    mutable QMutex m_mutex;
+    QImage m_front;
+    QImage m_back;
+    QImage m_scratch;
+    quintptr m_nextToken = 0;
+    quintptr m_publishToken = 0;
+    bool m_hasFront = false;
+};
+
+} // namespace vlcframes
+
 // libvlc-backed fallback engine (raw C API, PLAN §3.2 decision 1: VLC is the
 // escape hatch when the mpv path misbehaves). Video is delivered via vmem
 // callbacks as BGRA frames; VlcVideoItem paints the latest frame. Slower than
@@ -39,7 +120,8 @@ public:
     qint64 durationMs() const override { return m_durationMs; }
     bool buffering() const override { return m_buffering; }
 
-    // Latest decoded frame (copy under lock); null when nothing decoded yet.
+    // Latest decoded frame (shallow QImage snapshot under lock); null when
+    // nothing decoded yet.
     QImage currentFrame() const;
 
 signals:
@@ -73,9 +155,7 @@ private:
     // libvlc's event thread, which is the whole point of stamping events.
     std::atomic<LoadId> m_loadId = 0;
 
-    mutable QMutex m_frameMutex;
-    QImage m_frontFrame; // last displayed frame
-    QImage m_backFrame;  // vlc writes here
+    vlcframes::Buffers m_frames;
 };
 
 } // namespace strmqt

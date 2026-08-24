@@ -63,31 +63,26 @@ unsigned VlcPlayer::formatCb(void **opaque, char *chroma, unsigned *width, unsig
     qstrcpy(chroma, "RV32"); // BGRA on little-endian → QImage::Format_RGB32
     pitches[0] = *width * 4;
     lines[0] = *height;
-    QMutexLocker lock(&self->m_frameMutex);
-    self->m_backFrame = QImage(int(*width), int(*height), QImage::Format_RGB32);
+    self->m_frames.configure(QSize(int(*width), int(*height)));
     return 1;
 }
 
 void *VlcPlayer::lockCb(void *opaque, void **planes)
 {
     auto *self = static_cast<VlcPlayer *>(opaque);
-    self->m_frameMutex.lock();
-    planes[0] = self->m_backFrame.bits();
-    return nullptr;
+    return self->m_frames.lock(planes);
 }
 
 void VlcPlayer::unlockCb(void *opaque, void *, void *const *)
 {
-    static_cast<VlcPlayer *>(opaque)->m_frameMutex.unlock();
+    static_cast<VlcPlayer *>(opaque)->m_frames.unlock();
 }
 
-void VlcPlayer::displayCb(void *opaque, void *)
+void VlcPlayer::displayCb(void *opaque, void *picture)
 {
     auto *self = static_cast<VlcPlayer *>(opaque);
-    {
-        QMutexLocker lock(&self->m_frameMutex);
-        self->m_frontFrame = self->m_backFrame.copy();
-    }
+    if (!self->m_frames.display(picture))
+        return; // scratch frame from a retired load
     if (!self->m_sawFirstFrame) {
         self->m_sawFirstFrame = true;
         qCInfo(logPlayback) << "vlc vmem: first frame displayed";
@@ -97,8 +92,7 @@ void VlcPlayer::displayCb(void *opaque, void *)
 
 QImage VlcPlayer::currentFrame() const
 {
-    QMutexLocker lock(&m_frameMutex);
-    return m_frontFrame;
+    return m_frames.current();
 }
 
 void VlcPlayer::eventCb(const libvlc_event_t *event, void *opaque)
@@ -192,6 +186,12 @@ void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
 
 void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
 {
+    // Stop the outgoing decoder before reset clears its write buffer. libVLC's
+    // vmem callback runs on a decoder thread; clearing first left a window in
+    // which lockCb returned nullptr and the decoder wrote through it.
+    m_loadId = 0;
+    if (m_player)
+        libvlc_media_player_stop(m_player);
     m_loadId = loadId;
     resetPerLoadState(loadId, startMs);
     if (!m_player) {
@@ -232,9 +232,9 @@ void VlcPlayer::setPaused(bool paused)
 
 void VlcPlayer::stop()
 {
+    m_loadId = 0;
     if (m_player)
         libvlc_media_player_stop(m_player);
-    m_loadId = 0;
     resetPerLoadState(0, 0);
     setState(State::Idle, 0);
 }
@@ -255,11 +255,7 @@ void VlcPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
         m_buffering = false;
         emit bufferingChanged(false, loadId);
     }
-    {
-        QMutexLocker lock(&m_frameMutex);
-        m_frontFrame = {};
-        m_backFrame = {};
-    }
+    m_frames.clear();
     emit frameReady();
 }
 
