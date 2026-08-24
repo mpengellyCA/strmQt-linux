@@ -679,6 +679,7 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRef
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
+src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onCleared: SearchCtl.query = ""
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	onTextEdited: SearchCtl.query = searchField.text
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	page.builtQuery = SearchCtl.query
