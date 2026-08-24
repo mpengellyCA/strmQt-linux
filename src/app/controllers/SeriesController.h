@@ -8,6 +8,8 @@
 
 namespace strmqt {
 
+class LiveUpdateService;
+
 namespace emby {
 class EmbyClient;
 }
@@ -15,13 +17,10 @@ class EmbyClient;
 // Drives the Series page (Emby-web parity): seasons of a series and the
 // episode list of the selected season.
 //
-// `episodes` is the SELECTED season, which is what the page lists. That alone
-// cannot answer "what do I watch next", because the answer is regularly in a
-// season the user is not looking at — so open() additionally fetches the whole
-// series once (EmbyClient::episodes() with an empty seasonId returns every
-// episode, in season/episode order) and keeps it out of sight purely to derive
-// `nextUnwatched`. One extra request per series page entry, none per season
-// switch.
+// `episodes` is the SELECTED season, which is what the page lists. "What do I
+// watch next" is independent of that selection: a bounded server-filtered query
+// asks for the first unplayed episode across the series without retaining a
+// second, hidden copy of every episode.
 class SeriesController : public QObject
 {
     Q_OBJECT
@@ -60,16 +59,18 @@ public:
 
     QVariantMap series() const { return m_series; }
 
+    void bindLiveUpdates(LiveUpdateService *service);
     void resetSessionState();
 
     Q_INVOKABLE void open(const QString &seriesId, const QString &seriesName);
     Q_INVOKABLE void selectSeason(int row);
 
     // Watched state changed somewhere else in the app (a row's ⋯, the context
-    // menu, the player finishing an episode). The page forwards
-    // ItemActions::playedChanged here so the whole-series list — which is not a
-    // registered model and therefore not patched by ItemActions — stays true
-    // and `nextUnwatched` moves on. Cheap and idempotent: a miss is a no-op.
+    // menu, the player finishing an episode). ItemActions' committed
+    // played-state signal and live user-data invalidations reach here so the
+    // bounded next-unwatched query is refreshed. The changed item may be in
+    // another season, so the selected-season model alone cannot decide whether
+    // the answer moved.
     Q_INVOKABLE void notePlayed(const QString &itemId, bool played);
 
 signals:
@@ -81,16 +82,12 @@ signals:
 
 private:
     void setLoading(bool loading);
-    void recomputeNextUnwatched();
+    void refreshNextUnwatched();
+    void setNextUnwatched(QVariantMap next);
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_seasons;
     MediaItemModel *m_episodes;
-    // Every episode of the series. Not a Q_PROPERTY and never shown: it exists
-    // so nextUnwatched can be derived without refetching per season. A model
-    // rather than a bare list so the role→map conversion stays MediaItemModel's
-    // one implementation.
-    MediaItemModel *m_allEpisodes;
     QString m_seriesId;
     QString m_seriesName;
     QVariantMap m_series;
@@ -99,10 +96,10 @@ private:
     bool m_loading = false;
     // Invalidates in-flight season/episode replies across open()/selectSeason().
     int m_generation = 0;
-    // Separate counter for the whole-series fetch: it is issued by open() and
-    // must survive the selectSeason() that open()'s own seasons reply performs,
-    // which bumps m_generation.
+    // Separate counters for requests that must survive the selectSeason() that
+    // open()'s own seasons reply performs, which bumps m_generation.
     int m_seriesGeneration = 0;
+    int m_nextUnwatchedGeneration = 0;
 };
 
 } // namespace strmqt

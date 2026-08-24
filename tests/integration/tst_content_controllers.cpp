@@ -4,6 +4,7 @@
 
 #include "MockEmbyServer.h"
 #include "app/controllers/DetailsController.h"
+#include "app/controllers/LiveUpdateService.h"
 #include "app/controllers/MusicController.h"
 #include "app/controllers/PlaylistController.h"
 #include "app/controllers/SearchController.h"
@@ -38,6 +39,8 @@ private slots:
     void detailsPersonImageUsesSessionNamespace();
     void detailsClearsBetweenItems();
     void seriesFetchesItsOwnRecord();
+    void seriesNextUnwatchedQueryIsBounded();
+    void seriesNextUnwatchedRefetchesAfterPlayedChanges();
     void seriesIgnoresAnEmptyId();
     void sessionResetRetiresSearchDetailsAndSeriesReplies();
     void searchResetPreservesPerAccountHistory();
@@ -351,6 +354,9 @@ void ContentControllersTest::seriesFetchesItsOwnRecord()
                                        "\"TotalRecordCount\":1}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/100/Episodes"), 200,
                      QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/100").arg(kUserId),
                      200,
                      QByteArrayLiteral("{\"Id\":\"100\",\"Name\":\"Severance\","
@@ -370,6 +376,123 @@ void ContentControllersTest::seriesFetchesItsOwnRecord()
              QStringLiteral("Continuing"));
     QCOMPARE(series.series().value(QStringLiteral("overview")).toString(),
              QStringLiteral("Work-life balance."));
+}
+
+void ContentControllersTest::seriesNextUnwatchedQueryIsBounded()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/100/Seasons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"season-1\","
+                                       "\"Name\":\"Season 1\",\"Type\":\"Season\","
+                                       "\"IndexNumber\":1}],\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/100/Episodes"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/100").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Id\":\"100\",\"Name\":\"Series\","
+                                       "\"Type\":\"Series\"}"));
+    // The answer is deliberately in season two while the page opens season
+    // one. A selected-season lookup cannot produce this result.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"s2e1\","
+                                       "\"Name\":\"Season Two Premiere\","
+                                       "\"Type\":\"Episode\","
+                                       "\"ParentIndexNumber\":2,\"IndexNumber\":1}],"
+                                       "\"TotalRecordCount\":400}"));
+
+    SeriesController series(m_client);
+    series.open(QStringLiteral("100"), QStringLiteral("Series"));
+
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("s2e1"), 5000);
+    QCOMPARE(requestsFor(itemsPath), 1);
+
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("100"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")),
+             QStringLiteral("Episode"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Filters")), QStringLiteral("IsUnplayed"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("PremiereDate,SortName"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortOrder")), QStringLiteral("Ascending"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("0"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("1"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("Fields")));
+}
+
+void ContentControllersTest::seriesNextUnwatchedRefetchesAfterPlayedChanges()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/100/Seasons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"season-1\","
+                                       "\"Name\":\"Season 1\",\"Type\":\"Season\","
+                                       "\"IndexNumber\":1}],\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/100/Episodes"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/100").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Id\":\"100\",\"Name\":\"Series\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"first\","
+                                       "\"Name\":\"First\",\"Type\":\"Episode\"}],"
+                                       "\"TotalRecordCount\":2}"));
+
+    SeriesController series(m_client);
+    LiveUpdateService live(m_client, nullptr);
+    series.bindLiveUpdates(&live);
+    series.open(QStringLiteral("100"), QStringLiteral("Series"));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("first"), 5000);
+
+    // Marking the current answer played advances to the server's next bounded
+    // result, including when that episode belongs to another season.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"second\","
+                                       "\"Name\":\"Second\",\"Type\":\"Episode\","
+                                       "\"ParentIndexNumber\":2}],"
+                                       "\"TotalRecordCount\":1}"));
+    series.notePlayed(QStringLiteral("first"), true);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("second"), 5000);
+
+    // Marking an earlier episode unplayed can move the answer backwards even
+    // though that episode is not in the selected season model.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"first\","
+                                       "\"Name\":\"First\",\"Type\":\"Episode\"}],"
+                                       "\"TotalRecordCount\":2}"));
+    series.notePlayed(QStringLiteral("first"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 3, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("first"), 5000);
+
+    // An empty bounded answer means every episode is now watched.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    series.notePlayed(QStringLiteral("first"), true);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 4, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.hasNextUnwatched(), 5000);
+
+    // A phone/player update reaches SeriesController through the same
+    // debounced invalidation channel as every other live consumer and causes
+    // one bounded reconciliation, not a retained whole-series snapshot.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"live-first\","
+                                       "\"Name\":\"Changed Elsewhere\","
+                                       "\"Type\":\"Episode\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    live.refreshNow();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 5, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+        QStringLiteral("live-first"), 5000);
 }
 
 // An empty id reaches here whenever the page is reset rather than opened. The
@@ -455,10 +578,15 @@ void ContentControllersTest::sessionResetRetiresSearchDetailsAndSeriesReplies()
                      QByteArrayLiteral("{\"Items\":[{\"Id\":\"episode-a\",\"Name\":\"A "
                                        "Episode\",\"Type\":\"Episode\","
                                        "\"ParentIndexNumber\":1}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"episode-a\",\"Name\":\"A "
+                                       "Episode\",\"Type\":\"Episode\","
+                                       "\"ParentIndexNumber\":1}],"
+                                       "\"TotalRecordCount\":1}"));
     m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
                      QByteArrayLiteral("{\"Id\":\"shared\",\"Name\":\"A Series\","
                                        "\"Type\":\"Series\"}"));
-    for (const QString &path : {seasonsPath, episodesPath, detailPath})
+    for (const QString &path : {seasonsPath, episodesPath, detailPath, itemsPath})
         m_mock->setRouteDelay(QStringLiteral("GET"), path, 300);
 
     SeriesController series(m_client);

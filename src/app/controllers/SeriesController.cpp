@@ -1,23 +1,40 @@
 #include "SeriesController.h"
 
+#include "app/controllers/LiveUpdateService.h"
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
+
+#include <utility>
 
 namespace strmqt {
 
 SeriesController::SeriesController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_seasons(new MediaItemModel(this)),
-      m_episodes(new MediaItemModel(this)), m_allEpisodes(new MediaItemModel(this))
+      m_episodes(new MediaItemModel(this))
 {
+}
+
+void SeriesController::bindLiveUpdates(LiveUpdateService *service)
+{
+    if (!service)
+        return;
+    // A rich socket patch and a polling invalidation converge here after the
+    // server owns the new watched state. The changed id may belong to an
+    // unloaded season, so every delivered burst becomes one bounded refetch.
+    connect(service, &LiveUpdateService::userDataInvalidated, this,
+            [this](const QStringList &) {
+                if (!m_seriesId.isEmpty())
+                    refreshNextUnwatched();
+            });
 }
 
 void SeriesController::resetSessionState()
 {
     ++m_generation;
     ++m_seriesGeneration;
+    ++m_nextUnwatchedGeneration;
     m_seasons->clear();
     m_episodes->clear();
-    m_allEpisodes->clear();
     m_seriesId.clear();
     m_seriesName.clear();
     m_series.clear();
@@ -39,10 +56,9 @@ void SeriesController::open(const QString &seriesId, const QString &seriesName)
     emit seriesChanged();
     m_seasons->clear();
     m_episodes->clear();
-    m_allEpisodes->clear();
     m_currentSeason = -1;
     emit currentSeasonChanged();
-    recomputeNextUnwatched();
+    setNextUnwatched({});
 
     // The series' own record. A one-row model is used rather than duplicating
     // the role-name mapping here, so `series` and every item elsewhere in the
@@ -75,22 +91,10 @@ void SeriesController::open(const QString &seriesId, const QString &seriesName)
             emit seriesMetadataChanged();
         });
 
-    // Whole-series episode list, once per page entry. An empty seasonId asks
-    // Emby for every episode of the series, so "next unwatched" is a real
-    // answer instead of "next unwatched in the season you happen to be on".
-    // This deliberately does not drive `loading`: the page is usable as soon as
-    // the selected season arrives, and the button appears when this settles.
-    m_client->episodes(seriesId, QString())
-        .then(this, [this, seriesGeneration](const Result<ItemsPage> &result) {
-            if (seriesGeneration != m_seriesGeneration)
-                return;
-            if (!result.ok()) {
-                qCWarning(logApp) << "series episodes load failed:" << result.error;
-                return;
-            }
-            m_allEpisodes->setItems(result.value.items, result.value.totalRecordCount);
-            recomputeNextUnwatched();
-        });
+    // Independent of the selected season and deliberately not part of
+    // `loading`: the page is usable as soon as that season arrives, and the
+    // button appears when this bounded request settles.
+    refreshNextUnwatched();
 
     m_client->seasons(seriesId).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
@@ -138,37 +142,62 @@ void SeriesController::selectSeason(int row)
         });
 }
 
-void SeriesController::notePlayed(const QString &itemId, bool played)
+void SeriesController::notePlayed(const QString &itemId, bool)
 {
-    if (itemId.isEmpty())
+    if (itemId.isEmpty() || m_seriesId.isEmpty())
         return;
-    const auto &items = m_allEpisodes->items();
-    for (int row = 0; row < items.size(); ++row) {
-        if (items[row].id != itemId)
-            continue;
-        if (items[row].played == played)
-            return;
-        // updateUserData() writes both flags, so carry the favorite through
-        // untouched rather than clearing it as a side effect of a watch toggle.
-        m_allEpisodes->updateUserData(itemId, played, items[row].favorite);
-        recomputeNextUnwatched();
-        return;
-    }
+    // The changed episode may be in a season that is not loaded. Refetching one
+    // row is both cheaper and more reliable than trying to infer membership
+    // from the selected-season model. A change from another open surface costs
+    // one bounded request and cannot contaminate this series' answer because
+    // ParentId remains the current series.
+    refreshNextUnwatched();
 }
 
-void SeriesController::recomputeNextUnwatched()
+void SeriesController::refreshNextUnwatched()
 {
-    QVariantMap next;
-    const auto &items = m_allEpisodes->items();
-    for (int row = 0; row < items.size(); ++row) {
-        if (items[row].played)
-            continue;
-        next = m_allEpisodes->get(row);
-        break;
+    if (m_seriesId.isEmpty()) {
+        setNextUnwatched({});
+        return;
     }
+
+    ItemsQuery query;
+    query.parentId = m_seriesId;
+    query.recursive = true;
+    query.includeItemTypes = {QStringLiteral("Episode")};
+    query.filters = {QStringLiteral("IsUnplayed")};
+    // This is the same verified cross-season air order used by series play-all:
+    // PremiereDate is accepted by every Emby 4.x server and SortName makes ties
+    // deterministic without requesting episode overviews.
+    query.sortBy = QStringLiteral("PremiereDate,SortName");
+    query.limit = 1;
+
+    const int generation = ++m_nextUnwatchedGeneration;
+    m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
+        if (generation != m_nextUnwatchedGeneration)
+            return;
+        if (!result.ok()) {
+            qCWarning(logApp) << "next unwatched episode load failed:" << result.error;
+            return;
+        }
+
+        QVariantMap next;
+        if (!result.value.items.isEmpty()) {
+            // Reuse the public model's one role-to-map implementation without
+            // retaining a hidden model or the rest of the series.
+            MediaItemModel one;
+            one.setItems({result.value.items.first()});
+            next = one.get(0);
+        }
+        setNextUnwatched(std::move(next));
+    });
+}
+
+void SeriesController::setNextUnwatched(QVariantMap next)
+{
     if (next == m_nextUnwatched)
         return;
-    m_nextUnwatched = next;
+    m_nextUnwatched = std::move(next);
     emit nextUnwatchedChanged();
 }
 
