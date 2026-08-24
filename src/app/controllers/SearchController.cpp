@@ -51,6 +51,34 @@ SearchController::SearchController(emby::EmbyClient *client, QObject *parent)
     connect(&m_debounce, &QTimer::timeout, this, &SearchController::runSearch);
 }
 
+void SearchController::resetSessionState()
+{
+    ++m_generation;
+    m_debounce.stop();
+    m_model->clear();
+
+    if (!m_query.isEmpty()) {
+        m_query.clear();
+        emit queryChanged();
+    }
+    if (m_searching) {
+        m_searching = false;
+        emit searchingChanged();
+    }
+    if (!m_people.isEmpty() || !m_genres.isEmpty()) {
+        m_people.clear();
+        m_genres.clear();
+        emit facetsChanged();
+    }
+    // The stored value remains under user A's identity key. EmbyClient emits
+    // identityChanged after the boundary, and reloadRecentQueries() then reads
+    // user B's key (or nothing after logout).
+    if (!m_recentQueries.isEmpty()) {
+        m_recentQueries.clear();
+        emit recentQueriesChanged();
+    }
+}
+
 QString SearchController::recentKey() const
 {
     if (m_client->baseUrl().isEmpty() || m_client->userId().isEmpty())

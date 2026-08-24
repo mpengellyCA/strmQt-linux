@@ -83,6 +83,25 @@ PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent
 {
 }
 
+void PlaylistController::resetSessionState()
+{
+    ++m_listGeneration;
+    ++m_itemsGeneration;
+    ++m_sessionGeneration;
+    m_playlists->clear();
+    m_items->clear();
+    m_currentId.clear();
+    m_currentName.clear();
+    m_listNextIndex = 0;
+    m_listComplete = false;
+    m_listWalkActive = false;
+    resetMemberWalk();
+    setLoading(false);
+    setError({});
+    emit currentChanged();
+    emit playlistsChanged();
+}
+
 void PlaylistController::refresh()
 {
     // A restart, not a resume: create(), rename() and remove() all end here, and
@@ -279,8 +298,11 @@ void PlaylistController::create(const QString &name, const QStringList &itemIds,
         emit actionFailed(tr("A playlist needs a name."));
         return;
     }
+    const int sessionGeneration = m_sessionGeneration;
     m_client->createPlaylist(name.trimmed(), itemIds, mediaType)
-        .then(this, [this, name](const Result<QString> &result) {
+        .then(this, [this, sessionGeneration, name](const Result<QString> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
@@ -295,8 +317,12 @@ void PlaylistController::addItems(const QString &playlistId, const QStringList &
 {
     if (playlistId.isEmpty() || itemIds.isEmpty())
         return;
+    const int sessionGeneration = m_sessionGeneration;
     m_client->addToPlaylist(playlistId, itemIds)
-        .then(this, [this, playlistId, count = itemIds.size()](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration, playlistId,
+                     count = itemIds.size()](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
@@ -312,8 +338,12 @@ void PlaylistController::removeEntries(const QStringList &entryIds)
 {
     if (m_currentId.isEmpty() || entryIds.isEmpty())
         return;
+    const int sessionGeneration = m_sessionGeneration;
     m_client->removeFromPlaylist(m_currentId, entryIds)
-        .then(this, [this, count = entryIds.size()](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration,
+                     count = entryIds.size()](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
@@ -327,8 +357,11 @@ void PlaylistController::moveEntry(const QString &entryId, int newIndex)
 {
     if (m_currentId.isEmpty() || entryId.isEmpty() || newIndex < 0)
         return;
+    const int sessionGeneration = m_sessionGeneration;
     m_client->movePlaylistItem(m_currentId, entryId, newIndex)
-        .then(this, [this](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
@@ -346,8 +379,12 @@ void PlaylistController::rename(const QString &playlistId, const QString &name)
         emit actionFailed(tr("A playlist needs a name."));
         return;
     }
+    const int sessionGeneration = m_sessionGeneration;
     m_client->renameItem(playlistId, wanted)
-        .then(this, [this, playlistId, wanted](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration, playlistId,
+                     wanted](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (!result.ok()) {
                 emit actionFailed(result.error);
                 return;
@@ -366,7 +403,11 @@ void PlaylistController::remove(const QString &playlistId)
 {
     if (playlistId.isEmpty())
         return;
-    m_client->deleteItem(playlistId).then(this, [this, playlistId](const Result<bool> &result) {
+    const int sessionGeneration = m_sessionGeneration;
+    m_client->deleteItem(playlistId).then(
+        this, [this, sessionGeneration, playlistId](const Result<bool> &result) {
+        if (sessionGeneration != m_sessionGeneration)
+            return;
         if (!result.ok()) {
             emit actionFailed(result.error);
             return;

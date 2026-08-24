@@ -16,6 +16,32 @@ DetailsController::DetailsController(emby::EmbyClient *client, QObject *parent)
 {
 }
 
+void DetailsController::resetSessionState()
+{
+    ++m_generation;
+    m_similar->clear();
+    m_tagline.clear();
+    m_genresLine.clear();
+    m_castLine.clear();
+    m_directorLine.clear();
+    m_mediaSources.clear();
+    m_chapters.clear();
+    m_people.clear();
+    m_cast.clear();
+    m_crew.clear();
+    m_genres.clear();
+    m_studios.clear();
+    m_externalLinks.clear();
+    m_collections.clear();
+    m_trailers.clear();
+    m_premiereDate.clear();
+    m_person.clear();
+    m_criticRating = 0.0;
+    emit detailsChanged();
+    emit collectionsChanged();
+    emit personChanged();
+}
+
 void DetailsController::loadPerson(const QString &personId)
 {
     const int generation = ++m_generation;

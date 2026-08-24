@@ -83,6 +83,8 @@ public:
     double criticRating() const { return m_criticRating; }
     MediaItemModel *similar() const { return m_similar; }
 
+    void resetSessionState();
+
     Q_INVOKABLE void load(const QString &itemId);
     // A person is an ordinary item to Emby: /Users/{uid}/Items/{personId}
     // returns Overview, PremiereDate (their birth date) and

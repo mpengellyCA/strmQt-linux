@@ -60,6 +60,8 @@ public:
 
     QVariantMap series() const { return m_series; }
 
+    void resetSessionState();
+
     Q_INVOKABLE void open(const QString &seriesId, const QString &seriesName);
     Q_INVOKABLE void selectSeason(int row);
 

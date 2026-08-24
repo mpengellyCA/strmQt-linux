@@ -11,6 +11,25 @@ SeriesController::SeriesController(emby::EmbyClient *client, QObject *parent)
 {
 }
 
+void SeriesController::resetSessionState()
+{
+    ++m_generation;
+    ++m_seriesGeneration;
+    m_seasons->clear();
+    m_episodes->clear();
+    m_allEpisodes->clear();
+    m_seriesId.clear();
+    m_seriesName.clear();
+    m_series.clear();
+    m_nextUnwatched.clear();
+    m_currentSeason = -1;
+    setLoading(false);
+    emit seriesChanged();
+    emit seriesMetadataChanged();
+    emit currentSeasonChanged();
+    emit nextUnwatchedChanged();
+}
+
 void SeriesController::open(const QString &seriesId, const QString &seriesName)
 {
     const int generation = ++m_generation;

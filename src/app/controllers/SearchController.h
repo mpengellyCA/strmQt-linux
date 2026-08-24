@@ -48,6 +48,9 @@ public:
     // query, and recording those would fill the list with prefixes.
     Q_INVOKABLE void noteQueryUsed(const QString &query);
     Q_INVOKABLE void clearRecentQueries();
+    // Clears only the in-memory presentation. Persisted recent queries belong
+    // to their account key and are reloaded after EmbyClient changes identity.
+    void resetSessionState();
 
 signals:
     void queryChanged();

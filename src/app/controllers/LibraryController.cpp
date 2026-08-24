@@ -43,6 +43,37 @@ LibraryController::LibraryController(emby::EmbyClient *client, QObject *parent)
 {
 }
 
+void LibraryController::resetSessionState()
+{
+    ++m_generation;
+    m_model->clear();
+
+    m_libraryId.clear();
+    m_title.clear();
+    m_collectionType.clear();
+    m_favoritesOnly = false;
+    m_genreId.clear();
+    m_personId.clear();
+    m_studioId.clear();
+    m_collectionScope = false;
+
+    m_sortBy = QStringLiteral("SortName");
+    m_sortDescending = false;
+    m_watchedFilter = QStringLiteral("all");
+    m_nameStartsWith.clear();
+
+    setLoading(false);
+    setError({});
+    setPending(false, 0);
+    if (!m_autoApplyUpdates) {
+        m_autoApplyUpdates = true;
+        emit autoApplyUpdatesChanged();
+    }
+    emit titleChanged();
+    emit scopeChanged();
+    emit queryChanged();
+}
+
 void LibraryController::bindLiveUpdates(LiveUpdateService *service)
 {
     if (!service)

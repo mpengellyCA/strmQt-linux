@@ -70,6 +70,71 @@ void MusicController::setActions(ItemActions *actions)
     m_actions = actions;
 }
 
+void MusicController::resetSessionState()
+{
+    ++m_generation;
+    ++m_albumGeneration;
+    ++m_artistGeneration;
+    ++m_songGeneration;
+    ++m_playlistGeneration;
+    ++m_genreGeneration;
+    ++m_playGeneration;
+    ++m_collectGeneration;
+    m_albumInFlight = 0;
+    m_artistInFlight = 0;
+    m_songInFlight = 0;
+    m_playlistInFlight = 0;
+    m_detailInFlight = 0;
+
+    m_albums->clear();
+    m_artists->clear();
+    m_tracks->clear();
+    m_songs->clear();
+    m_playlists->clear();
+    m_artistAlbums->clear();
+    m_artistTracks->clear();
+    m_playScratch->clear();
+
+    m_libraryId.clear();
+    m_albumId.clear();
+    m_albumName.clear();
+    m_artistId.clear();
+    m_artistName.clear();
+    m_artistMode = QStringLiteral("albumArtists");
+    m_tab = QStringLiteral("albums");
+    m_albumSortBy = QStringLiteral("SortName");
+    m_albumSortDescending = false;
+    m_artistSortBy = QStringLiteral("SortName");
+    m_artistSortDescending = false;
+    m_songSortBy = QStringLiteral("SortName");
+    m_songSortDescending = false;
+    m_playlistSortBy = QStringLiteral("SortName");
+    m_playlistSortDescending = false;
+    m_nameStartsWith.clear();
+    m_genreIds.clear();
+    m_yearFilters.clear();
+    m_favoritesOnly = false;
+    m_genreOptions.clear();
+    m_genreNextIndex = 0;
+    m_genresComplete = false;
+    m_genreWalkActive = false;
+    m_genresFailed = false;
+    m_started = false;
+
+    updateLoading();
+    setError({});
+    emit scopeChanged();
+    emit albumChanged();
+    emit artistChanged();
+    emit albumsChanged();
+    emit artistsChanged();
+    emit songsChanged();
+    emit playlistsChanged();
+    emit queryChanged();
+    emit tabChanged();
+    emit genresChanged();
+}
+
 bool MusicController::canLoadMoreAlbums() const
 {
     if (isRandomSort(m_albumSortBy))

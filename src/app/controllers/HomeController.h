@@ -10,6 +10,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 
 namespace strmqt {
@@ -73,6 +74,10 @@ public:
     int pendingNewCount() const { return m_pendingNewCount; }
     bool autoApplyUpdates() const { return m_autoApplyUpdates; }
     void setAutoApplyUpdates(bool autoApply);
+
+    // Authentication owns every row, descriptor and deferred refresh in this
+    // controller. Called synchronously before EmbyClient changes identity.
+    void resetSessionState();
 
     // User-driven refresh: applies as soon as it lands.
     Q_INVOKABLE void refresh();
@@ -145,7 +150,7 @@ private:
     int countNewItems(const Snapshot &snapshot) const;
     void setPending(bool pending, int newCount);
     void beginRequest();
-    void endRequest();
+    void endRequest(int generation);
     void setError(const QString &message);
     void updateAllModels(const QString &itemId, bool played, bool favorite);
     void updateAllModels(const QString &itemId, bool played, bool favorite,
@@ -154,6 +159,7 @@ private:
 
     emby::EmbyClient *m_client;
     QElapsedTimer m_lastUserDataRefresh;
+    QTimer m_userDataRefreshTimer;
     int m_userDataRefreshFloorMs = 30'000;
     bool m_userDataRefreshQueued = false;
     MediaItemModel *m_resume;
@@ -172,6 +178,8 @@ private:
     QString m_errorMessage;
     int m_pending = 0;
     int m_generation = 0; // invalidates in-flight replies across refreshes
+    int m_genreGeneration = 0;
+    int m_sessionGeneration = 0;
 
     Snapshot m_incoming;      // the refresh currently in flight
     Snapshot m_held;          // fetched, waiting for applyPending()

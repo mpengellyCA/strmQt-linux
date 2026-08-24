@@ -156,6 +156,8 @@ public:
     QVariantList genreOptions() const { return m_genreOptions; }
     bool genresFailed() const { return m_genresFailed; }
 
+    void resetSessionState();
+
     // Each of these re-runs the visible tab from page 0 and invalidates the
     // other two, and each no-ops when the value is unchanged so a menu that
     // re-emits on open does not refetch — the same contract LibraryController's

@@ -62,6 +62,8 @@ public:
 
     bool playlistsComplete() const { return m_listComplete; }
 
+    void resetSessionState();
+
     // Refresh the list of playlists, from page 0, walking to the end.
     Q_INVOKABLE void refresh();
     // The walk, as a resume rather than a restart: nothing to do when the list
@@ -135,6 +137,9 @@ private:
     // in-flight page of the playlist list, so a picker silently lost a page.
     int m_listGeneration = 0;
     int m_itemsGeneration = 0;
+    // Mutation replies (create/add/remove/move/rename/delete) also own UI
+    // continuations and must not announce or refetch after an account switch.
+    int m_sessionGeneration = 0;
     // The walk's own state, so a walk that stopped on an error can be told apart
     // from one that reached the end of the list — the difference between "every
     // playlist you have" and "the 500 that arrived before page 1 failed", which

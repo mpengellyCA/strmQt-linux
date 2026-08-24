@@ -40,7 +40,9 @@ private slots:
     void serverChangeRetiresALateLogin();
     void serverUrlPolicyRejectsUnsafeAddresses();
     void homeRefreshBuildsRails();
+    void homeSessionResetRetiresOldCountersAndGenreCallbacks();
     void libraryPaging();
+    void librarySessionResetRetiresOldPage();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -288,6 +290,133 @@ void ControllersTest::libraryPaging()
     const auto secondRequest = m_mock->lastRequestFor(
         QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId));
     QVERIFY(secondRequest.query.contains(QStringLiteral("StartIndex=3")));
+}
+
+void ControllersTest::homeSessionResetRetiresOldCountersAndGenreCallbacks()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const QString resumeA = QStringLiteral("/Users/%1/Items/Resume").arg(kUserId);
+    const QString itemsA = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString viewsA = QStringLiteral("/Users/%1/Views").arg(kUserId);
+
+    m_client->setBaseUrl(m_mock->baseUrl());
+    m_client->setSession(kToken, kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), resumeA, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-resume\",\"Name\":\"A "
+                                       "Resume\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/NextUp"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsA, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), viewsA, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-genre\",\"Name\":\"A "
+                                       "Genre\",\"Type\":\"Genre\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    for (const QString &path : {resumeA, QStringLiteral("/Shows/NextUp"), itemsA, viewsA,
+                                QStringLiteral("/Genres")})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 350);
+
+    HomeController home(m_client);
+    home.refresh();
+    home.loadGenreRails();
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 5, 5000);
+    QVERIFY(home.busy());
+
+    home.resetSessionState();
+    QVERIFY(!home.busy());
+    QCOMPARE(home.resume()->rowCount(), 0);
+    QVERIFY(home.genreRails().isEmpty());
+
+    m_client->setSession(kToken, userB);
+    const QString resumeB = QStringLiteral("/Users/%1/Items/Resume").arg(userB);
+    const QString itemsB = QStringLiteral("/Users/%1/Items").arg(userB);
+    const QString viewsB = QStringLiteral("/Users/%1/Views").arg(userB);
+    m_mock->addRoute(QStringLiteral("GET"), resumeB, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"b-resume\",\"Name\":\"B "
+                                       "Resume\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/NextUp"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsB, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), viewsB, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    for (const QString &path : {resumeB, QStringLiteral("/Shows/NextUp"), itemsB, viewsB})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 0);
+
+    home.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
+    QCOMPARE(home.resume()->rowCount(), 1);
+    QCOMPARE(home.resume()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Resume"));
+
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"b-genre\",\"Name\":\"B "
+                                       "Genre\",\"Type\":\"Genre\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsB, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"b-movie\",\"Name\":\"B "
+                                       "Movie\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/Genres"), 0);
+    home.loadGenreRails();
+    QTRY_COMPARE_WITH_TIMEOUT(home.genreRails().size(), 1, 5000);
+    QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("B Genre"));
+
+    // User A's five held replies land after B is already visible. They must not
+    // decrement B's counters, repopulate A rows, or close B's genre load-once gate.
+    QTest::qWait(450);
+    QVERIFY(!home.busy());
+    QCOMPARE(home.resume()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Resume"));
+    QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("B Genre"));
+}
+
+void ControllersTest::librarySessionResetRetiresOldPage()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const QString itemsA = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString itemsB = QStringLiteral("/Users/%1/Items").arg(userB);
+    m_client->setBaseUrl(m_mock->baseUrl());
+    m_client->setSession(kToken, kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsA, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a\",\"Name\":\"A Movie\","
+                                       "\"Type\":\"Movie\"}],\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsA, 350);
+
+    LibraryController library(m_client);
+    library.open(QStringLiteral("shared"), QStringLiteral("A Library"),
+                 QStringLiteral("movies"));
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 1, 5000);
+    QVERIFY(library.loading());
+
+    library.resetSessionState();
+    QVERIFY(!library.loading());
+    QVERIFY(library.title().isEmpty());
+    QVERIFY(library.scopeKey().isEmpty());
+    QCOMPARE(library.model()->rowCount(), 0);
+
+    m_client->setSession(kToken, userB);
+    m_mock->addRoute(QStringLiteral("GET"), itemsB, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"b\",\"Name\":\"B Movie\","
+                                       "\"Type\":\"Movie\"}],\"TotalRecordCount\":1}"));
+    library.open(QStringLiteral("shared"), QStringLiteral("B Library"),
+                 QStringLiteral("movies"));
+    QTRY_VERIFY_WITH_TIMEOUT(!library.loading(), 5000);
+    QCOMPARE(library.title(), QStringLiteral("B Library"));
+    QCOMPARE(library.model()->rowCount(), 1);
+    QCOMPARE(library.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Movie"));
+
+    QTest::qWait(450);
+    QCOMPARE(library.title(), QStringLiteral("B Library"));
+    QCOMPARE(library.model()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Movie"));
 }
 
 QTEST_GUILESS_MAIN(ControllersTest)

@@ -71,6 +71,7 @@ public:
     int pendingNewCount() const { return m_pendingNewCount; }
     bool autoApplyUpdates() const { return m_autoApplyUpdates; }
     void setAutoApplyUpdates(bool autoApply);
+    void resetSessionState();
 
     QString sortBy() const { return m_sortBy; }
     bool sortDescending() const { return m_sortDescending; }

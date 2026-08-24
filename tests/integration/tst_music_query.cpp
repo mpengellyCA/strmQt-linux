@@ -48,6 +48,7 @@ private slots:
     void createdPlaylistsReappearInTheMusicTab();
     void invalidatingPlaylistsFromAnotherTabDoesNotStrandLoading();
     void aPlaylistFetchWithNoLibraryDoesNotStrandLoading();
+    void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
 private:
     // One row of `type`, over a total the server claims is much larger — the
@@ -967,6 +968,95 @@ void MusicQueryTest::aPlaylistFetchWithNoLibraryDoesNotStrandLoading()
     QCOMPARE(unscoped->playlists()->rowCount(), 0);
     delete unscoped;
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+}
+
+void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const QString itemsA = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString itemsB = QStringLiteral("/Users/%1/Items").arg(userB);
+    m_mock->addRoute(QStringLiteral("GET"), itemsA, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"audio-a\",\"Name\":\"A "
+                                       "Audio\",\"Type\":\"Audio\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"genre-a\",\"Name\":\"A "
+                                       "Genre\",\"Type\":\"MusicGenre\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsA, 350);
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 350);
+
+    m_music->setArtistMode(QStringLiteral("artists"));
+    m_music->setNameStartsWith(QStringLiteral("A"));
+    m_music->setGenreIds({QStringLiteral("genre-a")});
+    m_music->setYearFilters({QStringLiteral("2020")});
+    m_music->setFavoritesOnly(true);
+    m_music->setTab(QStringLiteral("songs"));
+    m_music->loadSongs();
+    m_music->openAlbum(QStringLiteral("shared-album"), QStringLiteral("A Album"));
+    m_music->loadGenres();
+    QTRY_VERIFY_WITH_TIMEOUT(requestsFor(itemsA) >= 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(QStringLiteral("/MusicGenres")), 1, 5000);
+    QVERIFY(m_music->loading());
+    QCOMPARE(m_music->albumId(), QStringLiteral("shared-album"));
+
+    m_music->resetSessionState();
+    QVERIFY(!m_music->loading());
+    QVERIFY(m_music->libraryId().isEmpty());
+    QVERIFY(m_music->albumId().isEmpty());
+    QVERIFY(m_music->artistId().isEmpty());
+    QCOMPARE(m_music->tab(), QStringLiteral("albums"));
+    QCOMPARE(m_music->artistMode(), QStringLiteral("albumArtists"));
+    QCOMPARE(m_music->sortBy(), QStringLiteral("SortName"));
+    QVERIFY(!m_music->sortDescending());
+    QVERIFY(m_music->nameStartsWith().isEmpty());
+    QVERIFY(m_music->genreIds().isEmpty());
+    QVERIFY(m_music->yearFilters().isEmpty());
+    QVERIFY(!m_music->favoritesOnly());
+    QVERIFY(m_music->genreOptions().isEmpty());
+    QCOMPARE(m_music->albums()->rowCount(), 0);
+    QCOMPARE(m_music->artists()->rowCount(), 0);
+    QCOMPARE(m_music->songs()->rowCount(), 0);
+    QCOMPARE(m_music->playlists()->rowCount(), 0);
+    QCOMPARE(m_music->tracks()->rowCount(), 0);
+    QCOMPARE(m_music->artistAlbums()->rowCount(), 0);
+    QCOMPARE(m_music->artistTracks()->rowCount(), 0);
+
+    m_client->setSession(kToken, userB);
+    m_music->setLibrary(kMusicLibrary); // the same id must not hit A's old early return
+    const int beforePreference = m_mock->requestCount();
+    m_music->setTab(QStringLiteral("songs"));
+    QTest::qWait(100);
+    // resetSessionState() restores the pre-load state: a tab preference alone
+    // does not start a request in the new account.
+    QCOMPARE(m_mock->requestCount(), beforePreference);
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsB, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"album-b\",\"Name\":\"B "
+                                       "Album\",\"Type\":\"MusicAlbum\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"genre-b\",\"Name\":\"B "
+                                       "Genre\",\"Type\":\"MusicGenre\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), QStringLiteral("/MusicGenres"), 0);
+    m_music->setTab(QStringLiteral("albums"));
+    m_music->loadAlbums();
+    m_music->loadGenres();
+    settle();
+    QTRY_COMPARE_WITH_TIMEOUT(m_music->genreOptions().size(), 1, 5000);
+    QCOMPARE(m_music->albums()->rowCount(), 1);
+    QCOMPARE(m_music->albums()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Album"));
+    QCOMPARE(m_music->genreOptions().first().toMap().value(QStringLiteral("label")).toString(),
+             QStringLiteral("B Genre"));
+
+    QTest::qWait(450);
+    QVERIFY(!m_music->loading());
+    QCOMPARE(m_music->albums()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Album"));
+    QCOMPARE(m_music->genreOptions().first().toMap().value(QStringLiteral("label")).toString(),
+             QStringLiteral("B Genre"));
 }
 
 QTEST_MAIN(MusicQueryTest)

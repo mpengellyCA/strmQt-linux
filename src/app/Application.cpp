@@ -219,10 +219,22 @@ void Application::teardownAuthenticatedSession()
     m_live->stop();
     m_player->shutdownForSessionBoundary();
 
-    // ItemActions owns the registry of every user-facing media model. It also
-    // retires optimistic mutations and asynchronous queue builders here.
+    // Controllers own more session state than the MediaItemModels registered
+    // with ItemActions: descriptor lists, scope ids, load-once gates, staged
+    // snapshots and independent async generations. Retire all of it while the
+    // old identity is still coherent, before SessionController changes the
+    // client's credentials.
+    m_home->resetSessionState();
+    m_library->resetSessionState();
+    m_search->resetSessionState();
+    m_series->resetSessionState();
+    m_details->resetSessionState();
+    m_playlists->resetSessionState();
+    m_music->resetSessionState();
+
+    // ItemActions retires optimistic mutations and asynchronous queue builders,
+    // and clears any dynamically registered rail model not owned above.
     m_actions->resetSessionState();
-    m_search->clearRecentQueries();
 
     // No old user's title, art, queue capabilities, or position may survive on
     // the desktop media-control surface while the login page is visible.

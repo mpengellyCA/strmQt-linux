@@ -45,6 +45,58 @@ HomeController::HomeController(emby::EmbyClient *client, QObject *parent)
       m_nextUp(new MediaItemModel(this)), m_favorites(new MediaItemModel(this)),
       m_libraries(new LibraryListModel(this))
 {
+    m_userDataRefreshTimer.setSingleShot(true);
+    connect(&m_userDataRefreshTimer, &QTimer::timeout, this, [this] {
+        m_userDataRefreshQueued = false;
+        onUserDataInvalidated({});
+    });
+}
+
+void HomeController::resetSessionState()
+{
+    const bool wasBusy = busy();
+    ++m_generation;
+    ++m_genreGeneration;
+    ++m_sessionGeneration;
+    m_pending = 0;
+    if (wasBusy)
+        emit busyChanged();
+
+    m_userDataRefreshTimer.stop();
+    m_userDataRefreshQueued = false;
+    m_lastUserDataRefresh.invalidate();
+
+    m_resume->clear();
+    m_nextUp->clear();
+    m_favorites->clear();
+    m_libraries->setLibraries({});
+
+    m_latestRails.clear();
+    for (MediaItemModel *model : std::as_const(m_railModels)) {
+        model->clear();
+        model->deleteLater();
+    }
+    m_railModels.clear();
+    emit latestRailsChanged();
+
+    m_genreRails.clear();
+    for (MediaItemModel *model : std::as_const(m_genreModels)) {
+        model->clear();
+        model->deleteLater();
+    }
+    m_genreModels.clear();
+    m_genreRailsFetched = false;
+    emit genreRailsChanged();
+
+    m_incoming = Snapshot{};
+    m_held = Snapshot{};
+    m_applyWhenReady = true;
+    setPending(false, 0);
+    setError({});
+    if (!m_autoApplyUpdates) {
+        m_autoApplyUpdates = true;
+        emit autoApplyUpdatesChanged();
+    }
 }
 
 void HomeController::bindLiveUpdates(LiveUpdateService *service)
@@ -125,10 +177,7 @@ void HomeController::onUserDataInvalidated(const QStringList &itemIds)
         if (waited < m_userDataRefreshFloorMs) {
             if (!m_userDataRefreshQueued) {
                 m_userDataRefreshQueued = true;
-                QTimer::singleShot(m_userDataRefreshFloorMs - waited, this, [this] {
-                    m_userDataRefreshQueued = false;
-                    onUserDataInvalidated({});
-                });
+                m_userDataRefreshTimer.start(m_userDataRefreshFloorMs - waited);
             }
             return;
         }
@@ -139,8 +188,12 @@ void HomeController::onUserDataInvalidated(const QStringList &itemIds)
 
 void HomeController::startRefresh(bool applyWhenReady)
 {
+    const bool wasBusy = busy();
     ++m_generation;
     const int generation = m_generation;
+    // A user-driven refresh may supersede another one. Its replies carry the
+    // old generation and must not decrement the new refresh's request count.
+    m_pending = 0;
     m_incoming = Snapshot{};
     m_applyWhenReady = applyWhenReady;
     setError({});
@@ -155,7 +208,7 @@ void HomeController::startRefresh(bool applyWhenReady)
                 setError(result.error);
             }
         }
-        endRequest();
+        endRequest(generation);
     });
 
     beginRequest();
@@ -168,7 +221,7 @@ void HomeController::startRefresh(bool applyWhenReady)
                 setError(result.error);
             }
         }
-        endRequest();
+        endRequest(generation);
     });
 
     beginRequest();
@@ -182,18 +235,18 @@ void HomeController::startRefresh(bool applyWhenReady)
             m_incoming.favorites = result.value.items;
             m_incoming.favoritesTotal = result.value.totalRecordCount;
         }
-        endRequest();
+        endRequest(generation);
     });
 
     beginRequest();
     m_client->userViews().then(this, [this, generation](const Result<QList<Library>> &result) {
         if (generation != m_generation) {
-            endRequest();
+            endRequest(generation);
             return;
         }
         if (!result.ok()) {
             setError(result.error);
-            endRequest();
+            endRequest(generation);
             return;
         }
 
@@ -215,11 +268,13 @@ void HomeController::startRefresh(bool applyWhenReady)
                     if (generation == m_generation && result.ok() &&
                         slot < m_incoming.rails.size())
                         m_incoming.rails[slot].second = result.value;
-                    endRequest();
+                    endRequest(generation);
                 });
         }
-        endRequest();
+        endRequest(generation);
     });
+    if (!wasBusy && busy())
+        emit busyChanged();
 }
 
 void HomeController::finishRefresh()
@@ -334,9 +389,10 @@ void HomeController::fetchGenreRails()
     constexpr int kGenreCount = 6;
     constexpr int kItemsPerRail = 20;
 
+    const int generation = ++m_genreGeneration;
     m_client->genres(QString(), kGenreCount)
-        .then(this, [this](const Result<QList<MediaItem>> &result) {
-            if (!result.ok() || result.value.isEmpty())
+        .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
+            if (generation != m_genreGeneration || !result.ok() || result.value.isEmpty())
                 return;
 
             // Rebuilt in place: each rail's items land independently, and the
@@ -366,8 +422,10 @@ void HomeController::fetchGenreRails()
                 query.limit = kItemsPerRail;
 
                 m_client->items(query).then(
-                    this, [this, genre, model, i, pending](const Result<ItemsPage> &result) {
-                        if (!result.ok() || result.value.items.isEmpty())
+                    this, [this, generation, genre, model, i,
+                           pending](const Result<ItemsPage> &result) {
+                        if (generation != m_genreGeneration || !result.ok()
+                            || result.value.items.isEmpty())
                             return;
                         model->setItems(result.value.items);
 
@@ -417,8 +475,12 @@ void HomeController::setPending(bool pending, int newCount)
 
 void HomeController::togglePlayed(const QString &itemId, bool played, bool favorite)
 {
+    const int sessionGeneration = m_sessionGeneration;
     m_client->setPlayed(itemId, played)
-        .then(this, [this, itemId, played, favorite](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration, itemId, played,
+                     favorite](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (result.ok())
                 updateAllModels(itemId, played, favorite);
             else
@@ -428,8 +490,12 @@ void HomeController::togglePlayed(const QString &itemId, bool played, bool favor
 
 void HomeController::toggleFavorite(const QString &itemId, bool played, bool favorite)
 {
+    const int sessionGeneration = m_sessionGeneration;
     m_client->setFavorite(itemId, favorite)
-        .then(this, [this, itemId, played, favorite](const Result<bool> &result) {
+        .then(this, [this, sessionGeneration, itemId, played,
+                     favorite](const Result<bool> &result) {
+            if (sessionGeneration != m_sessionGeneration)
+                return;
             if (result.ok())
                 updateAllModels(itemId, played, favorite);
             else
@@ -460,12 +526,13 @@ void HomeController::updateAllModels(const QString &itemId, bool played, bool fa
 
 void HomeController::beginRequest()
 {
-    if (++m_pending == 1)
-        emit busyChanged();
+    ++m_pending;
 }
 
-void HomeController::endRequest()
+void HomeController::endRequest(int generation)
 {
+    if (generation != m_generation)
+        return;
     if (--m_pending == 0) {
         finishRefresh();
         emit busyChanged();

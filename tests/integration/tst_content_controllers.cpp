@@ -38,7 +38,10 @@ private slots:
     void detailsClearsBetweenItems();
     void seriesFetchesItsOwnRecord();
     void seriesIgnoresAnEmptyId();
+    void sessionResetRetiresSearchDetailsAndSeriesReplies();
+    void searchResetPreservesPerAccountHistory();
     void playlistFetchesDoNotStrandEachOther();
+    void playlistSessionResetRetiresBothWalksAndMutations();
     void createWhileOpenLeavesTheOpenPlaylistAlone();
     void creationCarriesTheMediaTypeItWasGiven();
     void playlistMembersPageToTheEnd_data();
@@ -366,6 +369,189 @@ void ContentControllersTest::seriesIgnoresAnEmptyId()
     QCOMPARE(m_mock->requestCount(), 0);
     QVERIFY(series.series().isEmpty());
     QCOMPARE(series.seasons()->rowCount(), 0);
+}
+
+void ContentControllersTest::sessionResetRetiresSearchDetailsAndSeriesReplies()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-search\",\"Name\":\"A "
+                                       "Search\",\"Type\":\"Movie\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Persons"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-person\",\"Name\":\"A "
+                                       "Person\",\"Type\":\"Person\"}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-genre\",\"Name\":\"A "
+                                       "Genre\",\"Type\":\"Genre\"}]}"));
+    for (const QString &path : {itemsPath, QStringLiteral("/Persons"),
+                                QStringLiteral("/Genres")})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 300);
+
+    SearchController search(m_client);
+    search.setQuery(QStringLiteral("account a"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+    QVERIFY(search.searching());
+    search.resetSessionState();
+    QVERIFY(search.query().isEmpty());
+    QVERIFY(!search.searching());
+    QCOMPARE(search.model()->rowCount(), 0);
+    QTest::qWait(400);
+    QCOMPARE(search.model()->rowCount(), 0);
+    QVERIFY(search.people().isEmpty());
+    QVERIFY(search.genres().isEmpty());
+
+    const QString detailPath = QStringLiteral("/Users/%1/Items/shared").arg(kUserId);
+    const QString similarPath = QStringLiteral("/Items/shared/Similar");
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"shared\",\"Name\":\"A Detail\","
+                                       "\"Type\":\"Movie\",\"Genres\":[\"A Genre\"]}"));
+    m_mock->addRoute(QStringLiteral("GET"), similarPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"similar-a\","
+                                       "\"Name\":\"A Similar\",\"Type\":\"Movie\"}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"collection-a\","
+                                       "\"Name\":\"A Collection\",\"Type\":\"BoxSet\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    for (const QString &path : {detailPath, similarPath, itemsPath})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 300);
+
+    DetailsController details(m_client);
+    details.load(QStringLiteral("shared"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(detailPath), 1, 5000);
+    details.resetSessionState();
+    QVERIFY(details.genres().isEmpty());
+    QVERIFY(details.collections().isEmpty());
+    QCOMPARE(details.similar()->rowCount(), 0);
+    QTest::qWait(400);
+    QVERIFY(details.genres().isEmpty());
+    QVERIFY(details.collections().isEmpty());
+    QCOMPARE(details.similar()->rowCount(), 0);
+
+    const QString seasonsPath = QStringLiteral("/Shows/shared/Seasons");
+    const QString episodesPath = QStringLiteral("/Shows/shared/Episodes");
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"season-a\",\"Name\":\"A "
+                                       "Season\",\"Type\":\"Season\",\"IndexNumber\":1}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), episodesPath, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"episode-a\",\"Name\":\"A "
+                                       "Episode\",\"Type\":\"Episode\","
+                                       "\"ParentIndexNumber\":1}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), detailPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"shared\",\"Name\":\"A Series\","
+                                       "\"Type\":\"Series\"}"));
+    for (const QString &path : {seasonsPath, episodesPath, detailPath})
+        m_mock->setRouteDelay(QStringLiteral("GET"), path, 300);
+
+    SeriesController series(m_client);
+    series.open(QStringLiteral("shared"), QStringLiteral("A Series"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), 1, 5000);
+    QVERIFY(series.loading());
+    series.resetSessionState();
+    QVERIFY(!series.loading());
+    QVERIFY(series.seriesId().isEmpty());
+    QVERIFY(series.seriesName().isEmpty());
+    QVERIFY(series.series().isEmpty());
+    QCOMPARE(series.seasons()->rowCount(), 0);
+    QCOMPARE(series.episodes()->rowCount(), 0);
+    QTest::qWait(400);
+    QVERIFY(series.series().isEmpty());
+    QCOMPARE(series.seasons()->rowCount(), 0);
+    QCOMPARE(series.episodes()->rowCount(), 0);
+}
+
+void ContentControllersTest::searchResetPreservesPerAccountHistory()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    SearchController search(m_client);
+    search.clearRecentQueries();
+    search.noteQueryUsed(QStringLiteral("A only"));
+    QCOMPARE(search.recentQueries(), QStringList{QStringLiteral("A only")});
+
+    search.resetSessionState();
+    QVERIFY(search.recentQueries().isEmpty());
+    m_client->setSession(kToken, userB);
+    search.clearRecentQueries();
+    search.noteQueryUsed(QStringLiteral("B only"));
+    QCOMPARE(search.recentQueries(), QStringList{QStringLiteral("B only")});
+
+    m_client->setSession(kToken, kUserId);
+    QCOMPARE(search.recentQueries(), QStringList{QStringLiteral("A only")});
+    search.clearRecentQueries();
+    m_client->setSession(kToken, userB);
+    QCOMPARE(search.recentQueries(), QStringList{QStringLiteral("B only")});
+    search.clearRecentQueries();
+}
+
+void ContentControllersTest::playlistSessionResetRetiresBothWalksAndMutations()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const QString listA = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString listB = QStringLiteral("/Users/%1/Items").arg(userB);
+    const QString members = QStringLiteral("/Playlists/shared/Items");
+    m_mock->addRoute(QStringLiteral("GET"), listA, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"a-list\",\"Name\":\"A "
+                                       "List\",\"Type\":\"Playlist\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), members, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"track-a\",\"Name\":\"A "
+                                       "Track\",\"Type\":\"Audio\","
+                                       "\"PlaylistItemId\":\"entry-a\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Playlists"), 200,
+                     QByteArrayLiteral("{\"Id\":\"created-a\",\"ItemAddedCount\":1}"));
+    for (const auto &route : {qMakePair(QStringLiteral("GET"), listA),
+                              qMakePair(QStringLiteral("GET"), members),
+                              qMakePair(QStringLiteral("POST"), QStringLiteral("/Playlists"))})
+        m_mock->setRouteDelay(route.first, route.second, 350);
+
+    PlaylistController playlists(m_client);
+    QSignalSpy succeeded(&playlists, &PlaylistController::actionSucceeded);
+    QSignalSpy mutated(&playlists, &PlaylistController::playlistsMutated);
+    playlists.refresh();
+    playlists.open(QStringLiteral("shared"), QStringLiteral("A List"));
+    playlists.create(QStringLiteral("A Created"), {QStringLiteral("track-a")});
+    QTRY_COMPARE_WITH_TIMEOUT(m_mock->requestCount(), 3, 5000);
+    QVERIFY(playlists.loading());
+
+    playlists.resetSessionState();
+    QVERIFY(!playlists.loading());
+    QVERIFY(playlists.currentId().isEmpty());
+    QVERIFY(playlists.errorMessage().isEmpty());
+    QCOMPARE(playlists.playlists()->rowCount(), 0);
+    QCOMPARE(playlists.items()->rowCount(), 0);
+    QVERIFY(!playlists.playlistsComplete());
+
+    m_client->setSession(kToken, userB);
+    m_mock->addRoute(QStringLiteral("GET"), listB, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"shared\",\"Name\":\"B "
+                                       "List\",\"Type\":\"Playlist\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), members, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"track-b\",\"Name\":\"B "
+                                       "Track\",\"Type\":\"Audio\","
+                                       "\"PlaylistItemId\":\"entry-b\"}],"
+                                       "\"TotalRecordCount\":1}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), members, 0);
+    playlists.refresh();
+    playlists.open(QStringLiteral("shared"), QStringLiteral("B List"));
+    QTRY_VERIFY_WITH_TIMEOUT(!playlists.loading(), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(playlists.playlists()->rowCount(), 1, 5000);
+    QCOMPARE(playlists.items()->rowCount(), 1);
+    QVERIFY(playlists.playlistsComplete());
+    QCOMPARE(playlists.playlists()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B List"));
+    QCOMPARE(playlists.items()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Track"));
+
+    QTest::qWait(450);
+    QCOMPARE(playlists.playlists()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B List"));
+    QCOMPARE(playlists.items()->get(0).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B Track"));
+    QCOMPARE(succeeded.count(), 0);
+    QCOMPARE(mutated.count(), 0);
 }
 
 // The playlist LIST and the members of the OPEN playlist are independent
