@@ -336,9 +336,9 @@ FocusScope {
     // They live on the page and not in Main.qml because two of them need the
     // row under the cursor, which only this page can see.
     //
-    // `active: page.visible` is load-bearing: a Shortcut is window-scoped and a
-    // StackView keeps a covered page alive, so without it walking into an album
-    // would leave this page's S still shuffling the library.
+    // The shell context is load-bearing: a Shortcut is window-scoped and a
+    // StackView keeps a covered page alive. It also stands down for shell
+    // overlays layered above an otherwise-visible music page.
     //
     // Coexistence with type-to-jump: TrackTable claims single printable
     // characters while it has focus and typeToJump is on, so on the Songs tab
@@ -361,14 +361,14 @@ FocusScope {
         fallback: ["Space"]
         // Only while something is loaded: with no queue, Space is Select and
         // the grid's own key handling has to keep it.
-        active: page.visible && PlayerCtl.active
+        active: App.interactionContext === "music" && PlayerCtl.active
         onActivated: PlayerCtl.togglePause()
     }
 
     MappedShortcut {
         actionId: "music.shuffleAll"
         fallback: ["S"]
-        active: page.visible && page.scopeId.length > 0
+        active: App.interactionContext === "music" && page.scopeId.length > 0
         // The same call the header button makes, for the same reason it makes
         // it: shuffle exists once and takes a parent and a kind.
         onActivated: Actions.shuffle(page.scopeId, "music")
@@ -377,7 +377,7 @@ FocusScope {
     MappedShortcut {
         actionId: "music.favorite"
         fallback: ["L"]
-        active: page.visible
+        active: App.interactionContext === "music"
         onActivated: {
             // A selection wins over the cursor: if the user has picked rows,
             // "favourite" is obviously about those rows.
@@ -396,7 +396,7 @@ FocusScope {
         fallback: ["R"]
         // Not on the Playlists tab: a playlist's order IS the playlist, and
         // /Items/{playlistId}/InstantMix is a query nobody has measured.
-        active: page.visible && !page.playlistsTab
+        active: App.interactionContext === "music" && !page.playlistsTab
         onActivated: {
             const item = page.focusedItem()
             if (item)

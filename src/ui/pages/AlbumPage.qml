@@ -247,19 +247,19 @@ FocusScope {
 
     // ── The music input context (MUSIC.md §7) ──────────────────────────────
     // The same four keys the music library binds, answered for a record.
-    // `active: page.visible` is what keeps them off a covered page: a Shortcut
-    // is window-scoped and a StackView keeps what it covers alive.
+    // The shell's music context keeps them off covered pages and modal overlays;
+    // Shortcut is window-scoped even when its owning page is underneath one.
     MappedShortcut {
         actionId: "music.playPause"
         fallback: ["Space"]
-        active: page.visible && PlayerCtl.active
+        active: App.interactionContext === "music" && PlayerCtl.active
         onActivated: PlayerCtl.togglePause()
     }
 
     MappedShortcut {
         actionId: "music.shuffleAll"
         fallback: ["S"]
-        active: page.visible && page.albumId.length > 0
+        active: App.interactionContext === "music" && page.albumId.length > 0
         // THIS record, not the library: on an album page the scope the user
         // means is the one they are looking at, and it is the same call the
         // header's Shuffle button makes.
@@ -269,7 +269,7 @@ FocusScope {
     MappedShortcut {
         actionId: "music.favorite"
         fallback: ["L"]
-        active: page.visible
+        active: App.interactionContext === "music"
         onActivated: {
             if (trackList.selectionCount > 0) {
                 Actions.setFavoriteAll(trackList.selectedIds(), true)
@@ -284,7 +284,7 @@ FocusScope {
     MappedShortcut {
         actionId: "music.instantMix"
         fallback: ["R"]
-        active: page.visible && page.hasTracks
+        active: App.interactionContext === "music" && page.hasTracks
         onActivated: {
             // The track under the cursor, not the album: a mix from one song is
             // sharper than a mix from a whole record, and the seed comes back

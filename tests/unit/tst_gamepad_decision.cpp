@@ -18,6 +18,7 @@ private slots:
     void onlyHorizontalPlayerDirectionsCountAsSeeking();
     void typableKeysAreTheOnesAFieldWouldEat();
     void suppressionOnlyAppliesWhileAFieldHasFocus();
+    void disconnectReleasesOnlyItsDevice();
 };
 
 void GamepadDecisionTest::browseRepeatAccelerates()
@@ -99,6 +100,29 @@ void GamepadDecisionTest::suppressionOnlyAppliesWhileAFieldHasFocus()
     QVERIFY(shouldSuppressKey(Qt::Key_M, Qt::NoModifier, true));
     QVERIFY(!shouldSuppressKey(Qt::Key_Escape, Qt::NoModifier, true));
     QVERIFY(!shouldSuppressKey(Qt::Key_K, Qt::ControlModifier, true));
+}
+
+void GamepadDecisionTest::disconnectReleasesOnlyItsDevice()
+{
+    HeldKeyOwnership ownership;
+    constexpr quint64 left = 0x100;
+    constexpr quint64 right = 0x101;
+
+    QVERIFY(ownership.press(11, left));      // first owner: send Qt key down
+    QVERIFY(!ownership.press(11, left));     // stick + D-pad on one device
+    QVERIFY(!ownership.press(22, left));    // same key remains one Qt hold
+    QVERIFY(ownership.press(22, right));
+    QCOMPARE(ownership.owners(left), 3);
+
+    const QList<quint64> released = ownership.releaseDevice(11);
+    QVERIFY(released.isEmpty());             // device 22 still holds Left
+    QCOMPARE(ownership.owners(left), 1);
+    QVERIFY(!ownership.release(11, left));   // duplicate SDL up is harmless
+
+    const QList<quint64> final = ownership.releaseDevice(22);
+    QVERIFY(final.contains(left));
+    QVERIFY(final.contains(right));
+    QCOMPARE(ownership.owners(left), 0);
 }
 
 QTEST_MAIN(GamepadDecisionTest)

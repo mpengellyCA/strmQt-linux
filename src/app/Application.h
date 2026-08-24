@@ -36,6 +36,8 @@ class EmbyClient;
 class Application : public QGuiApplication
 {
     Q_OBJECT
+    Q_PROPERTY(QString interactionContext READ interactionContext WRITE setInteractionContext
+                   NOTIFY interactionContextChanged)
 
 public:
     Application(int &argc, char **argv);
@@ -57,9 +59,15 @@ public:
     PlaylistController *playlists() const { return m_playlists; }
     MusicController *music() const { return m_music; }
     LiveUpdateService *live() const { return m_live; }
+    QString interactionContext() const { return m_interactionContext; }
+    void setInteractionContext(const QString &context);
+
+signals:
+    void interactionContextChanged();
 
 private:
     void wirePlaybackIntegrations();
+    void recomputeLiveUpdatePolicy();
     void teardownAuthenticatedSession();
     // Rebuilds the MPRIS track from the queue entry under the playhead and, when
     // the sleeve changed, kicks off the async export that gives it a file:// URI.
@@ -95,6 +103,11 @@ private:
     // replaced, and publishing it would put the wrong cover on the lock screen.
     QString m_mprisArtId;
     QUrl m_mprisArtUrl;
+    // Published by Main.qml from the surface the user can actually interact
+    // with. Playback activity is deliberately not an input context: playback
+    // may continue underneath an ordinary browse page.
+    QString m_interactionContext = QStringLiteral("login");
+    bool m_lastPlaybackActive = false;
 };
 
 } // namespace strmqt

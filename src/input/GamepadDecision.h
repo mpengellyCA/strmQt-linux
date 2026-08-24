@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <QHash>
+#include <QList>
 #include <QString>
 
 namespace strmqt {
@@ -91,5 +93,58 @@ inline bool shouldSuppressKey(int key, int modifiers, bool textInputFocused)
 {
     return textInputFocused && isTypableKey(key, modifiers);
 }
+
+// Tracks which physical devices own a synthesized Qt key. SDL reports removal
+// per device, so clearing one controller must not release a key still held by
+// another. The bool results say whether a real Qt press/release is required.
+class HeldKeyOwnership
+{
+public:
+    bool press(quint32 deviceId, quint64 key)
+    {
+        ++m_deviceKeys[deviceId][key];
+        return ++m_owners[key] == 1;
+    }
+
+    bool release(quint32 deviceId, quint64 key)
+    {
+        auto device = m_deviceKeys.find(deviceId);
+        if (device == m_deviceKeys.end())
+            return false;
+        auto deviceKey = device->find(key);
+        if (deviceKey == device->end())
+            return false;
+        if (--deviceKey.value() == 0)
+            device->erase(deviceKey);
+        if (device->isEmpty())
+            m_deviceKeys.erase(device);
+        auto owner = m_owners.find(key);
+        if (owner == m_owners.end())
+            return false;
+        if (--owner.value() > 0)
+            return false;
+        m_owners.erase(owner);
+        return true;
+    }
+
+    QList<quint64> releaseDevice(quint32 deviceId)
+    {
+        const QHash<quint64, int> keys = m_deviceKeys.value(deviceId);
+        QList<quint64> finalReleases;
+        for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
+            for (int count = 0; count < it.value(); ++count) {
+                if (release(deviceId, it.key()))
+                    finalReleases.append(it.key());
+            }
+        }
+        return finalReleases;
+    }
+
+    int owners(quint64 key) const { return m_owners.value(key); }
+
+private:
+    QHash<quint32, QHash<quint64, int>> m_deviceKeys;
+    QHash<quint64, int> m_owners;
+};
 
 } // namespace strmqt

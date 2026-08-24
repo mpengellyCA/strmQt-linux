@@ -18,8 +18,27 @@ strmqt_add_test(tst_media_source unit/tst_media_source.cpp)
 strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
 strmqt_add_test(tst_stick_decision unit/tst_stick_decision.cpp)
 strmqt_add_test(tst_gamepad_decision unit/tst_gamepad_decision.cpp)
+strmqt_add_test(tst_application_policy unit/tst_application_policy.cpp)
+strmqt_add_test(tst_image_limits unit/tst_image_limits.cpp)
+target_link_libraries(tst_image_limits PRIVATE Qt6::Gui)
 strmqt_add_test(tst_item_details unit/tst_item_details.cpp)
 strmqt_add_test(tst_settings_prefs unit/tst_settings_prefs.cpp)
+
+strmqt_add_test(tst_qml_accessibility unit/tst_qml_accessibility.cpp)
+target_link_libraries(tst_qml_accessibility PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_qml_accessibility PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_qml_accessibility PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1")
+
+strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp
+)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
+target_link_libraries(tst_mpv_video_item PRIVATE
+    Qt6::Gui Qt6::Quick Qt6::OpenGL PkgConfig::MPV_RENDER_TEST)
+set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # Integration: client/controllers against a local mock HTTP server replaying fixtures.
 strmqt_add_test(tst_emby_client

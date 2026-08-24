@@ -32,14 +32,17 @@ QString libraryChangedFrame(const QStringList &updated)
         .arg(updated.join(QStringLiteral("\",\"")));
 }
 
-QString userDataFrame(const QString &itemId, bool played, bool favorite)
+QString userDataFrame(const QString &itemId, bool played, bool favorite,
+                      qint64 positionTicks = 0, int playCount = 0)
 {
     return QStringLiteral(
                R"({"MessageType":"UserDataChanged","Data":{"UserId":"u","UserDataList":)"
-               R"([{"ItemId":"%1","Played":%2,"IsFavorite":%3,"PlaybackPositionTicks":0,)"
-               R"("PlayCount":0}]}})")
+               R"([{"ItemId":"%1","Played":%2,"IsFavorite":%3,"PlaybackPositionTicks":%4,)"
+               R"("PlayCount":%5}]}})")
         .arg(itemId, played ? QStringLiteral("true") : QStringLiteral("false"),
-             favorite ? QStringLiteral("true") : QStringLiteral("false"));
+             favorite ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(positionTicks)
+        .arg(playCount);
 }
 
 // A port nothing is listening on: bind, read the port, then give it back.
@@ -73,7 +76,8 @@ private slots:
     void pollingFallbackEngagesAndSuspends();
     void suspensionDisarmsAnArmedDebounce();
     void transportGoesOffWhenDisabled();
-    void userDataPatchesHomeModelsWithoutRefetch();
+    void userDataPatchesThenReconcilesHomeMembership();
+    void filteredLaterPageAnnouncesMembershipChange();
     void homeHoldsUpdatesWhenAutoApplyIsOff();
     void libraryGridAnnouncesNewItemsInsteadOfReloading();
 
@@ -363,9 +367,9 @@ void LiveUpdatesTest::transportGoesOffWhenDisabled()
     live.stop();
 }
 
-// The whole point of C2: a played/favourite change from another device patches
-// the visible models and costs no extra request.
-void LiveUpdatesTest::userDataPatchesHomeModelsWithoutRefetch()
+// UserData fields patch immediately; server-owned rail membership is then
+// reconciled once after the debounce.
+void LiveUpdatesTest::userDataPatchesThenReconcilesHomeMembership()
 {
     routeHomeFixtures();
 
@@ -385,15 +389,64 @@ void LiveUpdatesTest::userDataPatchesHomeModelsWithoutRefetch()
     const int requestsBefore = m_mock->requestCount();
     QSignalSpy patched(&live, &LiveUpdateService::userDataPatched);
 
-    live.socket()->handleTextMessage(userDataFrame(itemId, true, true));
+    live.socket()->handleTextMessage(userDataFrame(itemId, true, true, 420000000, 7));
     QCOMPARE(patched.size(), 1);
 
     QVERIFY(home.resume()->get(0).value(QStringLiteral("favorite")).toBool());
     QVERIFY(home.resume()->get(0).value(QStringLiteral("played")).toBool());
+    QCOMPARE(home.resume()->get(0).value(QStringLiteral("positionMs")).toLongLong(), 42000);
+    QCOMPARE(home.resume()->get(0).value(QStringLiteral("playCount")).toInt(), 7);
 
-    // No refetch, now or after the debounce would have elapsed.
-    QTest::qWait(120);
+    // The patch itself is network-free, then the debounced invalidation reloads
+    // Continue Watching / Next Up / Favorites because membership is not local.
     QCOMPARE(m_mock->requestCount(), requestsBefore);
+    QTRY_VERIFY(m_mock->requestCount() > requestsBefore);
+}
+
+void LiveUpdatesTest::filteredLaterPageAnnouncesMembershipChange()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Items").arg(kUserId),
+                                     fixturePath(QStringLiteral("items_movies.json"))));
+
+    LibraryController library(m_client);
+    library.openFavorites();
+    QTRY_VERIFY(!library.loading());
+
+    // Represent a grid that has paged beyond its first 100 rows. An equal total
+    // after UserData invalidation can still mean one favorite left and another
+    // entered, so total-delta-only probing is insufficient.
+    QList<MediaItem> laterPage;
+    laterPage.reserve(101);
+    for (int i = 0; i < 101; ++i) {
+        MediaItem item;
+        item.id = QStringLiteral("later-%1").arg(i);
+        item.name = item.id;
+        item.type = QStringLiteral("Movie");
+        item.favorite = true;
+        laterPage.append(item);
+    }
+    library.model()->setItems(laterPage, 101);
+
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral(R"({"Items":[{"Id":"later-0","Name":"later-0",)"
+                                       R"("Type":"Movie"}],"TotalRecordCount":101})"));
+
+    QVariantMap patch;
+    patch.insert(QStringLiteral("itemId"), QStringLiteral("later-0"));
+    patch.insert(QStringLiteral("played"), true);
+    patch.insert(QStringLiteral("favorite"), false);
+    patch.insert(QStringLiteral("positionTicks"), 10000000);
+    patch.insert(QStringLiteral("playCount"), 3);
+    library.onUserDataPatched({patch});
+    QVERIFY(!library.model()->get(0).value(QStringLiteral("favorite")).toBool());
+    QCOMPARE(library.model()->get(0).value(QStringLiteral("playCount")).toInt(), 3);
+
+    library.onUserDataInvalidated({QStringLiteral("later-0")});
+    QTRY_VERIFY(library.updatesPending());
+    QCOMPARE(library.pendingNewCount(), 0); // "Updated", not a fictitious add
+    QCOMPARE(library.model()->rowCount(), 101); // cursor/scroll remain stable
 }
 
 void LiveUpdatesTest::homeHoldsUpdatesWhenAutoApplyIsOff()

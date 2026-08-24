@@ -23,6 +23,8 @@ ApplicationWindow {
 
     width: 1600
     height: 900
+    minimumWidth: 960
+    minimumHeight: 600
     visible: true
     title: "StrmQt"
     color: Theme.ground
@@ -52,6 +54,23 @@ ApplicationWindow {
     readonly property bool overlayOpen: shortcutSheet.opened || commandPalette.opened
                                         || resumePrompt.visible
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
+    // Interaction follows the visible surface, not whether media happens to be
+    // playing underneath it. This single answer gates the shell shortcuts and
+    // is published to Application for gamepad routing.
+    readonly property string interactionContext: root.overlayOpen ? "overlay"
+                                               : !Session.authenticated ? "login"
+                                               : root.playerOnTop ? "player"
+                                               : stack.currentItem !== null
+                                                 && (stack.currentItem.objectName === "musicPage"
+                                                     || stack.currentItem.objectName === "albumPage"
+                                                     || stack.currentItem.objectName === "artistPage")
+                                                 ? "music" : "browse"
+
+    Binding {
+        target: App
+        property: "interactionContext"
+        value: root.interactionContext
+    }
 
     readonly property var currentEntry: root.navTrail.length > 0
                                         ? root.navTrail[root.navTrail.length - 1] : null
@@ -123,6 +142,21 @@ ApplicationWindow {
             "title": pageTitle
         }]);
         stack.push(component, props !== undefined && props !== null ? props : ({}));
+        Qt.callLater(root.focusCurrentPage);
+    }
+
+    // Every route into the player goes through the same focus hand-off. The
+    // player may already be showing (for example activeChanged followed by a
+    // remote activation), in which case this simply reseats focus.
+    function showPlayer(animateSleeve): void {
+        if (root.playerOnTop) {
+            Qt.callLater(root.focusCurrentPage);
+            return;
+        }
+        root.rememberFocus();
+        if (animateSleeve === true)
+            root.liftSleeve();
+        stack.push(playerComponent);
         Qt.callLater(root.focusCurrentPage);
     }
 
@@ -648,11 +682,7 @@ ApplicationWindow {
         sleeveInFlight: sleeveFlight.active
 
         onExpandRequested: {
-            if (!root.playerOnTop) {
-                root.rememberFocus();
-                root.liftSleeve();
-                stack.push(playerComponent);
-            }
+            root.showPlayer(true)
         }
         // The bar's subline is a pair of links (MUSIC.md §4), and a link states
         // intent the same way a card does: the bar asks, this file routes. Both
@@ -737,17 +767,17 @@ ApplicationWindow {
 
     Component {
         id: artistComponent
-        ArtistPage {}
+        ArtistPage { objectName: "artistPage" }
     }
 
     Component {
         id: albumComponent
-        AlbumPage {}
+        AlbumPage { objectName: "albumPage" }
     }
 
     Component {
         id: musicComponent
-        MusicPage {}
+        MusicPage { objectName: "musicPage" }
     }
 
     Component {
@@ -782,7 +812,8 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "library.search"
         fallback: ["/"]
-        active: Session.authenticated && !PlayerCtl.active && !root.overlayOpen
+        active: (root.interactionContext === "browse"
+                 || root.interactionContext === "music")
                 && root.currentKey !== "search"
         onActivated: root.openSearch()
     }
@@ -790,7 +821,7 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "app.settings"
         fallback: ["F2"]
-        active: Session.authenticated && !PlayerCtl.active && !root.overlayOpen
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: root.openSettings()
     }
 
@@ -806,16 +837,14 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "app.shortcuts"
         fallback: ["?"]
-        active: Session.authenticated && !root.playerOnTop
-                && !commandPalette.opened && !resumePrompt.visible
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: shortcutSheet.toggle()
     }
 
     MappedShortcut {
         actionId: "app.commandPalette"
         fallback: ["Ctrl+K"]
-        active: Session.authenticated && !root.playerOnTop
-                && !shortcutSheet.opened && !resumePrompt.visible
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: commandPalette.toggle()
     }
 
@@ -830,7 +859,8 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "player.focusBar"
         fallback: ["N"]
-        active: Session.authenticated && miniPlayer.shown && !root.overlayOpen
+        active: (root.interactionContext === "browse"
+                 || root.interactionContext === "music") && miniPlayer.shown
         onActivated: miniPlayer.focusTransport()
     }
 
@@ -870,14 +900,14 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "nav.nextTab"
         fallback: ["Ctrl+Tab"]
-        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: root.cycleDestination(1)
     }
 
     MappedShortcut {
         actionId: "nav.previousTab"
         fallback: ["Ctrl+Shift+Tab"]
-        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: root.cycleDestination(-1)
     }
 
@@ -887,7 +917,7 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "app.toggleMenu"
         fallback: ["M"]
-        active: Session.authenticated && !root.playerOnTop && !root.overlayOpen
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
         onActivated: {
             if (navRail.pinned) {
                 navRail.pinned = false;
@@ -985,9 +1015,8 @@ ApplicationWindow {
         target: PlayerCtl
 
         function onActiveChanged() {
-            if (PlayerCtl.active && stack.currentItem.objectName !== "playerPage") {
-                root.rememberFocus();
-                stack.push(playerComponent);
+            if (PlayerCtl.active && !root.playerOnTop) {
+                root.showPlayer(false);
             }
         }
         function onStopped() {
@@ -1146,6 +1175,7 @@ ApplicationWindow {
             if (stack.currentItem)
                 stack.currentItem.forceActiveFocus();
             PlayerCtl.playItem(info.itemId, info.title, info.positionMs);
+            root.showPlayer(false);
         }
         function dismiss() {
             PlayerCtl.clearCrashResume();

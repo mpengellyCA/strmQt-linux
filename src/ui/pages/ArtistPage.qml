@@ -309,14 +309,14 @@ FocusScope {
     MappedShortcut {
         actionId: "music.playPause"
         fallback: ["Space"]
-        active: page.visible && PlayerCtl.active
+        active: App.interactionContext === "music" && PlayerCtl.active
         onActivated: PlayerCtl.togglePause()
     }
 
     MappedShortcut {
         actionId: "music.favorite"
         fallback: ["L"]
-        active: page.visible && page.artistId.length > 0
+        active: App.interactionContext === "music" && page.artistId.length > 0
         onActivated: {
             if (page.hasTopTracks && topTracks.selectionCount > 0) {
                 Actions.setFavoriteAll(topTracks.selectedIds(), true)
@@ -331,7 +331,7 @@ FocusScope {
     MappedShortcut {
         actionId: "music.instantMix"
         fallback: ["R"]
-        active: page.visible && page.artistId.length > 0
+        active: App.interactionContext === "music" && page.artistId.length > 0
         onActivated: Actions.instantMix(page.artistId)
     }
 

@@ -113,10 +113,12 @@ void ModelsTest::userDataUpdateEmitsDataChanged()
     model.setItems({makeEpisode()});
     QSignalSpy spy(&model, &MediaItemModel::dataChanged);
 
-    model.updateUserData(QStringLiteral("402014"), true, true);
+    model.updateUserData(QStringLiteral("402014"), true, true, 420000000, 7);
     QCOMPARE(spy.count(), 1);
     QVERIFY(model.data(model.index(0), MediaItemModel::PlayedRole).toBool());
     QVERIFY(model.data(model.index(0), MediaItemModel::FavoriteRole).toBool());
+    QCOMPARE(model.data(model.index(0), MediaItemModel::PositionMsRole).toLongLong(), 42000);
+    QCOMPARE(model.data(model.index(0), MediaItemModel::PlayCountRole).toInt(), 7);
 
     model.updateUserData(QStringLiteral("does-not-exist"), false, false);
     QCOMPARE(spy.count(), 1);

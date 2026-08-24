@@ -121,12 +121,13 @@ void GamepadManager::setContext(const QString &context)
     // context's action; drop everything held rather than translate it. Dropping
     // means releasing: the key is down, and a key left down never commits.
     releaseAll();
-    m_stickAxis = -1;
 }
 
 QString GamepadManager::actionForButton(int sdlButton) const
 {
     const bool player = m_context == QLatin1String("player");
+    const bool restricted = m_context == QLatin1String("login")
+                         || m_context == QLatin1String("overlay");
 
     switch (sdlButton) {
     // ── Face buttons ───────────────────────────────────────────────────────
@@ -135,17 +136,25 @@ QString GamepadManager::actionForButton(int sdlButton) const
     case SDL_GAMEPAD_BUTTON_EAST: // B
         return QStringLiteral("nav.back");
     case SDL_GAMEPAD_BUTTON_WEST: // X
+        if (restricted)
+            return {};
         return player ? QStringLiteral("player.cycleAudio")
                       : QStringLiteral("app.commandPalette");
     case SDL_GAMEPAD_BUTTON_NORTH: // Y
+        if (restricted)
+            return {};
         return player ? QStringLiteral("player.cycleSubtitle")
                       : QStringLiteral("library.search");
 
     // ── Shoulders: the pair that changes what you are looking at ───────────
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
+        if (restricted)
+            return {};
         return player ? QStringLiteral("player.seekBackwardLong")
                       : QStringLiteral("nav.previousTab");
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+        if (restricted)
+            return {};
         return player ? QStringLiteral("player.seekForwardLong")
                       : QStringLiteral("nav.nextTab");
 
@@ -153,17 +162,23 @@ QString GamepadManager::actionForButton(int sdlButton) const
     // Start is the Menu button on a 360/One pad and is what a TV UI opens its
     // menu with; in the player there is no rail to open, so it reveals the OSD.
     case SDL_GAMEPAD_BUTTON_START:
+        if (restricted)
+            return {};
         return player ? QStringLiteral("player.toggleOsd") : QStringLiteral("app.toggleMenu");
     // Back is "View" on an Xbox One pad.
     case SDL_GAMEPAD_BUTTON_BACK:
         return player ? QStringLiteral("player.stop") : QStringLiteral("nav.back");
     case SDL_GAMEPAD_BUTTON_GUIDE:
+        if (restricted)
+            return {};
         return player ? QString() : QStringLiteral("app.shortcuts");
     // The docked bar is unreachable from a pad otherwise: it takes focus by a
     // click or by Tab, and a pad has neither. Browse only — in the player there
     // is no bar, and the right stick is where a volume verb would land if
     // PlayerController ever grows one.
     case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
+        if (restricted)
+            return {};
         return player ? QString() : QStringLiteral("player.focusBar");
     default:
         return QString();
@@ -180,6 +195,7 @@ void GamepadManager::poll()
             // SDL re-announces devices it already told us about (a re-plug that
             // reuses an id, a subsystem re-init), and opening twice would leak
             // the first handle.
+            releaseDevice(instanceId);
             closePad(instanceId);
             SDL_Gamepad *pad = SDL_OpenGamepad(instanceId);
             qCInfo(logApp) << "gamepad connected:" << (pad ? SDL_GetGamepadName(pad) : "unknown");
@@ -192,21 +208,17 @@ void GamepadManager::poll()
             // The handle SDL gave us on connect goes back on disconnect; a
             // removal for a device we never opened closes nothing.
             closePad(event.gdevice.which);
-            // Whatever was held is no longer held by anything.
-            releaseAll();
-            m_axisState.clear();
-            m_stickX = 0;
-            m_stickY = 0;
-            m_stickAxis = -1;
+            // Another controller may still own the same held Qt key.
+            releaseDevice(event.gdevice.which);
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            handleButton(event.gbutton.button, true);
+            handleButton(event.gbutton.which, event.gbutton.button, true);
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
-            handleButton(event.gbutton.button, false);
+            handleButton(event.gbutton.which, event.gbutton.button, false);
             break;
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-            handleAxis(event.gaxis.axis, event.gaxis.value);
+            handleAxis(event.gaxis.which, event.gaxis.axis, event.gaxis.value);
             break;
         default:
             break;
@@ -214,22 +226,22 @@ void GamepadManager::poll()
     }
 }
 
-void GamepadManager::handleButton(int sdlButton, bool pressed)
+void GamepadManager::handleButton(quint32 deviceId, int sdlButton, bool pressed)
 {
     // D-pad directions repeat; everything else is a discrete press so a held
     // A does not fire the same item over and over.
     switch (sdlButton) {
     case SDL_GAMEPAD_BUTTON_DPAD_UP:
-        setDirection(SlotDpadY, QStringLiteral("nav.up"), pressed);
+        setDirection(deviceId, SlotDpadY, QStringLiteral("nav.up"), pressed);
         return;
     case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
-        setDirection(SlotDpadY, QStringLiteral("nav.down"), pressed);
+        setDirection(deviceId, SlotDpadY, QStringLiteral("nav.down"), pressed);
         return;
     case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
-        setDirection(SlotDpadX, QStringLiteral("nav.left"), pressed);
+        setDirection(deviceId, SlotDpadX, QStringLiteral("nav.left"), pressed);
         return;
     case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
-        setDirection(SlotDpadX, QStringLiteral("nav.right"), pressed);
+        setDirection(deviceId, SlotDpadX, QStringLiteral("nav.right"), pressed);
         return;
     default:
         break;
@@ -242,17 +254,20 @@ void GamepadManager::handleButton(int sdlButton, bool pressed)
         tap(actionId);
 }
 
-void GamepadManager::handleAxis(int axis, int value)
+void GamepadManager::handleAxis(quint32 deviceId, int axis, int value)
 {
+    DeviceState &state = m_deviceStates[deviceId];
     // Triggers are analog but used as buttons, with separate press/release
     // thresholds so a trigger held near the edge cannot chatter.
     if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
-        const bool wasDown = m_axisState.value(axis, 0) != 0;
+        const bool wasDown = state.axisState.value(axis, 0) != 0;
         const bool isDown = wasDown ? value > kTriggerRelease : value > kTriggerPress;
         if (isDown == wasDown)
             return;
-        m_axisState[axis] = isDown ? 1 : 0;
+        state.axisState[axis] = isDown ? 1 : 0;
         if (!isDown)
+            return;
+        if (m_context == QLatin1String("login") || m_context == QLatin1String("overlay"))
             return;
 
         const bool player = m_context == QLatin1String("player");
@@ -271,53 +286,55 @@ void GamepadManager::handleAxis(int axis, int value)
     // Store, then decide from BOTH axes: a single axis value cannot tell a
     // deliberate push from the incidental half of a diagonal.
     if (axis == SDL_GAMEPAD_AXIS_LEFTX)
-        m_stickX = value;
+        state.stickX = value;
     else
-        m_stickY = value;
-    evaluateStick();
+        state.stickY = value;
+    evaluateStick(deviceId);
 }
 
-void GamepadManager::evaluateStick()
+void GamepadManager::evaluateStick(quint32 deviceId)
 {
+    DeviceState &state = m_deviceStates[deviceId];
     const StickTuning tuning{kStickThreshold, kStickRelease, kVerticalThreshold,
                              kDominanceRatio, kTakeoverRatio};
-    const StickAxis owned = m_stickAxis == SlotStickX  ? StickAxis::Horizontal
-                          : m_stickAxis == SlotStickY  ? StickAxis::Vertical
+    const StickAxis owned = state.stickAxis == SlotStickX  ? StickAxis::Horizontal
+                          : state.stickAxis == SlotStickY  ? StickAxis::Vertical
                                                        : StickAxis::None;
-    const StickAxis chosen = decideStickAxis(m_stickX, m_stickY, owned, tuning);
+    const StickAxis chosen = decideStickAxis(state.stickX, state.stickY, owned, tuning);
 
     if (chosen == StickAxis::None) {
-        setDirection(SlotStickX, QString(), false);
-        setDirection(SlotStickY, QString(), false);
-        m_stickAxis = -1;
+        setDirection(deviceId, SlotStickX, QString(), false);
+        setDirection(deviceId, SlotStickY, QString(), false);
+        state.stickAxis = -1;
         return;
     }
 
     const bool horizontal = chosen == StickAxis::Horizontal;
     const int slot = horizontal ? SlotStickX : SlotStickY;
     const QString actionId =
-        horizontal ? (m_stickX < 0 ? QStringLiteral("nav.left") : QStringLiteral("nav.right"))
-                   : (m_stickY < 0 ? QStringLiteral("nav.up") : QStringLiteral("nav.down"));
+        horizontal ? (state.stickX < 0 ? QStringLiteral("nav.left") : QStringLiteral("nav.right"))
+                   : (state.stickY < 0 ? QStringLiteral("nav.up") : QStringLiteral("nav.down"));
 
     // Handing the stick to the other axis must release the first, or a direction
     // it was holding would keep repeating.
-    setDirection(horizontal ? SlotStickY : SlotStickX, QString(), false);
-    m_stickAxis = slot;
-    setDirection(slot, actionId, true);
+    setDirection(deviceId, horizontal ? SlotStickY : SlotStickX, QString(), false);
+    state.stickAxis = slot;
+    setDirection(deviceId, slot, actionId, true);
 }
 
-void GamepadManager::setDirection(int slot, const QString &actionId, bool active)
+void GamepadManager::setDirection(quint32 deviceId, int slot, const QString &actionId, bool active)
 {
     if (!active || actionId.isEmpty()) {
-        releaseDirection(slot);
+        releaseDirection(deviceId, slot);
         return;
     }
-    const auto it = m_held.constFind(slot);
-    if (it != m_held.constEnd() && it->actionId == actionId)
+    DeviceState &state = m_deviceStates[deviceId];
+    const auto it = state.held.constFind(slot);
+    if (it != state.held.constEnd() && it->actionId == actionId)
         return; // already holding this direction
     // Turning around on one slot ends the old direction properly rather than
     // dropping its key on the floor still pressed.
-    releaseDirection(slot);
+    releaseDirection(deviceId, slot);
 
     Repeat repeat;
     repeat.actionId = actionId;
@@ -332,57 +349,71 @@ void GamepadManager::setDirection(int slot, const QString &actionId, bool active
         // waits, and the release that ends the gesture comes in
         // releaseDirection(). That release is not an auto-repeat, and it is the
         // event a control commits on.
-        sendKey(repeat.key, repeat.modifiers, true, false);
+        pressHeldKey(deviceId, repeat.key, repeat.modifiers);
     }
-    m_held.insert(slot, repeat);
+    state.held.insert(slot, repeat);
 }
 
-void GamepadManager::releaseDirection(int slot)
+void GamepadManager::releaseDirection(quint32 deviceId, int slot)
 {
-    const auto it = m_held.constFind(slot);
-    if (it == m_held.constEnd())
+    auto stateIt = m_deviceStates.find(deviceId);
+    if (stateIt == m_deviceStates.end())
+        return;
+    DeviceState &state = stateIt.value();
+    const auto it = state.held.constFind(slot);
+    if (it == state.held.constEnd())
         return;
     const Repeat repeat = *it;
-    m_held.erase(it);
+    state.held.erase(it);
     if (repeat.key != 0)
-        sendKey(repeat.key, repeat.modifiers, false, false);
+        releaseHeldKey(deviceId, repeat.key, repeat.modifiers);
+}
+
+void GamepadManager::releaseDevice(quint32 deviceId)
+{
+    auto it = m_deviceStates.find(deviceId);
+    if (it == m_deviceStates.end())
+        return;
+    const QList<int> heldSlots = it->held.keys();
+    for (int slot : heldSlots)
+        releaseDirection(deviceId, slot);
+    m_deviceStates.erase(it);
 }
 
 void GamepadManager::releaseAll()
 {
-    // `slots` is a Qt keyword, hence the name.
-    const QList<int> heldSlots = m_held.keys();
-    for (int slot : heldSlots)
-        releaseDirection(slot);
+    const QList<quint32> devices = m_deviceStates.keys();
+    for (quint32 deviceId : devices)
+        releaseDevice(deviceId);
 }
 
 void GamepadManager::pump()
 {
-    if (m_held.isEmpty())
-        return;
-    for (auto it = m_held.begin(); it != m_held.end(); ++it) {
-        Repeat &repeat = it.value();
-        const qint64 heldMs = repeat.heldFor.elapsed();
-        if (heldMs < repeat.nextAtMs)
-            continue;
-        if (repeat.key != 0) {
-            m_input->noteInput(QStringLiteral("gamepad"));
-            // A repeat step is a release/press pair *flagged as auto-repeat*,
-            // which is the shape a keyboard delivers one in. The flag is the
-            // whole point: controls already read it — StrmSlider nudges on every
-            // press and commits only on a release that is not a repeat — so an
-            // unflagged step committed a seek, and a server round-trip, per
-            // step of the hold.
-            sendKey(repeat.key, repeat.modifiers, false, true);
-            sendKey(repeat.key, repeat.modifiers, true, true);
+    for (DeviceState &state : m_deviceStates) {
+        for (auto it = state.held.begin(); it != state.held.end(); ++it) {
+            Repeat &repeat = it.value();
+            const qint64 heldMs = repeat.heldFor.elapsed();
+            if (heldMs < repeat.nextAtMs)
+                continue;
+            if (repeat.key != 0) {
+                m_input->noteInput(QStringLiteral("gamepad"));
+                // A repeat step is a release/press pair *flagged as auto-repeat*,
+                // which is the shape a keyboard delivers one in. The flag is the
+                // whole point: controls already read it — StrmSlider nudges on every
+                // press and commits only on a release that is not a repeat — so an
+                // unflagged step committed a seek, and a server round-trip, per
+                // step of the hold.
+                sendKey(repeat.key, repeat.modifiers, false, true);
+                sendKey(repeat.key, repeat.modifiers, true, true);
+            }
+            ++repeat.emitted;
+            const int interval = repeatIntervalMs(repeat.emitted, repeat.seeking, kRepeat);
+            // Advance from the scheduled time, not from now, so a late frame does
+            // not slow the whole repeat down.
+            repeat.nextAtMs += interval;
+            if (repeat.nextAtMs < heldMs)
+                repeat.nextAtMs = heldMs + interval;
         }
-        ++repeat.emitted;
-        const int interval = repeatIntervalMs(repeat.emitted, repeat.seeking, kRepeat);
-        // Advance from the scheduled time, not from now, so a late frame does
-        // not slow the whole repeat down.
-        repeat.nextAtMs += interval;
-        if (repeat.nextAtMs < heldMs)
-            repeat.nextAtMs = heldMs + interval;
     }
 }
 
@@ -439,6 +470,20 @@ void GamepadManager::sendKey(int qtKey, int modifiers, bool pressed, bool autoRe
                                 static_cast<Qt::KeyboardModifiers>(modifiers), QString(),
                                 autoRepeat);
     QCoreApplication::postEvent(window, event);
+}
+
+void GamepadManager::pressHeldKey(quint32 deviceId, int qtKey, int modifiers)
+{
+    const quint64 keyId = (quint64(quint32(modifiers)) << 32) | quint32(qtKey);
+    if (m_keyOwners.press(deviceId, keyId))
+        sendKey(qtKey, modifiers, true, false);
+}
+
+void GamepadManager::releaseHeldKey(quint32 deviceId, int qtKey, int modifiers)
+{
+    const quint64 keyId = (quint64(quint32(modifiers)) << 32) | quint32(qtKey);
+    if (m_keyOwners.release(deviceId, keyId))
+        sendKey(qtKey, modifiers, false, false);
 }
 
 void GamepadManager::closePad(quint32 instanceId)

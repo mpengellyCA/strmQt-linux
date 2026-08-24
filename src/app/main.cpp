@@ -41,6 +41,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("DetailsCtl"), app.details());
     engine.rootContext()->setContextProperty(QStringLiteral("Actions"), app.actions());
     engine.rootContext()->setContextProperty(QStringLiteral("Input"), app.input());
+    // Main.qml owns the visible interaction surface and publishes it back to
+    // Application, which routes hardware input from that answer.
+    engine.rootContext()->setContextProperty(QStringLiteral("App"), &app);
     // Theme reads density and accent from here; SettingsPage writes them.
     engine.rootContext()->setContextProperty(QStringLiteral("Prefs"), app.settings());
     engine.rootContext()->setContextProperty(QStringLiteral("LiveCtl"), app.live());

@@ -120,6 +120,7 @@ public:
 public slots:
     void onLibraryInvalidated(const QStringList &itemIds);
     void onUserDataPatched(const QVariantList &entries);
+    void onUserDataInvalidated(const QStringList &itemIds);
 
 signals:
     void titleChanged();
@@ -135,7 +136,7 @@ signals:
 
 private:
     void fetchPage(int startIndex);
-    void probeForNewItems();
+    void probeForUpdates(bool announceEvenWithoutGrowth = false);
     void setLoading(bool loading);
     void setError(const QString &message);
     void resetFor(const QString &title);

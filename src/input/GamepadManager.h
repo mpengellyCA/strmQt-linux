@@ -1,5 +1,7 @@
 #pragma once
 
+#include "input/GamepadDecision.h"
+
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
@@ -51,9 +53,8 @@ public:
 
     bool available() const { return m_initialized; }
 
-    // "browse" or "player" — the same button means different things in each,
-    // which is what lets LB/RB change library while browsing and jump 60 s
-    // during playback. Set by Application from the player's active state.
+    // Shell-owned visible interaction context: login / browse / music / player /
+    // overlay. It is published by Main.qml; playback activity never infers it.
     void setContext(const QString &context);
     QString context() const { return m_context; }
 
@@ -76,17 +77,18 @@ private:
 
     void poll();
     void pump();
-    void handleButton(int sdlButton, bool pressed);
-    void handleAxis(int axis, int value);
+    void handleButton(quint32 deviceId, int sdlButton, bool pressed);
+    void handleAxis(quint32 deviceId, int axis, int value);
     // Decides a single direction from BOTH stick axes. The stick is one
     // control: a diagonal is an imprecise request to move one way, not a
     // request to move two ways at once.
-    void evaluateStick();
+    void evaluateStick(quint32 deviceId);
     // Digital view of a direction: starts a hold, or ends one.
-    void setDirection(int slot, const QString &actionId, bool active);
+    void setDirection(quint32 deviceId, int slot, const QString &actionId, bool active);
     // Ends a hold, sending the plain release that tells a control the gesture
     // is over. Every path that forgets a hold goes through here.
-    void releaseDirection(int slot);
+    void releaseDirection(quint32 deviceId, int slot);
+    void releaseDevice(quint32 deviceId);
     void releaseAll();
     // A discrete press: press and release back to back, neither a repeat.
     void tap(const QString &actionId);
@@ -94,6 +96,8 @@ private:
     // False leaves *key and *modifiers zeroed.
     bool resolveKey(const QString &actionId, int *key, int *modifiers) const;
     void sendKey(int qtKey, int modifiers, bool pressed, bool autoRepeat);
+    void pressHeldKey(quint32 deviceId, int qtKey, int modifiers);
+    void releaseHeldKey(quint32 deviceId, int qtKey, int modifiers);
     // Closes an open SDL handle, if this instance id has one.
     void closePad(quint32 instanceId);
     // Action for a button in the current context, or an empty string.
@@ -104,22 +108,23 @@ private:
     QString m_context = QStringLiteral("browse");
     QTimer *m_timer = nullptr;
 
-    // Slot → held direction. Slots are stable ids (stick X, stick Y, D-pad X,
-    // D-pad Y) so the stick and the D-pad cannot fight over one another's state.
-    QHash<int, Repeat> m_held;
-    // Latched digital state per analog axis, so a trigger reports one press.
-    QHash<int, int> m_axisState;
+    struct DeviceState
+    {
+        QHash<int, Repeat> held;
+        QHash<int, int> axisState;
+        int stickX = 0;
+        int stickY = 0;
+        int stickAxis = -1;
+    };
+    QHash<quint32, DeviceState> m_deviceStates;
+    // Multiple controllers may resolve to the same Qt key. Send the final key
+    // release only when the last owning device lets go.
+    HeldKeyOwnership m_keyOwners;
     // SDL instance id → open handle. SDL hands out a handle on connect and
     // expects it back on disconnect; keeping the map is also what makes a
     // removal event for a device we never opened a no-op rather than a guess.
     QHash<quint32, SDL_Gamepad *> m_pads;
 
-    // Raw left-stick position, and which axis currently owns it (-1 = neither).
-    // Ownership is what stops a long horizontal sweep that wanders slightly up
-    // from flipping to vertical halfway through.
-    int m_stickX = 0;
-    int m_stickY = 0;
-    int m_stickAxis = -1;
 };
 
 } // namespace strmqt

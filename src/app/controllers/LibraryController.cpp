@@ -52,6 +52,8 @@ void LibraryController::bindLiveUpdates(LiveUpdateService *service)
             &LibraryController::onLibraryInvalidated);
     connect(service, &LiveUpdateService::userDataPatched, this,
             &LibraryController::onUserDataPatched);
+    connect(service, &LiveUpdateService::userDataInvalidated, this,
+            &LibraryController::onUserDataInvalidated);
 }
 
 bool LibraryController::canLoadMore() const
@@ -351,10 +353,10 @@ void LibraryController::onLibraryInvalidated(const QStringList &itemIds)
         reload();
         return;
     }
-    probeForNewItems();
+    probeForUpdates();
 }
 
-void LibraryController::probeForNewItems()
+void LibraryController::probeForUpdates(bool announceEvenWithoutGrowth)
 {
     const int generation = m_generation;
     const int knownTotal = m_model->totalRecordCount();
@@ -365,16 +367,17 @@ void LibraryController::probeForNewItems()
     query.limit = 1;
 
     m_client->items(query).then(
-        this, [this, generation, knownTotal](const Result<ItemsPage> &result) {
+        this, [this, generation, knownTotal,
+               announceEvenWithoutGrowth](const Result<ItemsPage> &result) {
             if (generation != m_generation || !result.ok())
                 return;
             const int delta = result.value.totalRecordCount - knownTotal;
-            if (delta <= 0) {
+            if (delta <= 0 && !announceEvenWithoutGrowth) {
                 // Items were removed or only edited: nothing new to announce, and
                 // nothing worth yanking the grid for.
                 return;
             }
-            setPending(true, delta);
+            setPending(true, qMax(0, delta));
         });
 }
 
@@ -386,8 +389,33 @@ void LibraryController::onUserDataPatched(const QVariantList &entries)
         if (itemId.isEmpty())
             continue;
         m_model->updateUserData(itemId, entry.value(QStringLiteral("played")).toBool(),
-                                entry.value(QStringLiteral("favorite")).toBool());
+                                entry.value(QStringLiteral("favorite")).toBool(),
+                                entry.value(QStringLiteral("positionTicks")).toLongLong(),
+                                entry.value(QStringLiteral("playCount")).toInt());
     }
+}
+
+void LibraryController::onUserDataInvalidated(const QStringList &itemIds)
+{
+    Q_UNUSED(itemIds);
+    if (!hasQuery() || m_loading)
+        return;
+
+    // User data changes membership only for these server-side filters, and can
+    // reorder DatePlayed. Every other query is fully reconciled by the rich
+    // in-place patch above.
+    const bool membershipSensitive = m_favoritesOnly
+                                  || m_watchedFilter != QLatin1String("all")
+                                  || m_sortBy == QLatin1String("DatePlayed");
+    if (!membershipSensitive)
+        return;
+    if (m_autoApplyUpdates && m_model->rowCount() <= kPageSize) {
+        reload();
+        return;
+    }
+    // A later page must not be reset underneath the cursor. Even an unchanged
+    // total can hide a remove+add or a reorder, so announce an "Updated" pill.
+    probeForUpdates(/*announceEvenWithoutGrowth=*/true);
 }
 
 void LibraryController::applyPending()

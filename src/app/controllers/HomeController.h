@@ -29,8 +29,8 @@ class EmbyClient;
 // pendingNewCount tells the UI how many items are waiting behind an
 // "N new items" affordance. Content never reorders under the cursor.
 //
-// A UserDataChanged for a visible item is patched in place through
-// MediaItemModel::updateUserData(); it never triggers a refetch.
+// A UserDataChanged patches visible fields immediately, then reconciles the
+// server-owned membership of Continue Watching / Next Up / Favorites.
 class HomeController : public QObject
 {
     Q_OBJECT
@@ -96,6 +96,7 @@ public slots:
     // In-place user-data patch; entries as emitted by
     // LiveUpdateService::userDataPatched.
     void onUserDataPatched(const QVariantList &entries);
+    void onUserDataInvalidated(const QStringList &itemIds);
 
 signals:
     void latestRailsChanged();
@@ -141,6 +142,8 @@ private:
     void endRequest();
     void setError(const QString &message);
     void updateAllModels(const QString &itemId, bool played, bool favorite);
+    void updateAllModels(const QString &itemId, bool played, bool favorite,
+                         qint64 positionTicks, int playCount);
     MediaItemModel *railModelFor(const QString &libraryId);
 
     emby::EmbyClient *m_client;

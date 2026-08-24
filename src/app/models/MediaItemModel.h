@@ -101,6 +101,10 @@ public:
     // leaves a stale bar under a correct watched state.
     void updateUserData(const QString &itemId, bool played, bool favorite,
                         qint64 playbackPositionTicks);
+    // Complete UserDataChanged record. Negative optional values mean "leave
+    // unchanged" for local optimistic toggles that do not carry those fields.
+    void updateUserData(const QString &itemId, bool played, bool favorite,
+                        qint64 playbackPositionTicks, int playCount);
 
 signals:
     void countChanged();

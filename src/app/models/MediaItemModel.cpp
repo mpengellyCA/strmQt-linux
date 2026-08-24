@@ -257,6 +257,12 @@ void MediaItemModel::updateUserData(const QString &itemId, bool played, bool fav
 void MediaItemModel::updateUserData(const QString &itemId, bool played, bool favorite,
                                     qint64 playbackPositionTicks)
 {
+    updateUserData(itemId, played, favorite, playbackPositionTicks, -1);
+}
+
+void MediaItemModel::updateUserData(const QString &itemId, bool played, bool favorite,
+                                    qint64 playbackPositionTicks, int playCount)
+{
     for (int row = 0; row < m_items.size(); ++row) {
         if (m_items[row].id != itemId)
             continue;
@@ -264,9 +270,12 @@ void MediaItemModel::updateUserData(const QString &itemId, bool played, bool fav
         m_items[row].favorite = favorite;
         if (playbackPositionTicks >= 0)
             m_items[row].playbackPositionTicks = playbackPositionTicks;
+        if (playCount >= 0)
+            m_items[row].playCount = playCount;
         const QModelIndex idx = index(row);
         emit dataChanged(idx, idx,
-                         {PlayedRole, FavoriteRole, ResumableRole, ProgressRole, PositionMsRole});
+                         {PlayedRole, PlayCountRole, FavoriteRole, ResumableRole, ProgressRole,
+                          PositionMsRole});
     }
 }
 

@@ -55,6 +55,8 @@ void HomeController::bindLiveUpdates(LiveUpdateService *service)
             &HomeController::onLibraryInvalidated);
     connect(service, &LiveUpdateService::userDataPatched, this,
             &HomeController::onUserDataPatched);
+    connect(service, &LiveUpdateService::userDataInvalidated, this,
+            &HomeController::onUserDataInvalidated);
 }
 
 void HomeController::setAutoApplyUpdates(bool autoApply)
@@ -87,15 +89,31 @@ void HomeController::onLibraryInvalidated(const QStringList &itemIds)
 
 void HomeController::onUserDataPatched(const QVariantList &entries)
 {
-    // No refetch: the socket already told us everything the models need.
+    // Patch the complete record immediately. Membership is reconciled after
+    // the burst by onUserDataInvalidated(): Next Up in particular cannot be
+    // inferred from one item's payload.
     for (const QVariant &value : entries) {
         const QVariantMap entry = value.toMap();
         const QString itemId = entry.value(QStringLiteral("itemId")).toString();
         if (itemId.isEmpty())
             continue;
         updateAllModels(itemId, entry.value(QStringLiteral("played")).toBool(),
-                        entry.value(QStringLiteral("favorite")).toBool());
+                        entry.value(QStringLiteral("favorite")).toBool(),
+                        entry.value(QStringLiteral("positionTicks")).toLongLong(),
+                        entry.value(QStringLiteral("playCount")).toInt());
     }
+}
+
+void HomeController::onUserDataInvalidated(const QStringList &itemIds)
+{
+    Q_UNUSED(itemIds);
+    if (busy())
+        return;
+    // Continue Watching, Next Up and Favorites are three server-side queries.
+    // The changed ids do not contain enough type/series context to decide who
+    // enters them, so fetch one coherent snapshot and respect the page's
+    // existing "do not move under the cursor" policy.
+    startRefresh(/*applyWhenReady=*/m_autoApplyUpdates);
 }
 
 void HomeController::startRefresh(bool applyWhenReady)
@@ -405,6 +423,18 @@ void HomeController::updateAllModels(const QString &itemId, bool played, bool fa
     m_favorites->updateUserData(itemId, played, favorite);
     for (MediaItemModel *model : std::as_const(m_railModels))
         model->updateUserData(itemId, played, favorite);
+}
+
+void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite,
+                                     qint64 positionTicks, int playCount)
+{
+    m_resume->updateUserData(itemId, played, favorite, positionTicks, playCount);
+    m_nextUp->updateUserData(itemId, played, favorite, positionTicks, playCount);
+    m_favorites->updateUserData(itemId, played, favorite, positionTicks, playCount);
+    for (MediaItemModel *model : std::as_const(m_railModels))
+        model->updateUserData(itemId, played, favorite, positionTicks, playCount);
+    for (MediaItemModel *model : std::as_const(m_genreModels))
+        model->updateUserData(itemId, played, favorite, positionTicks, playCount);
 }
 
 void HomeController::beginRequest()

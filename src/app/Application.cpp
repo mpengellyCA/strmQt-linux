@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "ApplicationPolicy.h"
 
 #include "CoverTintService.h"
 #include "EmbyImageProvider.h"
@@ -144,28 +145,17 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
         else
             m_live->stop();
     });
-    // Polling must not fight the video decoder, and playback ending is the one
-    // moment the server state is guaranteed to have moved under us.
-    connect(m_player, &PlayerController::activeChanged, this, [this] {
-        m_live->setSuspended(m_player->active());
-        if (!m_player->active())
-            m_live->refreshNow();
-#ifdef STRMQT_HAVE_SDL3
-        // The same shoulder button changes library while browsing and jumps
-        // 60 s during playback, so the pad has to know which one it is in.
-        if (m_gamepad)
-            m_gamepad->setContext(m_player->active() ? QStringLiteral("player")
-                                                     : QStringLiteral("browse"));
-#endif
-    });
-    // A window nobody is looking at does not need to poll.
+    // One policy owns every suspension cause. Polling stands down only when
+    // the app is backgrounded or a VIDEO decoder is active; audio playback is
+    // cheap and may last for hours. Recompute on every input so an audio/video
+    // queue boundary cannot leave the old decision latched.
+    connect(m_player, &PlayerController::activeChanged, this,
+            &Application::recomputeLiveUpdatePolicy);
+    connect(m_player, &PlayerController::isAudioChanged, this,
+            &Application::recomputeLiveUpdatePolicy);
     connect(this, &QGuiApplication::applicationStateChanged, this,
-            [this](Qt::ApplicationState state) {
-                const bool foreground = state == Qt::ApplicationActive;
-                m_live->setSuspended(!foreground || m_player->active());
-                if (foreground && !m_player->active())
-                    m_live->refreshNow();
-            });
+            [this] { recomputeLiveUpdatePolicy(); });
+    recomputeLiveUpdatePolicy();
     if (m_session->authenticated())
         m_live->start();
 
@@ -224,6 +214,49 @@ void Application::teardownAuthenticatedSession()
     m_powerInhibit->release();
 }
 
+void Application::setInteractionContext(const QString &context)
+{
+    static const QStringList valid{QStringLiteral("login"), QStringLiteral("browse"),
+                                   QStringLiteral("music"), QStringLiteral("player"),
+                                   QStringLiteral("overlay")};
+    const QString wanted = valid.contains(context) ? context : QStringLiteral("browse");
+    if (m_interactionContext == wanted) {
+#ifdef STRMQT_HAVE_SDL3
+        // GamepadManager is constructed with a conservative browse default,
+        // while Application starts in login. The first QML publication may
+        // therefore repeat our value but still has hardware state to sync.
+        if (m_gamepad && m_gamepad->context() != wanted)
+            m_gamepad->setContext(wanted);
+#endif
+        return;
+    }
+    m_interactionContext = wanted;
+#ifdef STRMQT_HAVE_SDL3
+    if (m_gamepad)
+        m_gamepad->setContext(wanted);
+#endif
+    emit interactionContextChanged();
+}
+
+void Application::recomputeLiveUpdatePolicy()
+{
+    if (!m_live || !m_player)
+        return;
+    const bool foreground = applicationState() == Qt::ApplicationActive;
+    const bool active = m_player->active();
+    const bool playbackEnded = m_lastPlaybackActive && !active;
+    m_lastPlaybackActive = active;
+    const bool wasSuspended = m_live->suspended();
+    const bool suspended =
+        shouldSuspendLiveUpdates(foreground, active, m_player->isAudio());
+    m_live->setSuspended(suspended);
+    // Crossing from any composed suspension state to none is the safe point
+    // to reconcile immediately: video stopped/became audio, or the app came
+    // back to the foreground.
+    if (!suspended && (wasSuspended || playbackEnded))
+        m_live->refreshNow();
+}
+
 void Application::wirePlaybackIntegrations()
 {
     // Playback state → screensaver inhibit + MPRIS surface.
@@ -232,7 +265,9 @@ void Application::wirePlaybackIntegrations()
         const bool paused = m_player->paused();
         m_mpris->setBusy(m_player->busy());
         m_mpris->setPlaybackActive(active, paused);
-        if (active && !paused)
+        // Screen/display inhibition belongs to visible video. Audio playback
+        // should allow ordinary display blanking, even for an hours-long queue.
+        if (shouldInhibitDisplay(active, paused, m_player->isAudio()))
             m_powerInhibit->acquire(QStringLiteral("Playing video"));
         else
             m_powerInhibit->release();
@@ -240,6 +275,7 @@ void Application::wirePlaybackIntegrations()
     connect(m_player, &PlayerController::activeChanged, this, syncState);
     connect(m_player, &PlayerController::pausedChanged, this, syncState);
     connect(m_player, &PlayerController::busyChanged, this, syncState);
+    connect(m_player, &PlayerController::isAudioChanged, this, syncState);
     syncState();
 
     // MPRIS Volume is a linear multiplier with 1.0 as nominal volume; the
