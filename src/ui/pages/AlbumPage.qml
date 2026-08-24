@@ -201,7 +201,10 @@ FocusScope {
     // real in-flight state and a real failure. Scope the state to this album so
     // a covered page never displays another album's rows while StackView is
     // transitioning between them.
-    readonly property bool awaitingTracks: page.scopeMine && MusicCtl.loading
+    readonly property bool detailMine: MusicCtl.detailKind === "album"
+                                       && MusicCtl.detailId === page.albumId
+    readonly property bool awaitingTracks: page.scopeMine && page.detailMine
+                                           && MusicCtl.detailLoading
                                            && !page.hasTracks
 
     // ── The music input context (MUSIC.md §7) ──────────────────────────────
@@ -781,15 +784,16 @@ FocusScope {
         anchors.top: tableHead.bottom
         anchors.bottom: parent.bottom
         visible: page.albumId.length === 0
-                 || (page.scopeMine && !MusicCtl.loading && !page.hasTracks)
+                 || (page.scopeMine && page.detailMine
+                     && !MusicCtl.detailLoading && !page.hasTracks)
         iconName: "lib-music"
         headline: page.albumId.length === 0
                   ? qsTr("No album open")
-                  : (MusicCtl.errorMessage.length > 0
+                  : (MusicCtl.detailErrorMessage.length > 0
                      ? qsTr("Could not load tracks") : qsTr("No tracks came back"))
         body: page.albumId.length > 0
-              ? (MusicCtl.errorMessage.length > 0
-                 ? MusicCtl.errorMessage
+              ? (MusicCtl.detailErrorMessage.length > 0
+                 ? MusicCtl.detailErrorMessage
                  : qsTr("The server returned no tracks for this album."))
               : qsTr("Open an album from the music library to see its tracks.")
         actionText: page.albumId.length > 0 ? qsTr("Try again") : ""

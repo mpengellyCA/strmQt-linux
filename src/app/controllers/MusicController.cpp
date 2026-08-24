@@ -100,6 +100,9 @@ void MusicController::resetSessionState()
     m_albumName.clear();
     m_artistId.clear();
     m_artistName.clear();
+    m_detailKind.clear();
+    m_detailId.clear();
+    m_detailError.clear();
     m_artistMode = QStringLiteral("albumArtists");
     m_tab = QStringLiteral("albums");
     m_albumSortBy = QStringLiteral("SortName");
@@ -122,6 +125,7 @@ void MusicController::resetSessionState()
 
     updateLoading();
     setError({});
+    emit detailStatusChanged();
     emit scopeChanged();
     emit albumChanged();
     emit artistChanged();
@@ -375,7 +379,29 @@ int MusicController::retire(int &generation, int &inFlight)
 void MusicController::updateLoading()
 {
     setLoading(m_albumInFlight != 0 || m_artistInFlight != 0 || m_songInFlight != 0
-               || m_playlistInFlight != 0 || m_detailInFlight != 0);
+               || m_playlistInFlight != 0);
+}
+
+int MusicController::beginDetail(const QString &kind, const QString &id)
+{
+    const int generation = retire(m_generation, m_detailInFlight);
+    m_detailKind = kind;
+    m_detailId = id;
+    m_detailError.clear();
+    m_detailInFlight = generation;
+    emit detailStatusChanged();
+    return generation;
+}
+
+void MusicController::finishDetail(int generation, const QString &error)
+{
+    if (generation != m_generation)
+        return;
+    m_detailInFlight = 0;
+    m_detailError = error;
+    if (!error.isEmpty())
+        qCWarning(logApp) << "music detail:" << error;
+    emit detailStatusChanged();
 }
 
 void MusicController::applyQueryChange()
@@ -479,9 +505,9 @@ void MusicController::setLibrary(const QString &libraryId)
     // nothing has been requested for the new scope yet — so retiring them lowers
     // the flag here rather than leaving the grid shimmering until some unrelated
     // fetch happens to finish. It used to take an explicit setLoading(false) at
-    // the end of this function; the in-flight markers make it automatic, and
-    // more accurate: an album page still loading in another part of the app
-    // keeps the flag up instead of having it cleared out from under it.
+    // the end of this function; the per-list in-flight markers make it
+    // automatic. Album/artist detail has a separate status surface and cannot
+    // hold this library-list flag up or have it cleared here.
     retire(m_albumGeneration, m_albumInFlight);
     retire(m_artistGeneration, m_artistInFlight);
     retire(m_songGeneration, m_songInFlight);
@@ -872,13 +898,7 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     m_albumName = name;
     emit albumChanged();
     m_tracks->clear();
-    // Same gap openArtist() had: without these a failed track fetch is
-    // indistinguishable from a slow one, and the page shimmers forever.
-    setError(QString());
-
-    const int generation = retire(m_generation, m_detailInFlight);
-    m_detailInFlight = generation;
-    updateLoading();
+    const int generation = beginDetail(QStringLiteral("album"), albumId);
     ItemsQuery query;
     query.parentId = albumId;
     // NOT recursive and NOT sorted: an album's children are its tracks, and the
@@ -890,10 +910,8 @@ void MusicController::openAlbum(const QString &albumId, const QString &name)
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
         if (generation != m_generation)
             return;
-        m_detailInFlight = 0;
-        updateLoading();
+        finishDetail(generation, result.ok() ? QString() : result.error);
         if (!result.ok()) {
-            setError(result.error);
             return;
         }
         m_tracks->setItems(result.value.items, result.value.totalRecordCount);
@@ -994,13 +1012,7 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
     emit artistChanged();
     m_artistAlbums->clear();
     m_artistTracks->clear();
-    // Gap found in review: this fetch reported neither progress nor failure, so
-    // a failed discography was indistinguishable from an artist with no albums.
-    setError(QString());
-
-    const int generation = retire(m_generation, m_detailInFlight);
-    m_detailInFlight = generation;
-    updateLoading();
+    const int generation = beginDetail(QStringLiteral("artist"), artistId);
     ItemsQuery query;
     // AlbumArtistIds, not ArtistIds: a discography is what someone released,
     // not everything they guested on. Measured on one artist: 5 albums either
@@ -1020,10 +1032,8 @@ void MusicController::openArtist(const QString &artistId, const QString &name)
         // The top-tracks fetch below shares this generation and does NOT clear
         // the marker: the discography is what the page's spinner is about, and
         // one of the two replies has to own the flag.
-        m_detailInFlight = 0;
-        updateLoading();
+        finishDetail(generation, result.ok() ? QString() : result.error);
         if (!result.ok()) {
-            setError(result.error);
             return;
         }
         m_artistAlbums->setItems(result.value.items, result.value.totalRecordCount);

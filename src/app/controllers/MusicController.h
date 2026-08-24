@@ -62,6 +62,13 @@ class MusicController : public QObject
     Q_PROPERTY(QString artistName READ artistName NOTIFY artistChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
+    // Album/artist pages share one retargetable detail lane. Keep its owner and
+    // status separate from the library lists so unrelated replies cannot clear
+    // a detail failure or keep a detail skeleton alive.
+    Q_PROPERTY(QString detailKind READ detailKind NOTIFY detailStatusChanged)
+    Q_PROPERTY(QString detailId READ detailId NOTIFY detailStatusChanged)
+    Q_PROPERTY(bool detailLoading READ detailLoading NOTIFY detailStatusChanged)
+    Q_PROPERTY(QString detailErrorMessage READ detailErrorMessage NOTIFY detailStatusChanged)
     // False under SortBy=Random, whatever the totals say: Emby reshuffles per
     // request and has no seed, so a second page is a second shuffle. See
     // isRandomSort() in the .cpp for the whole reason.
@@ -135,6 +142,10 @@ public:
     QString artistName() const { return m_artistName; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_error; }
+    QString detailKind() const { return m_detailKind; }
+    QString detailId() const { return m_detailId; }
+    bool detailLoading() const { return m_detailInFlight != 0; }
+    QString detailErrorMessage() const { return m_detailError; }
     bool canLoadMoreAlbums() const;
     bool canLoadMoreArtists() const;
     bool canLoadMoreSongs() const;
@@ -274,7 +285,7 @@ signals:
     void artistsChanged();
     void songsChanged();
     void playlistsChanged();
-    // The query moved (sort, letter, genre, year, favourites): a list is being
+    // The query moved (sort, letter, genre, favourites): a list is being
     // refilled. Named for LibraryController's signal so FilterBar connects to
     // one name whichever controller it is pointed at.
     void queryChanged();
@@ -284,6 +295,7 @@ signals:
     void genresChanged();
     void loadingChanged();
     void errorChanged();
+    void detailStatusChanged();
     // A one-shot verb failed. Separate from errorMessage, which is the state of
     // the *lists* — MusicPage renders that as "Couldn't load this music
     // library" or, once a page is on screen, as a paging banner with a Retry
@@ -311,7 +323,9 @@ private:
                      const QString &failure);
     void setLoading(bool loading);
     void setError(const QString &message);
-    // Applies the shared filter axes (letter, genres, years, favourites) to a
+    int beginDetail(const QString &kind, const QString &id);
+    void finishDetail(int generation, const QString &error);
+    // Applies the shared filter axes (letter, genres, favourites) to a
     // query. One place, so the three tabs cannot drift apart on what "filtered"
     // means.
     void applyFilters(ItemsQuery &query) const;
@@ -327,8 +341,8 @@ private:
     // because that reply is now the thing that will never clear it. Returns the
     // new generation, which is what a fetch about to be issued carries.
     static int retire(int &generation, int &inFlight);
-    // `loading` is the OR of the in-flight markers. Called after every retire()
-    // and every reply.
+    // `loading` is the OR of the library-list markers. The detail lane has its
+    // own owner-scoped state. Called after every list retire() and reply.
     void updateLoading();
 
     emby::EmbyClient *m_client;
@@ -350,6 +364,9 @@ private:
     QString m_artistId;
     QString m_artistName;
     QString m_error;
+    QString m_detailKind;
+    QString m_detailId;
+    QString m_detailError;
     QString m_artistMode = QStringLiteral("albumArtists");
 
     QString m_tab = QStringLiteral("albums");
@@ -417,7 +434,8 @@ private:
     int m_artistInFlight = 0;
     int m_songInFlight = 0;
     int m_playlistInFlight = 0;
-    // openAlbum() and openArtist() share m_generation, so they share a marker.
+    // openAlbum() and openArtist() share m_generation, so they share a marker
+    // and an explicit kind/id owner.
     int m_detailInFlight = 0;
 };
 

@@ -115,10 +115,14 @@ FocusScope {
     // The controller owns the request lifetime and failure. Keeping this as a
     // binding avoids a timer declaring a slow request empty while it is still
     // in flight, and avoids leaving a fast empty response on a skeleton.
-    readonly property bool discographyLoading: page.scopeMine && MusicCtl.loading
+    readonly property bool detailMine: MusicCtl.detailKind === "artist"
+                                       && MusicCtl.detailId === page.artistId
+    readonly property bool discographyLoading: page.scopeMine && page.detailMine
+                                               && MusicCtl.detailLoading
 
     readonly property bool discographyEmpty: page.artistId.length > 0
                                              && page.scopeMine
+                                             && page.detailMine
                                              && !page.discographyLoading
                                              && page.albumsLoaded === 0
 
@@ -770,7 +774,8 @@ FocusScope {
         // Shown only while the shared controller is still scoped to this
         // artist: a grid quietly full of somebody else's records is worse than
         // no grid at all.
-        visible: page.scopeMine && !MusicCtl.loading && page.albumsLoaded > 0
+        visible: page.scopeMine && page.detailMine
+                 && !MusicCtl.detailLoading && page.albumsLoaded > 0
         // Focus follows content, never visibility.
         focus: albumGrid.count > 0
 
@@ -879,11 +884,11 @@ FocusScope {
         anchors.right: parent.right
         visible: page.discographyEmpty
         iconName: "lib-music"
-        headline: MusicCtl.errorMessage.length > 0
+        headline: MusicCtl.detailErrorMessage.length > 0
                   ? qsTr("Could not load albums")
                   : qsTr("No albums for %1").arg(page.displayName)
-        body: MusicCtl.errorMessage.length > 0
-              ? MusicCtl.errorMessage
+        body: MusicCtl.detailErrorMessage.length > 0
+              ? MusicCtl.detailErrorMessage
               : qsTr("Nothing on this server is filed under this artist — their tracks may sit on compilations credited to someone else.")
         actionText: qsTr("Reload")
         actionIcon: "refresh"

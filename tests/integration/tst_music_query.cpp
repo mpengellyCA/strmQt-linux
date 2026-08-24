@@ -48,6 +48,9 @@ private slots:
     void createdPlaylistsReappearInTheMusicTab();
     void invalidatingPlaylistsFromAnotherTabDoesNotStrandLoading();
     void aPlaylistFetchWithNoLibraryDoesNotStrandLoading();
+    void albumDetailStatusIsIsolatedFromListRequests();
+    void albumDetailStatusRejectsRetiredReplies();
+    void artistDetailStatusIsOwnedAndIsolated();
     void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
 private:
@@ -316,7 +319,7 @@ void MusicQueryTest::songsAreTheirOwnModelWithTheirOwnQuery()
 
     // Opening an album fills `tracks` and leaves the songs list alone.
     m_music->openAlbum(QStringLiteral("88001"), QStringLiteral("Lift Yr Skinny Fists"));
-    settle();
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
     QCOMPARE(m_music->tracks()->rowCount(), 1);
     QVERIFY(m_music->songs()->rowCount() >= 1);
 }
@@ -950,6 +953,115 @@ void MusicQueryTest::aPlaylistFetchWithNoLibraryDoesNotStrandLoading()
     m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
 }
 
+void MusicQueryTest::albumDetailStatusIsIsolatedFromListRequests()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+
+    // A successful library-list request is already in flight when the album
+    // detail fails. Its later success must not erase the detail-owned error.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    m_music->loadAlbums();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_music->openAlbum(QStringLiteral("album-failed"), QStringLiteral("Failed Album"));
+    QCOMPARE(m_music->detailKind(), QStringLiteral("album"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-failed"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QVERIFY(!m_music->detailErrorMessage().isEmpty());
+    const QString detailFailure = m_music->detailErrorMessage();
+    QVERIFY(m_music->loading());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->loading(), 5000);
+    QCOMPARE(m_music->detailErrorMessage(), detailFailure);
+
+    // Reverse the interleaving: an empty successful detail remains an honest
+    // empty result even when an unrelated list failure lands afterwards.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    m_music->loadAlbums();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 3, 5000);
+
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_music->openAlbum(QStringLiteral("album-empty"), QStringLiteral("Empty Album"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-empty"));
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+    QCOMPARE(m_music->tracks()->rowCount(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->loading(), 5000);
+    QVERIFY(!m_music->errorMessage().isEmpty());
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+}
+
+void MusicQueryTest::albumDetailStatusRejectsRetiredReplies()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    m_music->openAlbum(QStringLiteral("album-a"), QStringLiteral("Album A"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+
+    const QByteArray albumB = QByteArrayLiteral(
+        "{\"Items\":[{\"Id\":\"track-b\",\"Name\":\"Track B\",\"Type\":\"Audio\"}],"
+        "\"TotalRecordCount\":1}");
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, albumB);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_music->openAlbum(QStringLiteral("album-b"), QStringLiteral("Album B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QCOMPARE(m_music->detailKind(), QStringLiteral("album"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-b"));
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+    QCOMPARE(m_music->tracks()->rowCount(), 1);
+
+    QTest::qWait(450);
+    QCOMPARE(m_music->detailId(), QStringLiteral("album-b"));
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+    QCOMPARE(m_music->tracks()->get(0).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("track-b"));
+}
+
+void MusicQueryTest::artistDetailStatusIsOwnedAndIsolated()
+{
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+
+    // Both artist-detail requests fail promptly while a successful list request
+    // remains delayed. The list completion cannot clear the discography error.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    m_music->loadAlbums();
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 1, 5000);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_music->openArtist(QStringLiteral("artist-failed"), QStringLiteral("Failed Artist"));
+    QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("artist-failed"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    const QString detailFailure = m_music->detailErrorMessage();
+    QVERIFY(!detailFailure.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->loading(), 5000);
+    QCOMPARE(m_music->detailErrorMessage(), detailFailure);
+
+    // Retarget the artist lane while A is delayed. Neither of A's replies may
+    // mutate B's empty successful state.
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 500, QByteArrayLiteral("{}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 350);
+    const int beforeA = requestsFor(itemsPath);
+    m_music->openArtist(QStringLiteral("artist-a"), QStringLiteral("Artist A"));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), beforeA + 2, 5000);
+    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200, kEmptyPage);
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath, 0);
+    m_music->openArtist(QStringLiteral("artist-b"), QStringLiteral("Artist B"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_music->detailLoading(), 5000);
+    QCOMPARE(m_music->detailKind(), QStringLiteral("artist"));
+    QCOMPARE(m_music->detailId(), QStringLiteral("artist-b"));
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+    QTest::qWait(450);
+    QCOMPARE(m_music->detailId(), QStringLiteral("artist-b"));
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
+}
+
 void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
 {
     const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
@@ -984,6 +1096,10 @@ void MusicQueryTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
     QVERIFY(m_music->libraryId().isEmpty());
     QVERIFY(m_music->albumId().isEmpty());
     QVERIFY(m_music->artistId().isEmpty());
+    QVERIFY(m_music->detailKind().isEmpty());
+    QVERIFY(m_music->detailId().isEmpty());
+    QVERIFY(!m_music->detailLoading());
+    QVERIFY(m_music->detailErrorMessage().isEmpty());
     QCOMPARE(m_music->tab(), QStringLiteral("albums"));
     QCOMPARE(m_music->artistMode(), QStringLiteral("albumArtists"));
     QCOMPARE(m_music->sortBy(), QStringLiteral("SortName"));
