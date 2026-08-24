@@ -104,7 +104,8 @@ bool SecretsStore::ensureWallet()
                 qCWarning(logCore) << "migrated legacy credentials but could not remove"
                                    << legacyPath;
         } else {
-            qCWarning(logCore) << "legacy credential migration incomplete; plaintext retained";
+            qCWarning(logCore) << "legacy credential migration incomplete; plaintext retained at"
+                               << legacyPath;
         }
     }
     return true;
@@ -153,10 +154,14 @@ bool SecretsStore::writeSecret(const QString &key, const QString &value)
                                                 kWalletFolder, key, value, appId());
         delete wallet;
         if (rc.isValid() && rc.value() == 0) {
+            // The secret IS stored: reporting failure here made the caller log
+            // "could not persist access token" about a token sitting safely in
+            // the wallet. A leftover plaintext copy is a separate problem, and
+            // it is reported as one rather than folded into this result.
             if (!removeLegacySecret(key)) {
-                qCWarning(logCore) << "wallet write succeeded but legacy credential cleanup failed"
-                                   << key;
-                return false;
+                qCWarning(logCore) << "stored" << key
+                                   << "in the wallet but could not remove the older plaintext copy;"
+                                   << "delete it by hand:" << fallbackFilePath();
             }
             return true;
         }
@@ -174,14 +179,20 @@ bool SecretsStore::writeSecret(const QString &key, const QString &value)
     store.sync();
     const bool written = store.status() == QSettings::NoError && store.value(key).toString() == value;
     const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
-    if (!written || !QFile::setPermissions(fallbackFilePath(), ownerOnly))
-        return false;
-    const QFile::Permissions actual = QFileInfo(fallbackFilePath()).permissions();
     const QFile::Permissions exposed = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
                                        QFileDevice::ExeGroup | QFileDevice::ReadOther |
                                        QFileDevice::WriteOther | QFileDevice::ExeOther;
-    return actual.testFlag(QFileDevice::ReadOwner) &&
-           actual.testFlag(QFileDevice::WriteOwner) && !(actual & exposed);
+    if (written && QFile::setPermissions(fallbackFilePath(), ownerOnly)) {
+        // Re-read rather than trusting the call: the mode that matters is the
+        // one on disk after the change, not the one requested.
+        const QFile::Permissions actual = QFileInfo(fallbackFilePath()).permissions();
+        if (actual.testFlag(QFileDevice::ReadOwner) && actual.testFlag(QFileDevice::WriteOwner) &&
+            !(actual & exposed))
+            return true;
+    }
+    // Never leave a secret behind under permissions we could not prove.
+    removeLegacySecret(key);
+    return false;
 }
 
 QString SecretsStore::readSecret(const QString &key)
@@ -209,10 +220,11 @@ bool SecretsStore::removeSecret(const QString &key)
                                                 kWalletFolder, key, appId());
         delete wallet;
         const bool removed = rc.isValid() && rc.value() == 0;
-        const bool legacyRemoved = removeLegacySecret(key);
-        if (!legacyRemoved)
-            qCWarning(logCore) << "could not remove legacy plaintext credential" << key;
-        return removed && legacyRemoved;
+        if (!removeLegacySecret(key)) {
+            qCWarning(logCore) << "could not remove legacy plaintext credential" << key
+                               << "at" << fallbackFilePath();
+        }
+        return removed;
     }
 
     if (m_storageMode != StorageMode::PlaintextFallback)
