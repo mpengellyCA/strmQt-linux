@@ -11,6 +11,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <optional>
+
 namespace strmqt {
 
 class Settings;
@@ -400,6 +402,8 @@ private:
     int m_healthyTicks = 0;
     int m_stallStep = 0;      // 0 nudge-seek, 1 reload rung, 2 demote
     int m_recoverRetries = 0; // mid-stream ticket-refresh attempts this incident
+    int m_recoveryToken = 0;
+    bool m_recovering = false;
     int m_stallTicksLimit = 3;
     int m_backoffBaseMs = 1000;
 
@@ -410,6 +414,13 @@ private:
     bool m_upNextCancelled = false;
     bool m_upNextVisible = false;
     int m_upNextSeconds = 0;
+
+    // Track setters are requests. Persistence happens only after the backend's
+    // asynchronous readback publishes the selection that actually took effect.
+    bool m_trackSelectionPending = false;
+    bool m_restoringTracks = false;
+    std::optional<int> m_pendingAudioTrack;
+    std::optional<int> m_pendingSubtitleTrack;
 };
 
 } // namespace strmqt

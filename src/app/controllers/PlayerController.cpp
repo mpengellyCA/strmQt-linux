@@ -60,12 +60,48 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     // remembered choice can only be applied once that arrives.
     if (m_backend) {
         connect(m_backend, &PlayerBackend::tracksChanged, this, [this] {
-            if (m_tracksRestored || m_itemId.isEmpty())
+            if (m_expectedLoadId == 0 || m_restoringTracks || m_itemId.isEmpty())
                 return;
-            if (m_backend->audioTracks().isEmpty() && m_backend->subtitleTracks().isEmpty())
-                return; // list not populated yet
-            m_tracksRestored = true;
-            restoreRememberedTracks();
+            if (!m_tracksRestored) {
+                if (m_backend->audioTracks().isEmpty() && m_backend->subtitleTracks().isEmpty())
+                    return; // list not populated yet
+                m_tracksRestored = true;
+                m_restoringTracks = true;
+                restoreRememberedTracks();
+                m_restoringTracks = false;
+                return;
+            }
+            bool confirmed = m_trackSelectionPending;
+            if (m_pendingAudioTrack) {
+                confirmed = confirmed ||
+                    m_backend->currentAudioTrackId() == *m_pendingAudioTrack;
+                m_pendingAudioTrack.reset();
+            }
+            if (m_pendingSubtitleTrack) {
+                confirmed = confirmed ||
+                    m_backend->currentSubtitleTrackId() == *m_pendingSubtitleTrack;
+                m_pendingSubtitleTrack.reset();
+            }
+            if (confirmed) {
+                m_trackSelectionPending = false;
+                rememberCurrentTracks();
+            }
+        });
+        connect(m_backend, &PlayerBackend::trackChanged, this, [this](const QString &description) {
+            if (m_expectedLoadId != 0 && m_active)
+                emit trackChanged(description);
+        });
+        connect(m_backend, &PlayerBackend::playbackSpeedChanged, this, [this] {
+            if (m_expectedLoadId != 0 && m_active)
+                emit playbackSpeedChanged();
+        });
+        connect(m_backend, &PlayerBackend::audioDelayChanged, this, [this] {
+            if (m_expectedLoadId != 0 && m_active)
+                emit audioDelayChanged();
+        });
+        connect(m_backend, &PlayerBackend::subtitleDelayChanged, this, [this] {
+            if (m_expectedLoadId != 0 && m_active)
+                emit subtitleDelayChanged();
         });
     }
 
@@ -375,6 +411,9 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // playUrl() passes no item id (dev/test path, no server session).
     // A new item gets a fresh chance to restore its remembered tracks.
     m_tracksRestored = false;
+    m_trackSelectionPending = false;
+    m_pendingAudioTrack.reset();
+    m_pendingSubtitleTrack.reset();
     // Cleared before the fetch that refills them, so a failed lookup cannot
     // leave the previous episode's series attached to this one.
     m_currentSeriesId.clear();
@@ -385,10 +424,13 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     setError({});
     setBusy(true);
     setActive(true);
+    updateIsAudio();
     m_reporting = true;
     m_stallStep = 0;
     m_healthyTicks = 0;
     m_recoverRetries = 0;
+    m_recovering = false;
+    ++m_recoveryToken;
     // A fresh item gets a fresh Up Next card, whatever the user did about the
     // previous one.
     m_upNextCancelled = false;
@@ -427,7 +469,6 @@ void PlayerController::setPlaybackSpeed(qreal speed)
     if (!m_backend)
         return;
     m_backend->setPlaybackSpeed(speed);
-    emit playbackSpeedChanged();
 }
 
 void PlayerController::setAudioDelayMs(int ms)
@@ -435,7 +476,6 @@ void PlayerController::setAudioDelayMs(int ms)
     if (!m_backend)
         return;
     m_backend->setAudioDelayMs(ms);
-    emit audioDelayChanged();
 }
 
 void PlayerController::setSubtitleDelayMs(int ms)
@@ -443,7 +483,6 @@ void PlayerController::setSubtitleDelayMs(int ms)
     if (!m_backend)
         return;
     m_backend->setSubtitleDelayMs(ms);
-    emit subtitleDelayChanged();
 }
 
 void PlayerController::applySubtitleStyle()
@@ -490,6 +529,8 @@ void PlayerController::setPreferredSource(int index)
     m_stallStep = 0;
     m_healthyTicks = 0;
     m_recoverRetries = 0;
+    m_recovering = false;
+    ++m_recoveryToken;
     emit streamMethodChanged();
     startAttempt(m_lastPositionMs);
 }
@@ -513,18 +554,32 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_upNextCancelled = false;
     setUpNext(false, 0);
     ++m_generation;
+    m_recovering = false;
+    ++m_recoveryToken;
     m_title = title;
     emit titleChanged();
     setError({});
     m_reporting = false;
     m_ticket = {};
     m_ticketItemId.clear();
+    m_itemId.clear();
+    m_currentSeriesId.clear();
+    m_currentItemType.clear();
+    m_tracksRestored = false;
+    m_trackSelectionPending = false;
+    m_pendingAudioTrack.reset();
+    m_pendingSubtitleTrack.reset();
+    if (!m_chapters.isEmpty()) {
+        m_chapters.clear();
+        emit chaptersChanged();
+    }
     m_rung = 0;
     m_sourceIndex = -1;
     m_preferredSourceIndex = -1;
     emit sourcesChanged();
     emit sourceIndexChanged();
     setActive(true);
+    updateIsAudio();
     setBusy(true);
     m_started = false;
     m_lastPositionMs = 0;
@@ -547,6 +602,10 @@ void PlayerController::startAttempt(qint64 startMs)
     qCInfo(logPlayback) << "starting rung" << playMethodName(candidate.method) << "of source"
                         << m_sourceIndex << "for item" << m_itemId << "at" << startMs << "ms";
     m_started = false;
+    m_tracksRestored = false;
+    m_trackSelectionPending = false;
+    m_pendingAudioTrack.reset();
+    m_pendingSubtitleTrack.reset();
     m_watchdogLastPos = -1;
     m_stallTicks = 0;
     // m_stallStep intentionally survives watchdog-triggered reloads: the
@@ -567,6 +626,7 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
     emit pausedChanged();
 
     if (state == PlayerBackend::State::Playing && !m_started) {
+        m_recovering = false;
         m_started = true;
         setBusy(false);
         updateUpNext();
@@ -654,19 +714,23 @@ void PlayerController::recoverMidStream()
     // Tickets go stale (auth/HLS URLs expire): re-fetch and resume, with capped
     // exponential backoff. Retries reset once playback runs healthily again.
     ++m_recoverRetries;
+    m_recovering = true;
+    const int recoveryToken = ++m_recoveryToken;
+    m_watchdog.stop();
     const int delay = qMin(m_backoffBaseMs * (1 << (m_recoverRetries - 1)), 8 * m_backoffBaseMs);
     const int generation = m_generation;
     qCWarning(logPlayback) << "mid-stream failure; refreshing ticket in" << delay << "ms (attempt"
                            << m_recoverRetries << ")";
 
-    QTimer::singleShot(delay, this, [this, generation] {
-        if (generation != m_generation || !m_active)
+    QTimer::singleShot(delay, this, [this, generation, recoveryToken] {
+        if (generation != m_generation || recoveryToken != m_recoveryToken || !m_active)
             return;
         m_client->playbackInfo(m_itemId, m_lastPositionMs * kTicksPerMs)
-            .then(this, [this, generation](const Result<PlaybackTicket> &result) {
-                if (generation != m_generation || !m_active)
+            .then(this, [this, generation, recoveryToken](const Result<PlaybackTicket> &result) {
+                if (generation != m_generation || recoveryToken != m_recoveryToken || !m_active)
                     return;
                 if (!result.ok()) {
+                    m_recovering = false;
                     onBackendError(result.error, m_expectedLoadId);
                     return;
                 }
@@ -767,6 +831,8 @@ void PlayerController::onBackendError(const QString &message, PlayerBackend::Loa
     // session was torn down must not restart the ladder into a stopped player.
     if (!m_active || loadId != m_expectedLoadId)
         return;
+    if (m_recovering && m_started)
+        return; // one delayed ticket refresh owns this recovery incident
     m_progressTimer.stop();
 
     // Broken tail (the Emby-web-player bug class): an error at effectively the
@@ -1097,30 +1163,30 @@ void PlayerController::seekRelative(qint64 deltaMs)
 
 void PlayerController::cycleAudioTrack()
 {
+    m_trackSelectionPending = true;
     m_backend->cycleAudioTrack();
-    rememberCurrentTracks();
 }
 
 void PlayerController::cycleSubtitleTrack()
 {
+    m_trackSelectionPending = true;
     m_backend->cycleSubtitleTrack();
-    rememberCurrentTracks();
 }
 
 void PlayerController::setAudioTrack(int id)
 {
     if (!m_backend)
         return;
+    m_pendingAudioTrack = id;
     m_backend->setAudioTrack(id);
-    rememberCurrentTracks();
 }
 
 void PlayerController::setSubtitleTrack(int id)
 {
     if (!m_backend)
         return;
+    m_pendingSubtitleTrack = id;
     m_backend->setSubtitleTrack(id);
-    rememberCurrentTracks();
 }
 
 void PlayerController::frameStep(int direction)
@@ -1334,9 +1400,14 @@ void PlayerController::finishSession(TerminationReason reason)
     m_currentSeriesId.clear();
     m_currentItemType.clear();
     m_tracksRestored = false;
+    m_trackSelectionPending = false;
+    m_pendingAudioTrack.reset();
+    m_pendingSubtitleTrack.reset();
     m_sourceIndex = -1;
     m_rung = 0;
     m_preferredSourceIndex = -1;
+    m_recovering = false;
+    ++m_recoveryToken;
     m_lastPositionMs = 0;
     if (!m_chapters.isEmpty()) {
         m_chapters.clear();

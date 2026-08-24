@@ -45,6 +45,7 @@ private slots:
     void watchdogNudgesReloadsThenDemotes();
     void brokenTailErrorIsCleanEnd();
     void midStreamErrorRefetchesTicket();
+    void recoveryBurstStartsOnlyOneRefresh();
     void crashResumePersistsAndClears();
     void ladderDemotesOnStartupFailure();
     void allRungsFailingSurfacesError();
@@ -56,6 +57,8 @@ private slots:
     void seekAndPauseReportProgress();
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
+    void trackPersistenceWaitsForBackendReadback();
+    void playbackSettingsFollowBackendReadback();
 
     void replayGainReachesTheEngineOnLoadAndOnChange();
 
@@ -494,6 +497,92 @@ void PlayerControllerTest::midStreamErrorRefetchesTicket()
     m_backend->simulateError(QStringLiteral("reset final"));
     QTRY_COMPARE(stoppedSpy.count(), 1);
     QVERIFY(m_controller->errorMessage().contains(QStringLiteral("reset final")));
+}
+
+void PlayerControllerTest::recoveryBurstStartsOnlyOneRefresh()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(500'000);
+
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/301001/PlaybackInfo"),
+                          200);
+    const PlayerBackend::LoadId failedLoad = m_backend->loadedIds.constLast();
+    m_backend->simulateError(QStringLiteral("first"), failedLoad);
+    m_backend->simulateError(QStringLiteral("duplicate"), failedLoad);
+    m_backend->simulateError(QStringLiteral("duplicate again"), failedLoad);
+
+    // The watchdog is stopped throughout backoff/readback, and the error burst
+    // owns only one refresh token.
+    QTest::qWait(80);
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    int playbackInfoRequests = 0;
+    for (const auto &request : m_mock->requests()) {
+        if (request.method == QLatin1String("POST") &&
+            request.path == QLatin1String("/Items/301001/PlaybackInfo"))
+            ++playbackInfoRequests;
+    }
+    QCOMPARE(playbackInfoRequests, 2); // initial resolve plus one recovery
+}
+
+void PlayerControllerTest::trackPersistenceWaitsForBackendReadback()
+{
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("Main"), {}, {}, true),
+         FakePlayerBackend::makeTrack(2, QStringLiteral("Commentary"))},
+        {});
+    const QString sourceId =
+        m_controller->currentSource().value(QStringLiteral("id")).toString();
+    QVERIFY(!m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
+
+    m_backend->deferTrackReadback = true;
+    m_controller->setAudioTrack(2);
+    QCOMPARE(m_backend->currentAudioTrackId(), 1);
+    QVERIFY(!m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
+
+    m_backend->confirmAudioTrack(2);
+    QVERIFY(m_settings->hasRememberedTracks(QStringLiteral("301001"), sourceId));
+    QCOMPARE(m_settings->recalledTracks(QStringLiteral("301001"), sourceId).first, 2);
+
+    QSignalSpy toast(m_controller, &PlayerController::trackChanged);
+    m_backend->simulateTrackDescription(QStringLiteral("Audio: Commentary"));
+    QCOMPARE(toast.count(), 1);
+    QCOMPARE(toast.takeFirst().constFirst().toString(), QStringLiteral("Audio: Commentary"));
+}
+
+void PlayerControllerTest::playbackSettingsFollowBackendReadback()
+{
+    m_controller->playUrl(QUrl(QStringLiteral("file:///tmp/readback-test.mkv")),
+                          QStringLiteral("Readback"));
+    m_backend->deferPlaybackSettingsReadback = true;
+    QSignalSpy speedSpy(m_controller, &PlayerController::playbackSpeedChanged);
+    QSignalSpy audioSpy(m_controller, &PlayerController::audioDelayChanged);
+    QSignalSpy subtitleSpy(m_controller, &PlayerController::subtitleDelayChanged);
+
+    m_controller->setPlaybackSpeed(1.5);
+    m_controller->setAudioDelayMs(125);
+    m_controller->setSubtitleDelayMs(-250);
+    QCOMPARE(m_controller->playbackSpeed(), 1.0);
+    QCOMPARE(m_controller->audioDelayMs(), 0);
+    QCOMPARE(m_controller->subtitleDelayMs(), 0);
+    QCOMPARE(speedSpy.count(), 0);
+    QCOMPARE(audioSpy.count(), 0);
+    QCOMPARE(subtitleSpy.count(), 0);
+
+    m_backend->confirmPlaybackSpeed(1.5);
+    m_backend->confirmAudioDelay(125);
+    m_backend->confirmSubtitleDelay(-250);
+    QCOMPARE(m_controller->playbackSpeed(), 1.5);
+    QCOMPARE(m_controller->audioDelayMs(), 125);
+    QCOMPARE(m_controller->subtitleDelayMs(), -250);
+    QCOMPARE(speedSpy.count(), 1);
+    QCOMPARE(audioSpy.count(), 1);
+    QCOMPARE(subtitleSpy.count(), 1);
 }
 
 void PlayerControllerTest::crashResumePersistsAndClears()

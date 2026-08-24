@@ -59,6 +59,8 @@ public:
     void setAudioTrack(int id) override
     {
         audioTrackRequests.append(id);
+        if (deferTrackReadback)
+            return;
         m_audioTrackId = selectIn(m_audioTracks, id);
         emit tracksChanged();
     }
@@ -66,6 +68,8 @@ public:
     void setSubtitleTrack(int id) override
     {
         subtitleTrackRequests.append(id);
+        if (deferTrackReadback)
+            return;
         m_subtitleTrackId = selectIn(m_subtitleTracks, id);
         emit tracksChanged();
     }
@@ -74,18 +78,27 @@ public:
     qreal playbackSpeed() const override { return m_speed; }
     void setPlaybackSpeed(qreal speed) override
     {
+        speedRequests.append(speed);
+        if (deferPlaybackSettingsReadback)
+            return;
         m_speed = speed;
         emit playbackSpeedChanged();
     }
     int audioDelayMs() const override { return m_audioDelayMs; }
     void setAudioDelayMs(int ms) override
     {
+        audioDelayRequests.append(ms);
+        if (deferPlaybackSettingsReadback)
+            return;
         m_audioDelayMs = ms;
         emit audioDelayChanged();
     }
     int subtitleDelayMs() const override { return m_subtitleDelayMs; }
     void setSubtitleDelayMs(int ms) override
     {
+        subtitleDelayRequests.append(ms);
+        if (deferPlaybackSettingsReadback)
+            return;
         m_subtitleDelayMs = ms;
         emit subtitleDelayChanged();
     }
@@ -171,6 +184,31 @@ public:
         m_subtitleTrackId = selectedIdOf(subtitles);
         emit tracksChanged();
     }
+    void confirmAudioTrack(int id)
+    {
+        m_audioTrackId = selectIn(m_audioTracks, id);
+        emit tracksChanged();
+    }
+    void confirmSubtitleTrack(int id)
+    {
+        m_subtitleTrackId = selectIn(m_subtitleTracks, id);
+        emit tracksChanged();
+    }
+    void confirmPlaybackSpeed(qreal speed)
+    {
+        m_speed = speed;
+        emit playbackSpeedChanged();
+    }
+    void confirmAudioDelay(int ms)
+    {
+        m_audioDelayMs = ms;
+        emit audioDelayChanged();
+    }
+    void confirmSubtitleDelay(int ms)
+    {
+        m_subtitleDelayMs = ms;
+        emit subtitleDelayChanged();
+    }
     void simulateBufferedMs(qint64 ms)
     {
         m_bufferedMs = ms;
@@ -181,6 +219,7 @@ public:
         m_videoStats = stats;
         emit videoStatsChanged();
     }
+    void simulateTrackDescription(const QString &description) { emit trackChanged(description); }
 
     QList<QUrl> loadedUrls;
     QList<qint64> loadedStarts;
@@ -188,9 +227,14 @@ public:
     QList<qint64> seeks;
     QList<int> audioTrackRequests;
     QList<int> subtitleTrackRequests;
+    QList<qreal> speedRequests;
+    QList<int> audioDelayRequests;
+    QList<int> subtitleDelayRequests;
     QStringList screenshots;
     QStringList replayGainModes;
     int stopCalls = 0;
+    bool deferTrackReadback = false;
+    bool deferPlaybackSettingsReadback = false;
 
 private:
     LoadId resolvedLoadId(LoadId loadId) const { return loadId == 0 ? m_loadId : loadId; }
