@@ -317,6 +317,11 @@ void Application::wirePlaybackIntegrations()
         m_player->setVolume(percent);
     });
     syncVolume();
+    const auto syncRate = [this] { m_mpris->setRate(m_player->playbackSpeed()); };
+    connect(m_player, &PlayerController::playbackSpeedChanged, this, syncRate);
+    connect(m_mpris, &MprisPlayer::rateRequested, m_player,
+            [this](double rate) { m_player->setPlaybackSpeed(rate); });
+    syncRate();
     // Title and duration land on separate signals and the queue entry carries
     // everything else, so all three funnel into one rebuild; MprisPlayer drops
     // the repeats rather than putting them on the bus.

@@ -90,14 +90,14 @@ public:
     }
 
     QString playbackStatus() const { return m_player->playbackStatus(); }
-    double rate() const { return 1.0; }
-    void setRate(double) {}
+    double rate() const { return m_player->rate(); }
+    void setRate(double rate) { m_player->requestRateChange(rate); }
     QVariantMap metadata() const { return m_player->metadata(); }
     double volume() const { return m_player->volume(); }
     void setVolume(double volume) { m_player->requestVolumeChange(volume); }
     qlonglong position() const { return m_player->positionUs(); }
-    double minimumRate() const { return 1.0; }
-    double maximumRate() const { return 1.0; }
+    double minimumRate() const { return MprisPlayer::minimumRate(); }
+    double maximumRate() const { return MprisPlayer::maximumRate(); }
     bool canGoNext() const { return m_player->canGoNext(); }
     bool canGoPrevious() const { return m_player->canGoPrevious(); }
     bool canPlay() const { return m_player->canPlay(); }
@@ -342,6 +342,20 @@ void MprisPlayer::setVolume(double volume)
 void MprisPlayer::requestVolumeChange(double volume)
 {
     emit volumeRequested(std::clamp(volume, 0.0, 1.3));
+}
+
+void MprisPlayer::setRate(double rate)
+{
+    const double clamped = std::clamp(rate, minimumRate(), maximumRate());
+    if (qFuzzyCompare(m_rate, clamped))
+        return;
+    m_rate = clamped;
+    emitPropertiesChanged({{QStringLiteral("Rate"), m_rate}});
+}
+
+void MprisPlayer::requestRateChange(double rate)
+{
+    emit rateRequested(std::clamp(rate, minimumRate(), maximumRate()));
 }
 
 void MprisPlayer::emitMetadataChanged()

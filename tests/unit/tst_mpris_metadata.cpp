@@ -25,6 +25,7 @@ private slots:
     void queueStateDrivesCanGoNextAndPrevious();
     void capabilitiesFollowPlaybackLifecycle();
     void volumeRoundTripsAndClampsRequests();
+    void rateRoundTripsAndClampsRequests();
     void setPositionRejectsAStaleTrackId();
     void repeatedSetNowPlayingIsIdempotent();
 
@@ -286,6 +287,28 @@ void MprisMetadataTest::volumeRoundTripsAndClampsRequests()
     QCOMPARE(requests.at(0).at(0).toDouble(), 0.0);
     QCOMPARE(requests.at(1).at(0).toDouble(), 0.75);
     QCOMPARE(requests.at(2).at(0).toDouble(), 1.3);
+}
+
+void MprisMetadataTest::rateRoundTripsAndClampsRequests()
+{
+    MprisPlayer mpris;
+    QCOMPARE(mpris.rate(), 1.0);
+    QCOMPARE(MprisPlayer::minimumRate(), 0.25);
+    QCOMPARE(MprisPlayer::maximumRate(), 4.0);
+
+    mpris.setRate(1.75);
+    QCOMPARE(mpris.rate(), 1.75);
+    mpris.setRate(10.0);
+    QCOMPARE(mpris.rate(), 4.0);
+
+    QSignalSpy requests(&mpris, &MprisPlayer::rateRequested);
+    mpris.requestRateChange(0.1);
+    mpris.requestRateChange(1.25);
+    mpris.requestRateChange(8.0);
+    QCOMPARE(requests.count(), 3);
+    QCOMPARE(requests.at(0).at(0).toDouble(), 0.25);
+    QCOMPARE(requests.at(1).at(0).toDouble(), 1.25);
+    QCOMPARE(requests.at(2).at(0).toDouble(), 4.0);
 }
 
 void MprisMetadataTest::setPositionRejectsAStaleTrackId()

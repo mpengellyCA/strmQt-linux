@@ -67,6 +67,10 @@ public:
     // PlayerController's 0..130 surface maps to 0.0..1.3 here.
     void setVolume(double volume);
     void requestVolumeChange(double volume);
+    // Playback rate is the same 0.25x..4x surface exposed in-app. Publishing
+    // fixed 1.0 values while the engine ran faster made desktop clients drift.
+    void setRate(double rate);
+    void requestRateChange(double rate);
     // MPRIS SetPosition carries the track id the client observed. Reject a
     // delayed command after the queue has advanced to a different item.
     void requestSetPosition(const QString &trackPath, qint64 positionMs);
@@ -82,6 +86,9 @@ public:
     bool canSeek() const { return m_active && !m_busy; }
     bool playbackActive() const { return m_active; }
     double volume() const { return m_volume; }
+    double rate() const { return m_rate; }
+    static constexpr double minimumRate() { return 0.25; }
+    static constexpr double maximumRate() { return 4.0; }
 
 signals:
     void playPauseRequested();
@@ -93,6 +100,7 @@ signals:
     void seekRequested(qint64 deltaMs);
     void setPositionRequested(qint64 positionMs);
     void volumeRequested(double volume);
+    void rateRequested(double rate);
 
 private:
     void emitPropertiesChanged(const QVariantMap &changed);
@@ -107,6 +115,7 @@ private:
     TrackInfo m_track;
     qint64 m_positionMs = 0;
     double m_volume = 1.0;
+    double m_rate = 1.0;
     QString m_serviceName;
 };
 
