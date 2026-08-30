@@ -115,7 +115,8 @@ FocusScope {
             // answers no input.
             enabled: !page.showForm
             spacing: Theme.spacingLoose
-            clip: true
+            // No clip: invisible already stops the drawing, and a clip here
+            // cuts the focus ring's overhang off the top row of tiles.
 
             Flow {
                 id: tileFlow
