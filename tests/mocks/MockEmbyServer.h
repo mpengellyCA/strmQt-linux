@@ -49,6 +49,14 @@ public:
                          const QByteArray &contentType = "application/json");
     bool addRouteFromFile(const QString &method, const QString &path,
                           const QString &fixtureFilePath, int status = 200);
+    // Serves `fullBody` minus every key in `gatedKeys` that the request did not
+    // name in its Fields query item — mirroring Emby, which omits unrequested
+    // optional fields. Exists so whole-object write-back tests fail when the
+    // client's read forgets to ask for a field, instead of round-tripping a
+    // payload a real server would never have sent.
+    void addFieldsGatedRoute(const QString &method, const QString &path,
+                             const QByteArray &fullBody, const QStringList &gatedKeys,
+                             int status = 200);
     // Hold a route's reply back by `ms` before writing it. The request is
     // recorded when it arrives, so ordering assertions still see it.
     //
@@ -94,6 +102,13 @@ private:
         bool chunked = false;
     };
 
+    struct FieldsGatedRoute
+    {
+        int status = 200;
+        QByteArray fullBody;
+        QStringList gatedKeys;
+    };
+
     void handleConnection();
 
     void handleWebSocketConnection();
@@ -101,6 +116,7 @@ private:
     QTcpServer *m_server = nullptr;
     QHash<QString, Route> m_routes; // key: "METHOD /path"
     QHash<QString, QList<Route>> m_queuedRoutes;
+    QHash<QString, FieldsGatedRoute> m_fieldsGatedRoutes; // key: "METHOD /path"
     QList<ReceivedRequest> m_requests;
     QHash<QString, int> m_abortedResponses;
 

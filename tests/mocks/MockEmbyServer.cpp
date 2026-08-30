@@ -1,9 +1,12 @@
 #include "MockEmbyServer.h"
 
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QUrlQuery>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
@@ -70,6 +73,14 @@ bool MockEmbyServer::addRouteFromFile(const QString &method, const QString &path
     return true;
 }
 
+void MockEmbyServer::addFieldsGatedRoute(const QString &method, const QString &path,
+                                         const QByteArray &fullBody,
+                                         const QStringList &gatedKeys, int status)
+{
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    m_fieldsGatedRoutes.insert(key, FieldsGatedRoute{status, fullBody, gatedKeys});
+}
+
 MockEmbyServer::ReceivedRequest MockEmbyServer::lastRequestFor(const QString &method,
                                                                const QString &path) const
 {
@@ -134,10 +145,28 @@ void MockEmbyServer::handleConnection()
             const QString key = request.method + QLatin1Char(' ') + request.path;
             QByteArray response;
             int delayMs = 0;
-            if (!m_queuedRoutes.value(key).isEmpty() || m_routes.contains(key)) {
-                const Route route = !m_queuedRoutes.value(key).isEmpty()
-                                        ? m_queuedRoutes[key].takeFirst()
-                                        : m_routes.value(key);
+            if (!m_queuedRoutes.value(key).isEmpty() || m_routes.contains(key) ||
+                m_fieldsGatedRoutes.contains(key)) {
+                Route route;
+                if (!m_queuedRoutes.value(key).isEmpty()) {
+                    route = m_queuedRoutes[key].takeFirst();
+                } else if (m_fieldsGatedRoutes.contains(key)) {
+                    const FieldsGatedRoute gated = m_fieldsGatedRoutes.value(key);
+                    QJsonObject body = QJsonDocument::fromJson(gated.fullBody).object();
+                    const QStringList requested =
+                        QUrlQuery(request.query)
+                            .queryItemValue(QStringLiteral("Fields"))
+                            .split(QLatin1Char(','), Qt::SkipEmptyParts);
+                    for (const QString &gatedKey : gated.gatedKeys) {
+                        if (!requested.contains(gatedKey, Qt::CaseInsensitive))
+                            body.remove(gatedKey);
+                    }
+                    route = Route{gated.status,
+                                  QJsonDocument(body).toJson(QJsonDocument::Compact),
+                                  "application/json", 0, false};
+                } else {
+                    route = m_routes.value(key);
+                }
                 delayMs = route.delayMs;
                 response = "HTTP/1.1 " + QByteArray::number(route.status) +
                            " Status\r\nContent-Type: " + route.contentType + "\r\n";

@@ -476,9 +476,14 @@ void EmbyClientTest::renamePreservesTheFetchedItemMetadata()
         {QStringLiteral("ForcedSortName"), QStringLiteral("Old name")},
         {QStringLiteral("SortName"), QStringLiteral("Old name")},
     };
-    m_mock->addRoute(QStringLiteral("GET"),
-                     QStringLiteral("/Users/%1/Items/%2").arg(kUserId, itemId), 200,
-                     QJsonDocument(original).toJson(QJsonDocument::Compact));
+    // A real server omits optional fields the GET did not request; the mock
+    // mirrors that, so a rename whose read forgets Fields would post the
+    // stripped body back and wipe them — failing the assertion below.
+    m_mock->addFieldsGatedRoute(QStringLiteral("GET"),
+                                QStringLiteral("/Users/%1/Items/%2").arg(kUserId, itemId),
+                                QJsonDocument(original).toJson(QJsonDocument::Compact),
+                                {QStringLiteral("Overview"), QStringLiteral("Tags"),
+                                 QStringLiteral("ProviderIds")});
     m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Items/%1").arg(itemId), 204, {});
 
     const Result<bool> result = waitFor(m_client->renameItem(itemId, QStringLiteral("New name")));

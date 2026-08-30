@@ -984,8 +984,14 @@ QFuture<Result<bool>> EmbyClient::renameItem(const QString &itemId, const QStrin
     promise->start();
     const RequestContext context = requestContext();
 
-    // Read-modify-write, because UpdateItem replaces the object.
+    // Read-modify-write, because UpdateItem replaces the object. The read must
+    // ask for every field the write should preserve: a field the GET omits
+    // comes back missing, and the whole-object POST below would then clear it
+    // server-side.
     QUrlQuery params;
+    params.addQueryItem(QStringLiteral("Fields"),
+                        mergedFields(itemDetailFields() + itemMediaFields(),
+                                     {QStringLiteral("Overview"), QStringLiteral("Tags")}));
     QNetworkReply *reply = startGet(
         QStringLiteral("/Users/%1/Items/%2").arg(context.userId, itemId), params, context);
     finishDocument(reply).then(

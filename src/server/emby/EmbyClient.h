@@ -226,9 +226,10 @@ public:
     QFuture<Result<bool>> removeFromPlaylist(const QString &playlistId,
                                              const QStringList &entryIds);
     // POST /Items/{id} — Emby's UpdateItem. There is no rename endpoint, so a
-    // rename is a full-item update: fetch the item, change Name, post it back.
-    // Anything less than the whole object risks clearing fields the server
-    // treats as absent-means-empty.
+    // rename is a full-item update: fetch the item with an explicit full Fields
+    // list (anything the GET omits would be cleared by the write-back), change
+    // Name, post it back. Anything less than the whole object risks clearing
+    // fields the server treats as absent-means-empty.
     QFuture<Result<bool>> renameItem(const QString &itemId, const QString &name);
     // DELETE /Items/{id}. Irreversible on the server; callers must confirm.
     QFuture<Result<bool>> deleteItem(const QString &itemId);
