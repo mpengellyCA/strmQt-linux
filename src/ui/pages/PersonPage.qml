@@ -232,18 +232,12 @@ FocusScope {
             saturation: -0.55
         }
 
-        Image {
+        StrmImage {
             anchors.fill: parent
             source: page.headshotUrl
             sourceSize.width: Theme.scale(640)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            opacity: status === Image.Ready ? 1 : 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.animSlow; easing.type: Theme.easeEmphasis }
-            }
+            fadeDuration: Theme.animSlow
+            fadeEasing: Theme.easeEmphasis
         }
     }
 
@@ -292,73 +286,8 @@ FocusScope {
         }
     }
 
-    // The headshot, with the fallback treated as the normal case it is: on a
-    // typical film the server has a Primary image for part of the billing order
-    // and nothing for the rest. Initials on a tinted ground keep the page's
-    // shape identical either way, and the photo — when there is one — crossfades
-    // in over it rather than over a hole.
-    component Portrait: Rectangle {
-        id: portrait
-
-        property string imageUrl: ""
-        property string name: ""
-
-        readonly property string initials: {
-            const parts = portrait.name.trim().split(/\s+/).filter(p => p.length > 0)
-            if (parts.length === 0)
-                return ""
-            if (parts.length === 1)
-                return parts[0].charAt(0).toUpperCase()
-            return String(parts[0].charAt(0)
-                          + parts[parts.length - 1].charAt(0)).toUpperCase()
-        }
-
-        radius: Theme.radiusPanel
-        color: Theme.surfaceColor
-        border.width: 1
-        border.color: Theme.hairline
-        clip: true
-
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.surfaceRaisedColor }
-                GradientStop { position: 1.0; color: Theme.surfaceColor }
-            }
-
-            Text {
-                anchors.centerIn: parent
-                visible: portrait.initials.length > 0
-                text: portrait.initials
-                color: Theme.textTertiary
-                font.family: Theme.fontDisplay
-                font.pixelSize: Theme.fontDisplaySize
-                font.weight: Font.DemiBold
-            }
-
-            StrmIcon {
-                anchors.centerIn: parent
-                visible: portrait.initials.length === 0
-                name: "user"
-                size: Theme.scale(56)
-                color: Theme.textTertiary
-            }
-        }
-
-        Image {
-            anchors.fill: parent
-            source: portrait.imageUrl
-            sourceSize.width: portrait.width
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            opacity: status === Image.Ready ? 1 : 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
-            }
-        }
-    }
+    // The headshot is a StrmAvatar: the fallback is treated as the normal case
+    // it is, so the page's shape is identical with or without a Primary image.
 
     // ── Hero ───────────────────────────────────────────────────────────────
     readonly property int portraitWidth: Theme.scale(200)
@@ -389,7 +318,7 @@ FocusScope {
         // is the error state, not the error state laid over a blank hero.
         visible: !page.personLoading && page.haveRecord
 
-        Portrait {
+        StrmAvatar {
             id: portraitFrame
 
             anchors.top: parent.top
@@ -398,6 +327,8 @@ FocusScope {
             height: page.portraitHeight
             imageUrl: page.headshotUrl
             name: page.displayName
+            initialsPixelSize: Theme.fontDisplaySize
+            iconSize: Theme.scale(56)
         }
 
         Column {

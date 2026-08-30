@@ -187,7 +187,7 @@ FocusScope {
         color: Theme.ground
     }
 
-    Image {
+    StrmImage {
         id: backdrop
 
         anchors.fill: parent
@@ -196,17 +196,8 @@ FocusScope {
         // device pixels. A logical-pixel request comes back soft on any scaled
         // display (the lesson every card in this app learned the hard way).
         sourceSize.width: Math.round(Math.max(1, panel.width) * Screen.devicePixelRatio / 2)
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        cache: true
-        opacity: status === Image.Ready ? 0.14 : 0
-
-        Behavior on opacity {
-            NumberAnimation {
-                duration: Theme.animSlow
-                easing.type: Theme.easeStandard
-            }
-        }
+        readyOpacity: 0.14
+        fadeDuration: Theme.animSlow
     }
 
     Rectangle {
@@ -655,21 +646,9 @@ FocusScope {
                     opacity: panel.sleeveInFlight ? 0 : 1
                     visible: artArea.hasArtRoom
 
-                    Image {
+                    StrmImage {
                         anchors.fill: parent
                         source: panel.artUrl
-                        sourceSize.width: Math.round(artFrame.width * Screen.devicePixelRatio)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        opacity: status === Image.Ready ? 1 : 0
-
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Theme.animNormalMs
-                                easing.type: Theme.easeStandard
-                            }
-                        }
                     }
 
                     // A record with no cover is still a record: the placeholder

@@ -13,6 +13,8 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/controls/StrmScrollBar.qml
     ui/controls/StrmTooltip.qml
     ui/controls/StrmCard.qml
+    ui/controls/StrmImage.qml
+    ui/controls/StrmAvatar.qml
     ui/controls/StrmRail.qml
     ui/controls/StrmGrid.qml
     ui/controls/NavigationFocusRestorer.qml

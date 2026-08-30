@@ -145,7 +145,7 @@ Item {
                 ColorAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
             }
 
-            Image {
+            StrmImage {
                 id: art
                 anchors.fill: parent
                 source: card.imageUrl
@@ -153,25 +153,12 @@ Item {
                 // width we actually draw. Height is left unset so the aspect
                 // ratio is preserved during decode.
                 //
-                // mediaWidth is LOGICAL pixels, so on any scaled display this
-                // asked the server for half (or a third) of the pixels it then
-                // drew, and every card came back soft. Episode stills showed it
-                // worst because they are photographic rather than flat poster art.
-                //
                 // card.scale is how the size control resizes a card, so it has
                 // to be part of the request too: at the larger steps the card
                 // draws bigger than mediaWidth and would otherwise be handed a
                 // small image to upscale.
                 sourceSize.width: Math.round(card.mediaWidth * Math.max(1, card.scale)
                                              * Screen.devicePixelRatio)
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                opacity: status === Image.Ready ? 1 : 0
-
-                Behavior on opacity {
-                    NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
-                }
             }
 
             // Placeholder while loading / when the item has no artwork.

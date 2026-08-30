@@ -580,24 +580,9 @@ FocusScope {
                     Accessible.name: qsTr("Open player: %1").arg(mini.trackTitle)
                     Accessible.onPressAction: mini.expandRequested()
 
-                    Image {
+                    StrmImage {
                         anchors.fill: parent
                         source: mini.artUrl
-                        // Ask the provider for the pixels this actually draws,
-                        // in device pixels — a logical-pixel request comes back
-                        // soft on any scaled display.
-                        sourceSize.width: Math.round(artFrame.width * Screen.devicePixelRatio)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        opacity: status === Image.Ready ? 1 : 0
-
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Theme.animNormalMs
-                                easing.type: Theme.easeStandard
-                            }
-                        }
                     }
 
                     HoverHandler {

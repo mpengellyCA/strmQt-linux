@@ -56,14 +56,23 @@ QString embyImageProbeSource(const QString &itemId, const QString &imageType)
 
 namespace {
 
+// The one SxE rendering on the C++ side; QML uses MediaKinds.episodeCode()
+// and the two must not drift apart. Unnumbered episodes (either index
+// negative) have no code to show.
+QString episodeCode(int season, int episode)
+{
+    if (season < 0 || episode < 0)
+        return {};
+    return QStringLiteral("S%1E%2").arg(season).arg(episode);
+}
+
 QString displayLabel(const MediaItem &item)
 {
     if (item.type == QLatin1String("Episode") && !item.seriesName.isEmpty()) {
-        return QStringLiteral("%1 — S%2E%3 — %4")
-            .arg(item.seriesName)
-            .arg(item.parentIndexNumber)
-            .arg(item.indexNumber)
-            .arg(item.name);
+        const QString code = episodeCode(item.parentIndexNumber, item.indexNumber);
+        if (code.isEmpty())
+            return QStringLiteral("%1 — %2").arg(item.seriesName, item.name);
+        return QStringLiteral("%1 — %2 — %3").arg(item.seriesName, code, item.name);
     }
     return item.name;
 }
@@ -72,9 +81,7 @@ QString displayLabel(const MediaItem &item)
 QString subtitleOf(const MediaItem &item)
 {
     if (item.type == QLatin1String("Episode")) {
-        QString label;
-        if (item.parentIndexNumber >= 0 && item.indexNumber >= 0)
-            label = QStringLiteral("S%1E%2").arg(item.parentIndexNumber).arg(item.indexNumber);
+        QString label = episodeCode(item.parentIndexNumber, item.indexNumber);
         if (item.runtimeMs() > 0) {
             if (!label.isEmpty())
                 label += QStringLiteral(" · ");

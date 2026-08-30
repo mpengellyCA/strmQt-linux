@@ -25,9 +25,8 @@ QtObject {
     readonly property string seriesName: field("seriesName")
     readonly property int seasonNumber: numberField("parentIndexNumber", -1)
     readonly property int episodeNumber: numberField("indexNumber", -1)
-    readonly property string episodeCode: info.seasonNumber >= 0 && info.episodeNumber >= 0
-                                          ? "S" + info.seasonNumber + "E" + info.episodeNumber
-                                          : ""
+    readonly property string episodeCode: MediaKinds.episodeCode(info.seasonNumber,
+                                                                 info.episodeNumber)
     readonly property string videoContext: {
         const parts = [];
         if (info.seriesName.length > 0)
@@ -165,6 +164,22 @@ QtObject {
 
     function formatTime(ms: real): string {
         const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds / 60) % 60);
+        const seconds = totalSeconds % 60;
+        const pad = value => (value < 10 ? "0" : "") + value;
+        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
+                         : minutes + ":" + pad(seconds);
+    }
+
+    // A duration in a list row rather than a clock: absent or non-positive
+    // input renders as the caller's fallback ("", "–:––") rather than as
+    // "0:00", and the value is rounded — a 59.6 s track is "1:00", which a
+    // floor would read as 59 s forever. m:ss, or h:mm:ss past the hour.
+    function formatDuration(ms: real, emptyText: string): string {
+        const totalSeconds = Math.round(Number(ms) / 1000);
+        if (!isFinite(totalSeconds) || totalSeconds <= 0)
+            return emptyText;
         const hours = Math.floor(totalSeconds / 3600);
         const minutes = Math.floor((totalSeconds / 60) % 60);
         const seconds = totalSeconds % 60;

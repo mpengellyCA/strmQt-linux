@@ -85,19 +85,7 @@ FocusScope {
     }
 
     function rebuildRecords(): void {
-        const model = PlaylistCtl.playlists
-        const out = []
-        for (let i = 0; i < model.count; ++i) {
-            const entry = model.get(i)
-            const name = entry.name !== undefined ? String(entry.name) : ""
-            out.push({
-                "create": false,
-                "id": entry.itemId !== undefined ? String(entry.itemId) : "",
-                "name": name,
-                "lower": name.toLowerCase()
-            })
-        }
-        picker.records = out
+        picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
         picker.rebuild()
     }
 

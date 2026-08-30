@@ -51,18 +51,6 @@ Item {
                                        ? Images.sourceFor(card.personId, "Primary", card.imageTag)
                                        : ""
 
-    readonly property string initials: {
-        const parts = card.personName.trim().split(/\s+/).filter(p => p.length > 0);
-        if (parts.length === 0)
-            return "";
-        if (parts.length === 1)
-            return parts[0].charAt(0).toUpperCase();
-        // String() rather than a bare concatenation: charAt() types as a
-        // QJSPrimitiveValue, which has no toUpperCase() as far as qmllint is
-        // concerned, and a lint warning here is a real ambiguity.
-        return String(parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-    }
-
     readonly property bool hovered: hover.hovered
     readonly property bool raised: card.hovered || card.highlighted
 
@@ -111,54 +99,18 @@ Item {
             // ── Fallback: initials on a tinted ground ──────────────────────
             // Drawn underneath the photo rather than instead of it, so the
             // crossfade has something to arrive over instead of a black hole.
-            Rectangle {
+            // The frame above owns the card's chrome, so the avatar's own
+            // frame colour and border are off.
+            StrmAvatar {
                 anchors.fill: parent
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: Theme.surfaceRaisedColor }
-                    GradientStop { position: 1.0; color: Theme.surfaceColor }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    visible: card.initials.length > 0
-                    text: card.initials
-                    color: card.raised ? Theme.textSecondaryColor : Theme.textTertiary
-                    font.family: Theme.fontDisplay
-                    font.pixelSize: Theme.fontHeading
-                    font.weight: Font.DemiBold
-
-                    Behavior on color {
-                        ColorAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
-                    }
-                }
-
-                // No name at all (a malformed record) still gets a glyph
-                // rather than an empty box.
-                StrmIcon {
-                    anchors.centerIn: parent
-                    visible: card.initials.length === 0
-                    name: "user"
-                    size: Theme.scale(32)
-                    color: Theme.textTertiary
-                }
-            }
-
-            Image {
-                id: headshot
-
-                anchors.fill: parent
-                source: card.imageUrl
-                // The provider downscales server-side to the width actually
-                // drawn; height is left unset so decode keeps the aspect.
-                sourceSize.width: card.portraitWidth
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                opacity: headshot.status === Image.Ready ? 1 : 0
-
-                Behavior on opacity {
-                    NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
-                }
+                imageUrl: card.imageUrl
+                name: card.personName
+                radius: Theme.radiusCardValue
+                color: "transparent"
+                border.width: 0
+                initialsPixelSize: Theme.fontHeading
+                iconSize: Theme.scale(32)
+                initialsColor: card.raised ? Theme.textSecondaryColor : Theme.textTertiary
             }
         }
 

@@ -118,6 +118,7 @@ endif()
 set_source_files_properties(ui/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(ui/MediaKinds.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(ui/NowPlayingInfo.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(ui/ModelUtils.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(strmqt
     URI StrmQt
@@ -127,6 +128,7 @@ qt_add_qml_module(strmqt
         ui/Theme.qml
         ui/MediaKinds.qml
         ui/NowPlayingInfo.qml
+        ui/ModelUtils.qml
         ui/components/CoverWash.qml
         ui/components/MpvVideoPlane.qml
         ui/pages/LoginPage.qml

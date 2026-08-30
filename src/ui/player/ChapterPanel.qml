@@ -23,13 +23,7 @@ FocusScope {
     signal closeRequested
 
     function formatTime(ms: real): string {
-        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds / 60) % 60);
-        const seconds = totalSeconds % 60;
-        const pad = v => (v < 10 ? "0" : "") + v;
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds);
+        return NowPlayingInfo.formatTime(ms);
     }
 
     function chapterName(index: int): string {

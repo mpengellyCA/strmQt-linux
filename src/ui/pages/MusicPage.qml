@@ -290,10 +290,7 @@ FocusScope {
         const model = MusicCtl.songs
         if (!model || index < 0 || index >= model.count)
             return
-        const items = []
-        for (let i = 0; i < model.count; ++i)
-            items.push(model.get(i))
-        Actions.playAllFrom(items, index)
+        Actions.playAllFrom(ModelUtils.drain(model), index)
     }
 
     // ── Batch verbs (MUSIC.md §7) ──────────────────────────────────────────
@@ -324,15 +321,7 @@ FocusScope {
     }
 
     function formatDuration(ms) {
-        if (!ms || ms <= 0)
-            return "–:––"
-        const totalSeconds = Math.round(Number(ms) / 1000)
-        const hours = Math.floor(totalSeconds / 3600)
-        const minutes = Math.floor((totalSeconds / 60) % 60)
-        const seconds = totalSeconds % 60
-        const pad = v => (v < 10 ? "0" : "") + v
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds)
+        return NowPlayingInfo.formatDuration(ms, "–:––")
     }
 
     function idOf(item) {

@@ -196,10 +196,7 @@ FocusScope {
         const model = MusicCtl.artistTracks
         if (!model || index < 0 || index >= model.count)
             return
-        const items = []
-        for (let i = 0; i < model.count; ++i)
-            items.push(model.get(i))
-        Actions.playAllFrom(items, index)
+        Actions.playAllFrom(ModelUtils.drain(model), index)
     }
 
     function fileTopSelection(): void {
@@ -210,15 +207,7 @@ FocusScope {
     }
 
     function formatDuration(ms) {
-        if (!ms || ms <= 0)
-            return "–:––"
-        const totalSeconds = Math.round(Number(ms) / 1000)
-        const hours = Math.floor(totalSeconds / 3600)
-        const minutes = Math.floor((totalSeconds / 60) % 60)
-        const seconds = totalSeconds % 60
-        const pad = v => (v < 10 ? "0" : "") + v
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds)
+        return NowPlayingInfo.formatDuration(ms, "–:––")
     }
 
     // ── What is playing right now ──────────────────────────────────────────
@@ -329,18 +318,12 @@ FocusScope {
             saturation: -0.55
         }
 
-        Image {
+        StrmImage {
             anchors.fill: parent
             source: page.artUrl
             sourceSize.width: Theme.scale(640)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            opacity: status === Image.Ready ? 1 : 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.animSlow; easing.type: Theme.easeEmphasis }
-            }
+            fadeDuration: Theme.animSlow
+            fadeEasing: Theme.easeEmphasis
         }
     }
 
@@ -390,70 +373,8 @@ FocusScope {
 
     // The artist's art, square, with the missing-image case treated as the
     // normal case it is: most artists on a self-hosted server have no Primary
-    // image at all. Initials on a tinted ground keep the hero's geometry
-    // identical either way and the art crossfades in over them.
-    component ArtistArt: Rectangle {
-        id: art
-
-        property string imageUrl: ""
-        property string name: ""
-
-        readonly property string initials: {
-            const parts = art.name.trim().split(/\s+/).filter(p => p.length > 0)
-            if (parts.length === 0)
-                return ""
-            if (parts.length === 1)
-                return parts[0].charAt(0).toUpperCase()
-            return String(parts[0].charAt(0)
-                          + parts[parts.length - 1].charAt(0)).toUpperCase()
-        }
-
-        radius: Theme.radiusPanel
-        color: Theme.surfaceColor
-        border.width: 1
-        border.color: Theme.hairline
-        clip: true
-
-        Rectangle {
-            anchors.fill: parent
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.surfaceRaisedColor }
-                GradientStop { position: 1.0; color: Theme.surfaceColor }
-            }
-
-            Text {
-                anchors.centerIn: parent
-                text: art.initials
-                visible: art.initials.length > 0
-                color: Theme.textTertiary
-                font.family: Theme.fontDisplay
-                font.pixelSize: Math.round(art.height * 0.34)
-                font.weight: Font.DemiBold
-            }
-
-            StrmIcon {
-                anchors.centerIn: parent
-                visible: art.initials.length === 0
-                name: "lib-music"
-                size: Math.round(art.height * 0.28)
-                color: Theme.textTertiary
-            }
-        }
-
-        Image {
-            anchors.fill: parent
-            source: art.imageUrl
-            sourceSize.width: art.width
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            cache: true
-            opacity: status === Image.Ready ? 1 : 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
-            }
-        }
-    }
+    // image at all. StrmAvatar's initials on a tinted ground keep the hero's
+    // geometry identical either way and the art crossfades in over them.
 
     // ── Hero ───────────────────────────────────────────────────────────────
     Item {
@@ -468,7 +389,7 @@ FocusScope {
         height: Math.max(artFrame.height, heroText.implicitHeight)
         visible: page.artistId.length > 0
 
-        ArtistArt {
+        StrmAvatar {
             id: artFrame
 
             anchors.top: parent.top
@@ -477,6 +398,7 @@ FocusScope {
             height: page.artSize
             imageUrl: page.artUrl
             name: page.displayName
+            iconName: "lib-music"
         }
 
         Column {

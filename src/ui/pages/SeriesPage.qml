@@ -112,11 +112,7 @@ FocusScope {
     function episodeCode(item) {
         if (!item)
             return ""
-        const season = item.parentIndexNumber
-        const episode = item.indexNumber
-        if (season === undefined || episode === undefined || season < 0 || episode < 0)
-            return ""
-        return "S" + season + "E" + episode
+        return MediaKinds.episodeCode(item.parentIndexNumber, item.indexNumber)
     }
 
     readonly property string nextCode: page.episodeCode(page.nextItem)
@@ -461,19 +457,14 @@ FocusScope {
     // ── Backdrop ───────────────────────────────────────────────────────────
     // Anchored to the page rather than to the hero: the artwork is the room the
     // page sits in, so it stays put while the hero folds and the grid scrolls.
-    Image {
+    StrmImage {
         id: backdrop
 
         anchors.fill: parent
         source: page.seriesItem.backdropUrl ? page.seriesItem.backdropUrl : ""
         sourceSize.width: 1280
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        opacity: backdrop.status === Image.Ready ? 0.35 : 0.0
-
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.animSlow; easing.type: Theme.easeStandard }
-        }
+        readyOpacity: 0.35
+        fadeDuration: Theme.animSlow
     }
 
     Rectangle {
@@ -529,21 +520,10 @@ FocusScope {
                 color: Theme.surfaceColor
                 clip: true
 
-                Image {
+                StrmImage {
                     id: poster
                     anchors.fill: parent
                     source: page.heroPoster
-                    sourceSize.width: heroRow.posterW
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    opacity: poster.status === Image.Ready ? 1.0 : 0.0
-
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: Theme.animNormalMs
-                            easing.type: Theme.easeStandard
-                        }
-                    }
                 }
             }
 

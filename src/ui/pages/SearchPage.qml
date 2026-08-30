@@ -116,16 +116,7 @@ FocusScope {
     // mm:ss, or h:mm:ss for the rare long track. Mono and right-aligned where
     // it is drawn, so the column does not jitter between 9 and 10 seconds.
     function formatDuration(ms) {
-        const total = Math.round(Number(ms) / 1000)
-        if (!isFinite(total) || total <= 0)
-            return ""
-        const hours = Math.floor(total / 3600)
-        const minutes = Math.floor((total % 3600) / 60)
-        const seconds = total % 60
-        const ss = seconds < 10 ? "0" + seconds : String(seconds)
-        if (hours > 0)
-            return hours + ":" + (minutes < 10 ? "0" + minutes : String(minutes)) + ":" + ss
-        return minutes + ":" + ss
+        return NowPlayingInfo.formatDuration(ms, "")
     }
 
     function togglePlayedResult(sectionModel, index) {
@@ -947,22 +938,10 @@ FocusScope {
                         color: Theme.textTertiary
                     }
 
-                    Image {
+                    StrmImage {
                         anchors.fill: parent
                         source: trackRow.model.posterUrl !== undefined
                                 ? trackRow.model.posterUrl : ""
-                        sourceSize.width: Theme.scale(40)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        opacity: status === Image.Ready ? 1 : 0
-
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Theme.animNormalMs
-                                easing.type: Theme.easeStandard
-                            }
-                        }
                     }
 
                     // Played state, kept off the label so a long title never

@@ -588,19 +588,7 @@ FocusScope {
         }
 
         function rebuildRecords(): void {
-            const model = PlaylistCtl.playlists
-            const out = []
-            for (let i = 0; i < model.count; ++i) {
-                const entry = model.get(i)
-                const name = entry.name !== undefined ? String(entry.name) : ""
-                out.push({
-                    "create": false,
-                    "id": entry.itemId !== undefined ? String(entry.itemId) : "",
-                    "name": name,
-                    "lower": name.toLowerCase()
-                })
-            }
-            picker.records = out
+            picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
             picker.rebuild()
         }
 
@@ -1196,18 +1184,13 @@ FocusScope {
     // ── Backdrop ───────────────────────────────────────────────────────────
     // Anchored to the page, not to the scrolling content: the artwork is the
     // room the page sits in, so it stays put while the content moves over it.
-    Image {
+    StrmImage {
         id: backdrop
         anchors.fill: parent
         source: page.item.backdropUrl ? page.item.backdropUrl : ""
         sourceSize.width: 1280
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        opacity: backdrop.status === Image.Ready ? 0.35 : 0.0
-
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.animSlow; easing.type: Theme.easeStandard }
-        }
+        readyOpacity: 0.35
+        fadeDuration: Theme.animSlow
     }
 
     // Gentle scrim so the metadata stays legible over any artwork.
@@ -1325,21 +1308,10 @@ FocusScope {
                         color: Theme.surfaceColor
                         clip: true
 
-                        Image {
+                        StrmImage {
                             id: poster
                             anchors.fill: parent
                             source: page.item.posterUrl ? page.item.posterUrl : ""
-                            sourceSize.width: page.posterW
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            opacity: poster.status === Image.Ready ? 1.0 : 0.0
-
-                            Behavior on opacity {
-                                NumberAnimation {
-                                    duration: Theme.animNormalMs
-                                    easing.type: Theme.easeStandard
-                                }
-                            }
                         }
                     }
 

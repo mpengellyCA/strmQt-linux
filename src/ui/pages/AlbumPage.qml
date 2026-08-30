@@ -117,15 +117,7 @@ FocusScope {
 
     // ── Formatting ─────────────────────────────────────────────────────────
     function formatDuration(ms) {
-        if (!ms || ms <= 0)
-            return "–:––"
-        const totalSeconds = Math.round(Number(ms) / 1000)
-        const hours = Math.floor(totalSeconds / 3600)
-        const minutes = Math.floor((totalSeconds / 60) % 60)
-        const seconds = totalSeconds % 60
-        const pad = v => (v < 10 ? "0" : "") + v
-        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
-                         : minutes + ":" + pad(seconds)
+        return NowPlayingInfo.formatDuration(ms, "–:––")
     }
 
     function formatTotal(ms) {
@@ -157,18 +149,14 @@ FocusScope {
 
     // ── Track verbs ────────────────────────────────────────────────────────
     function trackItems() {
-        const model = MusicCtl.tracks
-        const out = []
-        for (let i = 0; i < model.count; ++i)
-            out.push(model.get(i))
-        return out
+        return ModelUtils.drain(MusicCtl.tracks)
     }
 
     function trackIds() {
-        const model = MusicCtl.tracks
         const out = []
-        for (let i = 0; i < model.count; ++i) {
-            const entry = model.get(i)
+        const items = ModelUtils.drain(MusicCtl.tracks)
+        for (let i = 0; i < items.length; ++i) {
+            const entry = items[i]
             if (entry.itemId !== undefined)
                 out.push(String(entry.itemId))
         }
@@ -313,22 +301,13 @@ FocusScope {
             border.color: Theme.hairline
             clip: true
 
-            Image {
+            StrmImage {
                 anchors.fill: parent
                 anchors.margins: 1
                 source: page.coverUrl
+                // The inset frame means this draws 2 px narrower than `cover`;
+                // keep the request on the frame's width, as before.
                 sourceSize.width: Math.round(cover.width * Screen.devicePixelRatio)
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                opacity: status === Image.Ready ? 1 : 0
-
-                Behavior on opacity {
-                    NumberAnimation {
-                        duration: Theme.animNormalMs
-                        easing.type: Theme.easeStandard
-                    }
-                }
             }
 
             // Records have covers; when this one does not, the placeholder says

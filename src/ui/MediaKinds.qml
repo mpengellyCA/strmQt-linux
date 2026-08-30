@@ -53,4 +53,16 @@ QtObject {
         const key = String(collectionType).toLowerCase();
         return _libraryLabels[key] !== undefined ? _libraryLabels[key] : qsTr("Media");
     }
+
+    // "S2E5" for an episode's season and episode numbers; "" when either is
+    // absent or negative, because an episode the server has not numbered yet
+    // has no code to show. MediaItemModel renders the same code in C++ (its
+    // file-local episodeCode()); the two must not drift apart.
+    function episodeCode(season, episode) {
+        const s = Number(season);
+        const e = Number(episode);
+        if (!isFinite(s) || !isFinite(e) || s < 0 || e < 0)
+            return "";
+        return "S" + s + "E" + e;
+    }
 }

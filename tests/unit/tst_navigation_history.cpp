@@ -784,7 +784,7 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
         QStringLiteral("StrmIcon.qml"),       QStringLiteral("StrmTooltip.qml"),
         QStringLiteral("StrmIconButton.qml"), QStringLiteral("StrmCard.qml"),
         QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
-        QStringLiteral("StrmGrid.qml"),
+        QStringLiteral("StrmGrid.qml"),       QStringLiteral("StrmImage.qml"),
     };
     for (const QString &name : moduleFiles) {
         const QString sourceRoot = name == QStringLiteral("Theme.qml")
@@ -805,7 +805,8 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "StrmCard 1.0 StrmCard.qml\n"
                  "StrmScrollBar 1.0 StrmScrollBar.qml\n"
                  "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
-                 "StrmGrid 1.0 StrmGrid.qml\n");
+                 "StrmGrid 1.0 StrmGrid.qml\n"
+                 "StrmImage 1.0 StrmImage.qml\n");
     qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));

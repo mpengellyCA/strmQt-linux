@@ -318,21 +318,9 @@ Item {
             // `posterUrl` straight from the model, never a hand-built image
             // URL: MediaItem::coverSource() already resolves an audio track to
             // its album's cover rather than the ripper's embedded art.
-            Image {
+            StrmImage {
                 anchors.fill: parent
                 source: row.coverUrl
-                sourceSize.width: Math.round(row.coverSize * Screen.devicePixelRatio)
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                opacity: status === Image.Ready ? 1 : 0
-
-                Behavior on opacity {
-                    NumberAnimation {
-                        duration: Theme.animNormalMs
-                        easing.type: Theme.easeStandard
-                    }
-                }
             }
 
             Rectangle {

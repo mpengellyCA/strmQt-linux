@@ -468,21 +468,9 @@ FocusScope {
                     color: Theme.ground
                     clip: true
 
-                    Image {
+                    StrmImage {
                         anchors.fill: parent
                         source: grid.listMode ? cell.wideArt : ""
-                        sourceSize.width: Math.round(rowArt.width * Screen.devicePixelRatio)
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        opacity: status === Image.Ready ? 1 : 0
-
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Theme.animNormalMs
-                                easing.type: Theme.easeStandard
-                            }
-                        }
                     }
 
                     // Resume position, exactly where StrmCard draws it.

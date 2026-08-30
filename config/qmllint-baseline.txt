@@ -141,7 +141,7 @@ src/ui/controls/PersonCard.qml: Unqualified access [unqualified]	? Images.source
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl.addItems(row.id, picker.targetIds)
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl.create(row.name, picker.targetIds, picker.mediaType)
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl.ensureAllPlaylists()
-src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	const model = PlaylistCtl.playlists
+src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	readonly property bool listComplete: PlaylistCtl.playlistsComplete
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowBlur: panel._shadow.blur
@@ -168,8 +168,7 @@ src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	active: App.interac
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && PlayerCtl.active
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && page.albumId.length > 0
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	active: App.interactionContext === "music" && page.hasTracks
-src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	const model = MusicCtl.tracks
-src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	const model = MusicCtl.tracks
+src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	const items = ModelUtils.drain(MusicCtl.tracks)
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	const model = MusicCtl.tracks
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	const queue = PlayerCtl.queue;
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	if (index < 0 || index >= MusicCtl.tracks.count)
@@ -187,6 +186,7 @@ src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	readonly property b
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	readonly property bool hasTracks: page.scopeMine && MusicCtl.tracks.count > 0
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	readonly property int trackCount: page.scopeMine && MusicCtl.tracks.count > 0
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	readonly property var albumArtistTarget: Actions.artistTarget(page.albumItem)
+src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	return ModelUtils.drain(MusicCtl.tracks)
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	target: Actions
 src/ui/pages/AlbumPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	&& !MusicCtl.artistAlbumsLoading && page.albumsLoaded > 0
@@ -199,7 +199,7 @@ src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	? MusicCtl.artistA
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	? MusicCtl.detailErrorMessage
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.play(item)
-src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, index)
+src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(ModelUtils.drain(model), index)
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.setFavorite(page.artistId, !page.artistFavorite)
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(topTracks.selectedIds(), true)
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
@@ -262,7 +262,6 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	color: DetailsCtl
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = DetailsCtl.mediaSources
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = DetailsCtl.mediaSources
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = DetailsCtl.mediaSources
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const model = PlaylistCtl.playlists
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const wanted = Prefs.rememberedVersion(page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (!DetailsCtl.premiereDate || DetailsCtl.premiereDate.length === 0)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (!DetailsCtl.premiereDate || DetailsCtl.premiereDate.length === 0)
@@ -290,6 +289,7 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoadi
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.itemPlayed = page.itemId.length > 0 && Actions.isPlayed(page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	people: DetailsCtl.cast
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	railModel: DetailsCtl.similar
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property bool multiVersion: DetailsCtl.mediaSourceCount > 1
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var capabilities: Actions.itemCapabilities(page.item)
@@ -406,7 +406,7 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.openDetails
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.play(item)
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, index)
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(ModelUtils.drain(model), index)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(table.selectedIds(), true)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
