@@ -125,7 +125,8 @@ class MusicController : public QObject
     // option, {key, label} — the shape LibraryController uses.
     Q_PROPERTY(QVariantList availableSorts READ availableSorts NOTIFY tabChanged)
     // Single letter from the alphabet bar, or empty for no constraint. Matched
-    // against the SORT name, so "The Beatles" is under B.
+    // against the SORT name, so "The Beatles" is under B. Sent as an indexable
+    // [NameStartsWithOrGreater, NameLessThan) range — see applyFilters.
     Q_PROPERTY(QString nameStartsWith READ nameStartsWith NOTIFY queryChanged)
     // MusicGenre ids. A music library has hundreds of genres (289 measured), so
     // this is a multi-select, never a row of chips.

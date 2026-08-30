@@ -110,6 +110,9 @@ public:
     // the same narrowing axes /Users/{uid}/Items does — measured live on 4.9.5.0:
     // SortBy, SortOrder, NameStartsWith and GenreIds all changed the answer
     // (NameStartsWith=T cut 2,394 album artists to 75; one genre id cut it to 2).
+    // MusicController nevertheless sends its letter as NameStartsWithOrGreater +
+    // NameLessThan: NameStartsWith's LIKE scan outlasted the 15 s transfer
+    // timeout on this library (see ItemsQuery).
     //
     // `filters` is sent as well, and it is the one axis on the query that is
     // **not** measured. The test account has zero favourites of any music kind,

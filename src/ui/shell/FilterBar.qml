@@ -573,9 +573,12 @@ FocusScope {
     }
 
     // ── Row 2: the alphabet ────────────────────────────────────────────────
-    // Emby matches NameStartsWith against the item's SORT name, not its title,
-    // so "A Quiet Place" is filed under Q. Labelling this "first letter" would
-    // be a lie the first time somebody looked for it under A, hence the hint.
+    // Emby matches the letter against the item's SORT name, not its title, so
+    // "A Quiet Place" is filed under Q. Labelling this "first letter" would be
+    // a lie the first time somebody looked for it under A, hence the hint.
+    // (The controllers choose the wire form: LibraryController sends
+    // NameStartsWith, MusicController an indexable sort-name range — same
+    // sort-name matching either way.)
     //
     // It is if anything MORE right for music: "The Beatles" files under B, and
     // a user who does not know that will look under T and find nothing.

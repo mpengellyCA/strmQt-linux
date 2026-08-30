@@ -40,6 +40,16 @@ struct ItemsQuery
     // Alphabet-bar jump: "A" returns everything sorted under A. Emby treats an
     // empty string as "no constraint", so this is safe to always set.
     QString nameStartsWith;
+    // The same jump as a [greater, lessThan) range on the sort name. Emby
+    // 4.9.5.0 (EF Core) answers NameStartsWith with a non-indexable LIKE scan —
+    // measured live: a lettered /Artists/AlbumArtists page repeatedly outlasted
+    // the 15 s transfer timeout while the unfiltered page took milliseconds.
+    // The range pair (documented on /Users/{uid}/Items and both /Artists
+    // endpoints, and what Emby's own alpha picker sends) stays on the SortName
+    // index. MusicController translates its letter into these; LibraryController
+    // still sends nameStartsWith above.
+    QString nameStartsWithOrGreater;
+    QString nameLessThan;
     bool recursive = false;
     int startIndex = 0;
     int limit = 100;

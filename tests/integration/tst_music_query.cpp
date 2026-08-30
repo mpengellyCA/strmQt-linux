@@ -588,8 +588,13 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     QVERIFY(!m_music->canLoadMoreSongs());
     QVERIFY(!m_music->canLoadMorePlaylists());
     settle();
-    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWith")),
+    // The letter travels as an indexable sort-name range, never NameStartsWith:
+    // on 4.9.5.0 the LIKE form outlasts the transfer timeout on this library.
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
              QStringLiteral("T"));
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameLessThan")),
+             QStringLiteral("U"));
     QVERIFY(m_music->filtered());
 
     // Self-toggling, exactly as LibraryController's is: tapping the lit letter
@@ -597,7 +602,28 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     m_music->setNameStartsWith(QStringLiteral("T"));
     settle();
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWithOrGreater")));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameLessThan")));
 
+    m_music->setNameStartsWith(QStringLiteral("T"));
+    settle();
+
+    // The two letters that cannot form a pair: "#" is everything filed before
+    // A, and Z is open-ended. Both must stay on the indexable range form.
+    m_music->setNameStartsWith(QStringLiteral("#"));
+    settle();
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWithOrGreater")));
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameLessThan")),
+             QStringLiteral("A"));
+
+    m_music->setNameStartsWith(QStringLiteral("Z"));
+    settle();
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
+             QStringLiteral("Z"));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameLessThan")));
+
+    // Back to the plain pair the rest of this test filters by.
     m_music->setNameStartsWith(QStringLiteral("T"));
     settle();
 
@@ -665,6 +691,8 @@ void MusicQueryTest::filtersAreSharedAcrossTabsAndInvalidateThem()
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("GenreIds")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("Filters")));
     QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWith")));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameStartsWithOrGreater")));
+    QVERIFY(!lastItemsQuery().hasQueryItem(QStringLiteral("NameLessThan")));
 }
 
 void MusicQueryTest::aHiddenOldQueryReplyCannotBypassLazyInvalidation()
@@ -797,7 +825,10 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
 
     QUrlQuery query = lastQueryFor(QStringLiteral("/Artists/AlbumArtists"));
     QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), kMusicLibrary);
-    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("T"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWith")));
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
+             QStringLiteral("T"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameLessThan")), QStringLiteral("U"));
     QCOMPARE(query.queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("1937444"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("SortName"));
 
@@ -811,7 +842,10 @@ void MusicQueryTest::artistEndpointsCarryTheNarrowingAxes()
     m_music->setArtistMode(QStringLiteral("artists"));
     settle();
     query = lastQueryFor(QStringLiteral("/Artists"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("T"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWith")));
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
+             QStringLiteral("T"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameLessThan")), QStringLiteral("U"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("PlayCount"));
 
     // Filters is forwarded, but unlike every other axis above it is
@@ -977,6 +1011,8 @@ void MusicQueryTest::switchingLibraryDropsThatLibrarysFilters()
     QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("2000001"));
     QVERIFY(!query.hasQueryItem(QStringLiteral("GenreIds")));
     QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWith")));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("NameStartsWithOrGreater")));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("NameLessThan")));
     QVERIFY(!query.hasQueryItem(QStringLiteral("Filters")));
 
     // The genre walk restarts for the new scope rather than being turned away by
@@ -1114,8 +1150,10 @@ void MusicQueryTest::aPreferenceSetBeforeAnythingLoadsFiresNoRequest()
     QTRY_VERIFY_WITH_TIMEOUT(!fresh->loading(), 5000);
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("SortBy")),
              QStringLiteral("DateCreated"));
-    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWith")),
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
              QStringLiteral("Q"));
+    QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("NameLessThan")),
+             QStringLiteral("R"));
     QCOMPARE(lastItemsQuery().queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
     delete fresh;
@@ -1255,7 +1293,10 @@ void MusicQueryTest::playlistsAreScopedToTheLibraryNotProbedOneByOne()
     m_music->setGenreIds({QStringLiteral("1932975")});
     settle();
     const QUrlQuery filtered = lastItemsQuery();
-    QCOMPARE(filtered.queryItemValue(QStringLiteral("NameStartsWith")), QStringLiteral("W"));
+    QVERIFY(!filtered.hasQueryItem(QStringLiteral("NameStartsWith")));
+    QCOMPARE(filtered.queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
+             QStringLiteral("W"));
+    QCOMPARE(filtered.queryItemValue(QStringLiteral("NameLessThan")), QStringLiteral("X"));
     QCOMPARE(filtered.queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("1932975"));
 
     m_music->setFavoritesOnly(true);

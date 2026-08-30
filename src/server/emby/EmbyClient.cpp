@@ -451,6 +451,11 @@ QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHan
     }
     if (!query.nameStartsWith.isEmpty())
         params.addQueryItem(QStringLiteral("NameStartsWith"), query.nameStartsWith);
+    if (!query.nameStartsWithOrGreater.isEmpty())
+        params.addQueryItem(QStringLiteral("NameStartsWithOrGreater"),
+                            query.nameStartsWithOrGreater);
+    if (!query.nameLessThan.isEmpty())
+        params.addQueryItem(QStringLiteral("NameLessThan"), query.nameLessThan);
     if (!query.listItemIds.isEmpty())
         params.addQueryItem(QStringLiteral("ListItemIds"),
                             query.listItemIds.join(QLatin1Char(',')));
@@ -634,6 +639,11 @@ QUrlQuery artistParams(const QString &userId, const ItemsQuery &query)
                                                          : QStringLiteral("Ascending"));
     if (!query.nameStartsWith.isEmpty())
         params.addQueryItem(QStringLiteral("NameStartsWith"), query.nameStartsWith);
+    if (!query.nameStartsWithOrGreater.isEmpty())
+        params.addQueryItem(QStringLiteral("NameStartsWithOrGreater"),
+                            query.nameStartsWithOrGreater);
+    if (!query.nameLessThan.isEmpty())
+        params.addQueryItem(QStringLiteral("NameLessThan"), query.nameLessThan);
     if (!query.genreIds.isEmpty())
         params.addQueryItem(QStringLiteral("GenreIds"), query.genreIds.join(QLatin1Char(',')));
     // Sent, but unmeasured — see the header. Every other parameter in this

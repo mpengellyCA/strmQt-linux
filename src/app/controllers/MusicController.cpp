@@ -395,7 +395,23 @@ void MusicController::clearFilters()
 
 void MusicController::applyFilters(ItemsQuery &query) const
 {
-    query.nameStartsWith = m_nameStartsWith;
+    // The letter goes out as a [greater, lessThan) range on the sort name, not
+    // NameStartsWith: on 4.9.5.0 the LIKE scan behind NameStartsWith outlasts
+    // the transfer timeout on this library, while the range pair stays on the
+    // SortName index (see ItemsQuery). The bar's "#" is everything filed before
+    // A — digits and symbols — which a range expresses as an upper bound only.
+    if (m_nameStartsWith == QLatin1String("#")) {
+        query.nameLessThan = QStringLiteral("A");
+    } else if (m_nameStartsWith.size() == 1) {
+        const QChar letter = m_nameStartsWith.at(0);
+        query.nameStartsWithOrGreater = m_nameStartsWith;
+        if (letter >= QLatin1Char('A') && letter < QLatin1Char('Z'))
+            query.nameLessThan = QString(QChar(letter.unicode() + 1));
+        // Z has no upper bound; anything outside A–Z falls through to a bare
+        // lower bound, which is still the indexable form.
+    } else {
+        query.nameStartsWith = m_nameStartsWith;
+    }
     query.genreIds = m_genreIds;
     if (m_favoritesOnly)
         query.filters.append(QStringLiteral("IsFavorite"));
