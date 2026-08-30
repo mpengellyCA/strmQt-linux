@@ -4,6 +4,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Window
 import StrmQt
 
 // PlayerOsd — the player's whole control surface (ARCHITECTURE.md).
@@ -247,6 +248,19 @@ Item {
         }
     }
 
+    // Focus moving IS input. Arrow/D-pad moves between the controls go through
+    // KeyNavigation, which accepts the key before any page-level handler can
+    // see it — so without this, navigating the chrome does not count as
+    // activity and the OSD fades out from under the user mid-move.
+    Connections {
+        target: osd.Window.window
+
+        function onActiveFocusItemChanged(): void {
+            if (osd.shown)
+                osd.wake();
+        }
+    }
+
     // ── Chrome ──────────────────────────────────────────────────────────────
     // One fading container so nothing inside has to animate itself, and
     // `enabled` follows opacity so a hidden OSD cannot be clicked or tabbed to.
@@ -402,6 +416,10 @@ Item {
                     // Matches the ±10 s seek convention rather than the control's
                     // default twentieth-of-the-media step.
                     stepSize: 10000
+                    // Focus is not a licence to seek: the bar must be armed
+                    // (Enter/Space/A, or a pointer press) before the arrows
+                    // move its cursor, so navigating past it cannot skip.
+                    armToScrub: true
                     enabled: PlayerCtl.durationMs > 0
                     previewComponent: scrubPreview
                     accessibleName: qsTr("Playback position")
@@ -652,7 +670,7 @@ Item {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: osd.formatTime(scrubber.hoverValue)
+                    text: osd.formatTime(scrubber.previewValue)
                     color: Theme.textPrimaryColor
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontSmall
@@ -663,7 +681,7 @@ Item {
 
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: previewChapter.text.length > 0
-                    text: osd.chapterNameAt(scrubber.hoverValue)
+                    text: osd.chapterNameAt(scrubber.previewValue)
                     color: Theme.textSecondaryColor
                     font.family: Theme.fontBody
                     font.pixelSize: Theme.fontCaption

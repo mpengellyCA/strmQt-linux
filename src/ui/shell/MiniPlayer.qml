@@ -511,6 +511,9 @@ FocusScope {
             value: mini.positionMs
             buffered: mini.bufferedPosition
             stepSize: 10000
+            // Reached by KeyNavigation from the transport row: armed before
+            // the arrows scrub, same as the full-player scrubbers.
+            armToScrub: true
             accessibleName: qsTr("Playback position")
             accessibleDescription: qsTr("%1 of %2")
                                    .arg(mini.formatTime(value))

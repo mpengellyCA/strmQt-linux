@@ -38,6 +38,15 @@ Item {
     readonly property real minimumValue: slider.from
     readonly property real maximumValue: slider.to
 
+    // Opt-in for scrubbers over playing media: focus alone must not let the
+    // arrows move the value, or navigating onto the bar seeks by accident.
+    // Return/Enter/Space (a gamepad's A lands here as Space) arms the control
+    // — the "click on the bar" a key or pad user gives — and the same key,
+    // Esc, or losing focus disarms it. Pointer scrubs are unaffected: a press
+    // on the track is already that click.
+    property bool armToScrub: false
+    property bool armed: false
+
     signal moved(real value)
     signal committed(real value)
 
@@ -45,6 +54,11 @@ Item {
     readonly property bool dragging: pointer.pressed
     // Value under the pointer — what a chapter-thumbnail preview wants.
     readonly property real hoverValue: slider.valueAt(slider.pointerX)
+    // What a preview tooltip should show: the value under the pointer for a
+    // hover or drag, but the control's own value when armed from the keyboard
+    // — then the pointer is somewhere irrelevant and the knob is the cursor.
+    readonly property real previewValue: (slider.armed && !slider.hovering && !slider.dragging)
+                                         ? slider.shownValue : slider.hoverValue
 
     // ── internals ──────────────────────────────────────────────────────────
     // Bound rather than assigned from the handlers: MouseArea keeps mouseX
@@ -176,7 +190,9 @@ Item {
         radius: width / 2
         color: Theme.accentColor
         border.width: 2
-        border.color: Theme.ground
+        // Armed reads as an accent ring around the knob: the visible half of
+        // "the arrows now own this bar".
+        border.color: slider.armed ? Theme.accentColor : Theme.ground
         visible: slider.enabled && knob.scale > 0.01
         // Grows into the pointer; absent entirely at rest when the owner asked
         // for a clean, unadorned progress line.
@@ -194,9 +210,17 @@ Item {
     Loader {
         id: preview
 
-        active: slider.previewComponent !== null && (slider.hovering || slider.dragging)
+        active: slider.previewComponent !== null
+                && (slider.hovering || slider.dragging || slider.armed)
         sourceComponent: slider.previewComponent
-        x: Math.max(0, Math.min(slider.width - preview.width, slider.pointerX - preview.width / 2))
+        // Armed without a pointer on the bar: anchor to the knob, not to a
+        // stale mouse position.
+        x: {
+            const centre = (slider.armed && !slider.hovering && !slider.dragging)
+                         ? track.width * slider.fillPos : slider.pointerX;
+            return Math.max(0, Math.min(slider.width - preview.width,
+                                        centre - preview.width / 2));
+        }
         y: -preview.height - Theme.spacingTight
     }
 
@@ -256,17 +280,63 @@ Item {
     // guard goes on the *release*: one committed seek per key press, however
     // many steps it travelled.
     Keys.onLeftPressed: event => {
+        if (slider.armToScrub && !slider.armed) {
+            // Swallowed, not propagated: the page binds plain Left to a 10 s
+            // seek, and a bar the user has only focused must not let the key
+            // fall through to it. Arming first is the whole point.
+            event.accepted = true;
+            return;
+        }
         slider.nudge(-1);
         event.accepted = true;
     }
     Keys.onRightPressed: event => {
+        if (slider.armToScrub && !slider.armed) {
+            event.accepted = true;
+            return;
+        }
         slider.nudge(1);
         event.accepted = true;
     }
     Keys.onReleased: event => {
         if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && !event.isAutoRepeat) {
-            slider.emitCommitted();
+            if (!slider.armToScrub || slider.armed)
+                slider.emitCommitted();
             event.accepted = true;
         }
+    }
+
+    // The arm/disarm keys. Each declines the event when arming is off so the
+    // page's own bindings (pause on Space, back on Esc) keep working for the
+    // volume sliders and any other ungated use.
+    Keys.onReturnPressed: event => {
+        if (!slider.armToScrub)
+            return;
+        slider.armed = !slider.armed;
+        event.accepted = true;
+    }
+    Keys.onEnterPressed: event => {
+        if (!slider.armToScrub)
+            return;
+        slider.armed = !slider.armed;
+        event.accepted = true;
+    }
+    Keys.onSpacePressed: event => {
+        if (!slider.armToScrub)
+            return;
+        slider.armed = !slider.armed;
+        event.accepted = true;
+    }
+    Keys.onEscapePressed: event => {
+        if (slider.armed) {
+            slider.armed = false;
+            event.accepted = true;
+        }
+    }
+
+    // Focus leaving is a disarm: an armed bar nobody can see is a seek trap.
+    onActiveFocusChanged: {
+        if (!slider.activeFocus)
+            slider.armed = false;
     }
 }

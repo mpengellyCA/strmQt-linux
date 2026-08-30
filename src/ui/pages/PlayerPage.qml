@@ -14,7 +14,11 @@ import StrmQt
 //   · every player action comes from Input.actionForKey(key, mods, "player");
 //   · auto-repeat is REJECTED for everything except seek and volume, where a
 //     held key is exactly what the user means;
-//   · Esc closes an open OSD panel before it stops playback.
+//   · Esc closes an open OSD panel before it stops playback;
+//   · a hidden OSD spends the first keypress on waking — it never also runs
+//     the action — and the scrubber must be armed (Enter/Space/A or a pointer
+//     press) before the arrows move its cursor, so navigating the controls
+//     can never skip the film by accident.
 //
 // Mouse (ARCHITECTURE.md): motion wakes the OSD and the cursor, the cursor hides
 // again with it, click toggles pause, double-click toggles full screen, and the
@@ -248,6 +252,19 @@ FocusScope {
         onLeaveRequested: page.minimizeRequested()
     }
 
+    // The keyboard must leave the chrome when the chrome does: a hidden,
+    // disabled scrubber that kept focus would still answer arrows nobody can
+    // see. Handing focus back to the page is also what makes the wake-consume
+    // guard above the single authority on what the first keypress does.
+    Connections {
+        target: osd
+
+        function onShownChanged(): void {
+            if (!osd.shown)
+                page.forceActiveFocus(Qt.OtherFocusReason);
+        }
+    }
+
     // ── Error surface ───────────────────────────────────────────────────────
     // Still the session's own message, still centred, still not a dialog: the
     // ladder may recover on its own, and a modal would be in the way when it
@@ -281,6 +298,17 @@ FocusScope {
     // ── Keyboard / gamepad ──────────────────────────────────────────────────
     Keys.onPressed: event => {
         Input.noteInput("keyboard");
+
+        // The press that wakes a hidden OSD is spent on the wake and goes no
+        // further. Without this the waking key also runs its action — a Right
+        // that meant "show me the controls" seeks the film instead, which is
+        // exactly the jump users reported. Repeat presses act normally.
+        if (!page.audioMode && !osd.shown) {
+            osd.wake();
+            event.accepted = true;
+            return;
+        }
+
         const action = Input.actionForKey(event.key, event.modifiers, "player");
 
         // Auto-repeat is the *wanted* behaviour for seek and volume — holding

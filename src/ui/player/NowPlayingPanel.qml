@@ -313,6 +313,10 @@ FocusScope {
                     // control on screen, not a thing revealed by a hover.
                     showKnobOnHoverOnly: false
                     stepSize: 10000
+                    // Same contract as the video OSD: focus alone does not
+                    // move the playhead — the bar is armed first, so passing
+                    // through it cannot skip the track.
+                    armToScrub: true
                     enabled: panel.seekable
                     accessibleName: qsTr("Playback position")
                     accessibleDescription: qsTr("%1 of %2")
