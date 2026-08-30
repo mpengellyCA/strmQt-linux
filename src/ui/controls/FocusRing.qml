@@ -6,6 +6,14 @@ import StrmQt
 // Purely visual: it declares no input handling at all, so dropping one into a
 // control never changes that control's hit area or its focus chain.
 //
+// **Never a direct child of a Row, Column, Grid or Flow.** It anchors-fills its
+// parent, and a positioner refuses fill anchors on its children: it warns "Row
+// will not function" once, resets the anchor, and the ring stays 0×0 for the
+// rest of its life — a control that can be focused and operated with nothing on
+// screen to say so. Give the group a wrapper Item with real geometry outside the
+// positioner and put the ring in that; StrmTabBar and LibraryPage's view-mode
+// switch both show the shape.
+//
 // `active` must be driven by `activeFocus` and NEVER by hover. Hover and focus
 // are separate states that can both be true at once; when they are, the ring is
 // what wins visually. Anything that binds this to a HoverHandler is the bug this

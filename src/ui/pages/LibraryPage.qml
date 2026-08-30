@@ -312,6 +312,8 @@ FocusScope {
         height: Theme.controlHeight
 
         Row {
+            id: viewControls
+
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingTight
@@ -364,12 +366,6 @@ FocusScope {
                         activeFocusOnTab: false
                         onClicked: page.setViewMode(modelData.value)
                     }
-                }
-
-                FocusRing {
-                    active: viewSelect.activeFocus
-                    radius: Theme.radiusChip
-                    inset: -Theme.scale(2)
                 }
             }
 
@@ -425,6 +421,30 @@ FocusScope {
                 KeyNavigation.up: page.viewBarUp
                 KeyNavigation.left: sizeDown
                 KeyNavigation.down: grid
+            }
+        }
+
+        // ── The group's focus ring ─────────────────────────────────────────
+        // Outside the Row, and it has to be: FocusRing anchors-FILLS its
+        // parent, and a positioner refuses fill anchors on its children — it
+        // warns "Row will not function" and leaves the item 0×0 for the rest of
+        // its life. Declared inside `viewSelect` it was therefore a 4 px speck
+        // at the group's left edge, so landing here with a D-pad moved the
+        // selection with nothing on screen to say where the keyboard was: a
+        // control you could operate and could not see.
+        //
+        // The same shape as StrmTabBar's ring, and for the same reason: a
+        // wrapper with real geometry, tracking the group from outside it.
+        Item {
+            x: viewControls.x + viewSelect.x
+            y: viewControls.y + viewSelect.y
+            width: viewSelect.width
+            height: viewSelect.height
+
+            FocusRing {
+                active: viewSelect.activeFocus
+                radius: Theme.radiusChip
+                inset: -Theme.scale(2)
             }
         }
     }
