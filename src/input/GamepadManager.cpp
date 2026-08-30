@@ -74,6 +74,7 @@ enum DirectionSlot
     SlotStickY,
     SlotDpadX,
     SlotDpadY,
+    SlotRStickY, // volume in the player; the only right-stick verb
 };
 
 } // namespace
@@ -170,10 +171,17 @@ QString GamepadManager::actionForButton(int sdlButton) const
         if (restricted)
             return {};
         return player ? QString() : QStringLiteral("app.shortcuts");
+    // L3: the short way back to the film. Leaving the player keeps it
+    // playing on the docked bar, and without this getting back to full screen
+    // from a pad is walking the whole navigation stack to the bar and
+    // pressing A on it.
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK:
+        if (restricted)
+            return {};
+        return QStringLiteral("player.toggleView");
     // The docked bar is unreachable from a pad otherwise: it takes focus by a
     // click or by Tab, and a pad has neither. Browse only — in the player there
-    // is no bar, and the right stick is where a volume verb would land if
-    // PlayerController ever grows one.
+    // is no bar, and the right stick's vertical axis is volume there.
     case SDL_GAMEPAD_BUTTON_RIGHT_STICK:
         if (restricted)
             return {};
@@ -282,8 +290,34 @@ void GamepadManager::handleAxis(quint32 deviceId, int axis, int value)
         return;
     }
 
+    // The right stick's vertical axis is the pad's volume control — the one
+    // player verb with no button left over for it, and a slider a pad cannot
+    // focus. Player context only: everywhere else the stick keeps having no
+    // verb, and the "+"/"-" keys it would send have no handler either. A held
+    // direction auto-repeats through the same machinery as the D-pad.
+    if (axis == SDL_GAMEPAD_AXIS_RIGHTY) {
+        const int held = state.axisState.value(axis, 0); // 0, or ±1 for up/down
+        int dir = 0;
+        if (m_context == QLatin1String("player")) {
+            if (value < -kStickThreshold)
+                dir = -1;
+            else if (value > kStickThreshold)
+                dir = 1;
+            else if (std::abs(value) > kStickRelease)
+                dir = held; // hysteresis: an engaged direction holds near the edge
+        }
+        if (dir == held)
+            return;
+        state.axisState[axis] = dir;
+        setDirection(deviceId, SlotRStickY,
+                     dir < 0 ? QStringLiteral("player.volumeUp")
+                             : QStringLiteral("player.volumeDown"),
+                     dir != 0);
+        return;
+    }
+
     if (axis != SDL_GAMEPAD_AXIS_LEFTX && axis != SDL_GAMEPAD_AXIS_LEFTY)
-        return; // the right stick has no verb behind it; do not pretend it does
+        return; // the right stick's horizontal axis has no verb behind it
 
     // Store, then decide from BOTH axes: a single axis value cannot tell a
     // deliberate push from the incidental half of a diagonal.

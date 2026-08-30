@@ -247,7 +247,10 @@ without a working binding is worse than no hint.
 
 The layout targets Xbox 360 / Xbox One, which is the PC standard and the layout
 SDL's own gamepad abstraction is modelled on. Mapping is context-dependent, so one
-pair of shoulders changes library while browsing and seeks during playback.
+pair of shoulders changes library while browsing and seeks ±60 s during playback.
+The triggers seek ±10 s in the player, the left stick click (L3) toggles between
+the full player and the docked bar, and the right stick's vertical axis is
+volume there — the one player control a pad cannot reach by focus.
 
 **There are three contexts, not two.** Browse, player, and *music* — the music
 library, an album and an artist page. Two actions only conflict when their
@@ -387,11 +390,12 @@ assertion catches the rot.
   counts, so marking an episode watched updates the badge only for the season
   currently on screen. A real fix needs the server's `UserData.UnplayedItemCount`
   refetched per season, not a UI hook.
-- **Held volume on a gamepad is unclamped.** Held horizontal seeks are floored at
-  250 ms, but Up/Down still run the fast ladder at 5% per step. Horizontal repeat
-  in player context is floored everywhere, including the OSD button row, because
-  `GamepadManager` can see the action and the context but not which control has
-  focus.
+- **Held volume on a gamepad is unclamped.** Held horizontal seeks in the player
+  are floored at 250 ms, but the right stick's volume runs the fast ladder — at
+  its 38 ms floor, 5% per step sweeps the whole range in well under a second.
+  Horizontal repeat in player context is floored everywhere, including the OSD
+  button row, because `GamepadManager` can see the action and the context but
+  not which control has focus.
 - **`Component.onDestruction` cannot read a delegate's `index`** — it has already
   been reset to -1 by then. Any cleanup keyed on index there is dead code; track
   the delegate's identity instead (`StrmRail`, `StrmGrid`, `HomePage` do).

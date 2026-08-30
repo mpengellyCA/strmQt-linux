@@ -40,19 +40,15 @@ struct RepeatTuning
     int fastMs = 90;
     int fastestMs = 38;
     int stepsBeforeAccel = 6; // steps at fastMs before the rate ramps to fastestMs
-    // A held direction in the player is a scrub, not a cursor: the grid ladder's
-    // 38 ms floor asks for ~260 s of media per real second and overshoots by
-    // minutes before the hand reacts. Floored at 250 ms — four steps a second,
-    // ~40 s of media per second, about a disc player's 32× scan: an hour of
-    // runtime in 90 s of holding, and still slow enough to stop on a scene.
-    //
-    // Honest about its own reach: this cannot tell the two player cases apart,
-    // because C++ sees the action and the context but not which control has
-    // focus. With the OSD scrubber focused, StrmSlider already commits exactly
-    // one seek on the final non-repeat release, so the per-step server cost is
-    // not there and the floor is purely a feel choice (a 6.5x slower scrub).
-    // With the scrubber unfocused, every step really is a 10 s seek and a
-    // round-trip. Erring toward the slower, cheaper one.
+    // A held direction in the player is a scrub, not a cursor: floored at
+    // 250 ms — four steps a second, ~40 s of media per second, about a disc
+    // player's 32× scan. Since the scrubber took over Left/Right (StrmSlider
+    // armToScrub), an unarmed hold is swallowed outright and an armed one
+    // commits a single seek on the final non-repeat release — so the floor is
+    // now purely a feel choice, still slow enough to stop on a scene. It also
+    // slows held horizontal *navigation* of the OSD button row; C++ sees the
+    // action and the context but not which control has focus, and the scrub
+    // is the case worth protecting.
     int seekFloorMs = 250;
 };
 
@@ -67,8 +63,11 @@ inline int repeatIntervalMs(int emitted, bool seeking,
 }
 
 // Which held directions scrub. Only the horizontal pair, and only in the
-// player: Left/Right are what PlayerPage turns into ±10 s, while Up/Down are
-// volume and the OSD's own lists still want the fast ladder.
+// player: there Left/Right belong to the scrubber — swallowed while the bar
+// is unarmed, a 10 s nudge per step once armed — so a held horizontal is a
+// scrub or nothing, and the fast ladder's 38 ms floor would turn the armed
+// case into ~260 s of media per real second. Up/Down enter or leave the OSD
+// instead, and the right stick's volume has its own slot; neither is clamped.
 inline bool isSeekRepeat(const QString &context, const QString &actionId)
 {
     return context == QLatin1String("player")

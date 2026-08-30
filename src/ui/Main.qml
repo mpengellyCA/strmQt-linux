@@ -1140,6 +1140,24 @@ ApplicationWindow {
         onActivated: miniPlayer.focusTransport()
     }
 
+    // L3 on a pad: the short way between the film and the docked bar. Without
+    // it, getting back to full-screen playback from a controller is navigating
+    // to the bar and pressing A on it. Global context (InputMap), gated here
+    // on a live session — with nothing playing there is no view to toggle.
+    MappedShortcut {
+        actionId: "player.toggleView"
+        fallback: ["V"]
+        active: PlayerCtl.active === true
+                && (root.interactionContext === "player" || root.interactionContext === "browse"
+                    || root.interactionContext === "music")
+        onActivated: {
+            if (root.playerOnTop)
+                root.minimizePlayer();
+            else
+                root.showPlayer(true);
+        }
+    }
+
     // ── Destination cycling (gamepad shoulders, Ctrl+Tab) ───────────────────
     // Home, then every library, in the order the rail lists them. Favorites,
     // Search and Settings are deliberately absent: they are destinations you go

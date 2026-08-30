@@ -69,9 +69,11 @@ void InputMapTest::defaultsMatchTodaysBindings()
     QCOMPARE(m_map->bindings(QStringLiteral("player.togglePause")),
              (QStringList{QStringLiteral("Space"), QStringLiteral("K")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackward")),
-             QStringList{QStringLiteral("Left")});
+             QStringList{QStringLiteral("J")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekForward")),
-             QStringList{QStringLiteral("Right")});
+             QStringList{QStringLiteral("L")});
+    QCOMPARE(m_map->bindings(QStringLiteral("player.markLoop")),
+             QStringList{QStringLiteral("B")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackwardLong")),
              QStringList{QStringLiteral("PgDown")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekForwardLong")),
@@ -90,6 +92,12 @@ void InputMapTest::defaultsMatchTodaysBindings()
                           QStringLiteral("Back")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.stop")),
              QStringList{QStringLiteral("S")});
+
+    // L3 on a pad, V on a keyboard: the toggle between the full player and the
+    // docked bar, live in both states — hence global context.
+    QCOMPARE(m_map->bindings(QStringLiteral("player.toggleView")),
+             QStringList{QStringLiteral("V")});
+    QCOMPARE(m_map->context(QStringLiteral("player.toggleView")), QStringLiteral("global"));
 
     // The catalogue is what the shortcut sheet and the remap UI render.
     const QVariantList actions = m_map->actions();
@@ -174,11 +182,6 @@ void InputMapTest::planSection37IsFullyCovered()
     }
 
     // Rows PLAN §3.7 gives a gamepad binding.
-    //
-    // player.volumeUp/Down are deliberately NOT here. They advertised "Right
-    // Stick Up/Down" while GamepadManager never read the right stick and
-    // PlayerController has no volume verb, so the hint described a control that
-    // did nothing. A binding is documented once it works, not before.
     const QStringList gamepadRows = {
         QStringLiteral("nav.up"),
         QStringLiteral("nav.select"),
@@ -193,6 +196,12 @@ void InputMapTest::planSection37IsFullyCovered()
         QStringLiteral("player.seekForwardLong"),
         QStringLiteral("player.minimize"),
         QStringLiteral("player.toggleOsd"),
+        // Right stick up/down and L3 — documented only once they actually
+        // worked, which is now: the right stick's vertical axis repeats these,
+        // and L3 toggles the full player and the docked bar.
+        QStringLiteral("player.volumeUp"),
+        QStringLiteral("player.volumeDown"),
+        QStringLiteral("player.toggleView"),
     };
     for (const QString &id : gamepadRows)
         QVERIFY2(!m_map->gamepadBinding(id).isEmpty(), qPrintable(id));
@@ -343,7 +352,11 @@ void InputMapTest::musicIsAThirdContext()
              QStringLiteral("player.stop"));
     QCOMPARE(m_map->actionForSequence(QStringLiteral("L"), music),
              QStringLiteral("music.favorite"));
+    // In the player L is seek-forward now; the loop marker moved to B when the
+    // arrows stopped seeking (the armed scrubber owns Left/Right).
     QCOMPARE(m_map->actionForSequence(QStringLiteral("L"), QStringLiteral("player")),
+             QStringLiteral("player.seekForward"));
+    QCOMPARE(m_map->actionForSequence(QStringLiteral("B"), QStringLiteral("player")),
              QStringLiteral("player.markLoop"));
 
     // And they are in the remap UI and the shortcut sheet, which is what

@@ -366,17 +366,23 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("Space"), QStringLiteral("K")},
          QObject::tr("A")},
+        // Plain Left/Right are NOT here any more: on the player page they are
+        // navigation, and the scrubber owns them once armed (StrmSlider
+        // armToScrub). A direction that seeks merely because nothing is focused
+        // yet is how a film jumped while the user was still finding the
+        // controls. J/L — the convention every video site teaches — are the
+        // discrete jumps, and LT/RT resolve through them.
         {QStringLiteral("player.seekBackward"),
          QObject::tr("Seek back 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("Left")},
+         {QStringLiteral("J")},
          QObject::tr("LT")},
         {QStringLiteral("player.seekForward"),
          QObject::tr("Seek forward 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("Right")},
+         {QStringLiteral("L")},
          QObject::tr("RT")},
         // GamepadManager maps LB→PgDown and RB→PgUp, i.e. the 60 s jumps.
         {QStringLiteral("player.seekBackwardLong"),
@@ -431,7 +437,9 @@ const QList<InputMap::ActionDef> &catalogue()
          QObject::tr("Mark A–B loop point"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("L")},
+         // B as in A–B; L moved to seek-forward when the arrows stopped
+         // seeking (see player.seekForward above).
+         {QStringLiteral("B")},
          QString()},
         // Esc lives here, not on player.stop. It is the key every other
         // application spells "go back", and ending a record with it — losing
@@ -450,20 +458,21 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("S")},
          QString()},
-        // PLAN §3.7 requires a volume row; no page handles it yet (PlayerController
-        // has no volume API), so this is a binding waiting for its verb.
+        // PlayerPage and the now-playing panel handle these; on a pad the
+        // right stick's vertical axis repeats them (GamepadManager), which is
+        // the one volume path a pad has — the slider only takes pointer focus.
         {QStringLiteral("player.volumeUp"),
          QObject::tr("Volume up"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("+")},
-         QString()},
+         QObject::tr("Right Stick Up")},
         {QStringLiteral("player.volumeDown"),
          QObject::tr("Volume down"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("-")},
-         QString()},
+         QObject::tr("Right Stick Down")},
 
         // ── The docked bar, from the keyboard and from a pad ──────────────
         // MiniPlayer::focusTransport() has existed since the bar did and
@@ -481,6 +490,18 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("N")},
          QObject::tr("R3 (Right Stick click)")},
+
+        // The short way between the film and the docked bar: leaving the
+        // player keeps it playing, and getting back without this is the whole
+        // navigation stack. Global context — the verb exists in both states,
+        // minimizing when the page is on top and expanding when it is not
+        // (Main.qml's MappedShortcut decides which).
+        {QStringLiteral("player.toggleView"),
+         QObject::tr("Full player / mini player"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("V")},
+         QObject::tr("L3 (Left Stick click)")},
 
         // ── Music (MUSIC.md §7) ───────────────────────────────────────────
         // Its own context, because each of these three keys is already bound in
