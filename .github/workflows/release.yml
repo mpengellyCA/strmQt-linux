@@ -72,10 +72,18 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install dependencies
+        # Deliberately the packages the PKGBUILD declares, not the `vlc`
+        # metapackage: Arch splits VLC into libvlc (headers, libvlc.so) plus
+        # separate plugin packages, and `vlc` lists the plugin sets as OPTIONAL
+        # deps. Installing `vlc` gave a libvlc that loads and decodes nothing,
+        # which is how tst_vlc_player timed out here while passing everywhere a
+        # developer had vlc-plugins-all. Matching the declared depends means the
+        # test proves the shipped dependency list is actually sufficient.
         run: |
           pacman -Syu --noconfirm --needed \
-            git cmake ninja pkgconf gcc namcap \
-            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv vlc sdl3
+            git cmake ninja pkgconf gcc namcap ffmpeg \
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv sdl3 \
+            libvlc vlc-plugins-base vlc-plugin-ffmpeg
 
       - uses: actions/checkout@v4
         with:

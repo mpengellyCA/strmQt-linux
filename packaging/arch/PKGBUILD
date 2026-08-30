@@ -12,7 +12,7 @@ pkgname=strmqt
 # strings agree, and all three package jobs went green anyway.
 # An Arch pkgver may not contain a hyphen, so it is stripped here rather than
 # spelling the git tag unconventionally to suit one packager.
-_tag=v0.4.0
+_tag=v0.4.1
 pkgver=${_tag#v}
 pkgver=${pkgver//-/}
 pkgrel=1
@@ -38,8 +38,18 @@ license=('GPL-3.0-or-later')
 # set is SVG in qrc and QImageReader decodes it through qt6-svg's imageformats
 # plugin. Nothing links libQt6Svg, so neither the linker nor namcap can see the
 # dependency — without it the package installs cleanly and every icon is blank.
+# libvlc.so alone is NOT enough, and this is the qt6-svg trap a second time.
+# Arch splits VLC: `libvlc` owns libvlc.so and the headers, while every codec
+# and video output lives in separate vlc-plugin-* packages that only the `vlc`
+# metapackage pulls, and even there as OPTIONAL deps. A package depending on
+# the soname alone installs cleanly, links fine, and then decodes nothing at
+# all on the VLC engine. vlc-plugins-base carries the vmem video output the
+# player renders through; vlc-plugin-ffmpeg carries libavcodec, which is what
+# actually decodes H.264/HEVC. The soname dep stays alongside them so an ABI
+# bump still forces a rebuild.
 depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg'
-         'hicolor-icon-theme' 'libmpv.so' 'libvlc.so' 'sdl3')
+         'hicolor-icon-theme' 'libmpv.so' 'sdl3'
+         'libvlc.so' 'vlc-plugins-base' 'vlc-plugin-ffmpeg')
 # Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).
 makedepends=('cmake' 'ninja' 'pkgconf' 'git')
 optdepends=(

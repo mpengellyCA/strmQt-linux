@@ -62,7 +62,7 @@
   </requires>
 
   <releases>
-    <release version="0.4.0" date="2026-08-30" type="development">
+    <release version="0.4.1" date="2026-08-30" type="development">
       <description>
         <p>
           Adds saved profiles with a "Who's watching?" picker at startup, a
