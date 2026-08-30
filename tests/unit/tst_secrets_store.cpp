@@ -55,7 +55,10 @@ class SecretsStoreTest : public QObject
 
 private slots:
     void plaintextTestModeRoundTripsAsynchronously();
-    void walletOperationsAreDelayedAndReportFailures();
+    void walletWriteFailureFallsBackToTheVaultFile();
+    void walletFailureIsReportedWhenTheVaultIsToo();
+    void emptyOrFailedWalletReadFallsBackToTheVaultFile();
+    void walletFailuresAreReported();
     void unavailableWalletFallsBackToTheVaultFile();
     void rejectedWalletUsesTheVaultFile();
     void vaultWriteFailureIsReported();
@@ -104,37 +107,114 @@ void SecretsStoreTest::plaintextTestModeRoundTripsAsynchronously()
     QVERIFY(removed.value.isEmpty());
 }
 
-void SecretsStoreTest::walletOperationsAreDelayedAndReportFailures()
+void SecretsStoreTest::walletWriteFailureFallsBackToTheVaultFile()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    FakeSecretsStore store;
+    store.setLegacyFilePathForTests(path);
+    QSignalSpy modeSpy(&store, &SecretsStore::storageModeChanged);
+
+    const QFuture<Result<bool>> write =
+        store.writeSecret(QStringLiteral("k"), QStringLiteral("v"));
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
+    store.replyNetworkWallet(true);
+    store.replyOpen(true);
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Write));
+    QVERIFY(!write.isFinished());
+
+    // The wallet refuses the write (kwalletd6 answering -1 and leaving an
+    // empty entry behind is the in-the-wild case); the vault takes over for
+    // the rest of the process, and the mode change is announced.
+    store.replyWrite(false);
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+    QCOMPARE(modeSpy.count(), 2); // Unknown → Wallet → PlaintextFallback
+
+    // Later operations bypass the wallet entirely.
+    store.calls.clear();
+    QCOMPARE(awaitResult(store.readSecret(QStringLiteral("k"))).value, QStringLiteral("v"));
+    QVERIFY(store.calls.isEmpty());
+
+    // And the value is really on disk, owner-only.
+    const QFileDevice::Permissions permissions = QFileInfo(path).permissions();
+    QVERIFY(!(permissions &
+              (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+               QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther)));
+    SecretsStore reloaded(path);
+    QCOMPARE(awaitResult(reloaded.readSecret(QStringLiteral("k"))).value, QStringLiteral("v"));
+}
+
+void SecretsStoreTest::walletFailureIsReportedWhenTheVaultIsToo()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+
+    FakeSecretsStore store;
+    store.setLegacyFilePathForTests(path);
+    const QFuture<Result<bool>> write =
+        store.writeSecret(QStringLiteral("k"), QStringLiteral("v"));
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
+    store.replyNetworkWallet(true);
+    store.replyOpen(true);
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Write));
+    store.replyWrite(false);
+
+    const Result<bool> failed = awaitResult(write);
+    QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                                  QFileDevice::ExeOwner));
+    QVERIFY(!failed.ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::Wallet);
+    QVERIFY(!QFileInfo::exists(path));
+}
+
+void SecretsStoreTest::emptyOrFailedWalletReadFallsBackToTheVaultFile()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("secrets.ini"));
+    FakeSecretsStore store;
+    store.setLegacyFilePathForTests(path);
+    initializeWallet(store);
+
+    // Seeded after the wallet opened — seeding earlier would migrate it away.
+    {
+        QSettings vault(path, QSettings::IniFormat);
+        vault.setValue(QStringLiteral("k"), QStringLiteral("vault-value"));
+        vault.sync();
+    }
+
+    // An empty wallet entry (what a refused write leaves behind) shadows nothing.
+    QFuture<Result<QString>> read = store.readSecret(QStringLiteral("k"));
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Read));
+    store.replyRead(true, {});
+    QCOMPARE(awaitResult(read).value, QStringLiteral("vault-value"));
+
+    // Clear the recorded calls so the QTRY below cannot pass on the stale
+    // Read above before the new read is even dispatched.
+    store.calls.clear();
+    read = store.readSecret(QStringLiteral("k"));
+    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Read));
+    store.replyRead(false, {});
+    QCOMPARE(awaitResult(read).value, QStringLiteral("vault-value"));
+}
+
+void SecretsStoreTest::walletFailuresAreReported()
 {
     QTemporaryDir dir;
     FakeSecretsStore store;
     store.setLegacyFilePathForTests(dir.filePath(QStringLiteral("missing.ini")));
+    initializeWallet(store);
 
-    QFuture<Result<bool>> write = store.writeSecret(QStringLiteral("k"), QStringLiteral("v"));
-    QVERIFY(!write.isFinished());
-    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
-    store.replyNetworkWallet(true);
-    QCOMPARE(store.calls.last().type, FakeSecretsStore::CallType::Open);
-    store.replyOpen(true);
-    QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Write));
-    QVERIFY(!write.isFinished());
-    store.replyWrite(false);
-    QVERIFY(!awaitResult(write).ok());
-
-    write = store.writeSecret(QStringLiteral("k"), QStringLiteral("v2"));
-    QTRY_VERIFY(!store.calls.isEmpty() && store.calls.last().value == QStringLiteral("v2"));
-    store.replyWrite(true);
-    QVERIFY(awaitResult(write).ok());
-
+    // The vault has nothing to rescue these with, so the wallet's failure is
+    // the answer.
     QFuture<Result<QString>> read = store.readSecret(QStringLiteral("k"));
     QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Read));
-    QVERIFY(!read.isFinished());
-    store.replyRead(true, QStringLiteral("v2"));
-    QCOMPARE(awaitResult(read).value, QStringLiteral("v2"));
+    store.replyRead(false, {});
+    QVERIFY(!awaitResult(read).ok());
 
     QFuture<Result<bool>> remove = store.removeSecret(QStringLiteral("k"));
     QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::Remove));
-    QVERIFY(!remove.isFinished());
     store.replyRemove(false);
     QVERIFY(!awaitResult(remove).ok());
 }

@@ -124,11 +124,12 @@ bool restoreSession(emby::EmbyClient &client, Settings &settings, SecretsStore &
     }
     if (stored.value.isEmpty()) {
         // Pre-scoping installs kept one flat token; adopt it into this
-        // account's scope, then forget the flat key.
+        // account's scope. The flat key is forgotten only once the scoped copy
+        // is safely stored — it is the last resort if the write fails.
         const Result<QString> legacy = await(secrets.readSecret(Settings::legacyTokenSecretKey()));
         if (legacy.ok() && !legacy.value.isEmpty()) {
-            await(secrets.writeSecret(scopedKey, legacy.value));
-            await(secrets.removeSecret(Settings::legacyTokenSecretKey()));
+            if (await(secrets.writeSecret(scopedKey, legacy.value)).ok())
+                await(secrets.removeSecret(Settings::legacyTokenSecretKey()));
             stored = legacy;
         }
     }

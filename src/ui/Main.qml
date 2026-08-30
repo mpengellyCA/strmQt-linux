@@ -1247,6 +1247,18 @@ ApplicationWindow {
         }
     }
 
+    // The vault fallback is deliberate but lower-security — announce it the
+    // moment it engages, not just on the login screen's standing banner.
+    Connections {
+        target: Session
+
+        function onSecretStorageChanged() {
+            if (Session.secretStorage === "vault")
+                toasts.show(qsTr("KWallet is unavailable or refused the write — your sign-in will be stored in a vault file with lower security."),
+                            "warning");
+        }
+    }
+
     // A refused version switch: the picker snaps back on its own, so without
     // this the control just looks like it does nothing.
     Connections {

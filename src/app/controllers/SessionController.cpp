@@ -228,12 +228,15 @@ void SessionController::login(const QString &username, const QString &password)
                 .then(this, [this, epoch](const Result<bool> &stored) {
                     if (epoch != m_epoch)
                         return;
-                    if (!stored.ok())
+                    if (!stored.ok()) {
                         qCWarning(logApp) << "could not persist access token:" << stored.error;
-                    // A flat pre-scoping token still present here was either not
-                    // adopted by restore() or belongs to the identity this login
-                    // superseded; the scoped write above is the record now.
-                    m_secrets->removeSecret(Settings::legacyTokenSecretKey());
+                    } else {
+                        // A flat pre-scoping token still present here was either
+                        // not adopted by restore() or belonged to the identity
+                        // this login superseded; the scoped write above is the
+                        // record now. Only once it succeeded, though.
+                        m_secrets->removeSecret(Settings::legacyTokenSecretKey());
+                    }
                     setBusy(false);
                     setAuthenticated(true);
                 });
@@ -365,12 +368,17 @@ QFuture<Result<QString>> SessionController::readAccountToken(const QUrl &serverU
                 return;
             }
             // Pre-scoping installs kept one flat token. Adopt it into this
-            // account's scope, then forget the flat key.
+            // account's scope; the flat key is forgotten only once the scoped
+            // copy is safely stored — it is the last resort if the write fails.
             m_secrets->readSecret(Settings::legacyTokenSecretKey())
                 .then(this, [this, promise, scopedKey](const Result<QString> &legacy) {
                     if (legacy.ok() && !legacy.value.isEmpty()) {
-                        m_secrets->writeSecret(scopedKey, legacy.value);
-                        m_secrets->removeSecret(Settings::legacyTokenSecretKey());
+                        m_secrets->writeSecret(scopedKey, legacy.value)
+                            .then(this, [this](const Result<bool> &written) {
+                                // The scoped copy exists now; drop the flat one.
+                                if (written.ok())
+                                    m_secrets->removeSecret(Settings::legacyTokenSecretKey());
+                            });
                     }
                     promise->addResult(legacy);
                     promise->finish();

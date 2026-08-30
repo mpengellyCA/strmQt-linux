@@ -77,6 +77,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	if (PlaylistCtl.playlists.coun
 src/ui/Main.qml: Unqualified access [unqualified]	if (PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
 src/ui/Main.qml: Unqualified access [unqualified]	if (Session.authenticated) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (Session.authenticated) {
+src/ui/Main.qml: Unqualified access [unqualified]	if (Session.secretStorage === "vault")
 src/ui/Main.qml: Unqualified access [unqualified]	if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
 src/ui/Main.qml: Unqualified access [unqualified]	initialItem: Session.authenticated ? homeComponent : loginComponent
 src/ui/Main.qml: Unqualified access [unqualified]	initialRoute: Session.authenticated
@@ -101,6 +102,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
+src/ui/Main.qml: Unqualified access [unqualified]	target: Session
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
 src/ui/Main.qml: Unqualified access [unqualified]	userName: Session.username
 src/ui/Main.qml: Unqualified access [unqualified]	var crash = PlayerCtl.crashResumeInfo();

@@ -446,18 +446,51 @@ void SecretsStore::completeWritePassword(bool success, const QString &error)
     }
     if (!m_current || m_current->type != OperationType::Write)
         return;
-    if (!success) {
-        finishCurrent(Result<QString>::failure(error));
+    if (success) {
+        removeLegacyForCurrent(Result<QString>::success({}));
         return;
     }
-    removeLegacyForCurrent(Result<QString>::success({}));
+    // The wallet refused the write (seen in the wild: kwalletd6 answers -1 and
+    // leaves an empty entry behind). Persist to the vault file instead, and
+    // demote for the rest of the process so later operations stop trusting the
+    // wallet's copy of this key. storageModeChanged drives the user warning.
+    qCWarning(logCore) << "wallet write failed; storing the secret in the vault file instead:"
+                       << error;
+    const QString path = fallbackFilePath();
+    const QString key = m_current->key;
+    const QString value = m_current->value;
+    runLegacyTask<Result<bool>>(
+        this, [path, key, value]() { return writePlaintextSecretFile(path, key, value); },
+        [this](const Result<bool> &written) {
+            if (written.ok())
+                setStorageMode(StorageMode::PlaintextFallback);
+            finishCurrent(written.ok() ? Result<QString>::success({})
+                                       : Result<QString>::failure(written.error));
+        });
 }
 
 void SecretsStore::completeReadPassword(bool success, const QString &value, const QString &error)
 {
     if (!m_current || m_current->type != OperationType::Read)
         return;
-    finishCurrent(success ? Result<QString>::success(value) : Result<QString>::failure(error));
+    if (success && !value.isEmpty()) {
+        finishCurrent(Result<QString>::success(value));
+        return;
+    }
+    // An empty or failed wallet read can shadow a vault copy written while the
+    // wallet was refusing writes — consult the vault before answering.
+    const QString path = fallbackFilePath();
+    const QString key = m_current->key;
+    runLegacyTask<Result<QString>>(
+        this, [path, key]() { return readPlaintextSecretFile(path, key); },
+        [this, success, value, error](const Result<QString> &vault) {
+            if (vault.ok() && !vault.value.isEmpty()) {
+                finishCurrent(vault);
+                return;
+            }
+            finishCurrent(success ? Result<QString>::success(value)
+                                  : Result<QString>::failure(error));
+        });
 }
 
 void SecretsStore::completeRemoveEntry(bool success, const QString &error)
