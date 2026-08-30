@@ -87,6 +87,11 @@ jobs:
         run: |
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          # The chown above hands the checkout to builder, so git running as
+          # root now refuses it as "dubious ownership" and exits 128. Harmless
+          # until the version-consistency step below started calling git to
+          # catch a moved tag; that turned the next release into a hard failure.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           # Arch's stock makepkg.conf splits out a -debug package. We do not
           # ship one, and its build-id symlinks point into the main package,
