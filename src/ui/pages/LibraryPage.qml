@@ -139,6 +139,18 @@ FocusScope {
     onScopeKeyChanged: page.loadViewPrefs()
     Component.onCompleted: page.loadViewPrefs()
 
+    // ── The pad's triggers (Main.qml jumpLetter) ───────────────────────────
+    // A letter is the only sane way across a 1300-item library from a
+    // controller, so LT/RT step the alphabet strip and apply it. A collection
+    // has no strip — sorting and alphabet-jumping are answers to questions a
+    // curated set of six does not raise — so there the same buttons move the
+    // grid a screenful instead, which is what they would have done anyway.
+    function jumpLetter(step) {
+        if (!page.isCollection && filterBar.stepLetter(step))
+            return true
+        return grid.pageBy(step)
+    }
+
     // ── Item verbs ─────────────────────────────────────────────────────────
     // StrmGrid hands back an index into LibraryCtl.model; every verb needs the
     // item map, so one helper resolves it and each handler stays a single line.

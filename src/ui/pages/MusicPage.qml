@@ -378,6 +378,30 @@ FocusScope {
     // "s" and "l" jump to a song instead of firing these — which is right, the
     // user is typing. Space is exempt at the table until a word is already
     // being typed, so play/pause works from the track list too.
+    // ── The pad's shoulders and triggers (Main.qml) ────────────────────────
+    // LB/RB belong to THESE four tabs rather than to the library cycle: a music
+    // library is one destination read four ways, and stepping between those
+    // readings is what the shoulders are for on a page that has them. They wrap,
+    // so the pair is never a dead button; another library is a rail away.
+    function cycleTab(step) {
+        const count = tabBar.tabs.length
+        if (count <= 1)
+            return false
+        tabBar.select((tabBar.currentIndex + step + count) % count)
+        return true
+    }
+
+    // LT/RT step the alphabet. Every tab here is filed by sort name — "The
+    // Beatles" under B — so the strip answers on all four; the grid-paging
+    // fallback is only for a tab whose bar somehow has no strip.
+    function jumpLetter(step) {
+        if (filterBar.stepLetter(step))
+            return true
+        const view = page.activeView
+        return view !== null && typeof view.pageBy === "function"
+               && view.pageBy(step) === true
+    }
+
     // What the keyboard is standing on, whichever view is showing.
     function focusedItem() {
         const view = page.activeView
@@ -745,6 +769,12 @@ FocusScope {
             multiSelect: true
             KeyNavigation.up: filterBar.entryItem
             onActivated: index => page.playSongFrom(index)
+
+            // The same menu the row's ⋯ and right-click raise, from the Menu key
+            // (and a held A on a pad). TrackTable emits it for the row under the
+            // ring, so both routes end in one handler.
+            onMenuRequested: (index, mx, my) =>
+                songMenu.popupForItemNoDetails(page.songAt(index), mx, my)
             prefetchThreshold: 30
             onNearEnd: if (MusicCtl.canLoadMoreSongs) MusicCtl.loadMoreSongs()
 

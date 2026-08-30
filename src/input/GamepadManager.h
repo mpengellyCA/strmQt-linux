@@ -37,6 +37,13 @@ class InputMap;
 //   · the triggers and the shoulder buttons were either unread or fixed to
 //     seeking, so there was no way to move between libraries at all.
 //
+// The pair of them now divide the work of moving about: the SHOULDERS change
+// what section is on screen (the page's own tab bar where it has one, the
+// library otherwise) and the TRIGGERS move through the list that is on it (a
+// letter where there is an alphabet strip, a screenful where there is not).
+// Both resolve through the shell, which is the only thing that knows which page
+// is up — see Main.qml cycleSection() / jumpLetter().
+//
 // A synthesized event says what it is. A held direction presses its key and
 // leaves it down, repeats are flagged as auto-repeat, and the release at the
 // end is the only plain one — the same shape a keyboard produces. Controls
@@ -92,6 +99,9 @@ private:
     void releaseAll();
     // A discrete press: press and release back to back, neither a repeat.
     void tap(const QString &actionId);
+    // The A button while browsing: a tap selects, a hold opens the item menu.
+    // False when this context has no hold gesture, and the caller taps as before.
+    bool handleSelectButton(quint32 deviceId, bool pressed);
     // Current binding for an action, and whether it may be delivered at all.
     // False leaves *key and *modifiers zeroed.
     bool resolveKey(const QString &actionId, int *key, int *modifiers) const;
@@ -115,6 +125,14 @@ private:
         int stickX = 0;
         int stickY = 0;
         int stickAxis = -1;
+        // A held A over a browsable item is "tell me more about this": the item
+        // menu, which is otherwise a right-click and therefore does not exist on
+        // a pad. Select is therefore committed on RELEASE while browsing, so the
+        // two gestures can be told apart; the release is within a fraction of a
+        // second of the press, so a tap still feels immediate. The rule itself
+        // is in GamepadDecision.h, where it has tests.
+        QElapsedTimer selectHeldFor;
+        SelectHold selectHold;
     };
     QHash<quint32, DeviceState> m_deviceStates;
     // Multiple controllers may resolve to the same Qt key. Send the final key

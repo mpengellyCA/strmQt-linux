@@ -293,6 +293,11 @@ ListView {
     }
 
     signal activated(int index)
+    // The row's context menu, raised from the keyboard rather than the pointer:
+    // TrackRow draws the same menu behind a right-click and a ⋯ button, and
+    // neither exists on a pad. `x`/`y` are SCENE coordinates, the same as
+    // TrackRow.menuRequested, so a page hands both to one handler.
+    signal menuRequested(int index, real x, real y)
     // Raised before this component's own key handling; accept the event to
     // claim the key.
     signal keyPressed(var event)
@@ -441,6 +446,32 @@ ListView {
         table._extending = false
         if (extending)
             table.selectRange(table.selectionAnchor, target)
+    }
+
+    // The context menu for the row under the ring. False when there is no row,
+    // so the caller can leave the key unaccepted.
+    function requestMenuForCurrent(): bool {
+        const item = table.currentItem
+        if (table.currentIndex < 0 || !item)
+            return false
+        table._cancelNavigationFocusForUser()
+        const point = item.mapToItem(null, item.width / 2, item.height)
+        table.menuRequested(table.currentIndex, point.x, point.y)
+        return true
+    }
+
+    // A screenful, for a caller that is not a keypress — the pad's triggers on
+    // a page with no alphabet strip to jump by.
+    function pageBy(step): bool {
+        if (table.count <= 0)
+            return false
+        const target = Math.max(0, Math.min(table.count - 1,
+                                            table.currentIndex + step * table._pageStep()))
+        if (target === table.currentIndex)
+            return false
+        table._moveCursor(target, false)
+        table.forceActiveFocus(Qt.OtherFocusReason)
+        return true
     }
 
     function _pageStep(): int {
@@ -635,6 +666,12 @@ ListView {
         table.keyPressed(event)
         if (event.accepted)
             return
+        // After the page's own keys, so a surface that already answers Menu
+        // (the playlist member list, whose menu is a different list) keeps it.
+        if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
+            event.accepted = table.requestMenuForCurrent()
+            return
+        }
         if (table.count === 0)
             return
 

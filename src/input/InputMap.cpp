@@ -58,6 +58,10 @@ const KeyName kNamedKeys[] = {
     {"]", Qt::Key_BracketRight},
     {"?", Qt::Key_Question},
     {"*", Qt::Key_Asterisk},
+    // The context-menu key a PC keyboard prints between AltGr and Ctrl. Named
+    // here so nav.contextMenu round-trips through the remap UI like any other
+    // binding; QKeySequence::fromString() spells it the same way.
+    {"Menu", Qt::Key_Menu},
 };
 
 // Aliases accepted on input but never emitted (canonical spelling wins).
@@ -305,18 +309,54 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("PgDown")},
          QObject::tr("RT")},
+        // ── What the triggers do, and why there are two rows for one button ──
+        // A pad's triggers are the only pair left for moving *through* a long
+        // list, and a 1300-item library has two different answers to that: jump
+        // to the next letter where there is an alphabet strip to jump by, and
+        // page a screenful where there is not. The shell asks the page which it
+        // is (Main.qml jumpLetter), so LT carries both — hence the hint on this
+        // pair and on the paging pair above. The keyboard keeps them apart:
+        // PgUp/PgDown page, "[" and "]" step the alphabet.
+        {QStringLiteral("nav.previousLetter"),
+         QObject::tr("Previous letter"),
+         QStringLiteral("Navigation"),
+         QString::fromLatin1(InputMap::kContextBrowse),
+         {QStringLiteral("[")},
+         QObject::tr("LT")},
+        {QStringLiteral("nav.nextLetter"),
+         QObject::tr("Next letter"),
+         QStringLiteral("Navigation"),
+         QString::fromLatin1(InputMap::kContextBrowse),
+         {QStringLiteral("]")},
+         QObject::tr("RT")},
+        // The shoulders change what SECTION you are looking at: the page's own
+        // tab bar when it has one — the music tabs, a season, a settings
+        // section — and the library otherwise, which is what they always did.
         {QStringLiteral("nav.previousTab"),
-         QObject::tr("Previous library"),
+         QObject::tr("Previous tab / library"),
          QStringLiteral("Navigation"),
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("Ctrl+Shift+Tab")},
          QObject::tr("LB")},
         {QStringLiteral("nav.nextTab"),
-         QObject::tr("Next library"),
+         QObject::tr("Next tab / library"),
          QStringLiteral("Navigation"),
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("Ctrl+Tab")},
          QObject::tr("RB")},
+        // Every verb a card draws on hover — play, mark watched, favourite, add
+        // to a playlist — used to live behind a right-click or a ⋯ that only
+        // appears under a pointer. This is the same menu, on the item the ring
+        // is on, and it is what makes those verbs exist for a keyboard and a
+        // pad at all. Held A rather than a button of its own: browse context
+        // has no button left, and a hold is the gesture a TV interface already
+        // spends on "more about this".
+        {QStringLiteral("nav.contextMenu"),
+         QObject::tr("Item actions"),
+         QStringLiteral("Navigation"),
+         QString::fromLatin1(InputMap::kContextBrowse),
+         {QStringLiteral("Menu")},
+         QObject::tr("Hold A")},
         {QStringLiteral("app.toggleMenu"),
          QObject::tr("Show / hide the menu"),
          QStringLiteral("Application"),

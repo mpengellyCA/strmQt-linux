@@ -36,6 +36,10 @@ Item {
     signal searchDismissed
     signal settingsRequested
     signal signOutRequested
+    // The keyboard left the bar downwards; the page takes it back. Without this
+    // a Down out of the header went nowhere at all, which made the bar a place
+    // an arrow key could enter and not leave.
+    signal dismissed
 
     // What the page area below must leave clear. Zero while auto-hiding, since
     // the bar then floats over the content instead of displacing it.
@@ -60,6 +64,28 @@ Item {
         field.selectAll();
     }
 
+    // Where Up out of the top of a page lands: the leftmost control that is
+    // actually offerable. Back is disabled at the root of the history and
+    // Forward whenever nothing has been gone back from, and landing the ring on
+    // a dead button would read as the key having done nothing.
+    //
+    // The search field is deliberately not in this walk, nor in the Left/Right
+    // chain below. A focused TextField answers the horizontal arrows itself —
+    // they are the caret's — so an arrow user who landed in it could not walk
+    // back out sideways, and the input this bar's arrows exist for cannot type
+    // into it anyway. It keeps Tab, the pointer, and the `/` that opens the
+    // search page proper.
+    function focusFirst(): bool {
+        const order = [backButton, forwardButton, settingsButton, avatar];
+        for (let i = 0; i < order.length; ++i) {
+            if (order[i].enabled && order[i].visible) {
+                order[i].forceActiveFocus(Qt.BacktabFocusReason);
+                return true;
+            }
+        }
+        return false;
+    }
+
     function clearSearch(): void {
         field.clear();
     }
@@ -67,6 +93,21 @@ Item {
     implicitHeight: Theme.topBarHeight
     height: Theme.topBarHeight
     clip: true
+
+    // Down leaves the bar for the page below it, and Esc does the same without
+    // committing anything — the mirror of the Up that reached it. Declared on
+    // the bar root so it fires for whichever control holds the keyboard, and
+    // only once that control has declined the key itself: the search field
+    // still gets its own Esc, which clears the query first.
+    Keys.onDownPressed: event => {
+        event.accepted = true;
+        topBar.dismissed();
+    }
+
+    Keys.onEscapePressed: event => {
+        event.accepted = true;
+        topBar.dismissed();
+    }
 
     // The reveal zone is the strip itself: a plain Item with only a
     // HoverHandler accepts no presses, so content underneath stays clickable
@@ -113,6 +154,9 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingTight / 2
 
+            // Left/Right walk the bar. KeyNavigation skips a disabled item on
+            // its own, so a chain declared once covers every combination of
+            // Back and Forward being offerable.
             StrmIconButton {
                 id: backButton
 
@@ -122,6 +166,8 @@ Item {
                 tooltip: qsTr("Back")
                 shortcut: topBar.shortcutFor("nav.back")
                 onClicked: topBar.backRequested()
+
+                KeyNavigation.right: forwardButton
             }
 
             StrmIconButton {
@@ -132,6 +178,9 @@ Item {
                 iconName: "arrow-right"
                 tooltip: qsTr("Forward")
                 onClicked: topBar.forwardRequested()
+
+                KeyNavigation.left: backButton
+                KeyNavigation.right: settingsButton
             }
         }
 
@@ -180,6 +229,9 @@ Item {
                 tooltip: qsTr("Settings")
                 shortcut: topBar.shortcutFor("app.settings")
                 onClicked: topBar.settingsRequested()
+
+                KeyNavigation.left: forwardButton
+                KeyNavigation.right: avatar
             }
 
             // Avatar: the only place the signed-in user is named anywhere in
@@ -274,6 +326,8 @@ Item {
                 Keys.onReturnPressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
                 Keys.onEnterPressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
                 Keys.onSpacePressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
+
+                KeyNavigation.left: settingsButton
             }
         }
     }

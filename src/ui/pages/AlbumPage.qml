@@ -648,6 +648,12 @@ FocusScope {
 
         onActivated: index => page.playFrom(index)
 
+        // The same menu the row's ⋯ and right-click raise, from the Menu key
+        // (and a held A on a pad). TrackTable emits it for the row under the
+        // ring, so both routes end in one handler.
+        onMenuRequested: (index, mx, my) =>
+            trackMenu.popupForItemNoDetails(page.trackAt(index), mx, my)
+
         delegate: TrackRow {
             id: trackRow
 

@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls.Basic
 import StrmQt
 
@@ -333,6 +334,18 @@ FocusScope {
         // must never inherit that stale suppression.
         episodeGrid.navigationFocusClaimed = false
         SeriesCtl.selectSeason(row)
+    }
+
+    // The pad's shoulders (Main.qml cycleTab): a season is this page's tab bar,
+    // and stepping seasons is what a viewer working through a show actually
+    // does. Wraps, so the last season's RB returns to the first rather than
+    // leaving the button dead.
+    function cycleTab(step) {
+        const count = page.seasonTabs.length
+        if (count <= 1)
+            return false
+        page.selectSeason((seasonBar.currentIndex + step + count) % count)
+        return true
     }
 
     // ── Vertical navigation ────────────────────────────────────────────────
@@ -915,6 +928,22 @@ FocusScope {
             page.playRow(episodeGrid.currentIndex)
         }
 
+        // A screenful, for the pad's triggers: this page has no alphabet strip,
+        // so the shell falls through to paging whatever holds the keyboard and
+        // finds this by walking up from it (Main.qml pageFocusedView).
+        function pageBy(step) {
+            if (episodeGrid.count <= 0)
+                return false
+            const target = Math.max(0, Math.min(episodeGrid.count - 1,
+                                                episodeGrid.currentIndex
+                                                + step * episodeGrid.pageStep()))
+            if (target === episodeGrid.currentIndex)
+                return false
+            episodeGrid.cancelNavigationFocusForUser()
+            episodeGrid.currentIndex = target
+            return true
+        }
+
         // Guard isAutoRepeat: a held Return must not launch playback twice.
         Keys.onReturnPressed: event => { if (!event.isAutoRepeat) episodeGrid.playCurrent() }
         Keys.onEnterPressed: event => { if (!event.isAutoRepeat) episodeGrid.playCurrent() }
@@ -942,8 +971,48 @@ FocusScope {
             return rows * Math.max(1, page.columns)
         }
 
+        // The edges of a row are edges, not wraps. GridView's own Left/Right walk
+        // the model, so Left in the first column lands on the LAST episode of
+        // the row above — the selection leaping across the screen, and the
+        // opposite of what keyNavigationWraps: false is set here to say. Left at
+        // the edge leaves the page for the destination rail instead, which is
+        // the gesture a ten-foot interface already teaches.
+        Keys.onLeftPressed: event => {
+            const columns = Math.max(1, page.columns)
+            if (episodeGrid.count > 0 && episodeGrid.currentIndex % columns !== 0) {
+                event.accepted = false
+                return
+            }
+            event.accepted = true
+            // A held Left must not bounce between the page and the rail; see
+            // StrmGrid, which carries the same guard for the same reason.
+            if (event.isAutoRepeat)
+                return
+            const win = episodeGrid.Window.window
+            if (win && typeof win.focusNavigationRail === "function")
+                win.focusNavigationRail()
+        }
+
+        Keys.onRightPressed: event => {
+            const columns = Math.max(1, page.columns)
+            event.accepted = episodeGrid.count === 0
+                             || episodeGrid.currentIndex % columns === columns - 1
+        }
+
         Keys.onPressed: event => {
             episodeGrid.cancelNavigationFocusForUser()
+            // The episode's own menu — mark watched, favourite, add to a queue —
+            // which was a right-click or a hover ⋯ and therefore did not exist
+            // for a keyboard or a pad.
+            if (event.key === Qt.Key_Menu && !event.isAutoRepeat
+                    && episodeGrid.currentItem) {
+                const item = episodeGrid.currentItem
+                const point = item.mapToItem(null, item.width / 2, item.height * 0.7)
+                itemMenu.popupForItem(SeriesCtl.episodes.get(episodeGrid.currentIndex),
+                                      point.x, point.y)
+                event.accepted = true
+                return
+            }
             if (episodeGrid.count === 0)
                 return
             if (event.key === Qt.Key_PageDown) {

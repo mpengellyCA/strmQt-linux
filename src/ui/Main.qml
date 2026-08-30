@@ -230,6 +230,36 @@ ApplicationWindow {
         heroWatch.restart();
     }
 
+    // ── The two edges of a page ────────────────────────────────────────────
+    // Both are asked for by controls that ran out of room — StrmGrid's Left in
+    // the first column, and the fallback on the stack below for everything
+    // else — and both answer false when there is no chrome to move to, so the
+    // key simply dies rather than doing something invisible.
+
+    // The destination rail. It expands on hover or focus, and a gamepad has
+    // neither: before this the only ways in were the Menu button and Tab, one
+    // undiscoverable and the other absent from a pad. Left off the left-hand
+    // edge of a page is the gesture every ten-foot interface already teaches.
+    function focusNavigationRail(): bool {
+        if (!root.chromeVisible || root.overlayOpen)
+            return false;
+        navRail.pinned = true;
+        navRail.focusCurrent();
+        return true;
+    }
+
+    // The header. It carries Back, Forward, the search field and the ONLY route
+    // to signing out, and every one of them was reachable by pointer or Tab
+    // alone — which is to say a gamepad could not sign out at all.
+    function focusTopBar(): bool {
+        if (!root.chromeVisible || root.overlayOpen)
+            return false;
+        // A pinned rail is drawn over the header's own left-hand controls, so
+        // it cannot stay open while the keyboard is up there.
+        navRail.pinned = false;
+        return topBar.focusFirst();
+    }
+
     function goBack(): void {
         if (!root.canGoBack)
             return;
@@ -666,6 +696,19 @@ ApplicationWindow {
             if (action === "nav.back" && root.canGoBack) {
                 root.goBack();
                 event.accepted = true;
+                return;
+            }
+            // The page edges. A key only reaches the stack once every control
+            // between it and here has declined it, which is exactly what makes
+            // these edges rather than a hijack: a grid mid-row, an armed
+            // scrubber, a filter chain and a two-pane playlist all answer Left
+            // first, and a list with somewhere above it answers Up.
+            if (event.key === Qt.Key_Left && root.focusNavigationRail()) {
+                event.accepted = true;
+                return;
+            }
+            if (event.key === Qt.Key_Up && root.focusTopBar()) {
+                event.accepted = true;
             }
         }
 
@@ -975,6 +1018,9 @@ ApplicationWindow {
         onSettingsRequested: root.openSettings()
         onSignOutRequested: Session.logout()
         onSearchDismissed: root.restoreFocusToPage()
+        // Down (or Esc) out of the header hands the keyboard back, the mirror
+        // of the Up that reached it.
+        onDismissed: root.focusCurrentPage()
         // Typing here hands off to the search page, which owns the query from
         // then on: its field is bound to SearchCtl.query, so the caret lands in
         // a bigger field already holding what was typed.
@@ -1191,18 +1237,71 @@ ApplicationWindow {
             root.openLibrary(keys[index], names[index], types[index]);
     }
 
+    // The shoulders change what SECTION is on screen. A page with a tab bar of
+    // its own — the music tabs, a season, a settings section — owns them by
+    // exposing cycleTab(step); everything else falls through to the library
+    // cycle above, which is what they have always done. Nothing here has to
+    // learn about a page that grows tabs later.
+    function cycleSection(step): void {
+        const page = stack.currentItem;
+        if (page !== null && typeof page.cycleTab === "function"
+                && page.cycleTab(step) === true)
+            return;
+        root.cycleDestination(step);
+    }
+
+    // The triggers move THROUGH the list. Where the page has an alphabet strip
+    // that is a letter — the only sane way across a 1300-item library from a
+    // pad, and the reason these are not simply Page Up and Page Down — and
+    // where it has not, it is a screenful of whatever holds the keyboard.
+    function jumpLetter(step): void {
+        const page = stack.currentItem;
+        if (page !== null && typeof page.jumpLetter === "function"
+                && page.jumpLetter(step) === true)
+            return;
+        root.pageFocusedView(step);
+    }
+
+    // Walk up from whatever holds the keyboard until something knows how to
+    // move by a screenful. Generic on purpose: every long surface in the app is
+    // a StrmGrid or a TrackTable and both answer pageBy(), so a page does not
+    // have to name its own content here.
+    function pageFocusedView(step): bool {
+        let node = root.activeFocusItem;
+        for (let i = 0; node !== null && node !== undefined && i < 64; ++i) {
+            if (typeof node.pageBy === "function")
+                return node.pageBy(step) === true;
+            node = node.parent;
+        }
+        return false;
+    }
+
     MappedShortcut {
         actionId: "nav.nextTab"
         fallback: ["Ctrl+Tab"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
-        onActivated: root.cycleDestination(1)
+        onActivated: root.cycleSection(1)
     }
 
     MappedShortcut {
         actionId: "nav.previousTab"
         fallback: ["Ctrl+Shift+Tab"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
-        onActivated: root.cycleDestination(-1)
+        onActivated: root.cycleSection(-1)
+    }
+
+    MappedShortcut {
+        actionId: "nav.nextLetter"
+        fallback: ["]"]
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
+        onActivated: root.jumpLetter(1)
+    }
+
+    MappedShortcut {
+        actionId: "nav.previousLetter"
+        fallback: ["["]
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
+        onActivated: root.jumpLetter(-1)
     }
 
     // The rail expands on hover or focus, neither of which a gamepad has. This

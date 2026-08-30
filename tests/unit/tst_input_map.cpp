@@ -23,6 +23,8 @@ private slots:
     void contextsKeepBrowseAndPlayerApart();
     void musicIsAThirdContext();
     void theDockedBarIsReachable();
+    void theShouldersAndTriggersHaveSeparateVerbs();
+    void theItemMenuHasAKeyOfItsOwn();
     void resetRestoresTheDefault();
     void resetAllClearsEveryOverride();
     void sequencesAreNormalised();
@@ -190,6 +192,9 @@ void InputMapTest::planSection37IsFullyCovered()
         QStringLiteral("nav.previousTab"),
         QStringLiteral("nav.pageUp"),
         QStringLiteral("nav.pageDown"),
+        QStringLiteral("nav.previousLetter"),
+        QStringLiteral("nav.nextLetter"),
+        QStringLiteral("nav.contextMenu"),
         QStringLiteral("app.toggleMenu"),
         QStringLiteral("player.togglePause"),
         QStringLiteral("player.seekForward"),
@@ -381,6 +386,59 @@ void InputMapTest::theDockedBarIsReachable()
     QVERIFY(!m_map->gamepadBinding(id).isEmpty());
     QCOMPARE(m_map->keyFor(id), int(Qt::Key_N));
     QCOMPARE(m_map->modifiersFor(id), 0);
+}
+
+// The pad has four buttons for moving about and they mean two different
+// things, which is only true because each pair resolves to a DIFFERENT action:
+// wiring both to paging is how the alphabet strip ended up unreachable from a
+// controller, and wiring both to the library is how a music page's four tabs
+// did. Both pairs still have to resolve to a single synthesizable key.
+void InputMapTest::theShouldersAndTriggersHaveSeparateVerbs()
+{
+    // Triggers: the letter step, distinct from the paging pair the keyboard
+    // keeps on PgUp/PgDown.
+    QCOMPARE(m_map->bindings(QStringLiteral("nav.previousLetter")),
+             QStringList{QStringLiteral("[")});
+    QCOMPARE(m_map->bindings(QStringLiteral("nav.nextLetter")),
+             QStringList{QStringLiteral("]")});
+    QCOMPARE(m_map->keyFor(QStringLiteral("nav.previousLetter")), int(Qt::Key_BracketLeft));
+    QCOMPARE(m_map->keyFor(QStringLiteral("nav.nextLetter")), int(Qt::Key_BracketRight));
+    QVERIFY(m_map->keyFor(QStringLiteral("nav.pageUp")) != m_map->keyFor(
+                QStringLiteral("nav.previousLetter")));
+
+    // Shoulders: unchanged keys, and they are the pair a page's own tab bar
+    // takes over — hence the name the shortcut sheet now shows.
+    QCOMPARE(m_map->bindings(QStringLiteral("nav.nextTab")),
+             QStringList{QStringLiteral("Ctrl+Tab")});
+    QCOMPARE(m_map->bindings(QStringLiteral("nav.previousTab")),
+             QStringList{QStringLiteral("Ctrl+Shift+Tab")});
+
+    for (const QString &id : {QStringLiteral("nav.previousLetter"),
+                              QStringLiteral("nav.nextLetter"),
+                              QStringLiteral("nav.previousTab"),
+                              QStringLiteral("nav.nextTab")}) {
+        QVERIFY2(!m_map->gamepadBinding(id).isEmpty(), qPrintable(id));
+        QCOMPARE(m_map->context(id), QStringLiteral("browse"));
+    }
+}
+
+// Every verb a card draws under a pointer — play, mark watched, favourite, add
+// to a playlist — lives in this one menu, and it had no key at all. The Menu
+// key has to survive the round trip through the name table, or the remap UI
+// would show a binding it could not parse back.
+void InputMapTest::theItemMenuHasAKeyOfItsOwn()
+{
+    QCOMPARE(m_map->bindings(QStringLiteral("nav.contextMenu")),
+             QStringList{QStringLiteral("Menu")});
+    QCOMPARE(m_map->keyFor(QStringLiteral("nav.contextMenu")), int(Qt::Key_Menu));
+    QCOMPARE(m_map->normalizeSequence(QStringLiteral("menu")), QStringLiteral("Menu"));
+    QCOMPARE(m_map->sequenceForKey(int(Qt::Key_Menu)), QStringLiteral("Menu"));
+    QCOMPARE(m_map->actionForKey(int(Qt::Key_Menu), 0, QStringLiteral("browse")),
+             QStringLiteral("nav.contextMenu"));
+
+    // It is not typing, so a pad may deliver it into a focused search field —
+    // which is where a held A over a result has to keep working.
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Menu")));
 }
 
 void InputMapTest::resetRestoresTheDefault()

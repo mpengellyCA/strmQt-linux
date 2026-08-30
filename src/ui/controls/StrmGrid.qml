@@ -144,6 +144,55 @@ FocusScope {
             grid.itemActivated(view.currentIndex)
     }
 
+    // The context menu for the cell under the ring, anchored to that cell. The
+    // verbs a card draws on hover — play, watched, favourite — had no keyboard
+    // route at all before this; the Menu key (and a held A on a pad) is it.
+    function requestMenuForCurrent(): bool {
+        const item = view.currentItem
+        if (view.currentIndex < 0 || !item)
+            return false
+        grid._cancelNavigationFocusForUser()
+        const point = item.mapToItem(null, item.width / 2, item.height * 0.7)
+        grid.menuRequested(view.currentIndex, point.x, point.y)
+        return true
+    }
+
+    // Where Left off the left-hand edge goes. Null asks the shell for its
+    // destination rail, which is the answer on every page that has one; a page
+    // with its own left-hand pane (a two-column playlist view) names it here
+    // instead.
+    property Item leftEdgeTarget: null
+
+    function escapeLeft(): bool {
+        if (grid.leftEdgeTarget && grid.leftEdgeTarget.visible
+                && grid.leftEdgeTarget.enabled) {
+            grid.leftEdgeTarget.forceActiveFocus(Qt.BacktabFocusReason)
+            return true
+        }
+        // The shell decides, and a shell without a rail on screen (login, the
+        // player, a test harness) simply answers false and the key dies here.
+        const win = grid.Window.window
+        if (win && typeof win.focusNavigationRail === "function")
+            return win.focusNavigationRail() === true
+        return false
+    }
+
+    // A screenful, for a caller that is not a keypress — the pad's triggers on
+    // a page with no alphabet strip to jump by. Returns false when there is
+    // nothing to move, so the caller can fall through.
+    function pageBy(step): bool {
+        if (view.count <= 0)
+            return false
+        const target = Math.max(0, Math.min(view.count - 1,
+                                            view.currentIndex + step * view._pageRows()))
+        if (target === view.currentIndex)
+            return false
+        grid._cancelNavigationFocusForUser()
+        view.currentIndex = target
+        view.forceActiveFocus(Qt.OtherFocusReason)
+        return true
+    }
+
     // ── Keeping the user's place across a mode or size change ──────────────
     // Cell geometry changes under the viewport, so contentY stops meaning what
     // it meant a frame ago. Remember the item at the top-left *before* the
@@ -665,8 +714,51 @@ FocusScope {
             return Math.max(1, rows) * Math.max(1, grid.columns);
         }
 
+        // ── The edges of a row are edges, not wraps ────────────────────────
+        // GridView's own Left/Right walk the model, so Left in the first column
+        // lands on the LAST card of the row above and Right in the last column
+        // on the first card of the row below. On a page of artwork that reads
+        // as the selection leaping across the screen, and it is the opposite of
+        // what `keyNavigationWraps: false` is set here to say. Both are claimed
+        // before the view sees them: Right stops, and Left leaves the grid the
+        // way a ten-foot interface expects — for the destination rail, which
+        // otherwise only opens by a key nobody was told about.
+        Keys.onLeftPressed: event => {
+            const columns = Math.max(1, grid.columns);
+            if (view.count > 0 && view.currentIndex % columns !== 0) {
+                // Somewhere inside a row: the view's own handling moves one
+                // cell, which is exactly what it is for.
+                event.accepted = false;
+                return;
+            }
+            event.accepted = true;
+            // A HELD Left must not bounce. The rail hands the keyboard back on
+            // its own Left, so a repeating one would swap the two surfaces
+            // several times a second for as long as the stick is pushed over.
+            // The edge is a gesture, not a direction to keep travelling in.
+            if (event.isAutoRepeat)
+                return;
+            grid.escapeLeft();
+        }
+
+        Keys.onRightPressed: event => {
+            const columns = Math.max(1, grid.columns);
+            // Stop at the right-hand edge instead of wrapping onto the next row.
+            event.accepted = view.count === 0
+                             || view.currentIndex % columns === columns - 1;
+        }
+
         Keys.onPressed: event => {
             grid._cancelNavigationFocusForUser()
+            // A grid publishes its column on a vertical step but never consumes
+            // one: its own cursor is already columnar, and the back-stack
+            // restores it by item identity. Publishing is what lets a shelf
+            // above or below a grid land under the cell the ring was on.
+            NavigationColumn.noteFromKey(view, event.key)
+            if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
+                event.accepted = grid.requestMenuForCurrent();
+                return;
+            }
             if (view.count === 0)
                 return;
             if (event.key === Qt.Key_PageDown) {

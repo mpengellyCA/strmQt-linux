@@ -62,6 +62,25 @@ Item {
         return true;
     }
 
+    // Pinned open by the Menu button, or by Left off the left-hand edge of a
+    // page — which is now the commonest way in, and made this matter: every
+    // route OUT of the rail unpinned it (choosing a destination, Esc, Left,
+    // Right) except the one nobody declared, which is the keyboard simply going
+    // somewhere else. A click on the page then left the rail standing open over
+    // the content for the rest of the session.
+    //
+    // Deferred, because moving between two entries clears `focusedEntry` for
+    // the instant between the first losing focus and the second gaining it.
+    onFocusedEntryChanged: {
+        if (rail.focusedEntry === null)
+            Qt.callLater(rail._unpinIfLeft);
+    }
+
+    function _unpinIfLeft(): void {
+        if (rail.focusedEntry === null && !hover.hovered)
+            rail.pinned = false;
+    }
+
     // Move focus into the rail, onto the entry for the page already on screen so
     // the first D-pad press moves from where the user actually is.
     function focusCurrent(): void {
@@ -267,15 +286,18 @@ Item {
         // The rail is on the left edge, so Right leaves it for the page and Left
         // closes it. Both only while pinned: while it is merely hovered or
         // tabbed into, horizontal arrows belong to whatever the user was doing.
+        // isAutoRepeat, because the page's own left-hand edge sends the
+        // keyboard HERE: a held horizontal direction would otherwise swap the
+        // rail and the page several times a second for as long as it is pushed.
         Keys.onRightPressed: event => {
-            if (rail.pinned) {
+            if (rail.pinned && !event.isAutoRepeat) {
                 rail.pinned = false;
                 rail.dismissed();
                 event.accepted = true;
             }
         }
         Keys.onLeftPressed: event => {
-            if (rail.pinned) {
+            if (rail.pinned && !event.isAutoRepeat) {
                 rail.pinned = false;
                 rail.dismissed();
                 event.accepted = true;

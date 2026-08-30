@@ -305,6 +305,30 @@ FocusScope {
         cacheBuffer: Theme.scale(800)
         boundsBehavior: Flickable.StopAtBounds
 
+        // A screenful of shelves, for the pad's triggers on a page that has no
+        // alphabet strip to jump by (Main.qml pageFocusedView finds this by
+        // walking up from whatever holds the keyboard). Rails differ in height,
+        // so the step is however many are on screen rather than a fixed count.
+        function pageBy(step) {
+            if (railList.count <= 0)
+                return false
+            // Clamped to zero: the view's top margin puts contentY BELOW the
+            // first delegate while it is scrolled to the top, and a probe in
+            // that margin finds no row at all.
+            const top = Math.max(0, railList.contentY)
+            const first = railList.indexAt(railList.contentX + 1, top + 1)
+            const last = railList.indexAt(railList.contentX + 1,
+                                          top + railList.height - 1)
+            const span = (first >= 0 && last > first) ? last - first : 1
+            const target = Math.max(0, Math.min(railList.count - 1,
+                                                railList.currentIndex + step * span))
+            if (target === railList.currentIndex)
+                return false
+            railList.currentIndex = target
+            railList.positionViewAtIndex(target, ListView.Contain)
+            return true
+        }
+
         // The Libraries rail is a different shape from a media rail — 16:9
         // tiles over a LibraryListModel, whose roles (libraryId / imageUrl)
         // are not the media roles StrmRail's delegate reads. A ListView takes
@@ -604,7 +628,17 @@ FocusScope {
                         libraryRail.cancelNavigationFocusForUser()
                         if (!event.isAutoRepeat) libraryRail.activateCurrent()
                     }
-                    Keys.onPressed: libraryRail.cancelNavigationFocusForUser()
+                    Keys.onPressed: event => {
+                        libraryRail.cancelNavigationFocusForUser()
+                        NavigationColumn.noteFromKey(libList, event.key)
+                    }
+
+                    // The Libraries shelf is a second horizontal view on this
+                    // page, so it keeps the column exactly as a StrmRail does.
+                    onActiveFocusChanged: {
+                        if (libList.activeFocus)
+                            NavigationColumn.applyTo(libList)
+                    }
                 }
             }
         }

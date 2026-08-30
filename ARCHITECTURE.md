@@ -214,6 +214,38 @@ Two conventions worth knowing:
   scale. Without that, every card asks the server for a fraction of the pixels it
   then draws.
 
+### Moving about with a D-pad
+
+Three rules, and each of them replaced something that read as the selection
+jumping about rather than being walked.
+
+- **A vertical step keeps the column.** A page of horizontal shelves has one
+  cursor per shelf, and each shelf remembers where it was left — so Down out of
+  card 3 landed on whatever card the next shelf was last parked on, usually its
+  far end. The shelf being left publishes the x of the card under the ring and
+  the shelf being entered puts its cursor on whichever of its own cards sits
+  nearest it (`NavigationColumn`). Each shelf keeps its own scroll offset;
+  nothing scrolls sideways to satisfy this. It is armed by an Up/Down keypress
+  and disarms itself on the next turn of the event loop, so a click, a Tab or a
+  back-stack restore never sees it.
+
+- **The edges of a row are edges, not wraps.** `GridView`'s own Left/Right walk
+  the model, so Left in the first column landed on the *last* card of the row
+  above. Both edges are claimed before the view sees them.
+
+- **The edges of a page reach the chrome.** Left off the left-hand edge opens and
+  focuses the destination rail; Up off the top reaches the header. Both are
+  fallbacks on the `StackView` (plus one in `StrmGrid`, which has to claim Left
+  itself to stop the wrap), so they only fire once every control between the
+  keyboard and the shell has declined the key — a grid mid-row, an armed
+  scrubber, a filter chain and the two-pane playlist all answer first. Both are
+  auto-repeat guarded: the rail hands the keyboard back on its own Left, so a
+  held direction would otherwise swap the two surfaces several times a second.
+
+This is what makes the shell reachable without a pointer at all. The rail expands
+on hover or focus and a gamepad has neither; the header carries Back, Forward and
+the only route to signing out, and every one of them was a pointer or a Tab away.
+
 ### Pages
 
 `Main.qml` owns a `StackView`, the navigation history (including a forward stack,
@@ -247,10 +279,31 @@ without a working binding is worse than no hint.
 
 The layout targets Xbox 360 / Xbox One, which is the PC standard and the layout
 SDL's own gamepad abstraction is modelled on. Mapping is context-dependent, so one
-pair of shoulders changes library while browsing and seeks ±60 s during playback.
+pair of shoulders seeks ±60 s during playback and changes section while browsing.
 The triggers seek ±10 s in the player, the left stick click (L3) toggles between
 the full player and the docked bar, and the right stick's vertical axis is
 volume there — the one player control a pad cannot reach by focus.
+
+**While browsing, the shoulders and the triggers divide the work of moving
+about.** The shoulders change what *section* is on screen: the page's own tab bar
+where it has one — the four music tabs, a season, a settings section — and the
+previous/next library where it has not. The triggers move *through* the list on
+it: a letter on the alphabet strip where the page has one, which is the only sane
+way across a 1300-item library from a pad, and a screenful of whatever holds the
+keyboard where it has not. Both resolve through the shell, which is the only
+thing that knows which page is up (`Main.qml` `cycleSection()` / `jumpLetter()`);
+a page opts in by exposing `cycleTab(step)` or `jumpLetter(step)`, and nothing in
+the shell has to learn about a page that grows tabs later.
+
+**A held A opens the item menu.** Every verb a card draws under a pointer — play,
+mark watched, favourite, add to a playlist, go to the series — lived behind a
+right-click or a hover `⋯`, so it did not exist for a keyboard or a pad at all.
+It has the Menu key (`nav.contextMenu`) and, on a pad, a half-second hold of A;
+tapping A still selects, committed on the release so the two can be told apart.
+The rule is a pure state machine in `input/GamepadDecision.h`, because what makes
+it subtle is an ordering — a release arriving after the hold has already fired
+must not *also* select — and orderings are what a device cannot be made to
+reproduce on demand.
 
 **There are three contexts, not two.** Browse, player, and *music* — the music
 library, an album and an artist page. Two actions only conflict when their

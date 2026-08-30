@@ -5,6 +5,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Window
 import StrmQt
 
 // Settings (ARCHITECTURE.md). A section rail on the left, the selected section's
@@ -346,6 +347,52 @@ FocusScope {
         return false;
     }
 
+    // The pad's shoulders (Main.qml cycleTab): the section rail is this page's
+    // tab bar. Wraps, like every other tab bar the shoulders drive.
+    function cycleTab(step) {
+        const count = page.sections.length
+        if (count <= 1)
+            return false
+        sectionList.currentIndex = (sectionList.currentIndex + step + count) % count
+        return true
+    }
+
+    // ── Up/Down inside the content pane ────────────────────────────────────
+    // Every row here is a switch, a select or a slider, chained to its
+    // neighbours by nothing at all: they were reachable by Tab and by pointer
+    // only. A gamepad has neither, so a controller could reach the section rail
+    // and then not one setting inside it — the whole pane was decoration.
+    //
+    // Walking the Tab chain is the right mechanism rather than a hand-written
+    // KeyNavigation web: the pane is fifty-odd controls that come and go with
+    // the section on screen, and the chain already knows their visual order.
+    //
+    // It returns false at either end so the key falls through — Up out of the
+    // top reaches the shell header, the same edge every other page has — and
+    // the focused control always answers first, so a slider keeps its own
+    // Left/Right and an open select keeps its own Up/Down.
+    function stepContentFocus(step) {
+        const from = page.Window.activeFocusItem;
+        if (from === null)
+            return false;
+        let candidate = from;
+        for (let i = 0; i < 256; ++i) {
+            candidate = candidate.nextItemInFocusChain(step > 0);
+            if (!candidate || candidate === from)
+                return false;
+            // The chain wraps around the whole window; leaving the pane is the
+            // end of the pane, not a reason to keep walking into the chrome.
+            if (!page.isInsideContent(candidate))
+                return false;
+            if (candidate.visible && candidate.enabled) {
+                candidate.forceActiveFocus(step > 0 ? Qt.TabFocusReason
+                                                    : Qt.BacktabFocusReason);
+                return true;
+            }
+        }
+        return false;
+    }
+
     function focusContent() {
         contentColumn.forceActiveFocus(Qt.OtherFocusReason);
         const next = contentColumn.nextItemInFocusChain(true);
@@ -543,6 +590,15 @@ FocusScope {
                     return;
                 sectionList.forceActiveFocus(Qt.OtherFocusReason);
                 event.accepted = true;
+            }
+
+            // The D-pad's way down the pane. See page.stepContentFocus().
+            Keys.onDownPressed: event => {
+                event.accepted = page.stepContentFocus(1);
+            }
+
+            Keys.onUpPressed: event => {
+                event.accepted = page.stepContentFocus(-1);
             }
 
             Column {

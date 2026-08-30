@@ -404,6 +404,18 @@ FocusScope {
             // Guarded against auto-repeat like every other activation path.
             Keys.onReturnPressed: event => { if (!event.isAutoRepeat) strip.activateCurrent() }
             Keys.onEnterPressed: event => { if (!event.isAutoRepeat) strip.activateCurrent() }
+
+            // A vertical step keeps the column (NavigationColumn): Down out of
+            // the fourth chip lands under it, not on wherever this shelf was
+            // last parked. Both halves are needed — one publishes the column,
+            // the other consumes it — and neither fires for a click, a Tab or a
+            // restored back-stack cursor, because only Up/Down arm it.
+            onActiveFocusChanged: {
+                if (chips.activeFocus)
+                    NavigationColumn.applyTo(chips)
+            }
+
+            Keys.onPressed: event => NavigationColumn.noteFromKey(chips, event.key)
         }
 
         // Shift+wheel pans the strip; everything else is handed straight back
@@ -619,6 +631,18 @@ FocusScope {
 
             Keys.onReturnPressed: event => { if (!event.isAutoRepeat) shelf.activateCurrent() }
             Keys.onEnterPressed: event => { if (!event.isAutoRepeat) shelf.activateCurrent() }
+
+            // A vertical step keeps the column (NavigationColumn): Down out of
+            // the fourth chip lands under it, not on wherever this shelf was
+            // last parked. Both halves are needed — one publishes the column,
+            // the other consumes it — and neither fires for a click, a Tab or a
+            // restored back-stack cursor, because only Up/Down arm it.
+            onActiveFocusChanged: {
+                if (cards.activeFocus)
+                    NavigationColumn.applyTo(cards)
+            }
+
+            Keys.onPressed: event => NavigationColumn.noteFromKey(cards, event.key)
         }
 
         MouseArea {

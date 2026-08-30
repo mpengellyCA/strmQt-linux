@@ -74,6 +74,65 @@ inline bool isSeekRepeat(const QString &context, const QString &actionId)
         && (actionId == QLatin1String("nav.left") || actionId == QLatin1String("nav.right"));
 }
 
+// ── A button with two meanings ──────────────────────────────────────────────
+
+// The A button while browsing answers two questions with one button: a tap
+// opens what is under the cursor, a hold asks for the item's menu — the verbs
+// a card only draws under a pointer (play, mark watched, favourite, add to a
+// playlist), which had no route from a pad at all.
+//
+// Which one a gesture turned out to be is decided here rather than in
+// GamepadManager, for the same reason the stick's axis is: it is a small state
+// machine whose interesting cases are orderings — a release that arrives after
+// the hold has already fired must not ALSO select — and orderings are what a
+// device cannot be made to reproduce on demand.
+//
+// Long enough that a firm press is still a select, short enough to be found by
+// accident, which is how anybody discovers a hold gesture at all.
+inline constexpr int kSelectHoldMs = 500;
+
+enum class SelectGesture
+{
+    None,
+    Select,
+    ContextMenu,
+};
+
+class SelectHold
+{
+public:
+    void press() { m_pending = true; }
+
+    // Called on every poll with how long the button has been down. Returns
+    // ContextMenu exactly once per press, on the first poll past the threshold.
+    SelectGesture tick(qint64 heldMs, int holdMs = kSelectHoldMs)
+    {
+        if (!m_pending || heldMs < holdMs)
+            return SelectGesture::None;
+        m_pending = false;
+        return SelectGesture::ContextMenu;
+    }
+
+    // A release before the hold matured is an ordinary select. After it, the
+    // menu is already open and the release must do nothing — or it would
+    // activate whatever the menu opened over.
+    SelectGesture release()
+    {
+        if (!m_pending)
+            return SelectGesture::None;
+        m_pending = false;
+        return SelectGesture::Select;
+    }
+
+    // A context switch or a disconnect mid-press. Neither meaning survives it.
+    void cancel() { m_pending = false; }
+
+    bool pending() const { return m_pending; }
+
+private:
+    bool m_pending = false;
+};
+
 // ── Keys a text field would eat ─────────────────────────────────────────────
 
 // A key a text editor treats as typing rather than as a command. Qt spells

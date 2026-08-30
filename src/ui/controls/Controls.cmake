@@ -1,7 +1,13 @@
 # Shared control library (ARCHITECTURE.md). Every control is simultaneously
 # pointer- and focus-driven; retrofitting mouse support a second time is
 # exactly how the prototype ended up with two MouseAreas app-wide.
+# One value shared by every horizontal shelf on a page, so a vertical move can
+# keep the column it started in (NavigationColumn.qml).
+set_source_files_properties(ui/controls/NavigationColumn.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_target_qml_sources(strmqt QML_FILES
+    ui/controls/NavigationColumn.qml
     ui/controls/FocusRing.qml
     ui/controls/StrmIcon.qml
     ui/controls/StrmButton.qml

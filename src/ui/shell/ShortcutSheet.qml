@@ -108,6 +108,43 @@ Item {
             sheet.close();
         }
 
+        // A Flickable answers the pointer and nothing else, so this sheet could
+        // be opened and not read: the catalogue is longer than the panel on any
+        // window, and the input most likely to be consulting it — a gamepad,
+        // whose Guide button opens it — has no wheel and no scrollbar to drag.
+        // The arrows, the paging keys and Home/End all move it here.
+        function scrollBy(dy) {
+            const maximum = Math.max(0, flick.contentHeight - flick.height);
+            flick.contentY = Math.max(0, Math.min(maximum, flick.contentY + dy));
+        }
+
+        Keys.onPressed: event => {
+            const line = Theme.controlHeight;
+            switch (event.key) {
+            case Qt.Key_Down:
+                scope.scrollBy(line);
+                break;
+            case Qt.Key_Up:
+                scope.scrollBy(-line);
+                break;
+            case Qt.Key_PageDown:
+                scope.scrollBy(flick.height * 0.9);
+                break;
+            case Qt.Key_PageUp:
+                scope.scrollBy(-flick.height * 0.9);
+                break;
+            case Qt.Key_Home:
+                flick.contentY = 0;
+                break;
+            case Qt.Key_End:
+                flick.contentY = Math.max(0, flick.contentHeight - flick.height);
+                break;
+            default:
+                return;
+            }
+            event.accepted = true;
+        }
+
         Rectangle {
             id: surface
 

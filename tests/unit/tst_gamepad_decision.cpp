@@ -20,6 +20,9 @@ private slots:
     void suppressionOnlyAppliesWhileAFieldHasFocus();
     void disconnectReleasesOnlyItsDevice();
     void pollCadenceSleepsWhileWaitingForADevice();
+    void aTapSelectsAndAHoldOpensTheItemMenu();
+    void aHoldThatFiredDoesNotAlsoSelectOnRelease();
+    void aCancelledPressMeansNeither();
 };
 
 void GamepadDecisionTest::browseRepeatAccelerates()
@@ -134,6 +137,53 @@ void GamepadDecisionTest::pollCadenceSleepsWhileWaitingForADevice()
     QCOMPARE(active, 16);
     QVERIFY(idle >= 250);
     QVERIFY(idle > active * 10);
+}
+
+// A is the one button in browse context with two meanings, and the whole of
+// telling them apart is an ordering: which of the release and the threshold
+// arrives first. A device cannot be made to reproduce that on demand, which is
+// why the rule is a pure state machine and this test exists.
+void GamepadDecisionTest::aTapSelectsAndAHoldOpensTheItemMenu()
+{
+    SelectHold tap;
+    tap.press();
+    // Every poll before the threshold says nothing at all: a select that fired
+    // early would open the item under the cursor half way through a hold.
+    QCOMPARE(tap.tick(0), SelectGesture::None);
+    QCOMPARE(tap.tick(kSelectHoldMs - 1), SelectGesture::None);
+    QCOMPARE(tap.release(), SelectGesture::Select);
+
+    SelectHold hold;
+    hold.press();
+    QCOMPARE(hold.tick(kSelectHoldMs), SelectGesture::ContextMenu);
+}
+
+void GamepadDecisionTest::aHoldThatFiredDoesNotAlsoSelectOnRelease()
+{
+    SelectHold hold;
+    hold.press();
+    QCOMPARE(hold.tick(kSelectHoldMs + 200), SelectGesture::ContextMenu);
+    // Polling continues while the button is still down; the menu opens once.
+    QCOMPARE(hold.tick(kSelectHoldMs + 400), SelectGesture::None);
+    // And letting go must not activate whatever the menu opened over.
+    QCOMPARE(hold.release(), SelectGesture::None);
+    QVERIFY(!hold.pending());
+}
+
+void GamepadDecisionTest::aCancelledPressMeansNeither()
+{
+    // A context switch or a disconnect mid-press. The press is forgotten, so
+    // the release that eventually arrives selects nothing on the new surface.
+    SelectHold interrupted;
+    interrupted.press();
+    interrupted.cancel();
+    QCOMPARE(interrupted.tick(kSelectHoldMs * 10), SelectGesture::None);
+    QCOMPARE(interrupted.release(), SelectGesture::None);
+
+    // A release with no press behind it (the button was down before the context
+    // became one that has this gesture) is equally a no-op.
+    SelectHold stray;
+    QCOMPARE(stray.release(), SelectGesture::None);
 }
 
 QTEST_MAIN(GamepadDecisionTest)

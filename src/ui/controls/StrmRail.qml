@@ -174,6 +174,19 @@ FocusScope {
             rail.itemActivated(list.currentIndex)
     }
 
+    // The context menu for the card under the ring, anchored to that card
+    // rather than to the pointer. False when there is nothing to act on, so
+    // the caller can leave the key unaccepted.
+    function requestMenuForCurrent(): bool {
+        const item = list.currentItem
+        if (list.currentIndex < 0 || !item)
+            return false
+        rail._cancelNavigationFocusForUser()
+        const point = item.mapToItem(null, item.width / 2, item.height * 0.75)
+        rail.menuRequested(list.currentIndex, point.x, point.y)
+        return true
+    }
+
     HoverHandler {
         id: railHover
         // No cursorShape here: the rail's background is not clickable, only the
@@ -385,10 +398,32 @@ FocusScope {
             }
         }
 
+        // A vertical step out of this shelf publishes the column it left from,
+        // and one into it lands on the card nearest whatever was published.
+        // Both halves live here because a shelf is the only thing that knows
+        // where its own cards are; NavigationColumn is only the value between
+        // them, and it is armed by nothing but an Up/Down keypress.
+        onActiveFocusChanged: {
+            if (list.activeFocus)
+                NavigationColumn.applyTo(list)
+        }
+
         // Guard isAutoRepeat: a held/stuck Return must not machine-gun activations.
         Keys.onReturnPressed: event => { if (!event.isAutoRepeat) rail.activateCurrent() }
         Keys.onEnterPressed: event => { if (!event.isAutoRepeat) rail.activateCurrent() }
-        Keys.onPressed: event => rail._cancelNavigationFocusForUser()
+        Keys.onPressed: event => {
+            rail._cancelNavigationFocusForUser()
+            NavigationColumn.noteFromKey(list, event.key)
+            // The item menu, from the keyboard. Every verb a card's hover
+            // overlay draws — play, watched, favourite — lived behind a pointer
+            // until this: the Menu key (and, through it, a held A on a pad)
+            // raises the same menu the right button does, on the card the ring
+            // is on.
+            if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
+                event.accepted = rail.requestMenuForCurrent()
+                return
+            }
+        }
     }
 
     // A6, part 3. The vertical axis cannot be filtered statically the way the

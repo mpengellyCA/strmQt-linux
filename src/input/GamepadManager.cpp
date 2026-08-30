@@ -130,6 +130,9 @@ QString GamepadManager::actionForButton(int sdlButton) const
 
     switch (sdlButton) {
     // ── Face buttons ───────────────────────────────────────────────────────
+    // A while browsing is handled by handleSelectButton() instead, which needs
+    // to tell a tap from a hold; this is the answer for the contexts that have
+    // no hold gesture.
     case SDL_GAMEPAD_BUTTON_SOUTH: // A
         return player ? QStringLiteral("player.togglePause") : QStringLiteral("nav.select");
     case SDL_GAMEPAD_BUTTON_EAST: // B
@@ -257,11 +260,33 @@ void GamepadManager::handleButton(quint32 deviceId, int sdlButton, bool pressed)
         break;
     }
 
+    if (sdlButton == SDL_GAMEPAD_BUTTON_SOUTH && handleSelectButton(deviceId, pressed))
+        return;
+
     if (!pressed)
         return;
     const QString actionId = actionForButton(sdlButton);
     if (!actionId.isEmpty())
         tap(actionId);
+}
+
+bool GamepadManager::handleSelectButton(quint32 deviceId, bool pressed)
+{
+    // Only where there is something to open a menu ON. The player has no items,
+    // and login and the overlays are one-decision surfaces where a delayed
+    // select would be a regression bought for nothing.
+    if (m_context != QLatin1String("browse") && m_context != QLatin1String("music"))
+        return false;
+
+    DeviceState &state = m_deviceStates[deviceId];
+    if (pressed) {
+        state.selectHeldFor.start();
+        state.selectHold.press();
+        return true;
+    }
+    if (state.selectHold.release() == SelectGesture::Select)
+        tap(QStringLiteral("nav.select"));
+    return true;
 }
 
 void GamepadManager::handleAxis(quint32 deviceId, int axis, int value)
@@ -286,7 +311,12 @@ void GamepadManager::handleAxis(quint32 deviceId, int axis, int value)
             tap(left ? QStringLiteral("player.seekBackward")
                      : QStringLiteral("player.seekForward"));
         else
-            tap(left ? QStringLiteral("nav.pageUp") : QStringLiteral("nav.pageDown"));
+            // Not pageUp/pageDown any more: the shell resolves a letter step to
+            // the alphabet strip where the page has one and to a page of the
+            // list where it does not (Main.qml jumpLetter), so one pair of
+            // triggers covers both and the useful one wins on a long library.
+            tap(left ? QStringLiteral("nav.previousLetter")
+                     : QStringLiteral("nav.nextLetter"));
         return;
     }
 
@@ -426,6 +456,12 @@ void GamepadManager::releaseAll()
 void GamepadManager::pump()
 {
     for (DeviceState &state : m_deviceStates) {
+        // The hold matures here rather than on the release, so the menu opens
+        // under the thumb while the button is still down — which is what tells
+        // the user the gesture is a hold at all. The release that follows is
+        // then a no-op (SelectHold::release).
+        if (state.selectHold.tick(state.selectHeldFor.elapsed()) == SelectGesture::ContextMenu)
+            tap(QStringLiteral("nav.contextMenu"));
         for (auto it = state.held.begin(); it != state.held.end(); ++it) {
             Repeat &repeat = it.value();
             const qint64 heldMs = repeat.heldFor.elapsed();

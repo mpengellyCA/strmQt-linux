@@ -211,6 +211,37 @@ FocusScope {
         return /^[0-9]$/.test(upper) ? bar.letters.length - 1 : -1;
     }
 
+    // ── Stepping the alphabet from outside the strip ───────────────────────
+    // The pad's triggers and the "[" / "]" keys (InputMap nav.previousLetter /
+    // nav.nextLetter). Unlike the strip's own Left/Right, which only move a
+    // preview cursor, this APPLIES the letter — the caller has no cursor to
+    // look at, so a step that changed nothing visible would not be a step.
+    //
+    // False when this bar has no strip, which is how the shell knows to fall
+    // back to paging the list instead (Main.qml jumpLetter).
+    function stepLetter(step: int): bool {
+        if (!bar.showAlphabet || !bar.hasController)
+            return false;
+        const current = bar.letters.indexOf(bar.activeLetter);
+        // With no letter applied yet the first step starts at the end it came
+        // from — A going forwards, "#" going back — rather than from wherever
+        // the preview cursor happens to be resting.
+        const next = current < 0 ? (step > 0 ? 0 : bar.letters.length - 1)
+                                 : current + step;
+        // Clamped, and still TRUE at either end: the alternative is the trigger
+        // silently paging the grid instead the moment the alphabet runs out,
+        // which is one button doing two different things a letter apart.
+        const target = Math.max(0, Math.min(bar.letters.length - 1, next));
+        if (target === current)
+            return true;
+        alphaStrip.moveCursor(target);
+        // setNameStartsWith() is self-toggling, so applyLetter() would CLEAR a
+        // letter that is already on. A step always lands on a different one, so
+        // it can never toggle — which is why it calls the controller directly.
+        bar.controller.setNameStartsWith(bar.letters[target]);
+        return true;
+    }
+
     // ── Extra filters ──────────────────────────────────────────────────────
     // Toggling one row of a multi-select, expressed as data so the controller
     // stays the only thing that decides what a selection means.
