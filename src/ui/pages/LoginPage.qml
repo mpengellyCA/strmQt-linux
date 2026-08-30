@@ -111,10 +111,15 @@ FocusScope {
             width: parent.width
             height: visible ? implicitHeight : 0
             visible: !page.showForm
+            // Same contract as the form's: a hidden surface holds no focus and
+            // answers no input.
+            enabled: !page.showForm
             spacing: Theme.spacingLoose
             clip: true
 
             Flow {
+                id: tileFlow
+
                 // Center the tiles as a block: a Flow fills rows left to
                 // right, so the block is exactly as wide as its widest row.
                 readonly property int tileStep: page.profileTileWidth + Theme.spacingLoose
@@ -128,15 +133,36 @@ FocusScope {
                 spacing: Theme.spacingLoose
 
                 Repeater {
+                    id: tiles
+
                     model: Session.profiles
 
                     delegate: ProfileTile {
                         id: tile
 
+                        required property int index
                         required property var modelData
 
                         profile: tile.modelData
                         manage: page.manageMode
+                        // The picker's claim on the keyboard: first tile while
+                        // the picker is the visible surface. The form's
+                        // userField carries the complementary claim.
+                        focus: tile.index === 0 && !page.showForm
+
+                        // Arrow-walk the Flow as the grid it draws as: rows of
+                        // perRow, clamped at the edges; Down off the last row
+                        // lands on the buttons beneath.
+                        KeyNavigation.left: tile.index % tileFlow.perRow > 0
+                                            ? tiles.itemAt(tile.index - 1) : null
+                        KeyNavigation.right: tile.index % tileFlow.perRow < tileFlow.perRow - 1
+                                             && tile.index + 1 < tiles.count
+                                             ? tiles.itemAt(tile.index + 1) : null
+                        KeyNavigation.up: tile.index >= tileFlow.perRow
+                                          ? tiles.itemAt(tile.index - tileFlow.perRow) : null
+                        KeyNavigation.down: tile.index + tileFlow.perRow < tiles.count
+                                            ? tiles.itemAt(tile.index + tileFlow.perRow)
+                                            : differentAccountButton
                     }
                 }
             }
@@ -146,8 +172,13 @@ FocusScope {
                 spacing: Theme.spacingTight
 
                 StrmButton {
+                    id: differentAccountButton
+
                     text: qsTr("Use a different account")
                     iconName: "user"
+                    KeyNavigation.up: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
+                    KeyNavigation.right: manageButton
+                    KeyNavigation.down: pickerAtStartSwitch
                     onClicked: {
                         // A stale-token error hands off here; prefill the name
                         // of the profile that just failed.
@@ -157,8 +188,13 @@ FocusScope {
                 }
 
                 StrmButton {
+                    id: manageButton
+
                     variant: "ghost"
                     text: page.manageMode ? qsTr("Done") : qsTr("Manage profiles")
+                    KeyNavigation.up: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
+                    KeyNavigation.left: differentAccountButton
+                    KeyNavigation.down: pickerAtStartSwitch
                     onClicked: page.manageMode = !page.manageMode
                 }
             }
@@ -168,10 +204,13 @@ FocusScope {
             // last signed in. One account resumes regardless — there is nothing
             // to pick.
             StrmSwitch {
+                id: pickerAtStartSwitch
+
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: qsTr("Ask who's watching at startup")
                 checked: Session.profilePickerAtStart
                 accessibleDescription: qsTr("With several profiles saved, show this screen when StrmQt starts instead of resuming the last one used")
+                KeyNavigation.up: differentAccountButton
                 onToggled: Session.profilePickerAtStart = !Session.profilePickerAtStart
             }
 
@@ -200,12 +239,16 @@ FocusScope {
         }
 
         // ── Credentials form ───────────────────────────────────────────────
+        // `enabled` follows visibility: an invisible item keeps activeFocus in
+        // Qt Quick, and a hidden-but-focused form is exactly how a gamepad's A
+        // used to submit an empty sign-in behind the profile picker.
         StrmPanel {
             id: panel
 
             width: parent.width
             height: visible ? implicitHeight : 0
             visible: page.showForm
+            enabled: page.showForm
             elevation: 3
             padding: Theme.spacingLoose
             clip: true
@@ -228,7 +271,9 @@ FocusScope {
                 id: userField
 
                 width: parent.width
-                focus: true
+                // Claims the keyboard only while the form is the visible
+                // surface; while the picker shows, the first tile holds it.
+                focus: page.showForm
                 label: qsTr("Username")
                 placeholder: qsTr("Your Emby user")
                 inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText

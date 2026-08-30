@@ -384,13 +384,28 @@ src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	readonly property
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	text: qsTr("Couldn't load more: %1").arg(LibraryCtl.errorMessage)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	title: LibraryCtl.title
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	visible: LibraryCtl.loading && grid.count === 0
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	&& tile.index + 1 < tiles.count
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	: differentAccountButton
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index + 1) : null
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index + tileFlow.perRow)
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index + tileFlow.perRow)
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index - 1) : null
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index - tileFlow.perRow) : null
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	? tiles.itemAt(tile.index - tileFlow.perRow) : null
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Component.onCompleted: userField.text = Session.username
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.down: tile.index + tileFlow.perRow < tiles.count
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.down: tile.index + tileFlow.perRow < tiles.count
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.left: tile.index % tileFlow.perRow > 0
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.right: tile.index % tileFlow.perRow < tileFlow.perRow - 1
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.right: tile.index % tileFlow.perRow < tileFlow.perRow - 1
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	KeyNavigation.up: tile.index >= tileFlow.perRow
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.login(userField.text.trim(), passwordField.text);
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.removeProfile(tile.profile.serverUrl, tile.profile.userId);
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.selectProfile(tile.profile.serverUrl, tile.profile.userId);
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.serverUrl = serverField.text.trim();
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	busy: Session.busy
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	checked: Session.profilePickerAtStart
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	focus: tile.index === 0 && !page.showForm
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	for (const profile of Session.profiles) {
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	iconName: Session.busy ? "" : "user"
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	if (Session.busy)
