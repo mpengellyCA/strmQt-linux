@@ -184,3 +184,17 @@ strmqt_add_test(tst_live_updates
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
 )
 target_include_directories(tst_live_updates PRIVATE mocks)
+
+# Real-libvlc lifecycle coverage for SOL-12: VlcPlayer.cpp is compiled into the
+# executable rather than a library, so the test builds it the same way
+# tst_mpv_video_item builds the mpv sources. Registered only when libvlc was
+# found, mirroring how src/CMakeLists.txt gates VlcVideoPlane.qml — a build
+# without libvlc simply lacks the test.
+if(STRMQT_WITH_VLC)
+    pkg_check_modules(LIBVLC_PLAYER_TEST IMPORTED_TARGET libvlc)
+    if(LIBVLC_PLAYER_TEST_FOUND)
+        strmqt_add_test(tst_vlc_player unit/tst_vlc_player.cpp
+            ${CMAKE_SOURCE_DIR}/src/playback/vlc/VlcPlayer.cpp)
+        target_link_libraries(tst_vlc_player PRIVATE Qt6::Gui PkgConfig::LIBVLC_PLAYER_TEST)
+    endif()
+endif()
