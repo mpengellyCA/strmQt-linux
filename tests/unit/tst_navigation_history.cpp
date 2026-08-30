@@ -16,6 +16,7 @@ private slots:
     void capsGraphsAndReconstructsMetadata();
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
+    void searchEscapeClearsQueryThenGoesBackThroughTransaction();
     void restoresPerEntryMusicTab();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void productionRetargetOrderingRetainsDepartingScopes();
@@ -538,6 +539,7 @@ Item {
     }
 
     component SearchProbe: FocusScope {
+        id: searchPageProbe
         property string queryAtCreation: ""
         readonly property string routeId: "search:" + queryAtCreation
         property alias focusA: searchFirst
@@ -549,6 +551,7 @@ Item {
         readonly property var navSections: [searchTracks]
         objectName: routeId
         focus: true
+        signal backRequested()
         signal focusRestoreOverrideRequested()
 
         function focusTrack(index): void { searchTracks._applyNavigationFocus(index); }
@@ -586,6 +589,17 @@ Item {
                 objectName: "search-track-fallback"
                 text: parent.parent.queryAtCreation
                 focus: true
+                // Mirrors SearchPage.qml's onEscapePressed: the field consumes
+                // Esc, the first press drops the query, and a second one asks
+                // Main to leave the page through its navigation transaction.
+                Keys.onEscapePressed: event => {
+                    event.accepted = true;
+                    if (searchFirst.text.length > 0) {
+                        searchPageProbe.applyUserQuery("");
+                        return;
+                    }
+                    searchPageProbe.backRequested();
+                }
             }
             FocusScope {
                 id: searchTracks
@@ -757,6 +771,14 @@ Item {
         loginPageComponent: loginComponent
         homePageComponent: homeComponent
         onPrepareRequested: route => root.prepareRoute(route)
+    }
+
+    // Mirrors Main.qml: a page's back intent goes through the same navigation
+    // transaction as the rail, mouse and input-map paths.
+    Connections {
+        target: history.currentItem
+        ignoreUnknownSignals: true
+        function onBackRequested() { root.goBack(); }
     }
 
     Component.onCompleted: {
@@ -1034,6 +1056,86 @@ void NavigationHistoryTest::restoresPerEntrySearchAndPreparesRouteKinds()
     QVERIFY(prepared.contains(QStringLiteral("details:1")));
     QVERIFY(prepared.contains(QStringLiteral("search:alpha")));
     QVERIFY(prepared.contains(QStringLiteral("search:beta edited")));
+}
+
+void NavigationHistoryTest::searchEscapeClearsQueryThenGoesBackThroughTransaction()
+{
+    // SOL-16: SearchPage's first Escape drops the query in place; the second
+    // one must reach Main's navigation transaction (goBack) rather than pop
+    // the StackView directly. The probe wires the page's backRequested signal
+    // through the same Connections Main.qml uses and drives both presses as
+    // real key events on the offscreen window.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    // Focus a specific control on the base page so the return trip has a
+    // focus locator to restore.
+    QVERIFY(invoke(root, "focusSecond"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-0"));
+
+    QVERIFY(invoke(root, "pushSearch", QStringLiteral("alpha")));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(),
+                 QStringLiteral("search:alpha"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(),
+                 QStringLiteral("search-track-fallback"));
+    QCOMPARE(history->property("depth").toInt(), 2);
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+
+    // First Escape: the page consumes it. The query drops and the field keeps
+    // focus, but nothing in the navigation state may move.
+    QTest::keyClick(&view, Qt::Key_Escape);
+    QCOMPARE(root->property("searchQuery").toString(), QString());
+    QTRY_COMPARE(view.activeFocusItem()->objectName(),
+                 QStringLiteral("search-track-fallback"));
+    QCOMPARE(history->property("depth").toInt(), 2);
+    QCOMPARE(listProperty(history, "navTrail").size(), 2);
+    QCOMPARE(listProperty(history, "navForward").size(), 0);
+    QCOMPARE(history->property("currentEntry").toMap().value(QStringLiteral("key")).toString(),
+             QStringLiteral("search"));
+
+    // Second Escape: backRequested -> Main's goBack -> the full transaction.
+    QTest::keyClick(&view, Qt::Key_Escape);
+    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QCOMPARE(history->property("pageGraphCount").toInt(), 1);
+    QCOMPARE(listProperty(history, "navTrail").size(), 1);
+    QCOMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("0"));
+
+    // Key and title describe the restored route, not Search; the search route
+    // moved to Forward with the query as captured at Back time (already
+    // cleared by the first Escape).
+    const QVariantMap current = history->property("currentEntry").toMap();
+    QCOMPARE(current.value(QStringLiteral("kind")).toString(), QStringLiteral("details"));
+    QCOMPARE(current.value(QStringLiteral("key")).toString(), QStringLiteral("details:0"));
+    QCOMPARE(current.value(QStringLiteral("title")).toString(), QStringLiteral("Title 0"));
+    const QVariantList forward = listProperty(history, "navForward");
+    QCOMPARE(forward.size(), 1);
+    QCOMPARE(forward.constFirst().toMap().value(QStringLiteral("kind")).toString(),
+             QStringLiteral("search"));
+    QCOMPARE(forward.constFirst().toMap().value(QStringLiteral("key")).toString(),
+             QStringLiteral("search"));
+    QCOMPARE(forward.constFirst().toMap().value(QStringLiteral("query")).toString(), QString());
+    QVERIFY(history->property("canGoForward").toBool());
+    QVERIFY(!history->property("canGoBack").toBool());
+
+    // The restored controller scope was re-prepared for the details route.
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("0"));
+
+    // Focus returned to the control the user was on before opening Search.
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-0"));
+
+    // The transaction is live in both directions: Forward returns to Search.
+    QVERIFY(invoke(root, "goForward"));
+    QTRY_COMPARE(history->property("currentEntry")
+                     .toMap()
+                     .value(QStringLiteral("key"))
+                     .toString(),
+                 QStringLiteral("search"));
+    QCOMPARE(currentItem(history)->property("routeId").toString(),
+             QStringLiteral("search:"));
 }
 
 void NavigationHistoryTest::restoresPerEntryMusicTab()
