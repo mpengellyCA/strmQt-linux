@@ -23,6 +23,8 @@ FocusScope {
     property bool formRequested: false
     // Manage mode turns tile taps into removals (Netflix's edit flow).
     property bool manageMode: false
+    // One width for the tile and the Flow's row math, so they cannot drift.
+    readonly property int profileTileWidth: Theme.scale(118)
 
     readonly property bool showForm: formRequested || Session.profiles.length === 0
     readonly property bool multipleServers: {
@@ -104,6 +106,8 @@ FocusScope {
 
         // ── Profile picker ─────────────────────────────────────────────────
         Column {
+            id: picker
+
             width: parent.width
             height: visible ? implicitHeight : 0
             visible: !page.showForm
@@ -111,7 +115,16 @@ FocusScope {
             clip: true
 
             Flow {
-                width: parent.width
+                // Center the tiles as a block: a Flow fills rows left to
+                // right, so the block is exactly as wide as its widest row.
+                readonly property int tileStep: page.profileTileWidth + Theme.spacingLoose
+                readonly property int perRow: Math.max(
+                                                  1, Math.floor((picker.width + Theme.spacingLoose) /
+                                                                tileStep))
+                readonly property int widestRow: Math.min(Session.profiles.length, perRow)
+
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: widestRow > 0 ? widestRow * tileStep - Theme.spacingLoose : 0
                 spacing: Theme.spacingLoose
 
                 Repeater {
@@ -323,7 +336,7 @@ FocusScope {
         required property var profile
         property bool manage: false
 
-        width: Theme.scale(118)
+        width: page.profileTileWidth
         implicitHeight: tileColumn.implicitHeight
         height: implicitHeight
         activeFocusOnTab: true

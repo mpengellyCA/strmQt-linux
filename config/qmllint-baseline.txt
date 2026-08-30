@@ -396,6 +396,7 @@ src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	imageUrl: Session.p
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	manage: page.manageMode
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	model: Session.profiles
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	readonly property bool showForm: formRequested || Session.profiles.length === 0
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	readonly property int widestRow: Math.min(Session.profiles.length, perRow)
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.busy ? qsTr("Signing in…") : qsTr("Sign in")
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.errorMessage
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.errorMessage
@@ -406,6 +407,7 @@ src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.er
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.profiles.length > 0
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.secretStorage === "vault"
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: page.multipleServers
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	width: page.profileTileWidth
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.albumsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.artistsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.playlistsLoading)
