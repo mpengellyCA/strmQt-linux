@@ -258,6 +258,12 @@ public:
     QUrl imageUrl(const QString &itemId, const QString &imageType, int maxWidth,
                   const QString &tag = QString()) const;
 
+    // User avatar URL for the logged-out profile picker. Static: a saved profile
+    // can point at a server the client is not currently pointed at. A user's
+    // Primary image is served without a token on a stock server — the web
+    // client's own login screen relies on that.
+    static QUrl userImageUrl(const QUrl &baseUrl, const QString &userId, int maxWidth = 200);
+
 signals:
     // Base URL/user/token jointly define the privacy boundary for caches and
     // other retained presentation state.

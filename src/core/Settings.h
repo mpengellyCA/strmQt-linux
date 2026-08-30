@@ -98,6 +98,25 @@ public:
     QString userId() const;
     void setUserId(const QString &id);
 
+    // ── Saved accounts (profiles) ────────────────────────────────────────────
+    // Every account that has signed in on this install, tagged by server URL so
+    // future multiserver support is a UI concern, not a data migration. Tokens
+    // live in SecretsStore under tokenSecretKeyFor(); only display data is here.
+    // accountProfiles() returns QVariantMaps {serverUrl, userId, username,
+    // lastUsed}, most recently used first.
+    QVariantList accountProfiles() const;
+    void upsertAccountProfile(const QUrl &serverUrl, const QString &userId,
+                              const QString &username);
+    void removeAccountProfile(const QUrl &serverUrl, const QString &userId);
+
+    // SHA-256 scope for (server, user): namespaces per-session settings
+    // (sessions/<scope>/...) and the account's token key in SecretsStore.
+    static QString sessionScopeFor(const QUrl &serverUrl, const QString &userId);
+    // SecretsStore key for an account's access token, plus the flat pre-scoping
+    // key a scoped account adopts on first use.
+    static QString tokenSecretKeyFor(const QUrl &serverUrl, const QString &userId);
+    static QString legacyTokenSecretKey();
+
     // Stable per-install device id for the Emby device identity; generated and
     // persisted on first call.
     QString deviceId();

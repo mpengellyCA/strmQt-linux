@@ -1110,4 +1110,21 @@ QUrl EmbyClient::imageUrl(const QString &itemId, const QString &imageType, int m
     return requestUrl(QStringLiteral("/Items/%1/Images/%2").arg(itemId, imageType), params);
 }
 
+QUrl EmbyClient::userImageUrl(const QUrl &baseUrl, const QString &userId, int maxWidth)
+{
+    QUrl url = baseUrl;
+    // Preserve any reverse-proxy base path on the server URL.
+    QString fullPath = url.path();
+    if (fullPath.endsWith(QLatin1Char('/')))
+        fullPath.chop(1);
+    url.setPath(fullPath + QStringLiteral("/Users/%1/Images/Primary").arg(userId));
+    QUrlQuery params;
+    if (maxWidth > 0)
+        params.addQueryItem(QStringLiteral("maxWidth"), QString::number(maxWidth));
+    params.addQueryItem(QStringLiteral("quality"), QStringLiteral("90"));
+    params.addQueryItem(QStringLiteral("EnableImageEnhancers"), QStringLiteral("false"));
+    url.setQuery(params);
+    return url;
+}
+
 } // namespace strmqt::emby

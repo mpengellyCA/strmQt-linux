@@ -25,6 +25,12 @@ QString fixturePath(const QString &name)
 const auto kUserId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
 const auto kToken = QStringLiteral("not-a-real-token-fixture-only");
 
+// The fixture login's scoped secret key (see Settings::tokenSecretKeyFor).
+QString tokenKey(const QUrl &serverUrl, const QString &userId = kUserId)
+{
+    return Settings::tokenSecretKeyFor(serverUrl, userId);
+}
+
 template<class T> Result<T> awaitResult(QFuture<Result<T>> future)
 {
     if (!future.isFinished()) {
@@ -61,6 +67,11 @@ private slots:
     void loginSupersedesADelayedWalletRestore();
     void logoutDuringDelayedTokenWriteCannotReauthenticate();
     void serverUrlPolicyRejectsUnsafeAddresses();
+    void loginRegistersAServerTaggedProfile();
+    void switchUserKeepsTheProfileAndSelectRestoresIt();
+    void profilesIsolateTokensPerAccount();
+    void selectProfileWithoutATokenAsksToSignInAgain();
+    void legacyFlatTokenIsAdoptedIntoTheAccountScope();
     void homeRefreshBuildsRails();
     void homeSessionResetRetiresOldCountersAndGenreCallbacks();
     void libraryPaging();
@@ -117,7 +128,8 @@ void ControllersTest::sessionLoginPersistsAndRestores()
     session.login(QStringLiteral("mike"), QStringLiteral("pw"));
     QTRY_VERIFY(session.authenticated());
     QCOMPARE(session.username(), QStringLiteral("mike"));
-    QCOMPARE(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value, kToken);
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value, kToken);
+    QCOMPARE(session.profiles().size(), 1);
 
     // A fresh controller + client restores the same session from storage.
     emby::EmbyClient freshClient;
@@ -129,7 +141,8 @@ void ControllersTest::sessionLoginPersistsAndRestores()
 
     restored.logout();
     QVERIFY(!restored.authenticated());
-    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
+    QVERIFY(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value.isEmpty());
+    QVERIFY(restored.profiles().isEmpty());
 }
 
 // A stored credential with no server address must NOT come back as a session.
@@ -149,8 +162,9 @@ void ControllersTest::sessionWithoutServerDoesNotRestore()
     QTRY_VERIFY(session.authenticated());
 
     // The credential survives; only the address is gone.
+    const QString key = tokenKey(m_mock->baseUrl());
     m_settings->setServerUrl(QUrl());
-    QCOMPARE(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value, kToken);
+    QCOMPARE(awaitResult(m_secrets->readSecret(key)).value, kToken);
 
     emby::EmbyClient freshClient;
     SessionController restored(m_settings, m_secrets, &freshClient);
@@ -190,7 +204,7 @@ void ControllersTest::logoutRetiresALateLogin()
     QTest::qWait(260);
     QVERIFY(!session.authenticated());
     QVERIFY(!m_client->hasSession());
-    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
+    QVERIFY(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value.isEmpty());
 }
 
 void ControllersTest::serverChangeRetiresALateLogin()
@@ -213,7 +227,7 @@ void ControllersTest::serverChangeRetiresALateLogin()
     QCOMPARE(m_client->baseUrl(), nextServer.baseUrl());
     QVERIFY(!session.authenticated());
     QVERIFY(!m_client->hasSession());
-    QVERIFY(awaitResult(m_secrets->readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
+    QVERIFY(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value.isEmpty());
 }
 
 void ControllersTest::delayedWalletRestoreIsRetiredByLogout()
@@ -257,9 +271,8 @@ void ControllersTest::logoutDuringDelayedTokenWriteCannotReauthenticate()
     QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::NetworkWallet));
     secrets.replyNetworkWallet(true);
     secrets.replyOpen(true);
-    // login() clears the previous persisted token before admitting the new one.
-    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
-    secrets.replyRemove(true);
+    // Signing in must not clear another account's persisted token — that is
+    // what profiles are for. The first secret op is the new scoped write.
     QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Write));
     QVERIFY(session.busy());
 
@@ -296,8 +309,8 @@ void ControllersTest::loginSupersedesADelayedWalletRestore()
     // The sign-in gesture must remain usable while a wallet daemon is slow.
     session.login(QStringLiteral("mike"), QStringLiteral("pw"));
     secrets.replyRead(true, QStringLiteral("retired-token"));
-    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Remove));
-    secrets.replyRemove(true);
+    // The retired restore read is canceled; the next secret op is the new
+    // account's scoped write. No removal — the old identity keeps its token.
     QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Write));
     secrets.replyWrite(true);
 
@@ -329,6 +342,141 @@ void ControllersTest::serverUrlPolicyRejectsUnsafeAddresses()
     QVERIFY(session.errorMessage().isEmpty());
     session.setServerUrl(QUrl(QStringLiteral("https://emby.example.org/")));
     QCOMPARE(session.serverUrl(), QUrl(QStringLiteral("https://emby.example.org")));
+}
+
+void ControllersTest::loginRegistersAServerTaggedProfile()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+
+    QCOMPARE(session.profiles().size(), 1);
+    const QVariantMap profile = session.profiles().first().toMap();
+    QCOMPARE(profile.value(QStringLiteral("userId")).toString(), kUserId);
+    QCOMPARE(profile.value(QStringLiteral("username")).toString(), QStringLiteral("mike"));
+    // Tagged by server URL, so a future second server is a new entry, not a
+    // collision.
+    QCOMPARE(profile.value(QStringLiteral("serverUrl")).toString(),
+             m_mock->baseUrl().adjusted(QUrl::StripTrailingSlash).toString(QUrl::FullyEncoded));
+    QVERIFY(!profile.value(QStringLiteral("lastUsed")).toString().isEmpty());
+    // The token lives under the scoped key; the flat pre-scoping key is empty.
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value, kToken);
+    QVERIFY(awaitResult(m_secrets->readSecret(Settings::legacyTokenSecretKey()))
+                .value.isEmpty());
+}
+
+void ControllersTest::switchUserKeepsTheProfileAndSelectRestoresIt()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+
+    // Switching user is not signing out: profile and token survive, and the
+    // picker can re-enter the account without a password or a network call.
+    session.switchUser();
+    QVERIFY(!session.authenticated());
+    QCOMPARE(session.profiles().size(), 1);
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value, kToken);
+
+    session.selectProfile(m_mock->baseUrl().toString(), kUserId);
+    QTRY_VERIFY(session.authenticated());
+    QCOMPARE(m_client->accessToken(), kToken);
+    QCOMPARE(m_client->userId(), kUserId);
+    QCOMPARE(m_mock->requestCount(), 1); // only the original login
+}
+
+void ControllersTest::profilesIsolateTokensPerAccount()
+{
+    const auto kUserIdB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const auto kTokenB = QStringLiteral("token-for-the-second-account");
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+    session.switchUser();
+
+    // Second account on the same server.
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Users/AuthenticateByName"), 200,
+                     QByteArrayLiteral("{\"AccessToken\":\"token-for-the-second-account\","
+                                       "\"ServerId\":\"s\","
+                                       "\"User\":{\"Id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+                                       "\"Name\":\"bob\"}}"));
+    session.login(QStringLiteral("bob"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+    QCOMPARE(session.username(), QStringLiteral("bob"));
+
+    QCOMPARE(session.profiles().size(), 2);
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value, kToken);
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl(), kUserIdB))).value,
+             kTokenB);
+
+    // Switching back is a restore of the first account's own token.
+    // selectProfile keeps the previous session marked authenticated while the
+    // read is in flight, so wait for the settle (busy), not the flag.
+    session.selectProfile(m_mock->baseUrl().toString(), kUserId);
+    QVERIFY(session.busy());
+    QTRY_VERIFY(!session.busy());
+    QVERIFY(session.authenticated());
+    QCOMPARE(m_client->accessToken(), kToken);
+    QCOMPARE(m_client->userId(), kUserId);
+
+    // Forgetting one profile leaves the other untouched.
+    session.removeProfile(m_mock->baseUrl().toString(), kUserIdB);
+    QCOMPARE(session.profiles().size(), 1);
+    QVERIFY(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl(), kUserIdB)))
+                .value.isEmpty());
+    QVERIFY(session.authenticated());
+}
+
+void ControllersTest::selectProfileWithoutATokenAsksToSignInAgain()
+{
+    // A registry entry whose token is gone (signed out elsewhere, or removed
+    // from the wallet by hand) must land back on the password form, not on an
+    // authenticated-but-broken session.
+    m_settings->upsertAccountProfile(m_mock->baseUrl(), kUserId, QStringLiteral("mike"));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.selectProfile(m_mock->baseUrl().toString(), kUserId);
+    QTRY_VERIFY(!session.busy());
+    QVERIFY(!session.authenticated());
+    QVERIFY(!session.errorMessage().isEmpty());
+    QCOMPARE(session.username(), QStringLiteral("mike")); // prefilled for the form
+}
+
+void ControllersTest::legacyFlatTokenIsAdoptedIntoTheAccountScope()
+{
+    // A pre-profiles install: one flat token, identity pointers, no registry.
+    QVERIFY(awaitResult(m_secrets
+                            ->writeSecret(Settings::legacyTokenSecretKey(), kToken))
+                .ok());
+    m_settings->setUsername(QStringLiteral("mike"));
+    m_settings->setUserId(kUserId);
+
+    emby::EmbyClient freshClient;
+    SessionController restored(m_settings, m_secrets, &freshClient);
+    restored.restore();
+    QTRY_VERIFY(restored.authenticated());
+    QCOMPARE(freshClient.accessToken(), kToken);
+
+    // The token moved into the account's scope, the flat key is gone, and the
+    // account joined the registry.
+    QCOMPARE(awaitResult(m_secrets->readSecret(tokenKey(m_mock->baseUrl()))).value, kToken);
+    QVERIFY(awaitResult(m_secrets->readSecret(Settings::legacyTokenSecretKey()))
+                .value.isEmpty());
+    QCOMPARE(restored.profiles().size(), 1);
+    QCOMPARE(restored.profiles().first().toMap().value(QStringLiteral("userId")).toString(),
+             kUserId);
 }
 
 void ControllersTest::homeRefreshBuildsRails()

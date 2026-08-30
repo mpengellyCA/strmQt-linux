@@ -1,8 +1,12 @@
 #pragma once
 
+#include "core/Result.h"
+
+#include <QFuture>
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QVariantList>
 
 namespace strmqt {
 
@@ -24,6 +28,12 @@ class SessionController : public QObject
     Q_PROPERTY(QUrl serverUrl READ serverUrl WRITE setServerUrl NOTIFY serverUrlChanged)
     Q_PROPERTY(QString playbackEngine READ playbackEngine WRITE setPlaybackEngine NOTIFY
                    playbackEngineChanged)
+    // "wallet", "vault" (KWallet unavailable — lower security, warn the user),
+    // or "unknown" before the first secret operation.
+    Q_PROPERTY(QString secretStorage READ secretStorage NOTIFY secretStorageChanged)
+    // Saved accounts, most recently used first; QVariantMaps with serverUrl,
+    // userId, username, lastUsed. Backs the login screen's profile picker.
+    Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
 
 public:
     SessionController(Settings *settings, SecretsStore *secrets, emby::EmbyClient *client,
@@ -38,15 +48,27 @@ public:
     void setServerUrl(const QUrl &url);
     QString playbackEngine() const;
     void setPlaybackEngine(const QString &engine); // applies on next launch
+    QString secretStorage() const;
+    QVariantList profiles() const;
 
     // Starts an asynchronous token restore. The window is already available
     // while KWallet opens; authenticatedChanged announces a successful restore.
     Q_INVOKABLE void restore();
     Q_INVOKABLE void login(const QString &username, const QString &password);
+    // Sign out AND forget the account: token, profile entry, local session.
     Q_INVOKABLE void logout();
-    // Sign out and return to the login screen WITHOUT forgetting the server —
-    // switching user is not the same act as leaving the server behind.
+    // Back to the profile picker WITHOUT forgetting anything: the account keeps
+    // its token and registry entry, and stays the one startup auto-resumes.
     Q_INVOKABLE void switchUser();
+    // Enter a profile from the picker: adopts (server, user) as current and
+    // restores its token. A missing token lands back on the password form.
+    Q_INVOKABLE void selectProfile(const QString &serverUrl, const QString &userId);
+    // Forget a picker profile: registry entry and stored token. Forgetting the
+    // active account also ends its local session.
+    Q_INVOKABLE void removeProfile(const QString &serverUrl, const QString &userId);
+    // Avatar URL for a saved profile; usable while logged out (the image is
+    // public on a stock server — see EmbyClient::userImageUrl).
+    Q_INVOKABLE QString profileAvatarUrl(const QString &serverUrl, const QString &userId) const;
 
 signals:
     // Emitted before credentials or server identity change. Consumers use this
@@ -58,10 +80,15 @@ signals:
     void errorMessageChanged();
     void serverUrlChanged();
     void playbackEngineChanged();
+    void secretStorageChanged();
+    void profilesChanged();
 
 private:
     quint64 beginSessionBoundary();
-    void clearCredentials(quint64 epoch);
+    // Ends the local session (settings pointer, client identity, authenticated
+    // flag) without touching any stored credential or profile.
+    void clearLocalSession();
+    QFuture<Result<QString>> readAccountToken(const QUrl &serverUrl, const QString &userId);
     void setBusy(bool busy);
     void setError(const QString &message);
     void setAuthenticated(bool authenticated);

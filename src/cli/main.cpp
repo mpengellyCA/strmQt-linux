@@ -25,8 +25,6 @@ using namespace strmqt;
 
 namespace {
 
-const auto kTokenSecretKey = QStringLiteral("emby/accessToken");
-
 QTextStream &out()
 {
     static QTextStream stream(stdout);
@@ -115,16 +113,28 @@ void printItems(const QList<MediaItem> &items)
 // piece is missing (caller should suggest `login`).
 bool restoreSession(emby::EmbyClient &client, Settings &settings, SecretsStore &secrets)
 {
-    const Result<QString> stored = await(secrets.readSecret(kTokenSecretKey));
+    const QString userId = settings.userId();
+    if (userId.isEmpty())
+        return false;
+    const QString scopedKey = Settings::tokenSecretKeyFor(settings.serverUrl(), userId);
+    Result<QString> stored = await(secrets.readSecret(scopedKey));
     if (!stored.ok()) {
         err() << "warning: could not read the saved access token: " << stored.error << "\n";
         return false;
     }
-    const QString token = stored.value;
-    const QString userId = settings.userId();
-    if (token.isEmpty() || userId.isEmpty())
+    if (stored.value.isEmpty()) {
+        // Pre-scoping installs kept one flat token; adopt it into this
+        // account's scope, then forget the flat key.
+        const Result<QString> legacy = await(secrets.readSecret(Settings::legacyTokenSecretKey()));
+        if (legacy.ok() && !legacy.value.isEmpty()) {
+            await(secrets.writeSecret(scopedKey, legacy.value));
+            await(secrets.removeSecret(Settings::legacyTokenSecretKey()));
+            stored = legacy;
+        }
+    }
+    if (stored.value.isEmpty())
         return false;
-    client.setSession(token, userId);
+    client.setSession(stored.value, userId);
     return true;
 }
 
@@ -167,11 +177,17 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
     settings.setServerUrl(client.baseUrl());
     settings.setUsername(result.value.user.name);
     settings.setUserId(result.value.user.id);
-    const Result<bool> stored =
-        await(secrets.writeSecret(kTokenSecretKey, result.value.accessToken));
+    // Register the account so the app's profile picker lists CLI logins too.
+    settings.upsertAccountProfile(client.baseUrl(), result.value.user.id, result.value.user.name);
+    const Result<bool> stored = await(secrets.writeSecret(
+        Settings::tokenSecretKeyFor(client.baseUrl(), result.value.user.id),
+        result.value.accessToken));
     if (!stored.ok()) {
         err() << "warning: could not persist the access token; you will need to log in "
                  "again next time.\n";
+    } else {
+        // The scoped write above is the record now; drop any flat pre-scoping token.
+        await(secrets.removeSecret(Settings::legacyTokenSecretKey()));
     }
 
     out() << "Logged in as " << result.value.user.name;
@@ -179,6 +195,8 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
         out() << " (access token was not saved)\n";
     else if (secrets.isWalletBacked())
         out() << " (token stored in KWallet)\n";
+    else if (secrets.persistent())
+        out() << " (token stored in the vault file — KWallet unavailable)\n";
     else
         out() << " (token kept for this process only)\n";
     return 0;
@@ -186,8 +204,17 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
 
 int commandLogout(Settings &settings, SecretsStore &secrets)
 {
-    const Result<bool> removed = await(secrets.removeSecret(kTokenSecretKey));
+    const QUrl url = settings.serverUrl();
+    const QString userId = settings.userId();
+    const QString key = Settings::tokenSecretKeyFor(url, userId);
+    if (key.isEmpty()) {
+        out() << "Logged out; no saved session to remove.\n";
+        return 0;
+    }
+    const Result<bool> removed = await(secrets.removeSecret(key));
     settings.setUserId(QString());
+    // Match the app: sign-out forgets the profile as well as the token.
+    settings.removeAccountProfile(url, userId);
     if (!removed.ok()) {
         err() << "warning: logged out, but the saved token could not be removed: " << removed.error
               << "\n";

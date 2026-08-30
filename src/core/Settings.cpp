@@ -2,6 +2,10 @@
 
 #include "Log.h"
 
+#include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QCryptographicHash>
 #include <QSet>
@@ -39,6 +43,8 @@ const auto kPollIntervalKey = QStringLiteral("live/pollIntervalSeconds");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
 const auto kLastTitleKey = QStringLiteral("resume/title");
 const auto kLastPositionKey = QStringLiteral("resume/positionMs");
+// JSON array of saved accounts: [{serverUrl, userId, username, lastUsed}].
+const auto kAccountRegistryKey = QStringLiteral("accounts/registry");
 // Set once, the first time a session scope exists to adopt the pre-scoping
 // keys. Without it the second account to sign in would inherit the first's
 // resume point and view preferences.
@@ -76,18 +82,113 @@ Settings::~Settings()
     flush();
 }
 
-QString Settings::sessionScope() const
+QString Settings::sessionScopeFor(const QUrl &serverUrl, const QString &userId)
 {
-    const QUrl url = serverUrl();
-    const QString user = userId();
-    if (url.isEmpty() || user.isEmpty())
+    if (serverUrl.isEmpty() || userId.isEmpty())
         return {};
-    const QByteArray identity = url.adjusted(QUrl::StripTrailingSlash)
+    const QByteArray identity = serverUrl.adjusted(QUrl::StripTrailingSlash)
                                     .toString(QUrl::FullyEncoded)
                                     .toUtf8() +
-                                '\0' + user.toUtf8();
+                                '\0' + userId.toUtf8();
     return QString::fromLatin1(
         QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
+}
+
+QString Settings::sessionScope() const
+{
+    return sessionScopeFor(serverUrl(), userId());
+}
+
+QString Settings::tokenSecretKeyFor(const QUrl &serverUrl, const QString &userId)
+{
+    const QString scope = sessionScopeFor(serverUrl, userId);
+    return scope.isEmpty() ? QString()
+                           : QStringLiteral("emby/%1/accessToken").arg(scope);
+}
+
+QString Settings::legacyTokenSecretKey()
+{
+    return QStringLiteral("emby/accessToken");
+}
+
+QVariantList Settings::accountProfiles() const
+{
+    QVariantList profiles;
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(m_store.value(kAccountRegistryKey).toByteArray());
+    // Tolerant parsing, same contract as the wire DTOs: a corrupt or partial
+    // entry is skipped, never fatal.
+    for (const QJsonValue &value : doc.array()) {
+        const QJsonObject entry = value.toObject();
+        const QString url = entry.value(QStringLiteral("serverUrl")).toString();
+        const QString userId = entry.value(QStringLiteral("userId")).toString();
+        const QString username = entry.value(QStringLiteral("username")).toString();
+        if (url.isEmpty() || userId.isEmpty())
+            continue;
+        profiles.append(QVariantMap{{QStringLiteral("serverUrl"), url},
+                                    {QStringLiteral("userId"), userId},
+                                    {QStringLiteral("username"), username},
+                                    {QStringLiteral("lastUsed"),
+                                     entry.value(QStringLiteral("lastUsed")).toString()}});
+    }
+    std::sort(profiles.begin(), profiles.end(), [](const QVariant &a, const QVariant &b) {
+        return a.toMap().value(QStringLiteral("lastUsed")).toString() >
+               b.toMap().value(QStringLiteral("lastUsed")).toString();
+    });
+    return profiles;
+}
+
+void Settings::upsertAccountProfile(const QUrl &serverUrl, const QString &userId,
+                                    const QString &username)
+{
+    if (serverUrl.isEmpty() || userId.isEmpty())
+        return;
+    const QString url = serverUrl.adjusted(QUrl::StripTrailingSlash).toString(QUrl::FullyEncoded);
+    QJsonArray registry;
+    for (const QVariant &existing : accountProfiles()) {
+        const QVariantMap profile = existing.toMap();
+        if (profile.value(QStringLiteral("serverUrl")).toString() == url &&
+            profile.value(QStringLiteral("userId")).toString() == userId)
+            continue;
+        registry.append(QJsonObject{
+            {QStringLiteral("serverUrl"), profile.value(QStringLiteral("serverUrl")).toString()},
+            {QStringLiteral("userId"), profile.value(QStringLiteral("userId")).toString()},
+            {QStringLiteral("username"), profile.value(QStringLiteral("username")).toString()},
+            {QStringLiteral("lastUsed"), profile.value(QStringLiteral("lastUsed")).toString()}});
+    }
+    registry.append(QJsonObject{{QStringLiteral("serverUrl"), url},
+                                {QStringLiteral("userId"), userId},
+                                {QStringLiteral("username"), username},
+                                {QStringLiteral("lastUsed"),
+                                 QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}});
+    m_store.setValue(kAccountRegistryKey,
+                     QString::fromUtf8(QJsonDocument(registry).toJson(QJsonDocument::Compact)));
+    m_store.sync();
+}
+
+void Settings::removeAccountProfile(const QUrl &serverUrl, const QString &userId)
+{
+    const QString url = serverUrl.adjusted(QUrl::StripTrailingSlash).toString(QUrl::FullyEncoded);
+    QJsonArray registry;
+    bool removed = false;
+    for (const QVariant &existing : accountProfiles()) {
+        const QVariantMap profile = existing.toMap();
+        if (!removed && profile.value(QStringLiteral("serverUrl")).toString() == url &&
+            profile.value(QStringLiteral("userId")).toString() == userId) {
+            removed = true;
+            continue;
+        }
+        registry.append(QJsonObject{
+            {QStringLiteral("serverUrl"), profile.value(QStringLiteral("serverUrl")).toString()},
+            {QStringLiteral("userId"), profile.value(QStringLiteral("userId")).toString()},
+            {QStringLiteral("username"), profile.value(QStringLiteral("username")).toString()},
+            {QStringLiteral("lastUsed"), profile.value(QStringLiteral("lastUsed")).toString()}});
+    }
+    if (!removed)
+        return;
+    m_store.setValue(kAccountRegistryKey,
+                     QString::fromUtf8(QJsonDocument(registry).toJson(QJsonDocument::Compact)));
+    m_store.sync();
 }
 
 // Per-session scoping (server+user) arrived after these keys had been written
