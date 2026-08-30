@@ -18,6 +18,7 @@ namespace {
 const auto kServerUrlKey = QStringLiteral("server/url");
 const auto kUsernameKey = QStringLiteral("server/username");
 const auto kUserIdKey = QStringLiteral("server/userId");
+const auto kProfilePickerKey = QStringLiteral("session/profilePickerAtStart");
 const auto kDeviceIdKey = QStringLiteral("device/id");
 const auto kEngineKey = QStringLiteral("playback/engine");
 const auto kToneMappingKey = QStringLiteral("playback/toneMapping");
@@ -285,6 +286,21 @@ QString Settings::userId() const
 void Settings::setUserId(const QString &id)
 {
     m_store.setValue(kUserIdKey, id);
+}
+
+bool Settings::profilePickerAtStart() const
+{
+    // On by default: with several accounts saved, "who's watching?" is the
+    // honest first screen, and a lone account never sees the picker either way.
+    return m_store.value(kProfilePickerKey, true).toBool();
+}
+
+void Settings::setProfilePickerAtStart(bool enabled)
+{
+    if (enabled == profilePickerAtStart())
+        return;
+    m_store.setValue(kProfilePickerKey, enabled);
+    emit profilePickerAtStartChanged();
 }
 
 QString Settings::playbackEngine() const

@@ -390,12 +390,15 @@ src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.removeProfi
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.selectProfile(tile.profile.serverUrl, tile.profile.userId);
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	Session.serverUrl = serverField.text.trim();
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	busy: Session.busy
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	checked: Session.profilePickerAtStart
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	for (const profile of Session.profiles) {
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	iconName: Session.busy ? "" : "user"
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	if (Session.busy)
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	imageUrl: Session.profileAvatarUrl(tile.profile.serverUrl,
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	manage: page.manageMode
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	model: Session.profiles
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	onToggled: Session.profilePickerAtStart = !Session.profilePickerAtStart
+src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	onToggled: Session.profilePickerAtStart = !Session.profilePickerAtStart
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	readonly property bool showForm: formRequested || Session.profiles.length === 0
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	readonly property int widestRow: Math.min(Session.profiles.length, perRow)
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	text: Session.busy ? qsTr("Signing in…") : qsTr("Sign in")

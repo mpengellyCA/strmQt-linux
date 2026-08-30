@@ -116,6 +116,19 @@ QVariantList SessionController::profiles() const
     return m_settings->accountProfiles();
 }
 
+bool SessionController::profilePickerAtStart() const
+{
+    return m_settings->profilePickerAtStart();
+}
+
+void SessionController::setProfilePickerAtStart(bool enabled)
+{
+    if (enabled == m_settings->profilePickerAtStart())
+        return;
+    m_settings->setProfilePickerAtStart(enabled);
+    emit profilePickerAtStartChanged();
+}
+
 QString SessionController::profileAvatarUrl(const QString &serverUrl, const QString &userId) const
 {
     return emby::EmbyClient::userImageUrl(QUrl(serverUrl), userId).toString();
@@ -149,6 +162,14 @@ void SessionController::restore()
         setError(tr("Enter the address of your Emby server to sign in again."));
         return;
     }
+
+    // With the preference on and more than one saved account, startup opens on
+    // the picker ("Who's watching?") rather than silently resuming whoever was
+    // last signed in. A single account still resumes — there is nothing to
+    // pick. Synchronous by design: no token read, no busy flash, the login
+    // page is simply already showing the right thing.
+    if (m_settings->profilePickerAtStart() && m_settings->accountProfiles().size() > 1)
+        return;
 
     const quint64 epoch = m_epoch;
     m_restorePending = true;

@@ -34,6 +34,10 @@ class SessionController : public QObject
     // Saved accounts, most recently used first; QVariantMaps with serverUrl,
     // userId, username, lastUsed. Backs the login screen's profile picker.
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
+    // Startup with more than one saved account opens on the picker instead of
+    // resuming the last-used account. The picker's own toggle drives this.
+    Q_PROPERTY(bool profilePickerAtStart READ profilePickerAtStart WRITE setProfilePickerAtStart
+                   NOTIFY profilePickerAtStartChanged)
 
 public:
     SessionController(Settings *settings, SecretsStore *secrets, emby::EmbyClient *client,
@@ -50,6 +54,8 @@ public:
     void setPlaybackEngine(const QString &engine); // applies on next launch
     QString secretStorage() const;
     QVariantList profiles() const;
+    bool profilePickerAtStart() const;
+    void setProfilePickerAtStart(bool enabled);
 
     // Starts an asynchronous token restore. The window is already available
     // while KWallet opens; authenticatedChanged announces a successful restore.
@@ -58,7 +64,8 @@ public:
     // Sign out AND forget the account: token, profile entry, local session.
     Q_INVOKABLE void logout();
     // Back to the profile picker WITHOUT forgetting anything: the account keeps
-    // its token and registry entry, and stays the one startup auto-resumes.
+    // its token and registry entry, and stays the one startup resumes unless the
+    // picker-at-start preference says to ask instead.
     Q_INVOKABLE void switchUser();
     // Enter a profile from the picker: adopts (server, user) as current and
     // restores its token. A missing token lands back on the password form.
@@ -82,6 +89,7 @@ signals:
     void playbackEngineChanged();
     void secretStorageChanged();
     void profilesChanged();
+    void profilePickerAtStartChanged();
 
 private:
     quint64 beginSessionBoundary();

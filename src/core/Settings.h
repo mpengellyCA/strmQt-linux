@@ -94,6 +94,12 @@ public:
     QString username() const;
     void setUsername(const QString &name);
 
+    // Startup with more than one saved account opens on the profile picker
+    // ("Who's watching?") instead of silently resuming the last-used account.
+    // A single saved account still resumes — there is nothing to pick.
+    bool profilePickerAtStart() const;
+    void setProfilePickerAtStart(bool enabled);
+
     // Server-side user id of the authenticated user (not a secret; the token is).
     QString userId() const;
     void setUserId(const QString &id);
@@ -250,6 +256,7 @@ signals:
     void subtitleStyleChanged();
     void backdropChanged();
     void usernameChanged();
+    void profilePickerAtStartChanged();
     void densityModeChanged();
     void themeAccentChanged();
     void reducedMotionChanged();

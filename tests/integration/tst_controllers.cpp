@@ -71,6 +71,7 @@ private slots:
     void switchUserKeepsTheProfileAndSelectRestoresIt();
     void profilesIsolateTokensPerAccount();
     void selectProfileWithoutATokenAsksToSignInAgain();
+    void pickerPreferenceSkipsMultiAccountRestore();
     void legacyFlatTokenIsAdoptedIntoTheAccountScope();
     void homeRefreshBuildsRails();
     void homeSessionResetRetiresOldCountersAndGenreCallbacks();
@@ -452,6 +453,51 @@ void ControllersTest::selectProfileWithoutATokenAsksToSignInAgain()
     QVERIFY(!session.authenticated());
     QVERIFY(!session.errorMessage().isEmpty());
     QCOMPARE(session.username(), QStringLiteral("mike")); // prefilled for the form
+}
+
+// With more than one saved account, startup asks who's watching instead of
+// silently resuming the last-used account — while the preference (default on)
+// says so. One account resumes regardless: there is nothing to pick.
+void ControllersTest::pickerPreferenceSkipsMultiAccountRestore()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Users/AuthenticateByName"),
+                                     fixturePath(QStringLiteral("auth_by_name.json"))));
+
+    SessionController session(m_settings, m_secrets, m_client);
+    session.login(QStringLiteral("mike"), QStringLiteral("pw"));
+    QTRY_VERIFY(session.authenticated());
+    QCOMPARE(session.profiles().size(), 1);
+
+    // A lone account resumes even with the preference on (its default).
+    QVERIFY(session.profilePickerAtStart());
+    {
+        emby::EmbyClient freshClient;
+        SessionController restored(m_settings, m_secrets, &freshClient);
+        restored.restore();
+        QTRY_VERIFY(restored.authenticated());
+    }
+
+    // A second account on the same server turns startup into the picker. The
+    // gate is synchronous: no token read, no busy flash, nothing to retire.
+    m_settings->upsertAccountProfile(m_mock->baseUrl(), QStringLiteral("user-2"),
+                                     QStringLiteral("dana"));
+    QCOMPARE(session.profiles().size(), 2);
+    {
+        emby::EmbyClient freshClient;
+        SessionController restored(m_settings, m_secrets, &freshClient);
+        restored.restore();
+        QVERIFY(!restored.authenticated());
+        QVERIFY(!restored.busy());
+        QVERIFY(freshClient.accessToken().isEmpty());
+
+        // The preference off puts startup back on the last-used account.
+        restored.setProfilePickerAtStart(false);
+        SessionController resumed(m_settings, m_secrets, &freshClient);
+        resumed.restore();
+        QTRY_VERIFY(resumed.authenticated());
+        QCOMPARE(freshClient.userId(), kUserId);
+    }
 }
 
 void ControllersTest::legacyFlatTokenIsAdoptedIntoTheAccountScope()

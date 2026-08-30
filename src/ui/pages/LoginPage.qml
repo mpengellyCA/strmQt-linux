@@ -163,6 +163,18 @@ FocusScope {
                 }
             }
 
+            // The startup preference lives on the screen it governs: with more
+            // than one saved account, open here instead of resuming whoever was
+            // last signed in. One account resumes regardless — there is nothing
+            // to pick.
+            StrmSwitch {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qsTr("Ask who's watching at startup")
+                checked: Session.profilePickerAtStart
+                accessibleDescription: qsTr("With several profiles saved, show this screen when StrmQt starts instead of resuming the last one used")
+                onToggled: Session.profilePickerAtStart = !Session.profilePickerAtStart
+            }
+
             // Selecting a profile whose token is gone surfaces this error; the
             // recovery is "Use a different account", which prefills the name.
             Row {
