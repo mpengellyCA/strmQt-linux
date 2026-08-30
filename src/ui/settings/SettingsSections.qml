@@ -231,6 +231,9 @@ Item {
 
         TapHandler {
             id: swatchTap
+            // Grab on press so a click never falls through to items beneath
+            // (see StrmIconButton for the full rationale).
+            gesturePolicy: TapHandler.ReleaseWithinBounds
             onTapped: {
                 swatch.forceActiveFocus(Qt.MouseFocusReason);
                 swatch.picked();
@@ -506,6 +509,9 @@ Item {
                 }
 
                 TapHandler {
+                    // Grab on press so a click never falls through to items
+                    // beneath (see StrmIconButton for the full rationale).
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: {
                         keyChip.forceActiveFocus(Qt.MouseFocusReason);
                         bindingRow.editRequested();

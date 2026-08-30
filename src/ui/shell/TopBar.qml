@@ -261,6 +261,9 @@ Item {
 
                 TapHandler {
                     id: avatarTap
+                    // Grab on press so a click never falls through to items
+                    // beneath (see StrmIconButton for the full rationale).
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: {
                         avatarTip.requestHide();
                         avatar.forceActiveFocus(Qt.MouseFocusReason);

@@ -191,6 +191,9 @@ Item {
     TapHandler {
         id: tap
         enabled: button.interactive
+        // Grab on press so a click never falls through to items beneath (see
+        // StrmIconButton for the full rationale).
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: {
             // Clicking *is* a deliberate act, so it may take focus.
             button.forceActiveFocus(Qt.MouseFocusReason);

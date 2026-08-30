@@ -177,6 +177,9 @@ Item {
     TapHandler {
         id: tap
         enabled: chip.enabled
+        // Grab on press so a click never falls through to items beneath (see
+        // StrmIconButton for the full rationale).
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: {
             chip.forceActiveFocus(Qt.MouseFocusReason);
             chip.toggled();

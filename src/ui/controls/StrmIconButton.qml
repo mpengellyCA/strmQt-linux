@@ -141,6 +141,12 @@ Item {
     TapHandler {
         id: tap
         enabled: button.enabled
+        // Grab on press rather than the DragThreshold default: the default
+        // holds only a passive grab until the drag threshold is crossed, so
+        // the press keeps falling through to whatever is beneath — a rail
+        // card under the hover chevrons, the card itself under the ✓/♥/⋯
+        // overlay — and on release BOTH the button and the item below fire.
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: {
             tip.requestHide();
             button.forceActiveFocus(Qt.MouseFocusReason);

@@ -437,6 +437,9 @@ FocusScope {
         }
 
         TapHandler {
+            // Grab on press so a click never falls through to items beneath
+            // (see StrmIconButton for the full rationale).
+            gesturePolicy: TapHandler.ReleaseWithinBounds
             onTapped: tile.activate()
         }
 
