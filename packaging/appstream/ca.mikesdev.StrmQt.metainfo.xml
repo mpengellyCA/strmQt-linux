@@ -62,6 +62,26 @@
   </requires>
 
   <releases>
+    <release version="0.4.0" date="2026-08-30" type="development">
+      <description>
+        <p>
+          Adds saved profiles with a "Who's watching?" picker at startup, a
+          music library that can be queried along several axes with a Songs
+          tab and audio playlists, ReplayGain volume normalisation, picture-in-
+          picture, and a restorable play queue. Gamepad sticks now stop seeking
+          on release, toggle the view with L3, and set volume on the right
+          stick.
+        </p>
+        <p>
+          A large correctness and performance pass throughout: focus
+          restoration survives loading and refill stalls, search results keep a
+          coherent lifecycle, image decoding moves off the GUI thread,
+          playback position updates no longer storm the UI at frame rate, and
+          credentials persist to an owner-only vault file when KWallet cannot
+          be reached.
+        </p>
+      </description>
+    </release>
     <release version="0.3.0~rc1" date="2026-08-22" type="development">
       <description>
         <p>
