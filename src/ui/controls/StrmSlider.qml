@@ -52,7 +52,15 @@ Item {
 
     readonly property bool hovering: pointer.containsMouse
     readonly property bool dragging: pointer.pressed
-    // Value under the pointer — what a chapter-thumbnail preview wants.
+    // True between the first arrow nudge of a key/gamepad scrub and the
+    // release that commits it. A key scrub is a drag for everything the
+    // pending value touches: without this, position ticks from the owner
+    // cleared `pending` mid-hold (only the pointer was covered), so a held
+    // stick re-based every step to the live position — the bar snapped back
+    // per tick — and the release committed a seek to wherever playback
+    // already was. Mouse users never saw it: pointer.pressed held the guard.
+    property bool _keyScrub: false
+    readonly property bool scrubbing: slider.dragging || slider._keyScrub    // Value under the pointer — what a chapter-thumbnail preview wants.
     readonly property real hoverValue: slider.valueAt(slider.pointerX)
     // What a preview tooltip should show: the value under the pointer for a
     // hover or drag, but the control's own value when armed from the keyboard
@@ -99,11 +107,22 @@ Item {
         slider.emitMoved(slider.shownValue + direction * slider.stepSize);
     }
 
-    // The owner answered: stop showing our own guess. Not while dragging,
-    // where an echoed value would fight the pointer.
+    // The owner answered: stop showing our own guess. Not while scrubbing —
+    // pointer drag or key/gamepad hold — where an echoed value would fight
+    // the position the user is still holding.
     onValueChanged: {
-        if (!slider.dragging)
+        if (!slider.scrubbing)
             slider.pending = false;
+    }
+
+    // Arming starts a fresh session from the live value: any pending guess
+    // left over from an interrupted scrub (focus lost mid-hold while paused,
+    // so no tick ever cleared it) must not become the base of the next nudge.
+    onArmedChanged: {
+        if (slider.armed)
+            slider.pending = false;
+        else
+            slider._keyScrub = false;
     }
 
     implicitWidth: Theme.scale(200)
@@ -281,12 +300,12 @@ Item {
     // many steps it travelled.
     Keys.onLeftPressed: event => {
         if (slider.armToScrub && !slider.armed) {
-            // Swallowed, not propagated: the page binds plain Left to a 10 s
-            // seek, and a bar the user has only focused must not let the key
-            // fall through to it. Arming first is the whole point.
+            // Swallowed, not propagated: a bar the user has only focused does
+            // not move its value. Arming first is the whole point.
             event.accepted = true;
             return;
         }
+        slider._keyScrub = true;
         slider.nudge(-1);
         event.accepted = true;
     }
@@ -295,6 +314,7 @@ Item {
             event.accepted = true;
             return;
         }
+        slider._keyScrub = true;
         slider.nudge(1);
         event.accepted = true;
     }
@@ -302,6 +322,7 @@ Item {
         if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && !event.isAutoRepeat) {
             if (!slider.armToScrub || slider.armed)
                 slider.emitCommitted();
+            slider._keyScrub = false;
             event.accepted = true;
         }
     }
