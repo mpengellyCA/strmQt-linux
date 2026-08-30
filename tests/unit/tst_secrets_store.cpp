@@ -56,10 +56,9 @@ class SecretsStoreTest : public QObject
 private slots:
     void plaintextTestModeRoundTripsAsynchronously();
     void walletOperationsAreDelayedAndReportFailures();
-    void unavailableWalletIsSessionOnly();
-    void sessionOnlyWriteNeutralizesLegacySecret();
-    void rejectedWalletRemoveNeutralizesLegacySecret();
-    void sessionOnlyCleanupFailureIsReported();
+    void unavailableWalletFallsBackToTheVaultFile();
+    void rejectedWalletUsesTheVaultFile();
+    void vaultWriteFailureIsReported();
     void legacyMigrationDeletesOnlyAfterEveryWrite();
     void failedLegacyMigrationRetainsTheFile();
     void identityChangeDuringOpenSkipsOldReadAndOrdersNewWork();
@@ -140,61 +139,39 @@ void SecretsStoreTest::walletOperationsAreDelayedAndReportFailures()
     QVERIFY(!awaitResult(remove).ok());
 }
 
-void SecretsStoreTest::unavailableWalletIsSessionOnly()
-{
-    QTemporaryDir dir;
-    FakeSecretsStore store;
-    store.available = false;
-    store.setLegacyFilePathForTests(dir.filePath(QStringLiteral("legacy.ini")));
-
-    const Result<bool> write =
-        awaitResult(store.writeSecret(QStringLiteral("k"), QStringLiteral("memory-only")));
-    QVERIFY(write.ok());
-    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::SessionOnly);
-    QVERIFY(store.calls.isEmpty());
-    QCOMPARE(awaitResult(store.readSecret(QStringLiteral("k"))).value,
-             QStringLiteral("memory-only"));
-
-    FakeSecretsStore restarted;
-    restarted.available = false;
-    restarted.setLegacyFilePathForTests(dir.filePath(QStringLiteral("legacy.ini")));
-    const Result<QString> absent = awaitResult(restarted.readSecret(QStringLiteral("k")));
-    QVERIFY(absent.ok());
-    QVERIFY(absent.value.isEmpty());
-}
-
-void SecretsStoreTest::sessionOnlyWriteNeutralizesLegacySecret()
+void SecretsStoreTest::unavailableWalletFallsBackToTheVaultFile()
 {
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("secrets.ini"));
-    {
-        QSettings legacy(path, QSettings::IniFormat);
-        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
-        legacy.sync();
-    }
-    QVERIFY(QFileInfo::exists(path));
 
     FakeSecretsStore store;
     store.available = false;
     store.setLegacyFilePathForTests(path);
-    const Result<bool> written = awaitResult(
-        store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("memory-token")));
+    const Result<bool> write =
+        awaitResult(store.writeSecret(QStringLiteral("k"), QStringLiteral("persisted")));
+    QVERIFY(write.ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+    QVERIFY(store.calls.isEmpty());
+    QCOMPARE(awaitResult(store.readSecret(QStringLiteral("k"))).value,
+             QStringLiteral("persisted"));
 
-    QVERIFY(written.ok());
-    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::SessionOnly);
-    QCOMPARE(awaitResult(store.readSecret(QStringLiteral("emby/accessToken"))).value,
-             QStringLiteral("memory-token"));
-    QVERIFY(!QFileInfo::exists(path));
+    // The point of the fallback: a new process (a fresh store) reads it back.
+    FakeSecretsStore restarted;
+    restarted.available = false;
+    restarted.setLegacyFilePathForTests(path);
+    const Result<QString> persisted = awaitResult(restarted.readSecret(QStringLiteral("k")));
+    QVERIFY(persisted.ok());
+    QCOMPARE(persisted.value, QStringLiteral("persisted"));
 }
 
-void SecretsStoreTest::rejectedWalletRemoveNeutralizesLegacySecret()
+void SecretsStoreTest::rejectedWalletUsesTheVaultFile()
 {
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("secrets.ini"));
     {
-        QSettings legacy(path, QSettings::IniFormat);
-        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
-        legacy.sync();
+        QSettings vault(path, QSettings::IniFormat);
+        vault.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
+        vault.sync();
     }
     QVERIFY(QFileInfo::exists(path));
 
@@ -204,34 +181,28 @@ void SecretsStoreTest::rejectedWalletRemoveNeutralizesLegacySecret()
     QTRY_VERIFY(lastCallIs(store, FakeSecretsStore::CallType::NetworkWallet));
     store.replyNetworkWallet(false);
 
+    // The wallet never opened, so the remove falls through to the vault file.
     QVERIFY(awaitResult(removed).ok());
-    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::SessionOnly);
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
     QVERIFY(!QFileInfo::exists(path));
 }
 
-void SecretsStoreTest::sessionOnlyCleanupFailureIsReported()
+void SecretsStoreTest::vaultWriteFailureIsReported()
 {
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("secrets.ini"));
-    {
-        QSettings legacy(path, QSettings::IniFormat);
-        legacy.setValue(QStringLiteral("emby/accessToken"), QStringLiteral("stale-token"));
-        legacy.sync();
-    }
-    QVERIFY(QFileInfo::exists(path));
     QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
 
     FakeSecretsStore store;
     store.available = false;
     store.setLegacyFilePathForTests(path);
     const Result<bool> written = awaitResult(
-        store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("memory-token")));
+        store.writeSecret(QStringLiteral("emby/accessToken"), QStringLiteral("token")));
 
     QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                                   QFileDevice::ExeOwner));
     QVERIFY(!written.ok());
-    QVERIFY(awaitResult(store.readSecret(QStringLiteral("emby/accessToken"))).value.isEmpty());
-    QVERIFY(QFileInfo::exists(path));
+    QVERIFY(!QFileInfo::exists(path));
 }
 
 void SecretsStoreTest::legacyMigrationDeletesOnlyAfterEveryWrite()

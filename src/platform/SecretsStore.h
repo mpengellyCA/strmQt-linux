@@ -3,7 +3,6 @@
 #include "core/Result.h"
 
 #include <QFuture>
-#include <QHash>
 #include <QObject>
 #include <QQueue>
 #include <QString>
@@ -15,10 +14,13 @@
 namespace strmqt {
 
 // Secret storage for auth tokens. Talks to KWallet asynchronously over D-Bus
-// (org.kde.kwalletd6) when available — no KF6 link dependency — and otherwise keeps
-// values in memory for this process only. Legacy INI migration and the explicit
-// test-file mode dispatch every QSettings/QFile operation to the Qt thread pool;
-// the test-file constructor below is never used in production.
+// (org.kde.kwalletd6) when available — no KF6 link dependency. When the wallet is
+// unreachable or the open is rejected, secrets persist to a vault file instead
+// (<AppDataLocation>/secrets.ini, owner-only 0600) — lower security, surfaced to the
+// user through the storageMode property. A vault written while the wallet was down is
+// migrated into the wallet and scrubbed the next time the wallet opens. Vault file
+// operations are dispatched to the Qt thread pool; the explicit-file constructor below
+// is a test seam that forces vault mode against a chosen path.
 class SecretsStore : public QObject
 {
     Q_OBJECT
@@ -30,13 +32,12 @@ public:
     {
         Unknown,
         Wallet,
-        SessionOnly,
         PlaintextFallback,
     };
     Q_ENUM(StorageMode)
 
     explicit SecretsStore(QObject *parent = nullptr);
-    // Test-only explicit plaintext mode: bypass the wallet and use this INI file.
+    // Test seam: force vault-file mode against this INI path, bypassing the wallet.
     explicit SecretsStore(const QString &fallbackFilePath, QObject *parent = nullptr);
     ~SecretsStore() override;
 
@@ -124,7 +125,6 @@ private:
     int m_walletHandle = -1;
     QString m_forcedFallbackPath;
     StorageMode m_storageMode = StorageMode::Unknown;
-    QHash<QString, QString> m_sessionSecrets;
     InitializationState m_initialization = InitializationState::NotStarted;
     QQueue<Operation> m_operations;
     std::optional<Operation> m_current;

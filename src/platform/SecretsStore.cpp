@@ -179,14 +179,14 @@ Result<bool> writePlaintextSecretFile(const QString &path, const QString &key, c
             return Result<bool>::success(true);
     }
     removeLegacySecretFile(path, key);
-    return Result<bool>::failure(QStringLiteral("could not safely write test secret file"));
+    return Result<bool>::failure(QStringLiteral("could not safely write the vault file"));
 }
 
 Result<QString> readPlaintextSecretFile(const QString &path, const QString &key)
 {
     QSettings store(path, QSettings::IniFormat);
     if (store.status() != QSettings::NoError)
-        return Result<QString>::failure(QStringLiteral("could not read test secret file"));
+        return Result<QString>::failure(QStringLiteral("could not read the vault file"));
     return Result<QString>::success(store.value(key).toString());
 }
 
@@ -260,9 +260,9 @@ void SecretsStore::setLegacyFilePathForTests(const QString &path)
 void SecretsStore::enqueue(Operation operation)
 {
     m_operations.enqueue(std::move(operation));
-    // Every public operation yields to the event loop even in session-only and
-    // test-file modes. Callers can therefore use one completion contract and no
-    // wallet or filesystem path runs inside a QML signal handler.
+    // Every public operation yields to the event loop even in vault-file mode.
+    // Callers can therefore use one completion contract and no wallet or
+    // filesystem path runs inside a QML signal handler.
     QTimer::singleShot(0, this, &SecretsStore::processNext);
 }
 
@@ -284,19 +284,6 @@ void SecretsStore::processNext()
     // FIFO serialization guarantees the old removal precedes every new write.
     if (operation.identity != m_identity && operation.type != OperationType::Remove) {
         finishCurrent(Result<QString>::failure(QStringLiteral("secret operation canceled")));
-        return;
-    }
-
-    if (m_storageMode == StorageMode::SessionOnly) {
-        if (operation.type == OperationType::Write) {
-            m_sessionSecrets.insert(operation.key, operation.value);
-            removeLegacyForCurrent(Result<QString>::success({}));
-        } else if (operation.type == OperationType::Read) {
-            finishCurrent(Result<QString>::success(m_sessionSecrets.value(operation.key)));
-        } else {
-            m_sessionSecrets.remove(operation.key);
-            removeLegacyForCurrent(Result<QString>::success({}));
-        }
         return;
     }
 
@@ -339,8 +326,9 @@ void SecretsStore::startWalletInitialization()
     if (m_initialization != InitializationState::NotStarted)
         return;
     if (!walletTransportAvailable()) {
-        qCWarning(logCore) << "kwalletd6 not reachable; secrets are session-only";
-        setStorageMode(StorageMode::SessionOnly);
+        qCWarning(logCore) << "kwalletd6 not reachable; secrets fall back to the vault file"
+                           << fallbackFilePath();
+        setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
         return;
     }
@@ -354,8 +342,9 @@ void SecretsStore::completeNetworkWallet(bool success, const QString &walletName
     if (m_initialization != InitializationState::NetworkWalletPending)
         return;
     if (!success || walletName.isEmpty()) {
-        qCWarning(logCore) << "networkWallet failed; secrets are session-only:" << error;
-        setStorageMode(StorageMode::SessionOnly);
+        qCWarning(logCore) << "networkWallet failed; secrets fall back to the vault file"
+                           << fallbackFilePath() << error;
+        setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
         return;
     }
@@ -368,8 +357,9 @@ void SecretsStore::completeOpenWallet(bool success, int handle, const QString &e
     if (m_initialization != InitializationState::OpenPending)
         return;
     if (!success || handle < 0) {
-        qCWarning(logCore) << "wallet open rejected or failed; secrets are session-only:" << error;
-        setStorageMode(StorageMode::SessionOnly);
+        qCWarning(logCore) << "wallet open rejected or failed; secrets fall back to the vault file"
+                           << fallbackFilePath() << error;
+        setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
         return;
     }
@@ -491,12 +481,8 @@ void SecretsStore::removeLegacyForCurrent(Result<QString> operationResult)
             if (!removed.ok()) {
                 qCWarning(logCore) << "could not remove legacy plaintext credential" << key << "at"
                                    << path << removed.error;
-                if (operationResult.ok()) {
-                    if (m_storageMode == StorageMode::SessionOnly && m_current &&
-                        m_current->type == OperationType::Write)
-                        m_sessionSecrets.remove(key);
+                if (operationResult.ok())
                     operationResult = Result<QString>::failure(removed.error);
-                }
             }
             finishCurrent(operationResult);
         });
