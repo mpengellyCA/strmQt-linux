@@ -806,7 +806,16 @@ FocusScope {
         anchors.rightMargin: page.songsTab ? Theme.pageMarginValue : 0
         anchors.bottomMargin: page.songsTab ? Theme.spacingValue : 0
         active: page.viewReady
-        focus: true
+        // A Loader is a focus scope: the grid inside it can only receive
+        // activeFocus while the LOADER holds focus in the page's scope. A
+        // constant `focus: true` loses that claim to the tab bar's
+        // `focus: !contentFocusable` — one focus child per scope — and when
+        // content then arrived, the grid's `focus: count > 0` landed in a
+        // scope that had no focus and the page went dead to arrows. Mirroring
+        // the tab bar's condition hands the claim over in step with it:
+        // empty or loading, the tab bar holds the keyboard; loaded, the view
+        // does.
+        focus: page.contentFocusable
         sourceComponent: page.loadedTab === 1 ? artistsViewComponent
                        : page.loadedTab === 2 ? songsViewComponent
                        : page.loadedTab === 3 ? playlistsViewComponent
