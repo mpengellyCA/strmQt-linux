@@ -293,6 +293,17 @@ public:
     // the library has no disc number, and a null disc sorts ahead of disc 1.)
     Q_INVOKABLE void playAlbum(const QString &albumId);
 
+    // ▸ Shuffle over the library AS NARROWED. The query is the Songs tab's own
+    // shape — recursive Audio under the library — with the shared filter axes
+    // applied (letter, genres, favourites); ItemActions owns the Random sort
+    // and the cap. A shuffle that ignores the genre you filtered to is not
+    // the shuffle you asked for.
+    //
+    // The filters' "not before anything loads" rule does not apply here:
+    // shuffle is a one-shot verb, not a query, so asking before the first list
+    // fetch still plays — with whatever filters are set.
+    Q_INVOKABLE void shuffleFiltered();
+
     // An album id expanded into the ids of its tracks, for "Add to playlist" on
     // an album card (MUSIC.md §3's gap). A playlist holds playable items, not
     // containers, and only the server can say which tracks an album has — so

@@ -832,6 +832,19 @@ void ItemActions::shuffle(const QString &parentId, const QString &collectionType
     fetchIntoQueue(query, true, false);
 }
 
+void ItemActions::shuffleFiltered(const ItemsQuery &query)
+{
+    // Constraints are the caller's; the sample is this verb's. Random has no
+    // direction and a filtered shuffle is not paged, so both are cleared
+    // rather than inherited from whatever the browse view was sorted by.
+    ItemsQuery randomised = query;
+    randomised.sortBy = QStringLiteral("Random");
+    randomised.sortDescending = false;
+    randomised.startIndex = 0;
+    randomised.limit = kQueueFetchLimit;
+    fetchIntoQueue(randomised, true, false);
+}
+
 void ItemActions::shuffleSeries(const QString &seriesId)
 {
     if (seriesId.isEmpty()) {

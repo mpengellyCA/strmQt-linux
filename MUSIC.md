@@ -166,9 +166,11 @@ Two music-specific additions to it:
   than for film: "The Beatles" files under B and users will look under T.
 
 **2.5 — Shuffle-the-whole-scope.** A header button that queues the current filtered
-scope in random order. `Actions.shuffle(scopeId, "music")` already pins `SortBy=Random`
-server-side, so this is a verb wire-up, not new machinery. It is the single most-used
-button in every music app and StrmQt does not have it.
+scope in random order. `MusicCtl.shuffleFiltered()` builds the Songs tab's query shape
+with the shared filters (letter, genres, favourites) applied and hands it to
+`ItemActions::shuffleFiltered()`, which pins `SortBy=Random` server-side — so the
+sample is drawn from the whole *filtered* set, not its first page. It is the single
+most-used button in every music app.
 
 ---
 

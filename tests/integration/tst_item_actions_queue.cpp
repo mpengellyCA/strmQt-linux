@@ -61,6 +61,7 @@ private slots:
 
     void playAllFetchesPlayableTypesInOrder();
     void shuffleAsksTheServerForARandomOrder();
+    void musicShuffleCarriesTheCurrentFilters();
     void shuffleNarrowsATvLibraryToEpisodes();
     void shuffleSeriesQueuesEveryEpisodeFromARandomStart();
     void seasonDispatchExpandsEpisodeChildren();
@@ -181,6 +182,46 @@ void ItemActionsQueueTest::shuffleAsksTheServerForARandomOrder()
     const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
     QVERIFY2(query.contains(QStringLiteral("SortBy=Random")), qPrintable(query));
     QVERIFY2(query.contains(QStringLiteral("Limit=500")), qPrintable(query));
+}
+
+// ▸ Shuffle on the music page samples the library AS FILTERED: the letter,
+// genre and favourites narrowing the browse view are the constraints on the
+// random draw, and Random replaces whatever the browse sort was.
+void ItemActionsQueueTest::musicShuffleCarriesTheCurrentFilters()
+{
+    MusicController music(m_client, this);
+    music.setActions(m_actions);
+    music.setLibrary(QStringLiteral("lib-music"));
+    // Set before any list load: preferences, not queries — they fire no browse
+    // request of their own, so the only /Items fetch below is the shuffle's.
+    music.setGenreIds({QStringLiteral("g-1"), QStringLiteral("g-2")});
+    music.setNameStartsWith(QStringLiteral("B"));
+    music.setFavoritesOnly(true);
+
+    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+    music.shuffleFiltered();
+
+    QTRY_COMPARE(queueSpy.count(), 1);
+    QVERIFY(m_player->queue()->rowCount() > 0);
+    QVERIFY(m_player->queue()->shuffled());
+
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("lib-music"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")),
+             QStringLiteral("Audio"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("Random"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("GenreIds")),
+             QStringLiteral("g-1,g-2"));
+    // The letter goes out as the indexable range, exactly as the browse lane
+    // sends it (MusicController::applyFilters).
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
+             QStringLiteral("B"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("NameLessThan")), QStringLiteral("C"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Filters")),
+             QStringLiteral("IsFavorite"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("StartIndex"))
+            || query.queryItemValue(QStringLiteral("StartIndex")) == QStringLiteral("0"));
 }
 
 // A shuffle of a TV library must yield episodes; queueing series folders would

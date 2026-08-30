@@ -72,6 +72,13 @@ public:
     Q_INVOKABLE void playAll(const QString &parentId,
                              const QString &collectionType = QString());
     Q_INVOKABLE void shuffle(const QString &parentId, const QString &collectionType = QString());
+    // Shuffle a set the CALLER narrowed. The query arrives with its
+    // constraints already applied (MusicController's letter, genres and
+    // favourites, for the music library's ▸ Shuffle); what stays owned here is
+    // the shuffle itself — the sort is forced to Random so the capped fetch is
+    // a fair sample of the whole filtered set, not its first page. C++ only:
+    // the caller is a controller holding an ItemsQuery, not a page.
+    void shuffleFiltered(const ItemsQuery &query);
     // A collection plays in the order the collection was curated in, so this is
     // NOT playAll() with a different parent: playAll sorts (SortName for mixed
     // types), which queues a franchise alphabetically while the grid above it

@@ -485,9 +485,9 @@ src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefi
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.artistsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.playlistsLoading
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: MusicCtl.songsLoading
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: Actions.shuffle(page.scopeId, "music")
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: MusicCtl.shuffleFiltered()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onActivated: PlayerCtl.togglePause()
-src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onClicked: Actions.shuffle(page.scopeId, "music")
+src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onClicked: MusicCtl.shuffleFiltered()
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onFavoriteRequested: Actions.setFavoriteAll(page.songsView().selectedIds(), true)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.instantMix(page.artistAt(index))
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	onNearEnd: if (MusicCtl.canLoadMoreAlbums) MusicCtl.loadMoreAlbums()

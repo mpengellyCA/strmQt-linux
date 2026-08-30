@@ -1169,6 +1169,25 @@ void MusicController::playAlbum(const QString &albumId)
         tr("Could not play this album: %1"));
 }
 
+void MusicController::shuffleFiltered()
+{
+    if (!m_actions) {
+        qCWarning(logApp) << "music: no ItemActions; cannot shuffle the library";
+        emit actionFailed(tr("Playback is not available."));
+        return;
+    }
+
+    // The Songs tab's query shape with the shared filters on top; the Random
+    // sort and the fetch cap are applied by ItemActions::shuffleFiltered,
+    // which owns what "shuffle" means for every caller.
+    ItemsQuery query;
+    query.parentId = m_libraryId; // empty means every music library, as elsewhere
+    query.includeItemTypes = {QStringLiteral("Audio")};
+    query.recursive = true;
+    applyFilters(query);
+    m_actions->shuffleFiltered(query);
+}
+
 void MusicController::collectAlbumTracks(const QString &albumId, const QString &subject)
 {
     if (albumId.isEmpty())

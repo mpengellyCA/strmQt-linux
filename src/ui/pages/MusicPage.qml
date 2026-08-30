@@ -406,8 +406,9 @@ FocusScope {
         fallback: ["S"]
         active: App.interactionContext === "music" && page.scopeId.length > 0
         // The same call the header button makes, for the same reason it makes
-        // it: shuffle exists once and takes a parent and a kind.
-        onActivated: Actions.shuffle(page.scopeId, "music")
+        // it: shuffle exists once and takes the library AS FILTERED — the
+        // letter, genres and favourites narrowing the view are the sample.
+        onActivated: MusicCtl.shuffleFiltered()
     }
 
     MappedShortcut {
@@ -496,15 +497,12 @@ FocusScope {
 
         // ── Shuffle everything ─────────────────────────────────────────────
         // The most-used button in every music app, and the one this had none
-        // of. A verb wire-up rather than new machinery: ItemActions::shuffle()
-        // pins SortBy=Random server-side, so the sample is drawn from the whole
-        // library and not from the pages this grid happens to have loaded
-        // (ARCHITECTURE.md rule 3 — shuffle exists once).
-        //
-        // It shuffles the LIBRARY, not the narrowed view: there is exactly one
-        // implementation of shuffle and it takes a parent and a kind. Widening
-        // it to carry genre and year is a change to a verb five other callers
-        // share, so it is called for what it is rather than reimplemented here.
+        // of. It shuffles the library AS NARROWED: the genre, letter and
+        // favourites filters on the filter bar constrain the sample, so
+        // "shuffle the jazz" is a filter plus this button. The query is built
+        // by MusicController (which owns the filter state) and the Random
+        // sample by ItemActions::shuffleFiltered (ARCHITECTURE.md rule 3 —
+        // shuffle exists once).
         StrmButton {
             id: shuffleAllButton
 
@@ -513,7 +511,7 @@ FocusScope {
             iconName: "shuffle"
             variant: "primary"
             enabled: page.scopeId.length > 0
-            onClicked: Actions.shuffle(page.scopeId, "music")
+            onClicked: MusicCtl.shuffleFiltered()
 
             KeyNavigation.left: page.artistsTab ? allArtistChip : null
             KeyNavigation.down: tabBar
