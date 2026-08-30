@@ -57,9 +57,9 @@ finish-args:
   # The entire point of the app: HTTP(S) to the Emby server, plus streaming.
   - --share=network
   # ── D-Bus ──────────────────────────────────────────────────────────────────
-  # KWallet is the SecretsStore backend (AGENTS.md: no plaintext credentials).
-  # Load-bearing: without this name the wallet is unreachable inside the sandbox
-  # and SecretsStore keeps the Emby token in memory for this process only.
+  # KWallet is the SecretsStore backend. Load-bearing for security: without this
+  # name the wallet is unreachable inside the sandbox and SecretsStore falls back
+  # to the vault file (app data dir, 0600) — the login screen warns while so.
   - --talk-name=org.kde.kwalletd6
   # MPRIS2: media-key handling, KDE Connect remote control, Plasma media applet.
   - --own-name=org.mpris.MediaPlayer2.strmqt

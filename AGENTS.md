@@ -22,7 +22,8 @@ you, say so instead of working around it silently.
   around libmpv/libvlc/ffmpeg — direct C API calls only.
 - New dependencies need a stated reason before use, recorded in the commit that adds them.
 - No credentials, tokens, or server passwords in the repo. Secrets go through
-  `platform/SecretsStore` (KWallet on KDE).
+  `platform/SecretsStore` (KWallet on KDE; warned-about 0600 vault file as fallback;
+  per-account keys scoped by server+user).
 - TLS certificate errors are fatal in release builds — never add SSL-ignore code.
 - Scope discipline: change only what the current milestone needs. No drive-by refactors,
   renames, or reformatting of untouched code.

@@ -335,12 +335,16 @@ Settings live in `QSettings` (INI under `~/.config/StrmQt/`). **There is no defa
 server address**: the artifacts are distributable, so a baked-in host would be both
 a privacy leak and wrong for every user but one. The login screen asks.
 
-The Emby access token goes to KWallet via `kwalletd6` over D-Bus. If the wallet is
-unavailable or access is rejected, the token remains in process memory for that
-session and sign-in is required after restart. Older plaintext fallback files are
-migrated into an available wallet and deleted only after every write succeeds. No
-production path silently writes a credential to plaintext, no credential is ever
-written to the repo, and TLS certificate errors are fatal in release builds.
+Access tokens go to KWallet via `kwalletd6` over D-Bus, one per saved account,
+keyed `emby/<sha256(server+user)>/accessToken`. If the wallet is unavailable or
+access is rejected, tokens fall back to a vault file (`secrets.ini` under the app
+data location, `0600` owner-only) — lower security, and the login screen says so
+while that mode is active; a vault written while the wallet was down is migrated
+into the wallet and scrubbed the next time the wallet opens. Accounts are listed
+in a server-tagged registry (`accounts/registry`) backing the login screen's
+profile picker: **switch user** keeps the profile and token, **sign out** forgets
+both. No credential is ever written to the repo, and TLS certificate errors are
+fatal in release builds.
 
 ---
 
