@@ -10,11 +10,30 @@
 #include <algorithm>
 #include <utility>
 
+#include <unistd.h>
+
 using strmqt::Result;
 using strmqt::SecretsStore;
 using strmqt::test::FakeSecretsStore;
 
 namespace {
+
+// Two cases below prove that a FAILED vault write is REPORTED rather than
+// swallowed, and the only way to provoke that failure is to take write
+// permission off the directory. Root ignores directory permissions
+// (CAP_DAC_OVERRIDE), so as root the write succeeds and the case is not
+// disproved — it is unprovable, which is a different thing and has to be said
+// differently.
+//
+// It cost a red CI for several commits while the same revision was green in
+// the release workflow, because that one runs its tests through makepkg as an
+// unprivileged user and this one runs its container as root. A test that
+// silently depends on not being root is a trap; skipping with a reason is the
+// honest form of the same coverage.
+bool cannotRevokeOwnWriteAccess()
+{
+    return ::geteuid() == 0;
+}
 
 template<class T> Result<T> awaitResult(QFuture<Result<T>> future)
 {
@@ -147,6 +166,9 @@ void SecretsStoreTest::walletWriteFailureFallsBackToTheVaultFile()
 
 void SecretsStoreTest::walletFailureIsReportedWhenTheVaultIsToo()
 {
+    if (cannotRevokeOwnWriteAccess())
+        QSKIP("running as root: directory permissions cannot make a write fail");
+
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("secrets.ini"));
     QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));
@@ -269,6 +291,9 @@ void SecretsStoreTest::rejectedWalletUsesTheVaultFile()
 
 void SecretsStoreTest::vaultWriteFailureIsReported()
 {
+    if (cannotRevokeOwnWriteAccess())
+        QSKIP("running as root: directory permissions cannot make a write fail");
+
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("secrets.ini"));
     QVERIFY(QFile::setPermissions(dir.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner));

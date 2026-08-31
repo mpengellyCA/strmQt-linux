@@ -17,11 +17,21 @@ jobs:
 
     steps:
       - name: Install dependencies
+        # The VLC packages are the ones the PKGBUILD declares, not the `vlc`
+        # metapackage — the same correction release.yml already carries, which
+        # this file never got. Arch's `vlc` depends on bash, an icon theme and
+        # the Qt GUI; every codec is an OPTIONAL dependency pacman does not
+        # install. That leaves libvlc able to demux the test clip and display
+        # it through vmem with nothing able to DECODE it, so tst_vlc_player
+        # waited out its 15 s timeout on a frame that could never arrive.
+        # Reproduced in this exact container: installing vlc-plugin-ffmpeg
+        # alone turns the failure into a pass in 0.3 s.
         run: |
           pacman -Syu --noconfirm --needed \
-            git cmake ninja pkgconf gcc \
+            git cmake ninja pkgconf gcc ffmpeg \
             qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg \
-            mpv vlc sdl3 \
+            mpv sdl3 \
+            libvlc vlc-plugins-base vlc-plugin-ffmpeg \
             xorg-server-xvfb
 
       - uses: actions/checkout@v4
