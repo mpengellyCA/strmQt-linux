@@ -67,11 +67,30 @@ owner-only vault file rather than quietly writing a plaintext config.
 Builds for every release are on the
 [**Releases page**](https://github.com/mpengellyCA/strmQt-linux/releases).
 
-| Format | File | Notes |
+**On Fedora, Ubuntu, Debian or anything that is not Arch — use the Flatpak.**
+
+| Format | Who it is for | |
 |---|---|---|
-| **AppImage** | `StrmQt-*-x86_64.AppImage` | `chmod +x` and run. Bundles Qt; built on current Arch, so its glibc floor is high. |
-| **Flatpak** | `ca.mikesdev.StrmQt.flatpak` | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
-| **Arch** | `strmqt-*.pkg.tar.zst` | `sudo pacman -U ./strmqt-*.pkg.tar.zst` — links against system Qt and mpv. |
+| **Flatpak** | everyone | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
+| **Arch package** | Arch and derivatives | `sudo pacman -U ./strmqt-*.pkg.tar.zst` |
+| **AppImage** | Arch, without installing anything | `chmod +x` and run — **needs glibc ≥ 2.44** |
+
+The AppImage is a convenience build, not a run-anywhere binary, and the difference
+matters enough to spell out. An AppImage bundles libraries but never glibc itself —
+the C library has to be the host's, because the dynamic loader, the NSS modules and
+the graphics drivers all have to agree with it. glibc is backward compatible and not
+forward compatible, so a bundle built on a new distro will not start on an older one.
+This one is built on current Arch, and the ffmpeg it has to carry imports
+`GLIBC_2.44`, which puts the floor above Fedora 43 (2.42) and every current Ubuntu
+and Debian. They get:
+
+```
+/lib64/libm.so.6: version `GLIBC_2.44' not found
+```
+
+Lowering that floor means building ffmpeg, libplacebo, libmpv and Qt from source on
+an old base — a real packaging project, not a flag. The Flatpak already solves it by
+carrying its own runtime, which is what it is for.
 
 Target platform is **Plasma 6 on Wayland**. It is written to stay portable to other
 Plasma/Wayland and X11 systems, but that is untested.
