@@ -807,6 +807,14 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
         QStringLiteral("StrmIconButton.qml"), QStringLiteral("StrmCard.qml"),
         QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
         QStringLiteral("StrmGrid.qml"),       QStringLiteral("StrmImage.qml"),
+        // StrmGrid publishes the focused column through this singleton on a
+        // vertical step. It resolves without being staged — the engine finds it
+        // on the ambient import path — so this is not fixing a failure; it is
+        // removing the reliance on that accident. The module is written out
+        // file by file precisely so it is self-contained, and a member that
+        // reaches outside it only shows up as "Type StrmGrid unavailable" on
+        // whichever machine happens not to have the real module in reach.
+        QStringLiteral("NavigationColumn.qml"),
     };
     for (const QString &name : moduleFiles) {
         const QString sourceRoot = name == QStringLiteral("Theme.qml")
@@ -828,7 +836,8 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "StrmScrollBar 1.0 StrmScrollBar.qml\n"
                  "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
                  "StrmGrid 1.0 StrmGrid.qml\n"
-                 "StrmImage 1.0 StrmImage.qml\n");
+                 "StrmImage 1.0 StrmImage.qml\n"
+                 "singleton NavigationColumn 1.0 NavigationColumn.qml\n");
     qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));
