@@ -162,13 +162,26 @@ Result<bool> removeLegacyFile(const QString &path)
 
 Result<bool> writePlaintextSecretFile(const QString &path, const QString &key, const QString &value)
 {
-    QDir().mkpath(QFileInfo(path).absolutePath());
+    const QString dirPath = QFileInfo(path).absolutePath();
+    if (!QDir(dirPath).exists()) {
+        QDir().mkpath(dirPath);
+        QFile::setPermissions(dirPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    }
+
+    const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    if (!QFileInfo::exists(path)) {
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.setPermissions(ownerOnly);
+            file.close();
+        }
+    }
+
     QSettings store(path, QSettings::IniFormat);
     store.setValue(key, value);
     store.sync();
     const bool written =
         store.status() == QSettings::NoError && store.value(key).toString() == value;
-    const QFile::Permissions ownerOnly = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
     const QFile::Permissions exposed = QFileDevice::ReadGroup | QFileDevice::WriteGroup |
                                        QFileDevice::ExeGroup | QFileDevice::ReadOther |
                                        QFileDevice::WriteOther | QFileDevice::ExeOther;

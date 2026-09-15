@@ -235,6 +235,7 @@ void SettingsPrefsTest::inputMapViewSurvivesSettingsWrites()
     settings.setThemeAccent(QStringLiteral("emby"));
     settings.setVolume(42);
     settings.setMuted(true);
+    settings.flush();
 
     QCOMPARE(input.binding(action), QStringLiteral("Ctrl+Shift+F9"));
     QVERIFY(input.isCustomised(action));

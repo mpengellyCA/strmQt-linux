@@ -6,8 +6,10 @@
 #include <QPair>
 #include <QSettings>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
+#include <optional>
 
 namespace strmqt {
 
@@ -287,6 +289,8 @@ private:
     QElapsedTimer m_lastPlaybackSync;
     QString m_lastPlaybackSyncIdentity;
     PendingLastPlayback m_pendingLastPlayback;
+    QTimer m_volumeDebounceTimer;
+    std::optional<int> m_cachedVolume;
 };
 
 } // namespace strmqt

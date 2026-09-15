@@ -18,6 +18,7 @@ private slots:
     void crashResumeWritesAreDebouncedUntilFlush();
     void retainedPlaybackChoicesAreBoundedAndKeepRecentEntries();
     void oversizedLegacyChoicesArePrunedWhenSessionRestores();
+    void accountProfileRemovalClearsSession();
 };
 
 void SettingsTest::defaultServerUrl()
@@ -221,6 +222,26 @@ void SettingsTest::oversizedLegacyChoicesArePrunedWhenSessionRestores()
 
     QSettings pruned(path, QSettings::IniFormat);
     QCOMPARE(pruned.allKeys().filter(QStringLiteral("/versions/")).size(), 256);
+}
+
+void SettingsTest::accountProfileRemovalClearsSession()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("remove.ini"));
+    Settings settings(path);
+    settings.upsertAccountProfile(QUrl(QStringLiteral("https://one.example")), QStringLiteral("alice"), QStringLiteral("Alice"));
+    
+    settings.setServerUrl(QUrl(QStringLiteral("https://one.example")));
+    settings.setUserId(QStringLiteral("alice"));
+    settings.setLibraryViewMode(QStringLiteral("movies"), QStringLiteral("list"));
+    settings.flush();
+
+    settings.removeAccountProfile(QUrl(QStringLiteral("https://one.example")), QStringLiteral("alice"));
+
+    QSettings raw(path, QSettings::IniFormat);
+    const QString scope = Settings::sessionScopeFor(QUrl(QStringLiteral("https://one.example")), QStringLiteral("alice"));
+    const QString sessionKey = QStringLiteral("sessions/%1/libraryView/movies/mode").arg(scope);
+    QVERIFY(!raw.contains(sessionKey));
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)

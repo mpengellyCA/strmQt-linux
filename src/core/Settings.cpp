@@ -71,11 +71,29 @@ constexpr int kMaxRetainedPlaybackEntries = 256;
 constexpr qint64 kResumeSyncIntervalMs = 60'000;
 } // namespace
 
-Settings::Settings(QObject *parent) : QObject(parent) {}
+Settings::Settings(QObject *parent) : QObject(parent)
+{
+    m_volumeDebounceTimer.setInterval(500);
+    m_volumeDebounceTimer.setSingleShot(true);
+    connect(&m_volumeDebounceTimer, &QTimer::timeout, this, [this]() {
+        if (m_cachedVolume.has_value()) {
+            m_store.setValue(kVolumeKey, *m_cachedVolume);
+            m_store.sync();
+        }
+    });
+}
 
 Settings::Settings(const QString &iniFilePath, QObject *parent)
     : QObject(parent), m_store(iniFilePath, QSettings::IniFormat)
 {
+    m_volumeDebounceTimer.setInterval(500);
+    m_volumeDebounceTimer.setSingleShot(true);
+    connect(&m_volumeDebounceTimer, &QTimer::timeout, this, [this]() {
+        if (m_cachedVolume.has_value()) {
+            m_store.setValue(kVolumeKey, *m_cachedVolume);
+            m_store.sync();
+        }
+    });
 }
 
 Settings::~Settings()
@@ -189,6 +207,12 @@ void Settings::removeAccountProfile(const QUrl &serverUrl, const QString &userId
         return;
     m_store.setValue(kAccountRegistryKey,
                      QString::fromUtf8(QJsonDocument(registry).toJson(QJsonDocument::Compact)));
+                     
+    const QString scope = sessionScopeFor(serverUrl, userId);
+    if (!scope.isEmpty()) {
+        m_store.remove(QStringLiteral("sessions/%1").arg(scope));
+    }
+                     
     m_store.sync();
 }
 
@@ -375,6 +399,9 @@ void Settings::setReducedMotion(bool reduced)
 
 int Settings::volume() const
 {
+    if (m_cachedVolume.has_value()) {
+        return *m_cachedVolume;
+    }
     const int stored = m_store.value(kVolumeKey, kDefaultVolume).toInt();
     return qBound(0, stored, kMaxVolume);
 }
@@ -384,7 +411,8 @@ void Settings::setVolume(int percent)
     const int clamped = qBound(0, percent, kMaxVolume);
     if (clamped == volume())
         return;
-    m_store.setValue(kVolumeKey, clamped);
+    m_cachedVolume = clamped;
+    m_volumeDebounceTimer.start();
     emit volumeChanged();
 }
 
@@ -800,6 +828,12 @@ void Settings::writePendingLastPlayback()
 
 void Settings::flush()
 {
+    if (m_volumeDebounceTimer.isActive()) {
+        m_volumeDebounceTimer.stop();
+        if (m_cachedVolume.has_value()) {
+            m_store.setValue(kVolumeKey, *m_cachedVolume);
+        }
+    }
     writePendingLastPlayback();
     m_store.sync();
     if (m_store.status() == QSettings::NoError) {
