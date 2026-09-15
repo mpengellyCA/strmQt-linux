@@ -419,14 +419,25 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
 
 void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &body)
 {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_failedPinAttempts >= 5 && (now - m_lastFailedPinTimeMs) < 2000) {
+        QJsonObject err;
+        err[QStringLiteral("error")] = QStringLiteral("Too many failed attempts. Please wait.");
+        sendJson(socket, 429, err);
+        return;
+    }
+
     const QString pin = body.value(QLatin1String("pin")).toString();
     if (m_settings && pin == m_settings->webRemotePin()) {
+        m_failedPinAttempts = 0;
         const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_authorizedTokens.insert(token);
         QJsonObject resp;
         resp[QStringLiteral("token")] = token;
         sendJson(socket, 200, resp);
     } else {
+        m_failedPinAttempts++;
+        m_lastFailedPinTimeMs = now;
         QJsonObject err;
         err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
         sendJson(socket, 403, err);
@@ -569,9 +580,12 @@ void WebRemoteServer::handleApiLibraries(QSslSocket *socket)
         return;
     }
 
-    m_client->userViews().then(this, [this, socket](const Result<QList<Library>> &res) {
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->userViews().then(this, [this, safeSocket](const Result<QList<Library>> &res) {
+        if (!safeSocket || !safeSocket->isOpen())
+            return;
         if (!res.ok()) {
-            sendResponse(socket, 500, "application/json", "{\"error\":\"Failed to fetch views\"}");
+            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Failed to fetch views\"}");
             return;
         }
         QJsonArray arr;
@@ -583,7 +597,7 @@ void WebRemoteServer::handleApiLibraries(QSslSocket *socket)
             arr.append(o);
         }
         const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(socket, 200, "application/json", data);
+        sendResponse(safeSocket, 200, "application/json", data);
     });
 }
 
@@ -606,9 +620,12 @@ void WebRemoteServer::handleApiLibraryItems(QSslSocket *socket, const HttpReques
     query.sortBy = q.queryItemValue(QStringLiteral("sortBy")).isEmpty() ? QStringLiteral("SortName") : q.queryItemValue(QStringLiteral("sortBy"));
     query.sortDescending = (q.queryItemValue(QStringLiteral("sortOrder")) == QLatin1String("Descending"));
 
-    m_client->items(query).then(this, [this, socket](const Result<ItemsPage> &res) {
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->items(query).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
+        if (!safeSocket || !safeSocket->isOpen())
+            return;
         if (!res.ok()) {
-            sendResponse(socket, 500, "application/json", "{\"error\":\"Failed to fetch items\"}");
+            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Failed to fetch items\"}");
             return;
         }
         QJsonArray arr;
@@ -622,7 +639,7 @@ void WebRemoteServer::handleApiLibraryItems(QSslSocket *socket, const HttpReques
             arr.append(o);
         }
         const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(socket, 200, "application/json", data);
+        sendResponse(safeSocket, 200, "application/json", data);
     });
 }
 
@@ -633,9 +650,12 @@ void WebRemoteServer::handleApiItemDetails(QSslSocket *socket, const QString &it
         return;
     }
 
-    m_client->itemDetails(itemId).then(this, [this, socket, itemId](const Result<ItemDetails> &res) {
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->itemDetails(itemId).then(this, [this, safeSocket, itemId](const Result<ItemDetails> &res) {
+        if (!safeSocket || !safeSocket->isOpen())
+            return;
         if (!res.ok()) {
-            sendResponse(socket, 404, "application/json", "{\"error\":\"Item not found\"}");
+            sendResponse(safeSocket, 404, "application/json", "{\"error\":\"Item not found\"}");
             return;
         }
         const ItemDetails &d = res.value;
@@ -654,7 +674,9 @@ void WebRemoteServer::handleApiItemDetails(QSslSocket *socket, const QString &it
 
         // If it's a TV series, fetch episodes
         if (d.item.type == QLatin1String("Series")) {
-            m_client->episodes(itemId, QString()).then(this, [this, socket, o](const Result<ItemsPage> &epRes) mutable {
+            m_client->episodes(itemId, QString()).then(this, [this, safeSocket, o](const Result<ItemsPage> &epRes) mutable {
+                if (!safeSocket || !safeSocket->isOpen())
+                    return;
                 QJsonArray epArr;
                 if (epRes.ok()) {
                     for (const MediaItem &ep : epRes.value.items) {
@@ -667,12 +689,12 @@ void WebRemoteServer::handleApiItemDetails(QSslSocket *socket, const QString &it
                     }
                 }
                 o[QStringLiteral("episodes")] = epArr;
-                sendJson(socket, 200, o);
+                sendJson(safeSocket, 200, o);
             });
             return;
         }
 
-        sendJson(socket, 200, o);
+        sendJson(safeSocket, 200, o);
     });
 }
 
@@ -688,9 +710,12 @@ void WebRemoteServer::handleApiSearch(QSslSocket *socket, const QString &query)
     q.limit = 30;
     q.recursive = true;
 
-    m_client->items(q).then(this, [this, socket](const Result<ItemsPage> &res) {
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->items(q).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
+        if (!safeSocket || !safeSocket->isOpen())
+            return;
         if (!res.ok()) {
-            sendResponse(socket, 500, "application/json", "{\"error\":\"Search failed\"}");
+            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Search failed\"}");
             return;
         }
         QJsonArray arr;
@@ -703,7 +728,7 @@ void WebRemoteServer::handleApiSearch(QSslSocket *socket, const QString &query)
             arr.append(o);
         }
         const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(socket, 200, "application/json", data);
+        sendResponse(safeSocket, 200, "application/json", data);
     });
 }
 
@@ -714,24 +739,34 @@ void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId, 
         return;
     }
 
+    // Sanitize itemId and imageType against path traversal
+    static const QRegularExpression safeRegex(QStringLiteral("^[a-zA-Z0-9_-]+$"));
+    if (!safeRegex.match(itemId).hasMatch() || !safeRegex.match(imageType).hasMatch()) {
+        sendResponse(socket, 400, "text/plain", "Invalid image parameters");
+        return;
+    }
+
     const QUrl imageUrl = m_client->baseUrl().resolved(
         QUrl(QStringLiteral("/Items/%1/Images/%2").arg(itemId, imageType)));
 
     QNetworkRequest req(imageUrl);
     req.setRawHeader("X-Emby-Token", m_client->accessToken().toUtf8());
 
+    QPointer<QSslSocket> safeSocket(socket);
     QNetworkReply *reply = m_imageNam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, socket, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, safeSocket, reply] {
         reply->deleteLater();
+        if (!safeSocket || !safeSocket->isOpen())
+            return;
         if (reply->error() != QNetworkReply::NoError) {
-            sendResponse(socket, 404, "text/plain", "Image not found");
+            sendResponse(safeSocket, 404, "text/plain", "Image not found");
             return;
         }
         const QByteArray data = reply->readAll();
         const QByteArray cType = reply->rawHeader("Content-Type");
         QHash<QByteArray, QByteArray> headers;
         headers["Cache-Control"] = "public, max-age=86400";
-        sendResponse(socket, 200, cType.isEmpty() ? "image/jpeg" : cType, data, headers);
+        sendResponse(safeSocket, 200, cType.isEmpty() ? "image/jpeg" : cType, data, headers);
     });
 }
 
@@ -933,11 +968,16 @@ void WebRemoteServer::broadcastQueue()
 void WebRemoteServer::sendResponse(QSslSocket *socket, int statusCode, const QByteArray &contentType,
                                    const QByteArray &body, const QHash<QByteArray, QByteArray> &extraHeaders)
 {
+    if (!socket || !socket->isOpen())
+        return;
+
     QByteArray statusText = "OK";
     if (statusCode == 204) statusText = "No Content";
     else if (statusCode == 400) statusText = "Bad Request";
     else if (statusCode == 401) statusText = "Unauthorized";
+    else if (statusCode == 403) statusText = "Forbidden";
     else if (statusCode == 404) statusText = "Not Found";
+    else if (statusCode == 429) statusText = "Too Many Requests";
     else if (statusCode == 500) statusText = "Internal Server Error";
 
     QByteArray res = "HTTP/1.1 " + QByteArray::number(statusCode) + " " + statusText + "\r\n" +

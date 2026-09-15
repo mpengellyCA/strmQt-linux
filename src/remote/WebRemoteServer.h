@@ -114,6 +114,8 @@ private:
     QList<QPointer<QSslSocket>> m_sseClients;
     QSet<QString> m_authorizedTokens;
     QNetworkAccessManager *m_imageNam = nullptr;
+    int m_failedPinAttempts = 0;
+    qint64 m_lastFailedPinTimeMs = 0;
 };
 
 } // namespace strmqt

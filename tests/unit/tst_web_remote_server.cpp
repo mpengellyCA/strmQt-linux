@@ -30,6 +30,7 @@ private slots:
     void servesStaticHtml();
     void apiStatusReturnsValidJson();
     void pinRequirementCheck();
+    void pinAuthAndRateLimiting();
     void keyNavigationSignal();
 
 private:
@@ -46,7 +47,7 @@ void WebRemoteServerTest::initTestCase()
     QVERIFY(m_dir.isValid());
     m_settings = new Settings(m_dir.filePath(QStringLiteral("test.ini")), this);
     m_settings->setWebRemotePort(m_port);
-    m_settings->setWebRemoteBindMode(QStringLiteral("loopback"));
+    m_settings->setWebRemoteBindMode(QStringLiteral("localhost"));
     m_settings->setWebRemoteRequirePin(false);
 
     m_server = new WebRemoteServer(m_settings, nullptr, nullptr, nullptr, nullptr, nullptr, this);
@@ -139,6 +140,49 @@ void WebRemoteServerTest::pinRequirementCheck()
     QVERIFY(doc.isObject());
     QCOMPARE(doc.object().value(QStringLiteral("required")).toBool(), false);
     reply->deleteLater();
+}
+
+void WebRemoteServerTest::pinAuthAndRateLimiting()
+{
+    m_settings->setWebRemotePin(QStringLiteral("0000"));
+    QCOMPARE(m_settings->webRemotePin(), QStringLiteral("0000"));
+
+    QSslConfiguration sslConf = QSslConfiguration::defaultConfiguration();
+    sslConf.setCaCertificates({m_cert});
+    sslConf.setPeerVerifyMode(QSslSocket::VerifyNone);
+
+    auto sendPin = [&](const QString &pin) -> int {
+        QNetworkRequest req(QUrl(QStringLiteral("https://127.0.0.1:%1/api/auth/pin").arg(m_port)));
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        req.setSslConfiguration(sslConf);
+
+        QJsonObject body;
+        body.insert(QStringLiteral("pin"), pin);
+        QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+        reply->ignoreSslErrors();
+        QSignalSpy spy(reply, &QNetworkReply::finished);
+        if (!spy.wait(5000)) {
+            reply->deleteLater();
+            return -1;
+        }
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        reply->deleteLater();
+        return statusCode;
+    };
+
+    // 5 failed attempts return 403 Forbidden
+    for (int i = 0; i < 5; ++i) {
+        QCOMPARE(sendPin(QStringLiteral("1234")), 403);
+    }
+
+    // 6th attempt immediately returns 429 Too Many Requests
+    QCOMPARE(sendPin(QStringLiteral("1234")), 429);
+
+    // Wait 2100 ms for the rate limit window to expire
+    QTest::qWait(2100);
+
+    // Valid PIN "0000" succeeds with 200 OK
+    QCOMPARE(sendPin(QStringLiteral("0000")), 200);
 }
 
 void WebRemoteServerTest::keyNavigationSignal()

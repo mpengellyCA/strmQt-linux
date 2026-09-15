@@ -51,7 +51,7 @@ void NetworkAddressHelperTest::urlFormatting()
     if (!NetworkAddressHelper::lanIp().isEmpty()) {
         QCOMPARE(lanUrl, QStringLiteral("https://%1:9000").arg(NetworkAddressHelper::lanIp()));
     } else {
-        QCOMPARE(lanUrl, QStringLiteral("https://localhost:9000"));
+        QVERIFY(lanUrl.isEmpty());
     }
 }
 

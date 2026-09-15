@@ -15,6 +15,9 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 namespace strmqt {
 
 QString TlsCertificateGenerator::defaultCertificatePath()
@@ -162,10 +165,18 @@ bool TlsCertificateGenerator::ensureCertificate(const QStringList &sanAddresses,
     PEM_write_bio_X509(bioCert, x509);
     BIO_free_all(bioCert);
 
-    // Write private key
-    BIO *bioKey = BIO_new_file(kPath.toLocal8Bit().constData(), "w");
-    if (!bioKey) {
+    // Write private key with immediate 0600 permissions to avoid a world-readable window
+    const int fd = ::open(kPath.toLocal8Bit().constData(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
         qCWarning(logApp) << "tls: failed to open key file for writing:" << kPath;
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return false;
+    }
+    BIO *bioKey = BIO_new_fd(fd, BIO_CLOSE);
+    if (!bioKey) {
+        ::close(fd);
+        qCWarning(logApp) << "tls: failed to allocate bio for key file:" << kPath;
         X509_free(x509);
         EVP_PKEY_free(pkey);
         return false;
@@ -176,7 +187,7 @@ bool TlsCertificateGenerator::ensureCertificate(const QStringList &sanAddresses,
     X509_free(x509);
     EVP_PKEY_free(pkey);
 
-    // Strict 0600 permissions on the private key file
+    // Ensure permissions explicitly in Qt as well
     QFile::setPermissions(kPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 
     qCInfo(logApp) << "tls: generated new self-signed certificate at" << cPath;

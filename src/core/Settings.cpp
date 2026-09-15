@@ -863,13 +863,15 @@ void Settings::setWebRemoteRequirePin(bool required)
 
 QString Settings::webRemotePin() const
 {
-    QString pin = m_store.value(kWebRemotePinKey).toString();
-    if (pin.length() != 4 || !pin.toInt()) {
-        const QString generated = QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
-        const_cast<Settings *>(this)->setWebRemotePin(generated);
-        return generated;
-    }
-    return pin;
+    const QString pin = m_store.value(kWebRemotePinKey).toString();
+    bool ok = false;
+    pin.toInt(&ok);
+    if (pin.length() == 4 && ok && pin.toInt() >= 0)
+        return pin;
+
+    const QString generated = QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
+    const_cast<Settings *>(this)->m_store.setValue(kWebRemotePinKey, generated);
+    return generated;
 }
 
 void Settings::setWebRemotePin(const QString &pin)
