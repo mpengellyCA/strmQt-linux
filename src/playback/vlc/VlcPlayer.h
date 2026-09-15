@@ -103,10 +103,12 @@ public:
         // integer token prevents a delayed display from an earlier configure()
         // from publishing the new load's back buffer merely because the member
         // QImage occupies the same address.
-        return reinterpret_cast<void *>(m_nextToken);
+        void *picture = reinterpret_cast<void *>(m_nextToken);
+        m_mutex.unlock();
+        return picture;
     }
 
-    void unlock() { m_mutex.unlock(); }
+    void unlock() {}
 
     bool display(void *picture)
     {

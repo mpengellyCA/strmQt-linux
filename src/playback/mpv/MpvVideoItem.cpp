@@ -71,11 +71,17 @@ public:
 
     ~MpvRenderer() override
     {
-        m_window.store(nullptr, std::memory_order_release);
+        QQuickWindow *win = m_window.load(std::memory_order_acquire);
         if (m_context) {
+            if (win)
+                win->beginExternalCommands();
             mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
             mpv_render_context_free(m_context);
+            if (win)
+                win->endExternalCommands();
+            m_context = nullptr;
         }
+        m_window.store(nullptr, std::memory_order_release);
     }
 
     void synchronize(QQuickFramebufferObject *item) override
@@ -89,8 +95,13 @@ public:
         if (handle == m_handle)
             return;
         if (m_context) {
+            QQuickWindow *win = m_window.load(std::memory_order_acquire);
+            if (win)
+                win->beginExternalCommands();
             mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
             mpv_render_context_free(m_context);
+            if (win)
+                win->endExternalCommands();
             m_context = nullptr;
         }
         m_handle = handle;
