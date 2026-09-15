@@ -131,7 +131,15 @@ void SessionController::setProfilePickerAtStart(bool enabled)
 
 QString SessionController::profileAvatarUrl(const QString &serverUrl, const QString &userId) const
 {
-    return emby::EmbyClient::userImageUrl(QUrl(serverUrl), userId).toString();
+    if (qEnvironmentVariableIsSet("STRMQT_SELFTEST"))
+        return {};
+    if (serverUrl.trimmed().isEmpty() || userId.trimmed().isEmpty())
+        return {};
+    const QUrl parsed(serverUrl);
+    if (!parsed.isValid() ||
+        (parsed.scheme() != QLatin1String("http") && parsed.scheme() != QLatin1String("https")))
+        return {};
+    return emby::EmbyClient::userImageUrl(parsed, userId).toString();
 }
 
 void SessionController::setPlaybackEngine(const QString &engine)

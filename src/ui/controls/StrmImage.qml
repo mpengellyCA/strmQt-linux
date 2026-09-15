@@ -18,6 +18,7 @@ Image {
     property real readyOpacity: 1.0
     property int fadeDuration: Theme.animNormalMs
     property int fadeEasing: Theme.easeStandard
+    property bool suppressWarnings: false
 
     fillMode: Image.PreserveAspectCrop
     asynchronous: true
@@ -37,7 +38,7 @@ Image {
     onStatusChanged: {
         // A dead URL must be loud, the way StrmIcon makes a typo'd name loud:
         // silently blank artwork is how a broken provider path ships.
-        if (img.status === Image.Error)
+        if (!suppressWarnings && img.status === Image.Error)
             console.warn("StrmImage: failed to load " + img.source);
     }
 }

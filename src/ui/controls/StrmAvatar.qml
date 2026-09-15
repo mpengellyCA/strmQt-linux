@@ -76,5 +76,6 @@ Rectangle {
     StrmImage {
         anchors.fill: parent
         source: avatar.imageUrl
+        suppressWarnings: true
     }
 }
