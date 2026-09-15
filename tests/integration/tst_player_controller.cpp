@@ -541,6 +541,7 @@ void PlayerControllerTest::seekAndPauseReportProgress()
     m_controller->seekRelative(30'000);
     QCOMPARE(m_backend->seeks.size(), 1);
     QCOMPARE(m_backend->seeks[0], Q_INT64_C(30000));
+    m_backend->simulatePosition(30'000);
     QTRY_VERIFY(
         !m_mock
              ->lastRequestFor(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Progress"))
