@@ -100,7 +100,7 @@ QString WebRemoteController::qrCodeSvg() const
     const QString target = activeUrl();
     if (target.isEmpty())
         return {};
-    return QrCodeGenerator::toSvg(target, 2, QStringLiteral("#F0A02A"), QStringLiteral("#0C0B0A"));
+    return QrCodeGenerator::toSvg(target, 4, QStringLiteral("#0C0B0A"), QStringLiteral("#FFFFFF"));
 }
 
 QString WebRemoteController::activeQrDataUri() const

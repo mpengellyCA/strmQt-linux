@@ -746,19 +746,19 @@ void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId, 
         return;
     }
 
-    const QUrl imageUrl = m_client->baseUrl().resolved(
-        QUrl(QStringLiteral("/Items/%1/Images/%2").arg(itemId, imageType)));
+    const QUrl imageUrl = m_client->imageUrl(itemId, imageType, 400);
 
     QNetworkRequest req(imageUrl);
     req.setRawHeader("X-Emby-Token", m_client->accessToken().toUtf8());
 
     QPointer<QSslSocket> safeSocket(socket);
     QNetworkReply *reply = m_imageNam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, safeSocket, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, safeSocket, reply, imageUrl] {
         reply->deleteLater();
         if (!safeSocket || !safeSocket->isOpen())
             return;
         if (reply->error() != QNetworkReply::NoError) {
+            qCWarning(logApp) << "webremote: image fetch failed for" << imageUrl << reply->errorString();
             sendResponse(safeSocket, 404, "text/plain", "Image not found");
             return;
         }

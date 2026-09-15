@@ -76,7 +76,11 @@
 
   function imageUrl(itemId, imageType = 'Primary') {
     if (!itemId) return '';
-    return `/api/image/${encodeURIComponent(itemId)}/${imageType}`;
+    let url = `/api/image/${encodeURIComponent(itemId)}/${imageType}`;
+    if (state.token) {
+      url += `?token=${encodeURIComponent(state.token)}`;
+    }
+    return url;
   }
 
   // ── UI Updates ────────────────────────────────────────────────────────────
@@ -800,6 +804,14 @@
         hidePinOverlay();
         connectEvents();
         fetchStatus();
+        if (state.currentView === 'view-browse') {
+          if (state.activeLibraryId === 'home') {
+            loadHome();
+            loadLibraries();
+          } else {
+            loadLibraryItems(state.activeLibraryId);
+          }
+        }
       } else {
         err.style.display = 'block';
       }

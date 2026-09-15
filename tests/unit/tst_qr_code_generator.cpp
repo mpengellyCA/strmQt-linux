@@ -23,6 +23,8 @@ void QrCodeGeneratorTest::generateValidSvg()
     QVERIFY(svg.endsWith(QStringLiteral("</svg>\n")));
     QVERIFY(svg.contains(QStringLiteral("viewBox=")));
     QVERIFY(svg.contains(QStringLiteral("<path fill=")));
+    QVERIFY(svg.contains(QStringLiteral("fill=\"#FFFFFF\"")));
+    QVERIFY(svg.contains(QStringLiteral("fill=\"#0C0B0A\"")));
 }
 
 void QrCodeGeneratorTest::customColorsAreReflectedInSvg()

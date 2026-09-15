@@ -14,8 +14,8 @@ public:
 
     // Returns an SVG string of the QR code with given content and margin.
     static QString toSvg(const QString &text, int border = 4,
-                        const QString &foreground = QStringLiteral("#F0A02A"),
-                        const QString &background = QStringLiteral("#0C0B0A"));
+                        const QString &foreground = QStringLiteral("#0C0B0A"),
+                        const QString &background = QStringLiteral("#FFFFFF"));
 
     // Generates a boolean 2D grid of modules (true = dark, false = light).
     static std::vector<std::vector<bool>> encodeText(const QString &text, Ecc ecc = Ecc::Medium);

@@ -1302,10 +1302,10 @@ FocusScope {
                         Rectangle {
                             width: Theme.scale(180)
                             height: Theme.scale(180)
-                            color: "#0C0B0A"
+                            color: "#FFFFFF"
                             radius: Theme.radiusCardValue
                             border.width: 1
-                            border.color: Theme.accentColor
+                            border.color: Theme.hairline
 
                             Image {
                                 anchors.centerIn: parent
