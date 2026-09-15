@@ -62,6 +62,16 @@
   </requires>
 
   <releases>
+    <release version="0.5.1" date="2026-09-15" type="development">
+      <description>
+        <p>
+          Fixes Web Remote poster asset loading on mobile devices by passing
+          authentication tokens on image requests and preserving server reverse-proxy
+          subpaths. Improves QR code camera readability by switching to high-contrast
+          black-on-white rendering with a standard quiet zone and white badge card.
+        </p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-15" type="development">
       <description>
         <p>
