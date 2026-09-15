@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import StrmQt
 
 // TopBar — the persistent application header (ARCHITECTURE.md).
@@ -47,9 +48,9 @@ Item {
 
     readonly property bool childFocused: backButton.activeFocus || forwardButton.activeFocus
                                          || field.activeFocus || settingsButton.activeFocus
-                                         || avatar.activeFocus
+                                         || remoteButton.activeFocus || avatar.activeFocus
     readonly property bool shown: !topBar.autoHide || hover.hovered || topBar.childFocused
-                                  || userMenu.opened || dwell.running
+                                  || userMenu.opened || remotePopup.opened || dwell.running
 
     // Input.actions is the notifying property that makes the invokable lookups
     // below live: rebind a key and every tooltip here updates.
@@ -76,7 +77,7 @@ Item {
     // into it anyway. It keeps Tab, the pointer, and the `/` that opens the
     // search page proper.
     function focusFirst(): bool {
-        const order = [backButton, forwardButton, settingsButton, avatar];
+        const order = [backButton, forwardButton, settingsButton, remoteButton, avatar];
         for (let i = 0; i < order.length; ++i) {
             if (order[i].enabled && order[i].visible) {
                 order[i].forceActiveFocus(Qt.BacktabFocusReason);
@@ -231,6 +232,24 @@ Item {
                 onClicked: topBar.settingsRequested()
 
                 KeyNavigation.left: forwardButton
+                KeyNavigation.right: remoteButton
+            }
+
+            StrmIconButton {
+                id: remoteButton
+
+                anchors.verticalCenter: parent.verticalCenter
+                iconName: "cast"
+                tooltip: qsTr("Web Remote")
+                shortcut: ""
+                onClicked: {
+                    if (remotePopup.opened)
+                        remotePopup.close();
+                    else
+                        remotePopup.open();
+                }
+
+                KeyNavigation.left: settingsButton
                 KeyNavigation.right: avatar
             }
 
@@ -327,7 +346,7 @@ Item {
                 Keys.onEnterPressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
                 Keys.onSpacePressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
 
-                KeyNavigation.left: settingsButton
+                KeyNavigation.left: remoteButton
             }
         }
     }
@@ -346,6 +365,118 @@ Item {
                 topBar.settingsRequested();
             else if (index === 2)
                 topBar.signOutRequested();
+        }
+    }
+
+    Popup {
+        id: remotePopup
+
+        parent: topBar
+        x: Math.max(Theme.spacingTight, topBar.width - remotePopup.width - Theme.spacingValue)
+        y: topBar.height + Theme.spacingTight
+        width: Theme.scale(260)
+        implicitHeight: popupColumn.implicitHeight + Theme.spacingValue * 2
+
+        padding: Theme.spacingValue
+        modal: false
+        dim: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                     | Popup.CloseOnReleaseOutsideParent
+
+        background: Rectangle {
+            color: Theme.surfaceOverlay
+            radius: Theme.radiusPanel
+            border.width: 1
+            border.color: Theme.hairline
+        }
+
+        contentItem: Column {
+            id: popupColumn
+            spacing: Theme.spacingTight
+
+            Row {
+                width: parent.width
+                spacing: Theme.spacingTight
+
+                StrmIcon {
+                    name: "cast"
+                    size: Theme.iconSize
+                    color: Theme.accentColor
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                    text: qsTr("Web Remote")
+                    color: Theme.textPrimaryColor
+                    font.family: Theme.fontDisplay
+                    font.pixelSize: Theme.fontBodySize
+                    font.weight: Font.DemiBold
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            Rectangle {
+                width: Theme.scale(180)
+                height: Theme.scale(180)
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: "#0C0B0A"
+                radius: Theme.radiusCardValue
+                border.width: 1
+                border.color: Theme.hairline
+
+                Image {
+                    anchors.centerIn: parent
+                    width: Theme.scale(164)
+                    height: Theme.scale(164)
+                    fillMode: Image.PreserveAspectFit
+                    source: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeQrDataUri : ""
+                    smooth: false
+                }
+            }
+
+            Text {
+                width: parent.width
+                text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
+                color: Theme.accentColor
+                font.family: Theme.fontMono
+                font.pixelSize: Theme.fontSmall
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WrapAnywhere
+            }
+
+            Text {
+                width: parent.width
+                visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
+                text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
+                color: Theme.textSecondaryColor
+                font.family: Theme.fontMono
+                font.pixelSize: Theme.fontSmall
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Theme.spacingTight
+
+                StrmButton {
+                    text: qsTr("Copy URL")
+                    iconName: "external-link"
+                    onClicked: {
+                        if (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl)
+                            WebRemoteCtl.copyUrlToClipboard(WebRemoteCtl.activeUrl);
+                    }
+                }
+
+                StrmButton {
+                    text: qsTr("Settings")
+                    iconName: "settings"
+                    onClicked: {
+                        remotePopup.close();
+                        topBar.settingsRequested();
+                    }
+                }
+            }
         }
     }
 }

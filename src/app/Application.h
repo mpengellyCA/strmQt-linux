@@ -22,6 +22,8 @@ class InputMap;
 class MusicController;
 class PlaylistController;
 class RemoteControlService;
+class WebRemoteServer;
+class WebRemoteController;
 class EmbyImageFetcher;
 class CoverTintService;
 class PlayerBackend;
@@ -63,6 +65,8 @@ public:
     PlaylistController *playlists() const { return m_playlists; }
     MusicController *music() const { return m_music; }
     LiveUpdateService *live() const { return m_live; }
+    WebRemoteServer *webRemoteServer() const { return m_webRemoteServer; }
+    WebRemoteController *webRemote() const { return m_webRemote; }
     QString interactionContext() const { return m_interactionContext; }
     int wheelStepPx() const { return m_wheelStepPx; }
     void setInteractionContext(const QString &context);
@@ -100,6 +104,8 @@ private:
 #endif
     LiveUpdateService *m_live = nullptr;
     RemoteControlService *m_remote = nullptr;
+    WebRemoteServer *m_webRemoteServer = nullptr;
+    WebRemoteController *m_webRemote = nullptr;
     PlaylistController *m_playlists = nullptr;
     MusicController *m_music = nullptr;
     PowerInhibit *m_powerInhibit = nullptr;

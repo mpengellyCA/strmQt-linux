@@ -14,6 +14,11 @@
 #include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/RemoteControlService.h"
+#include "remote/WebRemoteServer.h"
+#include "remote/WebRemoteController.h"
+#include <QClipboard>
+#include <QKeyEvent>
+#include <QWindow>
 #include "controllers/SearchController.h"
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
@@ -185,6 +190,56 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // this session. Constructed after m_live because it listens on that socket.
     m_remote = new RemoteControlService(m_client, m_live, m_player, m_actions, this);
 
+    m_webRemoteServer = new WebRemoteServer(m_settings, m_player, m_actions, m_home, m_session, m_client, this);
+    m_webRemote = new WebRemoteController(m_settings, m_webRemoteServer, this);
+
+    connect(m_webRemote, &WebRemoteController::copyToClipboardRequested, this, [](const QString &text) {
+        if (QClipboard *cb = QGuiApplication::clipboard())
+            cb->setText(text);
+    });
+
+    connect(m_webRemoteServer, &WebRemoteServer::keyNavigationRequested, this, [](const QString &key) {
+        Qt::Key qtKey = Qt::Key_unknown;
+        if (key == QLatin1String("up")) qtKey = Qt::Key_Up;
+        else if (key == QLatin1String("down")) qtKey = Qt::Key_Down;
+        else if (key == QLatin1String("left")) qtKey = Qt::Key_Left;
+        else if (key == QLatin1String("right")) qtKey = Qt::Key_Right;
+        else if (key == QLatin1String("select")) qtKey = Qt::Key_Return;
+        else if (key == QLatin1String("back")) qtKey = Qt::Key_Back;
+
+        if (qtKey != Qt::Key_unknown) {
+            if (QWindow *w = QGuiApplication::focusWindow()) {
+                QKeyEvent press(QEvent::KeyPress, qtKey, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &press);
+                QKeyEvent release(QEvent::KeyRelease, qtKey, Qt::NoModifier);
+                QCoreApplication::sendEvent(w, &release);
+            }
+        }
+    });
+
+    connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
+        if (m_settings->webRemoteEnabled())
+            m_webRemoteServer->start();
+        else
+            m_webRemoteServer->stop();
+    });
+    connect(m_settings, &Settings::webRemotePortChanged, this, [this] {
+        if (m_webRemoteServer->isRunning()) {
+            m_webRemoteServer->stop();
+            m_webRemoteServer->start();
+        }
+    });
+    connect(m_settings, &Settings::webRemoteBindModeChanged, this, [this] {
+        if (m_webRemoteServer->isRunning()) {
+            m_webRemoteServer->stop();
+            m_webRemoteServer->start();
+        }
+    });
+
+    if (m_settings->webRemoteEnabled()) {
+        m_webRemoteServer->start();
+    }
+
     m_powerInhibit = new PowerInhibit(this);
     m_mpris = new MprisPlayer(this);
     m_mpris->registerOnBus();
@@ -264,6 +319,9 @@ void Application::shutdown()
     if (m_shuttingDown)
         return;
     m_shuttingDown = true;
+
+    if (m_webRemoteServer)
+        m_webRemoteServer->stop();
 
     m_live->stop();
     const QFuture<Result<bool>> stoppedReport = m_player->shutdownForApplicationExit();

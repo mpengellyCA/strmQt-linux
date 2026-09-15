@@ -82,6 +82,18 @@ class Settings : public QObject
     // 0 = bottom edge, 100 = top. mpv's own sub-pos scale.
     Q_PROPERTY(int subtitlePosition READ subtitlePosition WRITE setSubtitlePosition NOTIFY
                    subtitleStyleChanged)
+    // ── Web Remote (ARCHITECTURE.md) ─────────────────────────────────────────
+    Q_PROPERTY(bool webRemoteEnabled READ webRemoteEnabled WRITE setWebRemoteEnabled NOTIFY
+                   webRemoteEnabledChanged)
+    Q_PROPERTY(int webRemotePort READ webRemotePort WRITE setWebRemotePort NOTIFY
+                   webRemotePortChanged)
+    // "all" | "tailscale" | "lan" | "localhost"
+    Q_PROPERTY(QString webRemoteBindMode READ webRemoteBindMode WRITE setWebRemoteBindMode NOTIFY
+                   webRemoteBindModeChanged)
+    Q_PROPERTY(bool webRemoteRequirePin READ webRemoteRequirePin WRITE setWebRemoteRequirePin NOTIFY
+                   webRemoteRequirePinChanged)
+    Q_PROPERTY(QString webRemotePin READ webRemotePin WRITE setWebRemotePin NOTIFY
+                   webRemotePinChanged)
 
 public:
     explicit Settings(QObject *parent = nullptr);
@@ -165,6 +177,18 @@ public:
     void setSubtitleBackground(int percent);
     int subtitlePosition() const;
     void setSubtitlePosition(int position);
+
+    bool webRemoteEnabled() const;
+    void setWebRemoteEnabled(bool enabled);
+    int webRemotePort() const;
+    void setWebRemotePort(int port);
+    QString webRemoteBindMode() const;
+    void setWebRemoteBindMode(const QString &mode);
+    bool webRemoteRequirePin() const;
+    void setWebRemoteRequirePin(bool required);
+    QString webRemotePin() const;
+    void setWebRemotePin(const QString &pin);
+    static QStringList webRemoteBindModes();
 
     // Per-library view preferences (ARCHITECTURE.md). Keyed by the library's
     // scope key rather than its title, so renaming a library on the server or
@@ -266,6 +290,11 @@ signals:
     void mutedChanged();
     void liveUpdatesEnabledChanged();
     void pollIntervalSecondsChanged();
+    void webRemoteEnabledChanged();
+    void webRemotePortChanged();
+    void webRemoteBindModeChanged();
+    void webRemoteRequirePinChanged();
+    void webRemotePinChanged();
 
 private:
     struct PendingLastPlayback

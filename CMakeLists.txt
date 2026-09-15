@@ -17,6 +17,8 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     Core DBus Gui Network OpenGL Quick QuickControls2 Test WebSockets)
 qt_standard_project_setup(REQUIRES 6.8)
 
+find_package(OpenSSL REQUIRED)
+
 add_compile_options(-Wall -Wextra)
 if(STRMQT_WERROR)
     add_compile_options(-Werror)

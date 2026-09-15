@@ -185,6 +185,18 @@ strmqt_add_test(tst_live_updates
 )
 target_include_directories(tst_live_updates PRIVATE mocks)
 
+strmqt_add_test(tst_network_address_helper unit/tst_network_address_helper.cpp)
+target_link_libraries(tst_network_address_helper PRIVATE strmqt_remote)
+
+strmqt_add_test(tst_tls_certificate_generator unit/tst_tls_certificate_generator.cpp)
+target_link_libraries(tst_tls_certificate_generator PRIVATE strmqt_remote)
+
+strmqt_add_test(tst_qr_code_generator unit/tst_qr_code_generator.cpp)
+target_link_libraries(tst_qr_code_generator PRIVATE strmqt_remote)
+
+strmqt_add_test(tst_web_remote_server unit/tst_web_remote_server.cpp)
+target_link_libraries(tst_web_remote_server PRIVATE strmqt_remote)
+
 # Real-libvlc lifecycle coverage for SOL-12: VlcPlayer.cpp is compiled into the
 # executable rather than a library, so the test builds it the same way
 # tst_mpv_video_item builds the mpv sources. Registered only when libvlc was

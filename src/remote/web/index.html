@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="StrmQt">
+  <meta name="theme-color" content="#0C0B0A">
+  <title>StrmQt Remote</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Header -->
+    <header class="top-header">
+      <div class="brand">
+        <span class="brand-name">STRMQT</span>
+        <span id="conn-badge" class="status-badge live" title="Connection status">
+          <span class="status-dot"></span><span id="conn-text">LIVE</span>
+        </span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-header-osd" class="btn-icon" title="Toggle TV OSD">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z M2 4v16h20V4H2z M8 10h8v4H8z"/></svg>
+        </button>
+        <button id="btn-header-queue" class="btn-icon" title="Queue">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Views -->
+    <main id="main-content">
+      <!-- 1. Remote Controller View -->
+      <section id="view-remote" class="view active">
+        <div class="remote-container">
+          <!-- Quick Nav Row -->
+          <div class="remote-nav-row">
+            <button class="nav-btn" data-nav="home" title="Home">
+              <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+              <span>Home</span>
+            </button>
+            <button class="nav-btn" data-nav="search" title="Search">
+              <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              <span>Search</span>
+            </button>
+            <button class="nav-btn" data-nav="back" title="Back">
+              <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+              <span>Back</span>
+            </button>
+            <button class="nav-btn" data-nav="settings" title="Settings">
+              <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+              <span>Settings</span>
+            </button>
+          </div>
+
+          <!-- D-Pad Directional Controller -->
+          <div class="dpad-wrapper">
+            <div class="dpad">
+              <button class="dpad-btn dpad-up" data-key="up" aria-label="Up">
+                <svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>
+              </button>
+              <button class="dpad-btn dpad-left" data-key="left" aria-label="Left">
+                <svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5z"/></svg>
+              </button>
+              <button class="dpad-btn dpad-center" data-key="select" aria-label="Select / OK">
+                <span>OK</span>
+              </button>
+              <button class="dpad-btn dpad-right" data-key="right" aria-label="Right">
+                <svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5z"/></svg>
+              </button>
+              <button class="dpad-btn dpad-down" data-key="down" aria-label="Down">
+                <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- TV Transport Controls -->
+          <div class="transport-card">
+            <div class="transport-row">
+              <button id="btn-prev" class="btn-transport" title="Previous">
+                <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+              </button>
+              <button id="btn-skip-back" class="btn-transport" title="Skip -10s">
+                <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor">10</text></svg>
+              </button>
+              <button id="btn-play-pause" class="btn-transport btn-play-large" title="Play / Pause">
+                <svg id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <svg id="icon-pause" viewBox="0 0 24 24" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              </button>
+              <button id="btn-skip-fwd" class="btn-transport" title="Skip +10s">
+                <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/><text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor">10</text></svg>
+              </button>
+              <button id="btn-next" class="btn-transport" title="Next">
+                <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+              </button>
+            </div>
+
+            <!-- Volume Slider -->
+            <div class="volume-slider-row">
+              <button id="btn-mute" class="btn-icon" title="Mute">
+                <svg id="icon-vol-high" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                <svg id="icon-vol-muted" viewBox="0 0 24 24" style="display:none;"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+              </button>
+              <input id="volume-slider" type="range" min="0" max="130" value="100" class="slider volume-range">
+              <span id="volume-val" class="mono-label">100%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Full Now Playing View -->
+      <section id="view-now-playing" class="view">
+        <div class="now-playing-container">
+          <div class="art-backdrop-container">
+            <div id="np-art-backdrop" class="art-backdrop"></div>
+            <div class="art-frame">
+              <img id="np-poster" src="" alt="Poster" class="np-poster-img" style="display:none;">
+              <div id="np-poster-placeholder" class="poster-placeholder">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="np-metadata">
+            <h2 id="np-title" class="np-title">Nothing Playing</h2>
+            <div id="np-subtitle" class="np-subtitle">Select media from library</div>
+            <div id="np-badges" class="np-badges-row">
+              <span id="np-badge-type" class="badge">READY</span>
+              <span id="np-badge-method" class="badge badge-accent" style="display:none;">DIRECT</span>
+            </div>
+          </div>
+
+          <!-- Progress Scrubber -->
+          <div class="np-scrubber-area">
+            <div class="scrubber-bar-container">
+              <input id="np-scrubber" type="range" min="0" max="1000" value="0" class="slider scrub-range">
+            </div>
+            <div class="np-times-row">
+              <span id="np-time-current" class="mono-label">0:00</span>
+              <span id="np-time-total" class="mono-label">0:00</span>
+            </div>
+          </div>
+
+          <!-- Stream Selection Pickers -->
+          <div class="stream-selectors-row">
+            <button id="btn-audio-stream" class="btn-stream" title="Select Audio Stream">
+              <svg viewBox="0 0 24 24"><path d="M12 3v9.28a4.39 4.39 0 0 0-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></svg>
+              <span id="lbl-audio-stream">Audio</span>
+            </button>
+            <button id="btn-subtitle-stream" class="btn-stream" title="Select Subtitle">
+              <svg viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
+              <span id="lbl-subtitle-stream">Subtitles</span>
+            </button>
+          </div>
+
+          <!-- Transport Row Duplicate for Now Playing -->
+          <div class="transport-row np-transport-row">
+            <button class="btn-transport" data-action="prev" title="Previous">
+              <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button class="btn-transport" data-action="skip-back" title="-10s">
+              <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor">10</text></svg>
+            </button>
+            <button class="btn-transport btn-play-large" data-action="toggle-play" title="Play / Pause">
+              <svg class="icon-np-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <svg class="icon-np-pause" viewBox="0 0 24 24" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+            <button class="btn-transport" data-action="skip-fwd" title="+10s">
+              <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/><text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor">10</text></svg>
+            </button>
+            <button class="btn-transport" data-action="next" title="Next">
+              <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Browse Library View -->
+      <section id="view-browse" class="view">
+        <div class="browse-container">
+          <!-- Library Tabs -->
+          <div class="shelf-header">
+            <h2 class="shelf-title">Libraries</h2>
+          </div>
+          <div id="libraries-pills" class="pills-row">
+            <button class="pill active" data-lib="home">Home</button>
+          </div>
+
+          <!-- Dynamic Rails / Shelves -->
+          <div id="browse-shelves" class="shelves-wrapper">
+            <div id="shelf-resume" class="shelf-section" style="display:none;">
+              <h3 class="shelf-subtitle">Continue Watching</h3>
+              <div id="shelf-resume-cards" class="cards-carousel"></div>
+            </div>
+
+            <div id="shelf-nextup" class="shelf-section" style="display:none;">
+              <h3 class="shelf-subtitle">Next Up</h3>
+              <div id="shelf-nextup-cards" class="cards-carousel"></div>
+            </div>
+
+            <div id="shelf-favorites" class="shelf-section" style="display:none;">
+              <h3 class="shelf-subtitle">Favorites</h3>
+              <div id="shelf-favorites-cards" class="cards-carousel"></div>
+            </div>
+
+            <div id="library-grid-section" class="shelf-section" style="display:none;">
+              <h3 id="library-grid-title" class="shelf-subtitle">Items</h3>
+              <div id="library-items-grid" class="items-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Search View -->
+      <section id="view-search" class="view">
+        <div class="search-container">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input id="search-input" type="search" placeholder="Search movies, shows, music..." autocomplete="off">
+            <button id="btn-clear-search" class="btn-icon" style="display:none;">
+              <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+
+          <div id="search-results-wrapper" class="search-results-list">
+            <div id="search-empty-state" class="empty-state">
+              <span>Type to search library...</span>
+            </div>
+            <div id="search-items-grid" class="items-grid" style="display:none;"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Mini-Player Bar (shown when browsing/searching while playing) -->
+    <div id="mini-player" class="mini-player" style="display:none;">
+      <div class="mini-progress-line">
+        <div id="mini-progress-fill" class="mini-progress-fill"></div>
+      </div>
+      <div class="mini-player-content" id="mini-player-tap">
+        <div class="mini-art">
+          <img id="mini-art-img" src="" alt="Cover" style="display:none;">
+          <div id="mini-art-placeholder" class="poster-placeholder tiny">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+          </div>
+        </div>
+        <div class="mini-info">
+          <div id="mini-title" class="mini-title">Title</div>
+          <div id="mini-subtitle" class="mini-subtitle">Subtitle</div>
+        </div>
+        <button id="mini-btn-play" class="btn-icon btn-mini-play" title="Play/Pause">
+          <svg id="mini-icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="mini-icon-pause" viewBox="0 0 24 24" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="bottom-nav">
+      <button class="nav-tab active" data-view="view-remote">
+        <svg viewBox="0 0 24 24"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3v2zm4.5 2c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4-3c-.83 0-1.5-.67-1.5-1.5S18.67 9 19.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+        <span>Remote</span>
+      </button>
+      <button class="nav-tab" data-view="view-now-playing">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+        <span>Playing</span>
+      </button>
+      <button class="nav-tab" data-view="view-browse">
+        <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+        <span>Browse</span>
+      </button>
+      <button class="nav-tab" data-view="view-search">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <span>Search</span>
+      </button>
+    </nav>
+
+    <!-- Bottom Sheet Modal: Item Details -->
+    <div id="modal-details" class="bottom-sheet" style="display:none;">
+      <div class="sheet-backdrop" id="modal-details-backdrop"></div>
+      <div class="sheet-content">
+        <div class="sheet-handle"></div>
+        <div class="sheet-body">
+          <div class="details-hero">
+            <img id="detail-poster" src="" alt="Poster" class="details-poster-img">
+            <div class="details-hero-info">
+              <h3 id="detail-title" class="detail-title">Title</h3>
+              <div id="detail-meta" class="detail-meta">2024 • 2h 15m</div>
+              <div id="detail-genres" class="detail-genres">Action, Sci-Fi</div>
+            </div>
+          </div>
+          <p id="detail-overview" class="detail-overview">Overview text...</p>
+          <div class="detail-actions-row">
+            <button id="btn-play-now" class="btn-primary-action">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <span>Play on StrmQt</span>
+            </button>
+            <button id="btn-play-next" class="btn-secondary-action">Play Next</button>
+            <button id="btn-add-queue" class="btn-secondary-action">Queue</button>
+          </div>
+          <!-- Episodes List for Series -->
+          <div id="detail-episodes-section" style="display:none;">
+            <h4 class="sheet-section-title">Episodes</h4>
+            <div id="detail-episodes-list" class="episodes-list"></div>
+          </div>
+          <!-- Tracks List for Album -->
+          <div id="detail-tracks-section" style="display:none;">
+            <h4 class="sheet-section-title">Tracks</h4>
+            <div id="detail-tracks-list" class="tracks-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Sheet Modal: Stream Track Picker (Audio / Subtitles) -->
+    <div id="modal-picker" class="bottom-sheet" style="display:none;">
+      <div class="sheet-backdrop" id="modal-picker-backdrop"></div>
+      <div class="sheet-content">
+        <div class="sheet-handle"></div>
+        <div class="sheet-body">
+          <h3 id="modal-picker-title" class="sheet-title">Select Track</h3>
+          <div id="modal-picker-list" class="picker-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Sheet Modal: Queue Viewer -->
+    <div id="modal-queue" class="bottom-sheet" style="display:none;">
+      <div class="sheet-backdrop" id="modal-queue-backdrop"></div>
+      <div class="sheet-content">
+        <div class="sheet-handle"></div>
+        <div class="sheet-body">
+          <h3 class="sheet-title">Play Queue</h3>
+          <div id="modal-queue-list" class="queue-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PIN Authentication Overlay -->
+    <div id="pin-overlay" class="pin-overlay" style="display:none;">
+      <div class="pin-card">
+        <div class="brand">
+          <span class="brand-name">STRMQT</span>
+        </div>
+        <h3>Enter 4-Digit PIN</h3>
+        <p>A pairing PIN is displayed on your TV / StrmQt screen.</p>
+        <div class="pin-inputs">
+          <input type="password" maxlength="4" pattern="[0-9]*" inputmode="numeric" id="pin-input" placeholder="••••">
+        </div>
+        <button id="btn-submit-pin" class="btn-primary-action">Connect</button>
+        <div id="pin-error" class="error-msg" style="display:none;">Invalid PIN. Please try again.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

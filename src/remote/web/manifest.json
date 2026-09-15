@@ -1,0 +1,16 @@
+{
+  "name": "StrmQt Remote",
+  "short_name": "StrmQt",
+  "description": "Mobile remote control and library browser for StrmQt",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0C0B0A",
+  "theme_color": "#0C0B0A",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

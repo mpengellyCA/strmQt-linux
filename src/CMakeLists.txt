@@ -51,6 +51,8 @@ qt_add_library(strmqt_app STATIC
 )
 target_link_libraries(strmqt_app PUBLIC strmqt_core)
 
+include(remote/Remote.cmake)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 # libVLC is the fallback engine only (PLAN §3.2): mpv is primary, so a distro that
@@ -172,7 +174,7 @@ endif()
 
 # qmltyperegistrar includes QML_ELEMENT headers by bare file name.
 target_include_directories(strmqt PRIVATE playback/mpv)
-target_link_libraries(strmqt PRIVATE strmqt_app Qt6::Gui Qt6::Quick Qt6::QuickControls2
+target_link_libraries(strmqt PRIVATE strmqt_app strmqt_remote Qt6::Gui Qt6::Quick Qt6::QuickControls2
     Qt6::OpenGL PkgConfig::MPV)
 if(LIBVLC_FOUND)
     target_include_directories(strmqt PRIVATE playback/vlc)

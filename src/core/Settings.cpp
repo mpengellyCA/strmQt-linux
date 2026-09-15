@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QCryptographicHash>
+#include <QRandomGenerator>
 #include <QSet>
 
 #include <QUuid>
@@ -41,6 +42,13 @@ const auto kSubtitleBackgroundKey = QStringLiteral("subtitles/background");
 const auto kSubtitlePositionKey = QStringLiteral("subtitles/position");
 const auto kLiveEnabledKey = QStringLiteral("live/enabled");
 const auto kPollIntervalKey = QStringLiteral("live/pollIntervalSeconds");
+const auto kWebRemoteEnabledKey = QStringLiteral("remote/enabled");
+const auto kWebRemotePortKey = QStringLiteral("remote/port");
+const auto kWebRemoteBindModeKey = QStringLiteral("remote/bindMode");
+const auto kWebRemoteRequirePinKey = QStringLiteral("remote/requirePin");
+const auto kWebRemotePinKey = QStringLiteral("remote/pin");
+constexpr int kDefaultWebRemotePort = 8337;
+const auto kDefaultWebRemoteBindMode = QStringLiteral("all");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
 const auto kLastTitleKey = QStringLiteral("resume/title");
 const auto kLastPositionKey = QStringLiteral("resume/positionMs");
@@ -786,6 +794,90 @@ void Settings::setPollIntervalSeconds(int seconds)
         return;
     m_store.setValue(kPollIntervalKey, clamped);
     emit pollIntervalSecondsChanged();
+}
+
+bool Settings::webRemoteEnabled() const
+{
+    return m_store.value(kWebRemoteEnabledKey, true).toBool();
+}
+
+void Settings::setWebRemoteEnabled(bool enabled)
+{
+    if (enabled == webRemoteEnabled())
+        return;
+    m_store.setValue(kWebRemoteEnabledKey, enabled);
+    emit webRemoteEnabledChanged();
+}
+
+int Settings::webRemotePort() const
+{
+    const int port = m_store.value(kWebRemotePortKey, kDefaultWebRemotePort).toInt();
+    if (port <= 1024 || port > 65535)
+        return kDefaultWebRemotePort;
+    return port;
+}
+
+void Settings::setWebRemotePort(int port)
+{
+    const int clamped = (port <= 1024 || port > 65535) ? kDefaultWebRemotePort : port;
+    if (clamped == webRemotePort())
+        return;
+    m_store.setValue(kWebRemotePortKey, clamped);
+    emit webRemotePortChanged();
+}
+
+QStringList Settings::webRemoteBindModes()
+{
+    return {QStringLiteral("all"), QStringLiteral("tailscale"), QStringLiteral("lan"), QStringLiteral("localhost")};
+}
+
+QString Settings::webRemoteBindMode() const
+{
+    const QString mode = m_store.value(kWebRemoteBindModeKey, kDefaultWebRemoteBindMode).toString();
+    if (!webRemoteBindModes().contains(mode))
+        return kDefaultWebRemoteBindMode;
+    return mode;
+}
+
+void Settings::setWebRemoteBindMode(const QString &mode)
+{
+    const QString safe = webRemoteBindModes().contains(mode) ? mode : kDefaultWebRemoteBindMode;
+    if (safe == webRemoteBindMode())
+        return;
+    m_store.setValue(kWebRemoteBindModeKey, safe);
+    emit webRemoteBindModeChanged();
+}
+
+bool Settings::webRemoteRequirePin() const
+{
+    return m_store.value(kWebRemoteRequirePinKey, false).toBool();
+}
+
+void Settings::setWebRemoteRequirePin(bool required)
+{
+    if (required == webRemoteRequirePin())
+        return;
+    m_store.setValue(kWebRemoteRequirePinKey, required);
+    emit webRemoteRequirePinChanged();
+}
+
+QString Settings::webRemotePin() const
+{
+    QString pin = m_store.value(kWebRemotePinKey).toString();
+    if (pin.length() != 4 || !pin.toInt()) {
+        const QString generated = QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
+        const_cast<Settings *>(this)->setWebRemotePin(generated);
+        return generated;
+    }
+    return pin;
+}
+
+void Settings::setWebRemotePin(const QString &pin)
+{
+    if (pin == m_store.value(kWebRemotePinKey).toString())
+        return;
+    m_store.setValue(kWebRemotePinKey, pin);
+    emit webRemotePinChanged();
 }
 
 void Settings::setLastPlayback(const QString &itemId, const QString &title, qint64 positionMs)

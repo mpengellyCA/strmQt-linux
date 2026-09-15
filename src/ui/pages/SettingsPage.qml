@@ -43,6 +43,16 @@ FocusScope {
 
     readonly property bool prefsAvailable: page.prefs !== null && page.prefs !== undefined
 
+    readonly property var webRemote: {
+        try {
+            return WebRemoteCtl;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    readonly property bool webRemoteAvailable: page.webRemote !== null && page.webRemote !== undefined
+
     readonly property string unavailableHint: qsTr("Unavailable: the settings object is not exposed to QML.")
 
     // ── Sections ───────────────────────────────────────────────────────────
@@ -71,6 +81,11 @@ FocusScope {
             "key": "live",
             "title": qsTr("Live updates"),
             "icon": "refresh"
+        },
+        {
+            "key": "remote",
+            "title": qsTr("Web Remote"),
+            "icon": "cast"
         },
         {
             "key": "input",
@@ -261,6 +276,48 @@ FocusScope {
         {
             "text": qsTr("Grey"),
             "value": "#A0A0A0"
+        }
+    ]
+
+    readonly property var webRemoteBindOptions: [
+        {
+            "text": qsTr("All interfaces (LAN + Tailscale)"),
+            "value": "all"
+        },
+        {
+            "text": qsTr("Local network only"),
+            "value": "lan"
+        },
+        {
+            "text": qsTr("Tailscale only"),
+            "value": "tailscale"
+        },
+        {
+            "text": qsTr("Loopback only (localhost)"),
+            "value": "loopback"
+        }
+    ]
+
+    readonly property var webRemotePortOptions: [
+        {
+            "text": qsTr("8337 (Default)"),
+            "value": 8337
+        },
+        {
+            "text": "8080",
+            "value": 8080
+        },
+        {
+            "text": "8443",
+            "value": 8443
+        },
+        {
+            "text": "8888",
+            "value": 8888
+        },
+        {
+            "text": "9090",
+            "value": 9090
         }
     ]
 
@@ -1114,6 +1171,251 @@ FocusScope {
                         text: qsTr("Refresh now")
                         iconName: "refresh"
                         onClicked: LiveCtl.refreshNow()
+                    }
+                }
+
+                // ── Web Remote ─────────────────────────────────────────────
+                StrmPanel {
+                    width: parent.width
+                    visible: page.currentKey === "remote"
+                    title: qsTr("Web Remote")
+                    subtitle: qsTr("Browse media and control playback from any phone, tablet, or browser on your network.")
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Enable Web Remote")
+                        hint: qsTr("Runs a local HTTPS server on port %1 with zero cloud dependencies.")
+                              .arg(page.webRemoteAvailable ? page.webRemote.port : 8337)
+
+                        StrmSwitch {
+                            enabled: page.webRemoteAvailable
+                            checked: page.webRemoteAvailable && page.webRemote.enabled
+                            onToggled: if (page.webRemoteAvailable) page.webRemote.enabled = !page.webRemote.enabled
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Port")
+                        hint: qsTr("Server port. Restart server to apply changes.")
+
+                        StrmSelect {
+                            enabled: page.webRemoteAvailable && page.webRemote.enabled
+                            width: Theme.scale(220)
+                            model: page.webRemotePortOptions
+                            currentIndex: page.indexOfValue(page.webRemotePortOptions, page.webRemoteAvailable ? page.webRemote.port : 8337)
+                            placeholder: qsTr("%1").arg(page.webRemoteAvailable ? page.webRemote.port : 8337)
+                            onActivated: index => {
+                                if (page.webRemoteAvailable)
+                                    page.webRemote.port = page.webRemotePortOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Network binding")
+                        hint: qsTr("Restrict connections to LAN, Tailscale, or listen on all adapters.")
+
+                        StrmSelect {
+                            enabled: page.webRemoteAvailable && page.webRemote.enabled
+                            width: Theme.scale(260)
+                            model: page.webRemoteBindOptions
+                            currentIndex: page.indexOfValue(page.webRemoteBindOptions, page.webRemoteAvailable ? page.webRemote.bindMode : "all")
+                            placeholder: qsTr("All interfaces")
+                            onActivated: index => {
+                                if (page.webRemoteAvailable)
+                                    page.webRemote.bindMode = page.webRemoteBindOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Require PIN")
+                        hint: qsTr("Ask for a 4-digit code in the web browser before allowing control.")
+
+                        StrmSwitch {
+                            enabled: page.webRemoteAvailable && page.webRemote.enabled
+                            checked: page.webRemoteAvailable && page.webRemote.requirePin
+                            onToggled: if (page.webRemoteAvailable) page.webRemote.requirePin = !page.webRemote.requirePin
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        visible: page.webRemoteAvailable && page.webRemote.requirePin
+                        label: qsTr("Current PIN")
+                        hint: qsTr("Enter this code in your phone's browser when pairing.")
+
+                        Row {
+                            spacing: Theme.spacingValue
+
+                            Text {
+                                text: page.webRemoteAvailable ? page.webRemote.pin : "----"
+                                color: Theme.accentColor
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontHeading
+                                font.weight: Font.Bold
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            StrmButton {
+                                text: qsTr("Generate New PIN")
+                                iconName: "refresh"
+                                anchors.verticalCenter: parent.verticalCenter
+                                onClicked: if (page.webRemoteAvailable) page.webRemote.generateNewPin()
+                            }
+                        }
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        label: qsTr("Server Status")
+                        value: (page.webRemoteAvailable && page.webRemote.running)
+                               ? qsTr("Running (%1 connected client(s))").arg(page.webRemote.connectedClientsCount)
+                               : qsTr("Stopped")
+                        mono: true
+                    }
+                }
+
+                StrmPanel {
+                    width: parent.width
+                    visible: page.currentKey === "remote"
+                    title: qsTr("Pairing & Addresses")
+                    subtitle: qsTr("Scan this QR code with your phone camera or navigate to the address.")
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        text: qsTr("Modern browsers require HTTPS. Because this server uses a self-signed certificate, your browser will display a security prompt on first load. Tap 'Advanced' and proceed.")
+                    }
+
+                    Item {
+                        width: 1
+                        height: Theme.spacingTight
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingLoose
+
+                        Rectangle {
+                            width: Theme.scale(180)
+                            height: Theme.scale(180)
+                            color: "#0C0B0A"
+                            radius: Theme.radiusCardValue
+                            border.width: 1
+                            border.color: Theme.accentColor
+
+                            Image {
+                                anchors.centerIn: parent
+                                width: Theme.scale(164)
+                                height: Theme.scale(164)
+                                fillMode: Image.PreserveAspectFit
+                                source: page.webRemoteAvailable ? page.webRemote.activeQrDataUri : ""
+                                smooth: false
+                            }
+                        }
+
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - Theme.scale(180) - Theme.spacingLoose
+                            spacing: Theme.spacingValue
+
+                            Text {
+                                text: qsTr("Active URL")
+                                color: Theme.textTertiary
+                                font.family: Theme.fontBody
+                                font.pixelSize: Theme.fontSmall
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: page.webRemoteAvailable ? page.webRemote.activeUrl : ""
+                                color: Theme.accentColor
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontBodySize
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Row {
+                                spacing: Theme.spacingTight
+
+                                StrmButton {
+                                    text: qsTr("Copy URL")
+                                    iconName: "external-link"
+                                    onClicked: {
+                                        if (page.webRemoteAvailable)
+                                            page.webRemote.copyUrlToClipboard(page.webRemote.activeUrl);
+                                    }
+                                }
+
+                                StrmButton {
+                                    visible: page.webRemoteAvailable && page.webRemote.hasTailscale
+                                    text: qsTr("Switch to Tailscale")
+                                    onClicked: {
+                                        if (page.webRemoteAvailable)
+                                            page.webRemote.activeUrl = page.webRemote.tailscaleUrl;
+                                    }
+                                }
+
+                                StrmButton {
+                                    visible: page.webRemoteAvailable && page.webRemote.lanUrl.length > 0
+                                    text: qsTr("Switch to LAN")
+                                    onClicked: {
+                                        if (page.webRemoteAvailable)
+                                            page.webRemote.activeUrl = page.webRemote.lanUrl;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        width: 1
+                        height: Theme.spacingTight
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        label: qsTr("Tailscale URL")
+                        value: (page.webRemoteAvailable && page.webRemote.hasTailscale) ? page.webRemote.tailscaleUrl : qsTr("Not detected")
+                        mono: true
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        label: qsTr("LAN URL")
+                        value: page.webRemoteAvailable ? page.webRemote.lanUrl : ""
+                        mono: true
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        label: qsTr("TLS SHA-256")
+                        value: page.webRemoteAvailable ? page.webRemote.certFingerprint : ""
+                        mono: true
+                    }
+
+                    Item {
+                        width: 1
+                        height: Theme.spacingTight
+                    }
+
+                    Row {
+                        spacing: Theme.spacingTight
+
+                        StrmButton {
+                            text: qsTr("Restart Server")
+                            iconName: "refresh"
+                            onClicked: if (page.webRemoteAvailable) page.webRemote.restart()
+                        }
+
+                        StrmButton {
+                            text: qsTr("Regenerate TLS Certificate")
+                            onClicked: if (page.webRemoteAvailable) page.webRemote.regenerateCertificate()
+                        }
                     }
                 }
 

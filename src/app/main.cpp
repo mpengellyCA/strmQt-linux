@@ -13,6 +13,7 @@
 #include "controllers/SearchController.h"
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
+#include "remote/WebRemoteController.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
 
@@ -49,6 +50,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("Prefs"), app.settings());
     engine.rootContext()->setContextProperty(QStringLiteral("LiveCtl"), app.live());
     engine.rootContext()->setContextProperty(QStringLiteral("RemoteCtl"), app.remote());
+    engine.rootContext()->setContextProperty(QStringLiteral("WebRemoteCtl"), app.webRemote());
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistCtl"), app.playlists());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicCtl"), app.music());
     // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
