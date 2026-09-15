@@ -45,6 +45,7 @@ private slots:
     void detailsSimilarStatusFollowsItsOwnReply();
     void detailsPersonLoadRetiresAnInFlightItemOwner();
     void supersededDetailsAbortsEveryLane();
+    void detailsSeriesUpcomingEpisodes();
     void seriesFetchesItsOwnRecord();
     void seriesNextUnwatchedQueryIsBounded();
     void seriesNextUnwatchedRefetchesAfterPlayedChanges();
@@ -610,6 +611,37 @@ void ContentControllersTest::supersededDetailsAbortsEveryLane()
              QStringLiteral("Current Collection"));
     QCOMPARE(details.similar()->get(0).value(QStringLiteral("name")).toString(),
              QStringLiteral("Current Similar"));
+}
+
+void ContentControllersTest::detailsSeriesUpcomingEpisodes()
+{
+    const QString seriesPath = QStringLiteral("/Users/%1/Items/series-1").arg(kUserId);
+    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    const QString similarPath = QStringLiteral("/Items/series-1/Similar");
+
+    m_mock->addRoute(QStringLiteral("GET"), seriesPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"series-1\",\"Name\":\"The Series\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), similarPath, 200,
+                     QByteArrayLiteral("{\"Items\":[]}"));
+
+    // Route for upcoming unplayed episodes
+    m_mock->addRoute(
+        QStringLiteral("GET"), itemsPath, 200,
+        QByteArrayLiteral("{\"Items\":[{\"Id\":\"ep-1\",\"Name\":\"Pilot\",\"Type\":\"Episode\","
+                          "\"SeriesId\":\"series-1\",\"SeasonId\":\"season-1\","
+                          "\"IndexNumber\":1,\"ParentIndexNumber\":1}],"
+                          "\"TotalRecordCount\":1}"));
+
+    DetailsController details(m_client);
+    QSignalSpy upcomingSpy(&details, &DetailsController::upcomingEpisodesChanged);
+    details.load(QStringLiteral("series-1"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(details.hasNextEpisode(), 5000);
+    QCOMPARE(details.upcomingEpisodes()->rowCount(), 1);
+    QCOMPARE(details.nextEpisode().value(QStringLiteral("itemId")).toString(), QStringLiteral("ep-1"));
+    QCOMPARE(details.nextEpisode().value(QStringLiteral("name")).toString(), QStringLiteral("Pilot"));
+    QVERIFY(upcomingSpy.count() > 0);
 }
 
 void ContentControllersTest::seriesFetchesItsOwnRecord()

@@ -1453,6 +1453,16 @@ QVariantList ItemActions::itemMenuPolicy(const QVariant &item, bool allowDetails
     separator();
     if (capabilities.value(QStringLiteral("seriesNavigation")).toBool() &&
         classified.kind == ItemKind::Episode) {
+        const QString seasonId = classified.item.value(QStringLiteral("seasonId")).toString();
+        if (!seasonId.isEmpty()) {
+            QVariantMap seasonTarget;
+            seasonTarget.insert(kItemIdKey, classified.item.value(QStringLiteral("seriesId")));
+            seasonTarget.insert(QStringLiteral("name"), classified.item.value(QStringLiteral("seriesName")));
+            seasonTarget.insert(QStringLiteral("type"), QStringLiteral("Series"));
+            seasonTarget.insert(QStringLiteral("seasonId"), seasonId);
+            append(QStringLiteral("goToSeason"), QStringLiteral("goToSeason"), seasonTarget,
+                   QStringLiteral("series"));
+        }
         QVariantMap target;
         target.insert(kItemIdKey, classified.item.value(QStringLiteral("seriesId")));
         target.insert(QStringLiteral("name"), classified.item.value(QStringLiteral("seriesName")));
@@ -1528,8 +1538,10 @@ void ItemActions::performItemVerb(const QString &verb, const QVariant &item)
     } else if (verb == QLatin1String("favorite")) {
         if (capabilities.value(QStringLiteral("favorite")).toBool())
             setFavorite(classified.id, !isFavorite(classified.id));
-    } else if (verb == QLatin1String("series")) {
-        if (capabilities.value(QStringLiteral("seriesNavigation")).toBool())
+    } else if (verb == QLatin1String("series") || verb == QLatin1String("goToSeason")) {
+        if (capabilities.value(QStringLiteral("seriesNavigation")).toBool() ||
+            !map.value(QStringLiteral("seriesId")).toString().isEmpty() ||
+            classified.kind == ItemKind::Series)
             openSeries(map);
     } else if (verb == QLatin1String("album")) {
         if (classified.kind == ItemKind::Audio) {
@@ -1594,10 +1606,13 @@ void ItemActions::openSeries(const QVariant &item)
                           << map.value(kItemIdKey).toString();
         return;
     }
-    emit routeRequested(QStringLiteral("series"),
-                        QVariantMap{{kItemIdKey, seriesId},
-                                    {QStringLiteral("name"), seriesName},
-                                    {QStringLiteral("type"), QStringLiteral("Series")}});
+    const QString seasonId = map.value(QStringLiteral("seasonId")).toString();
+    QVariantMap routePayload{{kItemIdKey, seriesId},
+                             {QStringLiteral("name"), seriesName},
+                             {QStringLiteral("type"), QStringLiteral("Series")}};
+    if (!seasonId.isEmpty())
+        routePayload.insert(QStringLiteral("seasonId"), seasonId);
+    emit routeRequested(QStringLiteral("series"), routePayload);
 }
 
 void ItemActions::openAlbum(const QString &albumId, const QString &name)

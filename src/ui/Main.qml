@@ -390,7 +390,11 @@ ApplicationWindow {
         const id = target && target.itemId !== undefined ? String(target.itemId) : "";
         const name = target && target.name !== undefined ? String(target.name) : "";
         switch (kind) {
-        case "series": root.openSeries(id, name); break;
+        case "series": {
+            const seasonId = target && target.seasonId !== undefined ? String(target.seasonId) : "";
+            root.openSeries(id, name, seasonId);
+            break;
+        }
         case "album": root.openAlbum(target); break;
         case "artist": root.openArtist(target); break;
         case "playlist": root.openPlaylist(id, name); break;
@@ -399,10 +403,14 @@ ApplicationWindow {
         }
     }
 
-    function openSeries(seriesId, seriesName): void {
+    function openSeries(seriesId, seriesName, seasonId): void {
         root.capturePageDeparture();
-        SeriesCtl.open(seriesId, seriesName);
+        if (seasonId)
+            SeriesCtl.ensureOpen(seriesId, seriesName, seasonId);
+        else
+            SeriesCtl.open(seriesId, seriesName);
         root.pushCapturedPage({ "kind": "series", "id": seriesId, "name": seriesName,
+                                "seasonId": seasonId || "",
                                 "key": "series", "title": seriesName });
     }
 

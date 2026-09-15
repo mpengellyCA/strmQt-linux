@@ -108,6 +108,7 @@ StrmMenu {
         case "removeFavorite":     return { text: qsTr("Remove from favourites"), icon: "heart-filled" }
         case "addToPlaylist":      return { text: qsTr("Add to playlist"), icon: "playlist" }
         case "removeFromPlaylist": return { text: qsTr("Remove from this playlist"), icon: "trash" }
+        case "goToSeason":         return { text: qsTr("Go to season"), icon: "list" }
         case "goToSeries":         return { text: qsTr("Go to series"), icon: "library" }
         case "goToAlbum":          return { text: qsTr("Go to album"), icon: "lib-music" }
         case "goToArtist":         return { text: qsTr("Go to artist"), icon: "user" }

@@ -901,6 +901,29 @@ FocusScope {
         page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId)
     }
 
+    function episodeCode(item) {
+        if (!item)
+            return ""
+        return MediaKinds.episodeCode(item.parentIndexNumber, item.indexNumber)
+    }
+
+    readonly property var nextEpisodeItem: (page.isSeries && DetailsCtl.hasNextEpisode) ? DetailsCtl.nextEpisode : ({})
+    readonly property string nextEpisodeCode: page.episodeCode(page.nextEpisodeItem)
+
+    readonly property string nextEpisodeLine: {
+        if (!page.isSeries || !DetailsCtl.hasNextEpisode)
+            return ""
+        const parts = []
+        if (page.nextEpisodeCode.length > 0)
+            parts.push(page.nextEpisodeCode)
+        if (page.nextEpisodeItem.name)
+            parts.push(String(page.nextEpisodeItem.name))
+        const runtime = page.formatRuntime(page.nextEpisodeItem.runtimeMs)
+        if (runtime.length > 0)
+            parts.push(runtime)
+        return parts.join("  ·  ")
+    }
+
     // ── Trailers (ARCHITECTURE.md) ───────────────────────────────────────────
     // {name, url} straight from the server's RemoteTrailers. They leave the
     // application: openTrailer() hands the URL to the desktop, exactly as the
@@ -1077,7 +1100,7 @@ FocusScope {
     // page that arrives on its own signal (collectionsChanged, a second request
     // that lands after the details) — so it must be able to appear mid-scroll
     // without renumbering anything. Walking this list is what makes that free.
-    readonly property var navSections: [genreRow, collectionRow, castRow, crewRow,
+    readonly property var navSections: [episodesRail, genreRow, collectionRow, castRow, crewRow,
                                         studioRow, linkRow, similarRail]
 
     function sectionBelow(start) {
@@ -1103,7 +1126,7 @@ FocusScope {
     // to my left" depends on the item type, on whether it resumes, on whether
     // the server sent a trailer — they are unmaintainable, and each new verb
     // meant editing the two neighbours it was inserted between.
-    readonly property var heroVerbs: [episodesButton, playAllButton, viewItemsButton,
+    readonly property var heroVerbs: [playNextSeriesButton, episodesButton, playAllButton, viewItemsButton,
                                       playButton, startOverButton, shuffleButton,
                                       trailerButton, playedButton, favoriteButton,
                                       playlistButton, moreButton]
@@ -1451,14 +1474,38 @@ FocusScope {
                             spacing: Theme.spacingTight
 
                             StrmButton {
+                                id: playNextSeriesButton
+                                visible: page.isSeries && DetailsCtl.hasNextEpisode
+                                focus: page.isSeries && DetailsCtl.hasNextEpisode
+                                text: {
+                                    const code = page.nextEpisodeCode;
+                                    const resumable = page.nextEpisodeItem && page.nextEpisodeItem.resumable === true;
+                                    if (resumable) {
+                                        return code.length > 0
+                                            ? qsTr("Resume  ·  %1").arg(code)
+                                            : qsTr("Resume");
+                                    }
+                                    return code.length > 0
+                                        ? qsTr("Play next  ·  %1").arg(code)
+                                        : qsTr("Play next");
+                                }
+                                iconName: "play"
+                                variant: "primary"
+                                onClicked: Actions.play(DetailsCtl.nextEpisode)
+                                KeyNavigation.right: page.verbAfter(0)
+                                KeyNavigation.down: page.heroDown
+                            }
+
+                            StrmButton {
                                 id: episodesButton
                                 visible: page.isSeries
-                                focus: page.isSeries
+                                focus: page.isSeries && !playNextSeriesButton.visible
                                 text: qsTr("Episodes")
                                 iconName: "list"
-                                variant: "primary"
+                                variant: (page.isSeries && DetailsCtl.hasNextEpisode) ? "secondary" : "primary"
                                 onClicked: Actions.performItemVerb("series", page.item)
-                                KeyNavigation.right: page.verbAfter(0)
+                                KeyNavigation.left: page.verbBefore(1)
+                                KeyNavigation.right: page.verbAfter(1)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1472,7 +1519,8 @@ FocusScope {
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: Actions.performItemVerb("play", page.item)
-                                KeyNavigation.right: page.verbAfter(1)
+                                KeyNavigation.left: page.verbBefore(2)
+                                KeyNavigation.right: page.verbAfter(2)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1488,8 +1536,8 @@ FocusScope {
                                 text: qsTr("View items")
                                 iconName: "lib-collections"
                                 onClicked: Actions.performItemVerb("browseCollection", page.item)
-                                KeyNavigation.left: page.verbBefore(2)
-                                KeyNavigation.right: page.verbAfter(2)
+                                KeyNavigation.left: page.verbBefore(3)
+                                KeyNavigation.right: page.verbAfter(3)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1506,7 +1554,8 @@ FocusScope {
                                     Actions.performItemVerb("play", page.item)
                                     page.applyVersion()
                                 }
-                                KeyNavigation.right: page.verbAfter(3)
+                                KeyNavigation.left: page.verbBefore(4)
+                                KeyNavigation.right: page.verbAfter(4)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1519,8 +1568,8 @@ FocusScope {
                                     Actions.performItemVerb("playFromStart", page.item)
                                     page.applyVersion()
                                 }
-                                KeyNavigation.left: page.verbBefore(4)
-                                KeyNavigation.right: page.verbAfter(4)
+                                KeyNavigation.left: page.verbBefore(5)
+                                KeyNavigation.right: page.verbAfter(5)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1532,8 +1581,8 @@ FocusScope {
                                 text: qsTr("Shuffle")
                                 iconName: "shuffle"
                                 onClicked: Actions.performItemVerb("shuffle", page.item)
-                                KeyNavigation.left: page.verbBefore(5)
-                                KeyNavigation.right: page.verbAfter(5)
+                                KeyNavigation.left: page.verbBefore(6)
+                                KeyNavigation.right: page.verbAfter(6)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1561,8 +1610,8 @@ FocusScope {
                                     else
                                         page.showTrailerMenu()
                                 }
-                                KeyNavigation.left: page.verbBefore(6)
-                                KeyNavigation.right: page.verbAfter(6)
+                                KeyNavigation.left: page.verbBefore(7)
+                                KeyNavigation.right: page.verbAfter(7)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1584,8 +1633,8 @@ FocusScope {
                                 // The verb, not a local flip: Actions owns the
                                 // value and tells every view about the change.
                                 onClicked: Actions.performItemVerb("played", page.item)
-                                KeyNavigation.left: page.verbBefore(7)
-                                KeyNavigation.right: page.verbAfter(7)
+                                KeyNavigation.left: page.verbBefore(8)
+                                KeyNavigation.right: page.verbAfter(8)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1595,8 +1644,8 @@ FocusScope {
                                 text: page.itemFavorite ? qsTr("Favourite") : qsTr("Add favourite")
                                 iconName: page.itemFavorite ? "heart-filled" : "heart"
                                 onClicked: Actions.performItemVerb("favorite", page.item)
-                                KeyNavigation.left: page.verbBefore(8)
-                                KeyNavigation.right: page.verbAfter(8)
+                                KeyNavigation.left: page.verbBefore(9)
+                                KeyNavigation.right: page.verbAfter(9)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1611,8 +1660,8 @@ FocusScope {
                                 text: qsTr("Add to playlist")
                                 iconName: "playlist"
                                 onClicked: playlistPicker.show(page.item)
-                                KeyNavigation.left: page.verbBefore(9)
-                                KeyNavigation.right: page.verbAfter(9)
+                                KeyNavigation.left: page.verbBefore(10)
+                                KeyNavigation.right: page.verbAfter(10)
                                 KeyNavigation.down: page.heroDown
                             }
 
@@ -1624,8 +1673,35 @@ FocusScope {
                                     var p = moreButton.mapToItem(null, 0, moreButton.height)
                                     itemMenu.popupForItemNoDetails(page.item, p.x, p.y)
                                 }
-                                KeyNavigation.left: page.verbBefore(10)
+                                KeyNavigation.left: page.verbBefore(11)
                                 KeyNavigation.down: page.heroDown
+                            }
+                        }
+
+                        // UP NEXT indicator for series
+                        Row {
+                            width: parent.width
+                            visible: page.isSeries && page.nextEpisodeLine.length > 0
+                            spacing: Theme.spacingTight
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: qsTr("UP NEXT")
+                                color: Theme.textTertiary
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                                font.letterSpacing: Theme.fontCaption * Theme.trackLabel
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: infoColumn.proseWidth - Theme.scale(90)
+                                text: page.nextEpisodeLine
+                                color: Theme.accentColor
+                                font.family: Theme.fontBody
+                                font.pixelSize: Theme.fontSmall
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
                             }
                         }
 
@@ -1741,6 +1817,37 @@ FocusScope {
                 }
             }
 
+            // ── Next episodes ──────────────────────────────────────────────
+            StrmRail {
+                id: episodesRail
+                navigationFocusKey: "details-episodes"
+                navigationFocusFallbackItem: page.heroButton
+                navigationFocusRefillActive: DetailsCtl.itemId === page.itemId
+                                             && DetailsCtl.upcomingEpisodesLoading
+                visible: page.isSeries && DetailsCtl.upcomingEpisodes.count > 0
+                title: qsTr("Next episodes")
+                railModel: DetailsCtl.upcomingEpisodes
+                cardVariant: "still"
+                preferItemName: true
+                showMore: true
+                emptyText: ""
+
+                onActiveFocusChanged: {
+                    if (episodesRail.activeFocus)
+                        page.ensureVisible(episodesRail)
+                }
+                KeyNavigation.up: page.heroExit
+                KeyNavigation.down: page.sectionBelow(1)
+
+                onMoreRequested: Actions.performItemVerb("series", page.item)
+                onItemActivated: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
+                onItemPlayRequested: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
+                onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
+                onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.upcomingEpisodes.get(index))
+                onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index),
+                                                                          mx, my)
+            }
+
             // ── Genres ─────────────────────────────────────────────────────
             ChipStrip {
                 id: genreRow
@@ -1751,8 +1858,8 @@ FocusScope {
                     Actions.browseGenre(genre.id ? genre.id : "", genre.name)
                 }
                 onActiveFocusChanged: { if (genreRow.activeFocus) page.ensureVisible(genreRow) }
-                KeyNavigation.up: page.heroExit
-                KeyNavigation.down: page.sectionBelow(1)
+                KeyNavigation.up: page.sectionAbove(0)
+                KeyNavigation.down: page.sectionBelow(2)
             }
 
             // ── Part of (E4) ───────────────────────────────────────────────
@@ -1781,8 +1888,8 @@ FocusScope {
                     if (collectionRow.activeFocus)
                         page.ensureVisible(collectionRow)
                 }
-                KeyNavigation.up: page.sectionAbove(0)
-                KeyNavigation.down: page.sectionBelow(2)
+                KeyNavigation.up: page.sectionAbove(1)
+                KeyNavigation.down: page.sectionBelow(3)
             }
 
             // ── Cast ───────────────────────────────────────────────────────
@@ -1796,8 +1903,8 @@ FocusScope {
                     Actions.browsePerson(person.id ? person.id : "", person.name)
                 }
                 onActiveFocusChanged: { if (castRow.activeFocus) page.ensureVisible(castRow) }
-                KeyNavigation.up: page.sectionAbove(1)
-                KeyNavigation.down: page.sectionBelow(3)
+                KeyNavigation.up: page.sectionAbove(2)
+                KeyNavigation.down: page.sectionBelow(4)
             }
 
             // ── Crew ───────────────────────────────────────────────────────
@@ -1815,8 +1922,8 @@ FocusScope {
                     Actions.browsePerson(person.id ? person.id : "", person.name)
                 }
                 onActiveFocusChanged: { if (crewRow.activeFocus) page.ensureVisible(crewRow) }
-                KeyNavigation.up: page.sectionAbove(2)
-                KeyNavigation.down: page.sectionBelow(4)
+                KeyNavigation.up: page.sectionAbove(3)
+                KeyNavigation.down: page.sectionBelow(5)
             }
 
             // ── Studios ────────────────────────────────────────────────────
@@ -1829,8 +1936,8 @@ FocusScope {
                     Actions.browseStudio(studio.id ? studio.id : "", studio.name)
                 }
                 onActiveFocusChanged: { if (studioRow.activeFocus) page.ensureVisible(studioRow) }
-                KeyNavigation.up: page.sectionAbove(3)
-                KeyNavigation.down: page.sectionBelow(5)
+                KeyNavigation.up: page.sectionAbove(4)
+                KeyNavigation.down: page.sectionBelow(6)
             }
 
             // ── Off-site links ─────────────────────────────────────────────
@@ -1850,8 +1957,8 @@ FocusScope {
                         Qt.openUrlExternally(link.url)
                 }
                 onActiveFocusChanged: { if (linkRow.activeFocus) page.ensureVisible(linkRow) }
-                KeyNavigation.up: page.sectionAbove(4)
-                KeyNavigation.down: page.sectionBelow(6)
+                KeyNavigation.up: page.sectionAbove(5)
+                KeyNavigation.down: page.sectionBelow(7)
             }
 
             // ── "More like this" (Emby-web parity) ─────────────────────────
@@ -1872,7 +1979,7 @@ FocusScope {
                     if (similarRail.activeFocus)
                         page.ensureVisible(similarRail)
                 }
-                KeyNavigation.up: page.sectionAbove(5)
+                KeyNavigation.up: page.sectionAbove(6)
 
                 onItemActivated: index => Actions.openDetails(DetailsCtl.similar.get(index))
                 onItemPlayRequested: index => Actions.play(DetailsCtl.similar.get(index))

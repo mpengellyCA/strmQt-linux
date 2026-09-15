@@ -10,6 +10,8 @@
 
 namespace strmqt {
 
+class LiveUpdateService;
+
 namespace emby {
 class EmbyClient;
 }
@@ -70,6 +72,10 @@ class DetailsController : public QObject
     // Focus restoration must wait for this model's own terminal state rather
     // than guessing from itemLoading.
     Q_PROPERTY(bool similarLoading READ similarLoading NOTIFY similarStatusChanged)
+    Q_PROPERTY(strmqt::MediaItemModel *upcomingEpisodes READ upcomingEpisodes CONSTANT)
+    Q_PROPERTY(bool upcomingEpisodesLoading READ upcomingEpisodesLoading NOTIFY upcomingEpisodesChanged)
+    Q_PROPERTY(QVariantMap nextEpisode READ nextEpisode NOTIFY upcomingEpisodesChanged)
+    Q_PROPERTY(bool hasNextEpisode READ hasNextEpisode NOTIFY upcomingEpisodesChanged)
 
 public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -94,6 +100,13 @@ public:
     double criticRating() const { return m_criticRating; }
     MediaItemModel *similar() const { return m_similar; }
     bool similarLoading() const { return m_similarLoading; }
+    MediaItemModel *upcomingEpisodes() const { return m_upcomingEpisodes; }
+    bool upcomingEpisodesLoading() const { return m_upcomingEpisodesLoading; }
+    QVariantMap nextEpisode() const { return m_nextEpisode; }
+    bool hasNextEpisode() const { return !m_nextEpisode.isEmpty(); }
+
+    void bindLiveUpdates(LiveUpdateService *service);
+    Q_INVOKABLE void refreshUpcomingEpisodes();
 
     void resetSessionState();
 
@@ -113,6 +126,7 @@ signals:
     void collectionsChanged();
     void personChanged();
     void similarStatusChanged();
+    void upcomingEpisodesChanged();
 
 private:
     void cancelRequests();
@@ -141,6 +155,12 @@ private:
     emby::RequestHandle m_detailsRequest;
     emby::RequestHandle m_collectionsRequest;
     emby::RequestHandle m_similarRequest;
+    MediaItemModel *m_upcomingEpisodes = nullptr;
+    bool m_upcomingEpisodesLoading = false;
+    QVariantMap m_nextEpisode;
+    bool m_isSeries = false;
+    int m_upcomingEpisodesGeneration = 0;
+    emby::RequestHandle m_upcomingEpisodesRequest;
 };
 
 } // namespace strmqt

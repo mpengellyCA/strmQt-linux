@@ -98,7 +98,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_actions = new ItemActions(m_client, m_player, this);
     for (MediaItemModel *model : { m_home->resume(), m_home->nextUp(), m_home->favorites(),
                                    m_library->model(), m_search->model(), m_series->episodes(),
-                                   m_details->similar(), m_music->albums(), m_music->artists(),
+                                   m_details->similar(), m_details->upcomingEpisodes(),
+                                   m_music->albums(), m_music->artists(),
                                    m_music->tracks(), m_music->songs(),
                                    m_music->artistAlbums(),
                                    m_music->artistTracks(), m_music->playlists(),
@@ -125,6 +126,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // only after the played mutation commits; the optimistic signal fires
     // before the REST request and would race the query against stale state.
     connect(m_actions, &ItemActions::playedCommitted, m_series, &SeriesController::notePlayed);
+    connect(m_actions, &ItemActions::playedCommitted, m_details,
+            [this](const QString &, bool) { m_details->refreshUpcomingEpisodes(); });
 
     // Latest rails are built lazily by HomeController::refresh(); registerModel dedupes.
     const auto registerRailModels = [this](const QVariantList &rails) {
@@ -146,6 +149,7 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_home->bindLiveUpdates(m_live);
     m_library->bindLiveUpdates(m_live);
     m_series->bindLiveUpdates(m_live);
+    m_details->bindLiveUpdates(m_live);
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();

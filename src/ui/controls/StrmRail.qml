@@ -17,6 +17,7 @@ FocusScope {
     property var railModel: null
     property string cardVariant: "poster"
     property bool showMore: false
+    property bool preferItemName: false
     property string emptyText: qsTr("Nothing here yet")
     property string navigationFocusKey: ""
     property Item navigationFocusFallbackItem: null
@@ -356,8 +357,10 @@ FocusScope {
                         return thumb;
                     return cell.model.posterUrl !== undefined ? cell.model.posterUrl : "";
                 }
-                label: cell.model.label !== undefined ? cell.model.label
-                     : (cell.model.name !== undefined ? cell.model.name : "")
+                label: rail.preferItemName && cell.model.name !== undefined && cell.model.name.length > 0
+                     ? cell.model.name
+                     : (cell.model.label !== undefined ? cell.model.label
+                        : (cell.model.name !== undefined ? cell.model.name : ""))
                 sublabel: cell.model.subtitle !== undefined ? cell.model.subtitle : ""
                 progress: cell.model.progress !== undefined ? cell.model.progress : 0
                 played: cell.model.played === true

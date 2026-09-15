@@ -1,4 +1,5 @@
 #include "DetailsController.h"
+#include "LiveUpdateService.h"
 
 #include "app/models/MediaItemModel.h"
 #include "core/Log.h"
@@ -8,24 +9,31 @@
 namespace strmqt {
 
 DetailsController::DetailsController(emby::EmbyClient *client, QObject *parent)
-    : QObject(parent), m_client(client), m_similar(new MediaItemModel(this))
+    : QObject(parent), m_client(client), m_similar(new MediaItemModel(this)),
+      m_upcomingEpisodes(new MediaItemModel(this))
 {
 }
 
 DetailsController::~DetailsController()
 {
     ++m_generation;
+    ++m_upcomingEpisodesGeneration;
     cancelRequests();
 }
 
 void DetailsController::resetSessionState()
 {
     ++m_generation;
+    ++m_upcomingEpisodesGeneration;
     cancelRequests();
     m_itemId.clear();
     m_itemLoading = false;
     setSimilarLoading(false);
     m_similar->clear();
+    m_upcomingEpisodes->clear();
+    m_nextEpisode.clear();
+    m_upcomingEpisodesLoading = false;
+    m_isSeries = false;
     m_tagline.clear();
     m_mediaSources.clear();
     m_chapters.clear();
@@ -43,13 +51,20 @@ void DetailsController::resetSessionState()
     emit detailsChanged();
     emit collectionsChanged();
     emit personChanged();
+    emit upcomingEpisodesChanged();
 }
 
 void DetailsController::loadPerson(const QString &personId)
 {
     const int generation = ++m_generation;
+    ++m_upcomingEpisodesGeneration;
     cancelRequests();
     setSimilarLoading(false);
+    m_upcomingEpisodes->clear();
+    m_nextEpisode.clear();
+    m_upcomingEpisodesLoading = false;
+    m_isSeries = false;
+    emit upcomingEpisodesChanged();
     const bool retiredItemOwner = !m_itemId.isEmpty() || m_itemLoading;
     m_itemId.clear();
     m_itemLoading = false;
@@ -93,9 +108,15 @@ void DetailsController::loadPerson(const QString &personId)
 void DetailsController::load(const QString &itemId)
 {
     const int generation = ++m_generation;
+    ++m_upcomingEpisodesGeneration;
     cancelRequests();
     m_itemId = itemId;
     m_itemLoading = !itemId.isEmpty();
+    m_isSeries = false;
+    m_upcomingEpisodes->clear();
+    m_nextEpisode.clear();
+    m_upcomingEpisodesLoading = false;
+    emit upcomingEpisodesChanged();
     m_tagline.clear();
     m_mediaSources.clear();
     m_chapters.clear();
@@ -129,7 +150,13 @@ void DetailsController::load(const QString &itemId)
             m_itemId.clear();
             m_collectionsRequest.cancel();
             m_similarRequest.cancel();
+            m_upcomingEpisodesRequest.cancel();
             setSimilarLoading(false);
+            m_upcomingEpisodes->clear();
+            m_nextEpisode.clear();
+            m_upcomingEpisodesLoading = false;
+            m_isSeries = false;
+            emit upcomingEpisodesChanged();
             qCWarning(logApp) << "item details load failed:" << result.error;
             emit detailsChanged();
             return;
@@ -198,6 +225,10 @@ void DetailsController::load(const QString &itemId)
         m_premiereDate = details.premiereDate;
         m_criticRating = details.criticRating;
 
+        m_isSeries = details.item.type.compare(QLatin1String("Series"), Qt::CaseInsensitive) == 0;
+        if (m_isSeries)
+            refreshUpcomingEpisodes();
+
         emit detailsChanged();
     });
 
@@ -233,6 +264,83 @@ void DetailsController::load(const QString &itemId)
         });
 }
 
+void DetailsController::bindLiveUpdates(LiveUpdateService *service)
+{
+    if (!service)
+        return;
+    connect(service, &LiveUpdateService::userDataInvalidated, this,
+            [this](const QStringList &) {
+                if (m_isSeries && !m_itemId.isEmpty())
+                    refreshUpcomingEpisodes();
+            });
+    connect(service, &LiveUpdateService::refreshRequested, this,
+            [this]() {
+                if (m_isSeries && !m_itemId.isEmpty())
+                    refreshUpcomingEpisodes();
+            });
+}
+
+void DetailsController::refreshUpcomingEpisodes()
+{
+    if (!m_isSeries || m_itemId.isEmpty()) {
+        m_upcomingEpisodes->clear();
+        m_nextEpisode.clear();
+        m_upcomingEpisodesLoading = false;
+        emit upcomingEpisodesChanged();
+        return;
+    }
+
+    const int generation = ++m_upcomingEpisodesGeneration;
+    m_upcomingEpisodesLoading = true;
+    emit upcomingEpisodesChanged();
+
+    ItemsQuery query;
+    query.parentId = m_itemId;
+    query.recursive = true;
+    query.includeItemTypes = {QStringLiteral("Episode")};
+    query.filters = {QStringLiteral("IsUnplayed")};
+    query.sortBy = QStringLiteral("PremiereDate,SortName");
+    query.limit = 12;
+
+    m_client->items(query, &m_upcomingEpisodesRequest)
+        .then(this, [this, generation](const Result<ItemsPage> &result) {
+            if (generation != m_upcomingEpisodesGeneration)
+                return;
+            if (result.ok() && !result.value.items.isEmpty()) {
+                m_upcomingEpisodes->setItems(result.value.items, result.value.totalRecordCount);
+                m_nextEpisode = m_upcomingEpisodes->get(0);
+                m_upcomingEpisodesLoading = false;
+                emit upcomingEpisodesChanged();
+                return;
+            }
+
+            // Fallback: If no unplayed episodes exist across the series, query the first
+            // episodes in broadcast air order so the shelf is not left blank.
+            ItemsQuery fallbackQuery;
+            fallbackQuery.parentId = m_itemId;
+            fallbackQuery.recursive = true;
+            fallbackQuery.includeItemTypes = {QStringLiteral("Episode")};
+            fallbackQuery.sortBy = QStringLiteral("PremiereDate,SortName");
+            fallbackQuery.limit = 12;
+
+            m_client->items(fallbackQuery, &m_upcomingEpisodesRequest)
+                .then(this, [this, generation](const Result<ItemsPage> &fallbackResult) {
+                    if (generation != m_upcomingEpisodesGeneration)
+                        return;
+                    if (fallbackResult.ok() && !fallbackResult.value.items.isEmpty()) {
+                        m_upcomingEpisodes->setItems(fallbackResult.value.items,
+                                                     fallbackResult.value.totalRecordCount);
+                        m_nextEpisode = m_upcomingEpisodes->get(0);
+                    } else {
+                        m_upcomingEpisodes->clear();
+                        m_nextEpisode.clear();
+                    }
+                    m_upcomingEpisodesLoading = false;
+                    emit upcomingEpisodesChanged();
+                });
+        });
+}
+
 void DetailsController::ensureLoaded(const QString &itemId)
 {
     if (itemId.isEmpty() || m_itemId == itemId)
@@ -245,6 +353,7 @@ void DetailsController::cancelRequests()
     m_detailsRequest.cancel();
     m_collectionsRequest.cancel();
     m_similarRequest.cancel();
+    m_upcomingEpisodesRequest.cancel();
 }
 
 void DetailsController::setSimilarLoading(bool loading)
