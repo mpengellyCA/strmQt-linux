@@ -62,6 +62,24 @@
   </requires>
 
   <releases>
+    <release version="0.5.0" date="2026-09-15" type="development">
+      <description>
+        <p>
+          Adds a built-in Web Remote server and companion mobile web application,
+          enabling playback and navigation control from any browser on the local
+          network via QR code or PIN pairing. Adds TV show up-next actions and
+          next-episode shelves on show detail pages.
+        </p>
+        <p>
+          Hardens application security and stability: installs global token and
+          authorization header redaction across Qt logging, tightens vault directory
+          and file permissions, clears saved session state on account removal,
+          debounces volume settings persistence to prevent disk thrashing, decouples
+          the VLC frame mutex from decoding intervals to eliminate UI stutter, and
+          fences MPV RHI teardown against in-flight command buffer desync.
+        </p>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-08-30" type="development">
       <description>
         <p>
