@@ -1,3 +1,9 @@
+src/ui/Main.qml: Member "cycleTab" not found on type "QQuickItem" [missing-property]	&& page.cycleTab(step) === true)
+src/ui/Main.qml: Member "cycleTab" not found on type "QQuickItem" [missing-property]	if (page !== null && typeof page.cycleTab === "function"
+src/ui/Main.qml: Member "jumpLetter" not found on type "QQuickItem" [missing-property]	&& page.jumpLetter(step) === true)
+src/ui/Main.qml: Member "jumpLetter" not found on type "QQuickItem" [missing-property]	if (page !== null && typeof page.jumpLetter === "function"
+src/ui/Main.qml: Member "pageBy" not found on type "QQuickItem" [missing-property]	if (typeof node.pageBy === "function")
+src/ui/Main.qml: Member "pageBy" not found on type "QQuickItem" [missing-property]	return node.pageBy(step) === true;
 src/ui/Main.qml: Member "sleeveRadius" not found on type "QQuickItem" [missing-property]	sleeveFlight.flyTo(target, page.sleeveRadius);
 src/ui/Main.qml: Member "sleeveRadius" not found on type "QQuickItem" [missing-property]	stack.currentItem.sleeveRadius,
 src/ui/Main.qml: Member "sleeveRect" not found on type "QQuickItem" [missing-property]	const target = page.sleeveRect(root.contentItem);
@@ -47,6 +53,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = route.query;
 src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	SeriesCtl.ensureOpen(route.id, route.name, route.seasonId);
+src/ui/Main.qml: Unqualified access [unqualified]	SeriesCtl.ensureOpen(seriesId, seriesName, seasonId);
 src/ui/Main.qml: Unqualified access [unqualified]	SeriesCtl.open(seriesId, seriesName);
 src/ui/Main.qml: Unqualified access [unqualified]	active: PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	const action = Input.actionForKey(event.key, event.modifiers, "browse");
@@ -147,6 +154,8 @@ src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	PlaylistCtl
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	readonly property bool listComplete: PlaylistCtl.playlistsComplete
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	target: PlaylistCtl
+src/ui/controls/StrmGrid.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	if (win && typeof win.focusNavigationRail === "function")
+src/ui/controls/StrmGrid.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	return win.focusNavigationRail() === true
 src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowBlur: panel._shadow.blur
 src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowOpacity: panel._shadow.opacity
 src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowVerticalOffset: panel._shadow.y
@@ -241,6 +250,7 @@ src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	target: PlaylistCt
 src/ui/pages/ArtistPage.qml: Unqualified access [unqualified]	visible: Prefs.backdropEnabled && page.artUrl.length > 0 && wash.opacity > 0.001
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	&& DetailsCtl.itemLoading
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	&& DetailsCtl.similarLoading
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	&& DetailsCtl.upcomingEpisodesLoading
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	&& typeof Prefs.rememberVersion === "function"
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	&& typeof Prefs.rememberedVersion === "function"
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browseCollection(set.id ? set.id : "", set.name)
@@ -266,10 +276,13 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = Deta
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = DetailsCtl.mediaSources
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const list = DetailsCtl.mediaSources
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	const wanted = Prefs.rememberedVersion(page.itemId)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	focus: page.isSeries && DetailsCtl.hasNextEpisode
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (!DetailsCtl.premiereDate || DetailsCtl.premiereDate.length === 0)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (!DetailsCtl.premiereDate || DetailsCtl.premiereDate.length === 0)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (!page.isSeries || !DetailsCtl.hasNextEpisode)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (DetailsCtl.itemId === page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (typed.length > 0 && !exact && PlaylistCtl.playlistsComplete)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: DetailsCtl.itemId === page.itemId
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: DetailsCtl.itemId === page.itemId
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("browseCollection", page.item)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("favorite", page.item)
@@ -277,15 +290,27 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Action
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("played", page.item)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("series", page.item)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("shuffle", page.item)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.play(DetailsCtl.nextEpisode)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.play(DetailsCtl.nextEpisode)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemActivated: index => Actions.openDetails(DetailsCtl.similar.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemActivated: index => Actions.openDetails(DetailsCtl.similar.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemActivated: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemActivated: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.similar.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.similar.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.upcomingEpisodes.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.upcomingEpisodes.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.play(DetailsCtl.similar.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.play(DetailsCtl.similar.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayRequested: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.similar.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.similar.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.similar.get(index),
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index),
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMoreRequested: Actions.performItemVerb("series", page.item)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId && DetailsCtl.itemLoading
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId && DetailsCtl.itemLoading
@@ -294,8 +319,11 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.itemPlayed =
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	people: DetailsCtl.cast
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	railModel: DetailsCtl.similar
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	railModel: DetailsCtl.upcomingEpisodes
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property bool multiVersion: DetailsCtl.mediaSourceCount > 1
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var capabilities: Actions.itemCapabilities(page.item)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var nextEpisodeItem: (page.isSeries && DetailsCtl.hasNextEpisode) ? DetailsCtl.nextEpisode : ({})
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var nextEpisodeItem: (page.isSeries && DetailsCtl.hasNextEpisode) ? DetailsCtl.nextEpisode : ({})
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var trailers: DetailsCtl.trailers
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	readonly property var versions: DetailsCtl.mediaSources
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	target: Actions
@@ -311,9 +339,12 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	var person = Deta
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	var set = DetailsCtl.collections[index]
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	var studio = DetailsCtl.studios[index]
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	var when = new Date(DetailsCtl.premiereDate)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	variant: (page.isSeries && DetailsCtl.hasNextEpisode) ? "secondary" : "primary"
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	visible: DetailsCtl.criticRating > 0
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	visible: DetailsCtl.similar.count > 0
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	visible: DetailsCtl.tagline.length > 0
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	visible: page.isSeries && DetailsCtl.hasNextEpisode
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	visible: page.isSeries && DetailsCtl.upcomingEpisodes.count > 0
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	&& HomeCtl.errorMessage.length === 0
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	&& HomeCtl.errorMessage.length > 0
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	Actions.browseGenre(cell.genreId, cell.title)
@@ -716,6 +747,8 @@ src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: !page.has
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: SearchCtl.searching && page.resultCount === 0
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: page.hasQuery && !SearchCtl.searching
 src/ui/pages/SearchPage.qml: Unqualified access [unqualified]	visible: page.hasQuery && !SearchCtl.searching && page.failed
+src/ui/pages/SeriesPage.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	if (win && typeof win.focusNavigationRail === "function")
+src/ui/pages/SeriesPage.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	win.focusNavigationRail()
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	"itemId": SeriesCtl.seriesId,
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	"name": SeriesCtl.seriesName,
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	Actions.play(SeriesCtl.episodes.get(row))
@@ -749,6 +782,7 @@ src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	if (itemId === Ser
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	if (itemId === SeriesCtl.seriesId)
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	if (row < 0 || row >= SeriesCtl.episodes.count)
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	itemMenu.popupForItem(SeriesCtl.episodes.get(cell.index), mx, my)
+src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	itemMenu.popupForItem(SeriesCtl.episodes.get(episodeGrid.currentIndex),
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	model: SeriesCtl.episodes
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	model: SeriesCtl.episodes
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	onActionTriggered: page.selectSeason(SeriesCtl.currentSeason)
@@ -810,6 +844,7 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property bool replayGainSupported: Session.playbackEngine === "mpv"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	return Prefs;
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	return WebRemoteCtl;
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	target: Input
@@ -972,5 +1007,16 @@ src/ui/shell/NavRail.qml: Unqualified access [unqualified]	return rail.inputRevi
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	const names = Input.categories();
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	const revision = Input.actions;
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	out.push({ "name": names[i], "actions": Input.actionsForCategory(names[i]) });
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	WebRemoteCtl.copyUrlToClipboard(WebRemoteCtl.activeUrl);
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	WebRemoteCtl.copyUrlToClipboard(WebRemoteCtl.activeUrl);
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	if (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl)
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	readonly property var inputRevision: Input.actions
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	return topBar.inputRevision.length > 0 ? Input.binding(actionId) : "";
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	source: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeQrDataUri : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	source: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeQrDataUri : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
+src/ui/shell/TopBar.qml: Unqualified access [unqualified]	visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
