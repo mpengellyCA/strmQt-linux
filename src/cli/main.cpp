@@ -11,8 +11,10 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QFutureWatcher>
+#include <QJsonDocument>
 #include <QSysInfo>
 #include <QTextStream>
+#include <QUrlQuery>
 
 #include <cstdio>
 
@@ -279,6 +281,31 @@ int commandNextUp(emby::EmbyClient &client)
     return 0;
 }
 
+// Raw GET for server measurements: get /Users/{uid}/Items Key=Value ...
+int commandGet(emby::EmbyClient &client, const QStringList &args)
+{
+    if (args.size() < 2) {
+        err() << "usage: get PATH [Key=Value ...]   (PATH may contain {uid})\n";
+        return 2;
+    }
+    QUrlQuery query;
+    for (qsizetype i = 2; i < args.size(); ++i) {
+        const qsizetype eq = args.at(i).indexOf(QLatin1Char('='));
+        if (eq <= 0) {
+            err() << "error: expected Key=Value, got " << args.at(i) << "\n";
+            return 2;
+        }
+        query.addQueryItem(args.at(i).left(eq), args.at(i).mid(eq + 1));
+    }
+    const auto result = await(client.getJson(args.at(1), query));
+    if (!result.ok()) {
+        err() << "error: " << result.error << "\n";
+        return 1;
+    }
+    out() << result.value.toJson(QJsonDocument::Indented);
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -293,7 +320,7 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(
         QStringLiteral("StrmQt Emby probe tool.\n"
                        "Commands: status | login | logout | libraries | resume | "
-                       "latest [libraryId] | nextup"));
+                       "latest [libraryId] | nextup | get PATH [Key=Value...]"));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("Command to run"));
@@ -352,6 +379,8 @@ int main(int argc, char *argv[])
         return commandLatest(client, args.value(1));
     if (command == QLatin1String("nextup"))
         return commandNextUp(client);
+    if (command == QLatin1String("get"))
+        return commandGet(client, args);
 
     err() << "unknown command: " << command << "\n";
     parser.showHelp(2);

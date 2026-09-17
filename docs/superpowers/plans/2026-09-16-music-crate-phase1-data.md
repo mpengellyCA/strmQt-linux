@@ -54,7 +54,7 @@ ctest --preset dev -R <test_name> --output-on-failure
   - `static QUrlQuery EmbyClient::artistParams(const QString &userId, const ItemsQuery &query)`
   - `ItemsQuery::years` (`QList<int>`), `audioCodecs` (`QStringList`), `minDateCreated`, `minPremiereDate`, `maxPremiereDate` (`QString`, ISO-8601), `ids` (`QStringList`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add three slots to `EmbyClientTest` in `tests/integration/tst_emby_client.cpp`: declare them under `private slots:`, then add the definitions before the `QTEST_MAIN` line.
 
@@ -118,12 +118,12 @@ void EmbyClientTest::itemsSendsMusicAxes()
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_emby_client`
 Expected: a compile error (`getJson`, `itemsParams`, `years` and the other new members do not exist).
 
-- [ ] **Step 3: Extend `ItemsQuery`**
+- [x] **Step 3: Extend `ItemsQuery`**
 
 In `src/server/dto/ItemsQuery.h`, add `#include <QList>` and insert these members before `bool recursive`:
 
@@ -140,7 +140,7 @@ In `src/server/dto/ItemsQuery.h`, add `#include <QList>` and insert these member
     QStringList ids;
 ```
 
-- [ ] **Step 4: Extract `itemsParams`, publish `artistParams`, add `getJson`**
+- [x] **Step 4: Extract `itemsParams`, publish `artistParams`, add `getJson`**
 
 In `EmbyClient.h`, in the public section right after `items(...)`:
 
@@ -217,12 +217,12 @@ QFuture<Result<QJsonDocument>> EmbyClient::getJson(const QString &path, const QU
 
 `failedFuture` is a member template defined in the .cpp. Its instantiation for `QJsonDocument` compiles as long as `getJson` comes after the template definition (line ~344), which it does.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_emby_client && ctest --preset dev -R 'tst_emby_client|tst_item_actions|tst_music_query|tst_library' --output-on-failure`
 Expected: PASS. The regex also covers the existing `items()` and artist callers, so it catches a regression in the refactor.
 
-- [ ] **Step 6: Add the CLI `get` probe**
+- [x] **Step 6: Add the CLI `get` probe**
 
 In `src/cli/main.cpp`, add this above the closing `} // namespace` that precedes `main`:
 
@@ -263,7 +263,7 @@ Include `<QUrlQuery>` and `<QJsonDocument>` if they are missing. Append ` | get 
 Run: `cmake --build --preset dev --target strmqt-cli && ./build/dev/strmqt-cli --help | grep get`
 Expected: the help text lists `get PATH [Key=Value...]`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/server/dto/ItemsQuery.h src/server/emby/EmbyClient.h src/server/emby/EmbyClient.cpp src/cli/main.cpp tests/integration/tst_emby_client.cpp

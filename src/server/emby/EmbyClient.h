@@ -74,6 +74,16 @@ public:
     QFuture<Result<QList<Library>>> userViews();
     // GET /Users/{uid}/Items
     QFuture<Result<ItemsPage>> items(const ItemsQuery &query, RequestHandle *handle = nullptr);
+    // Raw JSON escape hatch for composed music queries (MusicRepository). `path`
+    // and query values may contain "{uid}", replaced with the session's user id. Same auth,
+    // cancellation, size limit and epoch rules as every typed call.
+    QFuture<Result<QJsonDocument>> getJson(const QString &path, const QUrlQuery &query,
+                                           RequestHandle *handle = nullptr);
+    // The query string items() sends. Public so composed callers send exactly
+    // the same parameters as the typed call.
+    static QUrlQuery itemsParams(const ItemsQuery &query);
+    // The subset of ItemsQuery the /Artists endpoints honour (measured).
+    static QUrlQuery artistParams(const QString &userId, const ItemsQuery &query);
     // GET /Users/{uid}/Items/Resume
     QFuture<Result<ItemsPage>> resumeItems(int limit = 20);
     // GET /Users/{uid}/Items/Latest (bare array on the wire)

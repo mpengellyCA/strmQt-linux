@@ -412,13 +412,8 @@ QFuture<Result<QList<Library>>> EmbyClient::userViews()
     });
 }
 
-QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHandle *handle)
+QUrlQuery EmbyClient::itemsParams(const ItemsQuery &query)
 {
-    if (handle)
-        handle->cancel();
-    if (!hasSession())
-        return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
-
     QUrlQuery params;
     if (!query.parentId.isEmpty())
         params.addQueryItem(QStringLiteral("ParentId"), query.parentId);
@@ -459,15 +454,61 @@ QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHan
     if (!query.listItemIds.isEmpty())
         params.addQueryItem(QStringLiteral("ListItemIds"),
                             query.listItemIds.join(QLatin1Char(',')));
+    if (!query.years.isEmpty()) {
+        QStringList years;
+        years.reserve(query.years.size());
+        for (int year : query.years)
+            years.append(QString::number(year));
+        params.addQueryItem(QStringLiteral("Years"), years.join(QLatin1Char(',')));
+    }
+    if (!query.audioCodecs.isEmpty())
+        params.addQueryItem(QStringLiteral("AudioCodecs"), query.audioCodecs.join(QLatin1Char(',')));
+    if (!query.minDateCreated.isEmpty())
+        params.addQueryItem(QStringLiteral("MinDateCreated"), query.minDateCreated);
+    if (!query.minPremiereDate.isEmpty())
+        params.addQueryItem(QStringLiteral("MinPremiereDate"), query.minPremiereDate);
+    if (!query.maxPremiereDate.isEmpty())
+        params.addQueryItem(QStringLiteral("MaxPremiereDate"), query.maxPremiereDate);
+    if (!query.ids.isEmpty())
+        params.addQueryItem(QStringLiteral("Ids"), query.ids.join(QLatin1Char(',')));
     if (query.recursive)
         params.addQueryItem(QStringLiteral("Recursive"), QStringLiteral("true"));
     params.addQueryItem(QStringLiteral("StartIndex"), QString::number(query.startIndex));
     params.addQueryItem(QStringLiteral("Limit"), QString::number(query.limit));
+    return params;
+}
+
+QFuture<Result<ItemsPage>> EmbyClient::items(const ItemsQuery &query, RequestHandle *handle)
+{
+    if (handle)
+        handle->cancel();
+    if (!hasSession())
+        return failedFuture<ItemsPage>(QStringLiteral("not authenticated"));
+
+    const QUrlQuery params = itemsParams(query);
 
     QNetworkReply *reply = startGet(QStringLiteral("/Users/%1/Items").arg(m_userId), params);
     return finishJson<ItemsPage>(reply, [](const QJsonDocument &doc) {
         return Result<ItemsPage>::success(parseItemsPage(doc.object()));
     }, handle);
+}
+
+QFuture<Result<QJsonDocument>> EmbyClient::getJson(const QString &path, const QUrlQuery &query,
+                                                   RequestHandle *handle)
+{
+    if (handle)
+        handle->cancel();
+    if (!hasSession())
+        return failedFuture<QJsonDocument>(QStringLiteral("not authenticated"));
+    QString resolved = path;
+    resolved.replace(QStringLiteral("{uid}"), m_userId);
+    QUrlQuery resolvedQuery;
+    for (auto item : query.queryItems(QUrl::FullyDecoded)) {
+        item.second.replace(QStringLiteral("{uid}"), m_userId);
+        resolvedQuery.addQueryItem(item.first, item.second);
+    }
+    QNetworkReply *reply = startGet(resolved, resolvedQuery);
+    return finishDocument(reply, handle);
 }
 
 QFuture<Result<ItemsPage>> EmbyClient::resumeItems(int limit)
@@ -619,11 +660,10 @@ QFuture<Result<ItemsPage>> EmbyClient::instantMix(const QString &itemId, int lim
     });
 }
 
-namespace {
 // The subset of ItemsQuery the artist endpoints were measured to honour. Sending
 // the rest would not fail — this server ignores what it does not know — which is
 // exactly why the set is stated here rather than assumed.
-QUrlQuery artistParams(const QString &userId, const ItemsQuery &query)
+QUrlQuery EmbyClient::artistParams(const QString &userId, const ItemsQuery &query)
 {
     QUrlQuery params;
     params.addQueryItem(QStringLiteral("UserId"), userId);
@@ -654,7 +694,6 @@ QUrlQuery artistParams(const QString &userId, const ItemsQuery &query)
         params.addQueryItem(QStringLiteral("Filters"), query.filters.join(QLatin1Char(',')));
     return params;
 }
-} // namespace
 
 QFuture<Result<ItemsPage>> EmbyClient::musicArtists(const ItemsQuery &query)
 {

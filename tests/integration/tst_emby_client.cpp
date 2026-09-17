@@ -52,6 +52,9 @@ private slots:
     void requestHandleCancelsOnlyItsOwnedReply();
     void renamePreservesTheFetchedItemMetadata();
     void renameCannotChainAWriteAcrossServers();
+    void getJsonSubstitutesUserAndKeepsQuery();
+    void getJsonFailsWithoutSession();
+    void itemsSendsMusicAxes();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -530,6 +533,58 @@ void EmbyClientTest::renameCannotChainAWriteAcrossServers()
     QVERIFY(!result.ok());
     QCOMPARE(result.error, QStringLiteral("request canceled"));
     QCOMPARE(nextServer.requestCount(), 0);
+}
+
+void EmbyClientTest::getJsonSubstitutesUserAndKeepsQuery()
+{
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/Latest").arg(kUserId), 200,
+                     R"({"Items":[{"Id":"x1"}]})");
+    m_client->setSession(kToken, kUserId);
+
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("Limit"), QStringLiteral("7"));
+    query.addQueryItem(QStringLiteral("UserId"), QStringLiteral("{uid}"));
+    const auto result = waitFor(m_client->getJson(QStringLiteral("/Users/{uid}/Items/Latest"), query));
+
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.object().value(QStringLiteral("Items")).toArray().size(), 1);
+    const auto request = m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/Latest").arg(kUserId));
+    QCOMPARE(QUrlQuery(request.query).queryItemValue(QStringLiteral("Limit")), QStringLiteral("7"));
+    QCOMPARE(QUrlQuery(request.query).queryItemValue(QStringLiteral("UserId")), kUserId);
+}
+
+void EmbyClientTest::getJsonFailsWithoutSession()
+{
+    const auto result = waitFor(m_client->getJson(QStringLiteral("/Users/{uid}/Items"), {}));
+    QVERIFY(!result.ok());
+    QCOMPARE(result.error, QStringLiteral("not authenticated"));
+    QCOMPARE(m_mock->requestCount(), 0);
+}
+
+void EmbyClientTest::itemsSendsMusicAxes()
+{
+    ItemsQuery query;
+    query.years = {1970, 1971};
+    query.audioCodecs = {QStringLiteral("flac"), QStringLiteral("alac")};
+    query.minDateCreated = QStringLiteral("2026-09-09T00:00:00Z");
+    query.minPremiereDate = QStringLiteral("1970-01-01");
+    query.maxPremiereDate = QStringLiteral("1979-12-31");
+    query.ids = {QStringLiteral("a1"), QStringLiteral("a2")};
+
+    const QUrlQuery params = EmbyClient::itemsParams(query);
+    QCOMPARE(params.queryItemValue(QStringLiteral("Years")), QStringLiteral("1970,1971"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("AudioCodecs")), QStringLiteral("flac,alac"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("MinDateCreated")), QStringLiteral("2026-09-09T00:00:00Z"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("MinPremiereDate")), QStringLiteral("1970-01-01"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("MaxPremiereDate")), QStringLiteral("1979-12-31"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("Ids")), QStringLiteral("a1,a2"));
+
+    // Unset axes are not sent at all.
+    const QUrlQuery empty = EmbyClient::itemsParams(ItemsQuery{});
+    QVERIFY(!empty.hasQueryItem(QStringLiteral("Years")));
+    QVERIFY(!empty.hasQueryItem(QStringLiteral("Ids")));
+    QCOMPARE(empty.queryItemValue(QStringLiteral("Limit")), QStringLiteral("100"));
 }
 
 QTEST_GUILESS_MAIN(EmbyClientTest)

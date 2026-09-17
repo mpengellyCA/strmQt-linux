@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -50,6 +51,16 @@ struct ItemsQuery
     // still sends nameStartsWith above.
     QString nameStartsWithOrGreater;
     QString nameLessThan;
+    // Music Crate axes (docs/superpowers/plans/2026-09-16-music-crate-verifications.md
+    // records which ones Emby 4.9.5 honours; unset values are never sent).
+    QList<int> years;
+    QStringList audioCodecs;
+    // ISO-8601 bounds, sent verbatim.
+    QString minDateCreated;
+    QString minPremiereDate;
+    QString maxPremiereDate;
+    // Explicit id list ("Ids"); the server returns them in its own sort order.
+    QStringList ids;
     bool recursive = false;
     int startIndex = 0;
     int limit = 100;
