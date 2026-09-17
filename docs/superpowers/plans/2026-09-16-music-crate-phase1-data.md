@@ -7023,7 +7023,7 @@ Rules:
 - A failed request emits `ItemActions::actionFailed(tr("Couldn't start playback: %1").arg(error))`, and the queue is left alone.
 - Shuffles shuffle the track list before queueing and start at row 0. The queue's own shuffle flag stays off, so ⇄ in the player still reorders the queue from that list.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/tst_music_playback.cpp`:
 
@@ -7247,12 +7247,12 @@ strmqt_add_test(tst_music_playback
 target_include_directories(tst_music_playback PRIVATE mocks)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_music_playback`
 Expected: a compile error (`MusicPlayback.h` not found).
 
-- [ ] **Step 3: Write `MusicPlayback`**
+- [x] **Step 3: Write `MusicPlayback`**
 
 `src/app/music/MusicPlayback.h`:
 
@@ -7438,14 +7438,14 @@ Add to `strmqt_app`:
 
 `emit m_actions->actionFailed(...)` from outside `ItemActions` is legal because Qt 6 signals are public. It keeps a single failure toast path in `Main.qml`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_playback && ctest --preset dev -R tst_music_playback --output-on-failure`
 Expected: PASS (6 tests).
 
 If `lastVerbWins` shows `a1…` after the wait, `reservePlaybackIntent` is not being called before the request. Fix the order; do not loosen the test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/music/MusicPlayback.* src/CMakeLists.txt tests/integration/tst_music_playback.cpp tests/CMakeLists.txt
