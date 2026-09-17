@@ -52,10 +52,41 @@ FocusScope {
         const row = HomeCtl.rails.indexOfKey(key.slice(prefix.length))
         if (row < 0)
             return false
+        page._railCursorPlaced = true
         railList.currentIndex = row
         railList.positionViewAtIndex(row, ListView.Contain)
         railList.forceLayout()
         return true
+    }
+
+    // ── Where the cursor starts ────────────────────────────────────────────
+    // Rails land in whatever order their requests finish. The genre rails are
+    // one cheap query each and routinely arrive before Continue Watching, and
+    // the descriptor sync then inserts the earlier rails ABOVE them. ListView
+    // keeps its current item across an insert or a move, so the cursor rode
+    // down with the first rail to arrive and Home opened on "Action" (the first
+    // genre alphabetically). Until something deliberately places the cursor — a
+    // key, a click, a back-stack restore — it belongs to the top rail.
+    property bool _railCursorPlaced: false
+    property bool _settlingRailCursor: false
+
+    function _settleRailCursor(): void {
+        // The view applies model changes at its next layout, and until then
+        // currentIndex still reads the pre-insert value.
+        railList.forceLayout()
+        if (page._railCursorPlaced || railList.count <= 0 || railList.currentIndex === 0)
+            return
+        page._settlingRailCursor = true
+        railList.currentIndex = 0
+        page._settlingRailCursor = false
+    }
+
+    Connections {
+        target: railList.model
+        function onRowsInserted() { Qt.callLater(page._settleRailCursor) }
+        function onRowsMoved() { Qt.callLater(page._settleRailCursor) }
+        function onRowsRemoved() { Qt.callLater(page._settleRailCursor) }
+        function onModelReset() { Qt.callLater(page._settleRailCursor) }
     }
 
     // ── Item verbs ─────────────────────────────────────────────────────────
@@ -305,6 +336,15 @@ FocusScope {
         cacheBuffer: Theme.scale(800)
         boundsBehavior: Flickable.StopAtBounds
 
+        // Only rail-to-rail steps reach here: a rail answers its own Left and
+        // Right, and declines Up and Down so this view can move between rails.
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                    || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown)
+                page._railCursorPlaced = true
+            event.accepted = false
+        }
+
         // A screenful of shelves, for the pad's triggers on a page that has no
         // alphabet strip to jump by (Main.qml pageFocusedView finds this by
         // walking up from whatever holds the keyboard). Rails differ in height,
@@ -324,6 +364,7 @@ FocusScope {
                                                 railList.currentIndex + step * span))
             if (target === railList.currentIndex)
                 return false
+            page._railCursorPlaced = true
             railList.currentIndex = target
             railList.positionViewAtIndex(target, ListView.Contain)
             return true
@@ -384,8 +425,13 @@ FocusScope {
             // the keyboard last visited rather than the one the user is on.
             // Focus only: hovering a rail still never moves the cursor onto it.
             onActiveFocusChanged: {
-                if (cell.activeFocus)
-                    railList.currentIndex = cell.index
+                if (!cell.activeFocus)
+                    return
+                // Focus arriving on a rail other than the current one was put
+                // there on purpose (a click, a restore), not by an insert.
+                if (cell.index !== railList.currentIndex && !page._settlingRailCursor)
+                    page._railCursorPlaced = true
+                railList.currentIndex = cell.index
             }
 
             onHoveringChanged: page.publishHover(cell, cell.hovering,

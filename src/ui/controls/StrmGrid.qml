@@ -249,7 +249,19 @@ FocusScope {
         function onModelReset() {
             grid._lastNearEndCount = -1
             Qt.callLater(navigationFocus.noteProgress)
+            Qt.callLater(grid._settleCurrentIndex)
         }
+    }
+
+    // A reset leaves the GridView with no current item, even when the new rows
+    // are already there (inserts into an empty view pick 0; a reset does not).
+    // With currentIndex at -1 the first Down moves to -1 + columns, the LAST
+    // card of the top row, so every freshly loaded library opened its cursor
+    // at the wrong end. A pending restore places the cursor itself.
+    function _settleCurrentIndex(): void {
+        if (navigationFocus.pending || view.count <= 0 || view.currentIndex >= 0)
+            return
+        view.currentIndex = 0
     }
 
     NavigationFocusRestorer {
