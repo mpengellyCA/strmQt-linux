@@ -698,6 +698,17 @@ FocusScope {
             height: content.sideBySide ? content.height
                                        : Math.max(0, content.height - heroPane.height - content.gap)
 
+            // The page's volume wheel sits under this panel. A list at either
+            // end of its travel (or too short to scroll) ignores the wheel, and
+            // it fell through and changed the volume. Declared first so the
+            // list still scrolls; buttons are left alone, so a click here still
+            // reaches whatever it did before.
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.NoButton
+                onWheel: wheel => wheel.accepted = true
+            }
+
             Item {
                 id: queueHeader
 
