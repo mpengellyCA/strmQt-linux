@@ -55,6 +55,7 @@ private slots:
     void getJsonSubstitutesUserAndKeepsQuery();
     void getJsonFailsWithoutSession();
     void itemsSendsMusicAxes();
+    void queryRoutesMatchMostSpecific();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -585,6 +586,36 @@ void EmbyClientTest::itemsSendsMusicAxes()
     QVERIFY(!empty.hasQueryItem(QStringLiteral("Years")));
     QVERIFY(!empty.hasQueryItem(QStringLiteral("Ids")));
     QCOMPARE(empty.queryItemValue(QStringLiteral("Limit")), QStringLiteral("100"));
+}
+
+void EmbyClientTest::queryRoutesMatchMostSpecific()
+{
+    const QString path = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), path, 200, R"({"Items":[],"TotalRecordCount":0})");
+    m_mock->addQueryRoute(QStringLiteral("GET"), path,
+                          {{QStringLiteral("IncludeItemTypes"), QStringLiteral("MusicAlbum")}}, 200,
+                          R"({"Items":[{"Id":"album"}],"TotalRecordCount":1})");
+    m_mock->addQueryRoute(QStringLiteral("GET"), path,
+                          {{QStringLiteral("IncludeItemTypes"), QStringLiteral("MusicAlbum")},
+                           {QStringLiteral("Filters"), QStringLiteral("IsFavorite")}},
+                          200, R"({"Items":[{"Id":"fav"}],"TotalRecordCount":1})");
+    m_client->setSession(kToken, kUserId);
+
+    auto firstId = [&](QList<QPair<QString, QString>> items) {
+        QUrlQuery query;
+        query.setQueryItems(items);
+        const auto result = waitFor(m_client->getJson(QStringLiteral("/Users/{uid}/Items"), query));
+        const QJsonArray array = result.value.object().value(QStringLiteral("Items")).toArray();
+        return array.isEmpty() ? QString() : array.at(0).toObject().value(QStringLiteral("Id")).toString();
+    };
+
+    QCOMPARE(firstId({{QStringLiteral("IncludeItemTypes"), QStringLiteral("MusicAlbum")},
+                      {QStringLiteral("Limit"), QStringLiteral("5")}}),
+             QStringLiteral("album"));
+    QCOMPARE(firstId({{QStringLiteral("Filters"), QStringLiteral("IsFavorite")},
+                      {QStringLiteral("IncludeItemTypes"), QStringLiteral("MusicAlbum")}}),
+             QStringLiteral("fav"));
+    QCOMPARE(firstId({{QStringLiteral("IncludeItemTypes"), QStringLiteral("Audio")}}), QString());
 }
 
 QTEST_GUILESS_MAIN(EmbyClientTest)

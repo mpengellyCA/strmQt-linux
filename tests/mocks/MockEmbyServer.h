@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -57,6 +58,12 @@ public:
     void addFieldsGatedRoute(const QString &method, const QString &path,
                              const QByteArray &fullBody, const QStringList &gatedKeys,
                              int status = 200);
+    // Answers only requests whose query carries every `required` Key=Value
+    // (fully decoded). The most specific match wins, ahead of queued, gated
+    // and plain routes on the same path.
+    void addQueryRoute(const QString &method, const QString &path,
+                       const QList<QPair<QString, QString>> &required, int status,
+                       const QByteArray &body);
     // Hold a route's reply back by `ms` before writing it. The request is
     // recorded when it arrives, so ordering assertions still see it.
     //
@@ -109,6 +116,13 @@ private:
         QStringList gatedKeys;
     };
 
+    struct QueryRoute
+    {
+        QList<QPair<QString, QString>> required;
+        int status = 200;
+        QByteArray body;
+    };
+
     void handleConnection();
 
     void handleWebSocketConnection();
@@ -117,6 +131,7 @@ private:
     QHash<QString, Route> m_routes; // key: "METHOD /path"
     QHash<QString, QList<Route>> m_queuedRoutes;
     QHash<QString, FieldsGatedRoute> m_fieldsGatedRoutes; // key: "METHOD /path"
+    QHash<QString, QList<QueryRoute>> m_queryRoutes; // key: "METHOD /path"
     QList<ReceivedRequest> m_requests;
     QHash<QString, int> m_abortedResponses;
 

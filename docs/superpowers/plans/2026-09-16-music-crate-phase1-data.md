@@ -2086,7 +2086,7 @@ The repository sends several requests to the same path (`/Users/{uid}/Items`) th
 **Interfaces:**
 - Produces: `void MockEmbyServer::addQueryRoute(const QString &method, const QString &path, const QList<QPair<QString, QString>> &required, int status, const QByteArray &body)`. A request matches when every `required` key has exactly that (fully decoded) value. More specific routes (more required keys) win. A matching query route takes priority over queued, gated and static routes on the same path. `addQueryRoute` with the same method, path and required set replaces the earlier body.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a slot `void queryRoutesMatchMostSpecific();` to `tst_emby_client.cpp`:
 
@@ -2122,12 +2122,12 @@ void EmbyClientTest::queryRoutesMatchMostSpecific()
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_emby_client`
 Expected: a compile error (`addQueryRoute` is not a member).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `MockEmbyServer.h`, add `#include <QPair>` and declare the method public, after `addFieldsGatedRoute`:
 
@@ -2200,12 +2200,12 @@ In `handleConnection`, directly after `const QString key = request.method + QLat
 
 The rest of the chain (`else if (m_fieldsGatedRoutes…)`, `else`) is unchanged. Delete the original `QByteArray response;` and `int delayMs = 0;` lines above the old `if` so they are not declared twice. `Route`'s field order is `{status, body, contentType, delayMs, chunked}`. If `contentType` is a `QByteArray` in this file, the literal converts implicitly.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev && ctest --preset dev -R 'tst_emby_client|tst_item_actions|tst_home|tst_library' --output-on-failure`
 Expected: PASS (the new test passes and the existing mock users are unaffected).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/mocks/MockEmbyServer.h tests/mocks/MockEmbyServer.cpp tests/integration/tst_emby_client.cpp

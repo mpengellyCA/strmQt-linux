@@ -1,5 +1,7 @@
 #include "MockEmbyServer.h"
 
+#include <algorithm>
+
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -81,6 +83,19 @@ void MockEmbyServer::addFieldsGatedRoute(const QString &method, const QString &p
     m_fieldsGatedRoutes.insert(key, FieldsGatedRoute{status, fullBody, gatedKeys});
 }
 
+void MockEmbyServer::addQueryRoute(const QString &method, const QString &path,
+                                   const QList<QPair<QString, QString>> &required, int status,
+                                   const QByteArray &body)
+{
+    const QString key = method.toUpper() + QLatin1Char(' ') + path;
+    QList<QueryRoute> &routes = m_queryRoutes[key];
+    routes.removeIf([&](const QueryRoute &route) { return route.required == required; });
+    routes.append(QueryRoute{required, status, body});
+    std::stable_sort(routes.begin(), routes.end(), [](const QueryRoute &a, const QueryRoute &b) {
+        return a.required.size() > b.required.size();
+    });
+}
+
 MockEmbyServer::ReceivedRequest MockEmbyServer::lastRequestFor(const QString &method,
                                                                const QString &path) const
 {
@@ -143,12 +158,30 @@ void MockEmbyServer::handleConnection()
             responseState->pending = true;
 
             const QString key = request.method + QLatin1Char(' ') + request.path;
+            const QueryRoute *queryRoute = nullptr;
+            if (const auto it = m_queryRoutes.constFind(key); it != m_queryRoutes.cend()) {
+                const QUrlQuery received(request.query);
+                for (const QueryRoute &candidate : *it) {
+                    const bool matches = std::all_of(
+                        candidate.required.cbegin(), candidate.required.cend(),
+                        [&](const QPair<QString, QString> &pair) {
+                            return received.hasQueryItem(pair.first)
+                                   && received.queryItemValue(pair.first, QUrl::FullyDecoded) == pair.second;
+                        });
+                    if (matches) {
+                        queryRoute = &candidate;
+                        break;
+                    }
+                }
+            }
             QByteArray response;
             int delayMs = 0;
-            if (!m_queuedRoutes.value(key).isEmpty() || m_routes.contains(key) ||
+            if (queryRoute || !m_queuedRoutes.value(key).isEmpty() || m_routes.contains(key) ||
                 m_fieldsGatedRoutes.contains(key)) {
                 Route route;
-                if (!m_queuedRoutes.value(key).isEmpty()) {
+                if (queryRoute) {
+                    route = Route{queryRoute->status, queryRoute->body, "application/json", 0, false};
+                } else if (!m_queuedRoutes.value(key).isEmpty()) {
                     route = m_queuedRoutes[key].takeFirst();
                 } else if (m_fieldsGatedRoutes.contains(key)) {
                     const FieldsGatedRoute gated = m_fieldsGatedRoutes.value(key);
