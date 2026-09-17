@@ -7487,7 +7487,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 Crate adds no colours (spec §2). The mockup badge border `#4a443d` is within 2/255 of the existing `textDisabled` (`#4A453F`), so the token aliases it rather than adding a literal.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/tst_crate_tokens.cpp`:
 
@@ -7595,12 +7595,12 @@ target_compile_definitions(tst_crate_tokens PRIVATE STRMQT_SOURCE_DIR="${CMAKE_S
 set_tests_properties(tst_crate_tokens PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_crate_tokens && ctest --preset dev -R tst_crate_tokens --output-on-failure`
 Expected: FAIL, with the first `QCOMPARE` on `axes` reporting a missing value.
 
-- [ ] **Step 3: Add the tokens**
+- [x] **Step 3: Add the tokens**
 
 Append inside the root object of `src/ui/Theme.qml`, after `topBarHeight`:
 
@@ -7640,12 +7640,12 @@ Append inside the root object of `src/ui/Theme.qml`, after `topBarHeight`:
 
 The root object's id is `theme`: `accentColor` and `scale()` already use it.
 
-- [ ] **Step 4: Run the test and the lint baseline**
+- [x] **Step 4: Run the test and the lint baseline**
 
 Run: `cmake --build --preset dev --target tst_crate_tokens && ctest --preset dev -R "tst_crate_tokens|tst_qml_accessibility" --output-on-failure && bash scripts/check-qmllint-baseline.sh build/dev`
 Expected: both tests PASS, and the baseline reports no new warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ui/Theme.qml tests/unit/tst_crate_tokens.cpp tests/CMakeLists.txt

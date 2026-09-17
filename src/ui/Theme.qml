@@ -217,4 +217,35 @@ QtObject {
     readonly property int pageMarginValue: scale(48)
     readonly property int railGap: scale(32)
     readonly property int topBarHeight: scale(52)
+
+    // ── Crate (music) ──────────────────────────────────────────────────────
+    // Music's dialect of Projection Booth (Crate spec §2): the same ground,
+    // accent and typefaces, set louder. Archivo is pushed wide and heavy for
+    // headings and hero titles; data stays in Plex Mono. No colours are added
+    // here: the badge border is textDisabled, the hi-res badge is the accent.
+    readonly property var crateDisplayAxes: ({ "wdth": 120, "wght": 820 })
+    readonly property int crateDisplayWeight: 820
+    readonly property real crateDisplayTracking: -0.02 // em
+
+    readonly property int crateHeroHome: scale(52)
+    readonly property int crateHeroAlbum: scale(58)   // album page and player
+    readonly property int crateHeroArtist: scale(84)
+    readonly property int crateShelfHeading: scale(26)
+    readonly property int crateStripSize: scale(15)
+
+    readonly property int crateKickerSize: scale(11)
+    readonly property real crateKickerTracking: 0.17 // em
+
+    readonly property int crateBadgeSize: scale(10.5)
+    readonly property int crateBadgeRadius: 3
+    readonly property int crateBadgeBorderWidth: 1
+    readonly property color crateBadgeBorder: theme.textDisabled
+    readonly property color crateBadgeHiRes: theme.accentColor
+
+    // A sleeve is a square cover with a deep shadow and no card behind it.
+    readonly property int crateSleeveRadius: 3
+    readonly property var crateSleeveElevation: theme.elevation4
+    readonly property int crateSleeveSize: scale(178)
+    readonly property int crateSleeveSizeLarge: scale(260)
+    readonly property int cratePortraitSize: scale(150)
 }

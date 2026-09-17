@@ -232,3 +232,8 @@ if(STRMQT_WITH_VLC)
 endif()
 
 strmqt_add_test(tst_music_cache unit/tst_music_cache.cpp)
+
+strmqt_add_test(tst_crate_tokens unit/tst_crate_tokens.cpp)
+target_link_libraries(tst_crate_tokens PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick)
+target_compile_definitions(tst_crate_tokens PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_crate_tokens PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
