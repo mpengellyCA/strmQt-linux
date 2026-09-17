@@ -2625,7 +2625,7 @@ Sort tables (spec §5.3). Every key is lower-case and stable; the UI stores keys
 | Genres | `size` (client-side, desc); `name` (client-side, asc) |
 | Playlists | `name` → `SortName`; `added` → `DateCreated` (desc) |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/unit/tst_music_query_translator.cpp`:
 
@@ -2805,12 +2805,12 @@ Register:
 strmqt_add_test(tst_music_query_translator unit/tst_music_query_translator.cpp)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_query_translator`
 Expected: a compile error (headers not found).
 
-- [ ] **Step 3: Write `MusicFormat.h/.cpp`**
+- [x] **Step 3: Write `MusicFormat.h/.cpp`**
 
 ```cpp
 #pragma once
@@ -2902,7 +2902,7 @@ QString coverUrl(const ImageRef &ref)
 
 `formatRuntime(48 min 20 s)` rounds to 48 min; `formatRuntime(20 s)` floors to "1 min" so a short track never reads as "0 min".
 
-- [ ] **Step 4: Write `MusicQueryTranslator.h/.cpp`**
+- [x] **Step 4: Write `MusicQueryTranslator.h/.cpp`**
 
 ```cpp
 #pragma once
@@ -3148,12 +3148,12 @@ Add to `strmqt_app` in `src/CMakeLists.txt`:
     app/music/MusicQueryTranslator.h app/music/MusicQueryTranslator.cpp
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_query_translator && ctest --preset dev -R tst_music_query_translator --output-on-failure`
 Expected: PASS (8 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/music/MusicFormat.* src/app/music/MusicQueryTranslator.* src/CMakeLists.txt tests/unit/tst_music_query_translator.cpp tests/CMakeLists.txt

@@ -12,6 +12,7 @@ strmqt_add_test(tst_settings unit/tst_settings.cpp)
 strmqt_add_test(tst_log_redaction unit/tst_log_redaction.cpp)
 strmqt_add_test(tst_emby_dto unit/tst_emby_dto.cpp)
 strmqt_add_test(tst_music_mapper unit/tst_music_mapper.cpp)
+strmqt_add_test(tst_music_query_translator unit/tst_music_query_translator.cpp)
 strmqt_add_test(tst_secrets_store unit/tst_secrets_store.cpp)
 
 strmqt_add_test(tst_models unit/tst_models.cpp)
