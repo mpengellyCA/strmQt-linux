@@ -1,6 +1,11 @@
 #include "server/emby/EmbyMusicMapper.h"
 
+#include <algorithm>
+
 #include <QRegularExpression>
+
+#include "server/dto/MediaItem.h"
+#include "server/emby/MusicServerCapabilities.h"
 
 namespace strmqt::emby {
 
@@ -39,6 +44,106 @@ QString codecLabel(const QString &codec)
     if (codec == QLatin1String("vorbis"))
         return QStringLiteral("OGG");
     return codec.toUpper();
+}
+
+QString text(const QJsonValue &value)
+{
+    if (value.isString())
+        return value.toString();
+    if (value.isDouble())
+        return value.toVariant().toString();
+    return {};
+}
+
+qint64 ticksToMs(const QJsonValue &value)
+{
+    return qMax<qint64>(0, value.toVariant().toLongLong() / kTicksPerMs);
+}
+
+QList<NamedRef> refs(const QJsonValue &value)
+{
+    QList<NamedRef> list;
+    for (const QJsonValue &entry : value.toArray()) {
+        const QJsonObject object = entry.toObject();
+        const QString name = text(object.value(QStringLiteral("Name")));
+        if (!name.isEmpty())
+            list.append({text(object.value(QStringLiteral("Id"))), name});
+    }
+    return list;
+}
+
+QList<NamedRef> namesOnly(const QJsonValue &value)
+{
+    QList<NamedRef> list;
+    for (const QJsonValue &entry : value.toArray()) {
+        const QString name = text(entry);
+        if (!name.isEmpty())
+            list.append({QString(), name});
+    }
+    return list;
+}
+
+QString primaryTag(const QJsonObject &json)
+{
+    return text(json.value(QStringLiteral("ImageTags")).toObject().value(QStringLiteral("Primary")));
+}
+
+ImageRef ownPrimary(const QJsonObject &json)
+{
+    const QString tag = primaryTag(json);
+    if (tag.isEmpty())
+        return {};
+    return {text(json.value(QStringLiteral("Id"))), QStringLiteral("Primary"), tag};
+}
+
+bool sameArtist(const NamedRef &a, const NamedRef &b)
+{
+    if (!a.id.isEmpty() && !b.id.isEmpty())
+        return a.id == b.id;
+    return a.name.compare(b.name, Qt::CaseInsensitive) == 0;
+}
+
+bool containsArtist(const QList<NamedRef> &list, const NamedRef &artist)
+{
+    return std::any_of(list.cbegin(), list.cend(),
+                       [&](const NamedRef &entry) { return sameArtist(entry, artist); });
+}
+
+struct UserDataFields
+{
+    bool favourite = false;
+    bool played = false;
+    int playCount = 0;
+    qint64 positionMs = 0;
+    QDateTime lastPlayed;
+};
+
+UserDataFields userData(const QJsonObject &json)
+{
+    const QJsonObject data = json.value(QStringLiteral("UserData")).toObject();
+    UserDataFields fields;
+    fields.favourite = data.value(QStringLiteral("IsFavorite")).toBool();
+    fields.played = data.value(QStringLiteral("Played")).toBool();
+    fields.playCount = qMax(0, integer(data.value(QStringLiteral("PlayCount"))));
+    fields.positionMs = ticksToMs(data.value(QStringLiteral("PlaybackPositionTicks")));
+    fields.lastPlayed = parseEmbyDate(text(data.value(QStringLiteral("LastPlayedDate"))));
+    return fields;
+}
+
+std::optional<ReleaseType> serverReleaseType(const QJsonObject &json)
+{
+    const QString field = QString::fromLatin1(caps::kReleaseTypeField);
+    if (field.isEmpty())
+        return std::nullopt;
+    const QJsonValue value = json.value(field);
+    if (value.isArray()) {
+        for (const QJsonValue &entry : value.toArray()) {
+            if (auto type = releaseTypeFromTag(text(entry)))
+                return type;
+        }
+        return std::nullopt;
+    }
+    return releaseTypeFromTag(text(value));
 }
 
 } // namespace
@@ -137,6 +242,212 @@ FeaturedSplit splitFeatured(const QString &title)
             list.append(trimmed);
     }
     return {title.left(match.capturedStart()).trimmed(), list};
+}
+
+QDateTime parseEmbyDate(const QString &input)
+{
+    if (input.isEmpty())
+        return {};
+    static const QRegularExpression kFraction(QStringLiteral(R"((\.\d{3})\d+)"));
+    QString trimmed = input;
+    trimmed.replace(kFraction, QStringLiteral("\\1"));
+    return QDateTime::fromString(trimmed, Qt::ISODateWithMs);
+}
+
+std::optional<ReleaseType> releaseTypeFromTag(const QString &tag)
+{
+    const QString key = tag.trimmed().toLower();
+    if (key == QLatin1String("album"))
+        return ReleaseType::Album;
+    if (key == QLatin1String("ep"))
+        return ReleaseType::EP;
+    if (key == QLatin1String("single"))
+        return ReleaseType::Single;
+    if (key == QLatin1String("compilation"))
+        return ReleaseType::Compilation;
+    return std::nullopt;
+}
+
+Track parseTrack(const QJsonObject &json)
+{
+    Track track;
+    track.id = text(json.value(QStringLiteral("Id")));
+    track.title = text(json.value(QStringLiteral("Name")));
+    track.artists = refs(json.value(QStringLiteral("ArtistItems")));
+    if (track.artists.isEmpty())
+        track.artists = namesOnly(json.value(QStringLiteral("Artists")));
+    track.albumArtists = refs(json.value(QStringLiteral("AlbumArtists")));
+    if (track.albumArtists.isEmpty()) {
+        const QString name = text(json.value(QStringLiteral("AlbumArtist")));
+        if (!name.isEmpty())
+            track.albumArtists.append({QString(), name});
+    }
+    track.albumId = text(json.value(QStringLiteral("AlbumId")));
+    track.albumTitle = text(json.value(QStringLiteral("Album")));
+    track.discNumber = qMax(0, integer(json.value(QStringLiteral("ParentIndexNumber"))));
+    track.trackNumber = qMax(0, integer(json.value(QStringLiteral("IndexNumber"))));
+    track.runtimeMs = ticksToMs(json.value(QStringLiteral("RunTimeTicks")));
+    track.dateAdded = parseEmbyDate(text(json.value(QStringLiteral("DateCreated"))));
+    track.playlistItemId = text(json.value(QStringLiteral("PlaylistItemId")));
+
+    const UserDataFields data = userData(json);
+    track.favourite = data.favourite;
+    track.played = data.played;
+    track.playCount = data.playCount;
+    track.positionMs = data.positionMs;
+    track.lastPlayed = data.lastPlayed;
+
+    track.format = parseAudioFormat(json);
+
+    const QString albumTag = text(json.value(QStringLiteral("AlbumPrimaryImageTag")));
+    const QString parentId = text(json.value(QStringLiteral("ParentPrimaryImageItemId")));
+    const QString parentTag = text(json.value(QStringLiteral("ParentPrimaryImageTag")));
+    if (!albumTag.isEmpty() && !track.albumId.isEmpty())
+        track.coverRef = {track.albumId, QStringLiteral("Primary"), albumTag};
+    else if (!parentTag.isEmpty() && !parentId.isEmpty())
+        track.coverRef = {parentId, QStringLiteral("Primary"), parentTag};
+    else
+        track.coverRef = ownPrimary(json);
+
+    const FeaturedSplit split = splitFeatured(track.title);
+    track.displayTitle = split.title;
+    for (const QString &name : split.names) {
+        NamedRef ref{QString(), name};
+        for (const NamedRef &artist : track.artists) {
+            if (sameArtist(artist, ref))
+                ref.id = artist.id;
+        }
+        if (!containsArtist(track.featured, ref))
+            track.featured.append(ref);
+    }
+    const bool albumArtistPerforms = std::any_of(
+        track.albumArtists.cbegin(), track.albumArtists.cend(),
+        [&](const NamedRef &albumArtist) { return containsArtist(track.artists, albumArtist); });
+    if (albumArtistPerforms) {
+        for (const NamedRef &artist : track.artists) {
+            if (!containsArtist(track.albumArtists, artist) && !containsArtist(track.featured, artist))
+                track.featured.append(artist);
+        }
+    }
+    track.differsFromAlbumArtist =
+        !track.artists.isEmpty() && !track.albumArtists.isEmpty() && !albumArtistPerforms;
+    return track;
+}
+
+QList<Track> parseTracks(const QJsonArray &json)
+{
+    QList<Track> list;
+    list.reserve(json.size());
+    for (const QJsonValue &value : json)
+        list.append(parseTrack(value.toObject()));
+    return list;
+}
+
+Album parseAlbum(const QJsonObject &json)
+{
+    Album album;
+    album.id = text(json.value(QStringLiteral("Id")));
+    album.title = text(json.value(QStringLiteral("Name")));
+    album.albumArtists = refs(json.value(QStringLiteral("AlbumArtists")));
+    if (album.albumArtists.isEmpty()) {
+        const QString name = text(json.value(QStringLiteral("AlbumArtist")));
+        if (!name.isEmpty())
+            album.albumArtists.append({QString(), name});
+    }
+    album.premiereDate = parseEmbyDate(text(json.value(QStringLiteral("PremiereDate"))));
+    album.year = integer(json.value(QStringLiteral("ProductionYear")));
+    if (album.year <= 0 && album.premiereDate.isValid())
+        album.year = album.premiereDate.toUTC().date().year();
+    album.genres = refs(json.value(QStringLiteral("GenreItems")));
+    if (album.genres.isEmpty())
+        album.genres = namesOnly(json.value(QStringLiteral("Genres")));
+    for (const NamedRef &studio : refs(json.value(QStringLiteral("Studios"))))
+        album.studios.append(studio.name);
+    album.dateAdded = parseEmbyDate(text(json.value(QStringLiteral("DateCreated"))));
+    album.trackCount = qMax(0, integer(json.value(QStringLiteral("ChildCount"))));
+    album.runtimeMs = ticksToMs(json.value(QStringLiteral("RunTimeTicks")));
+    if (album.runtimeMs == 0)
+        album.runtimeMs = ticksToMs(json.value(QStringLiteral("CumulativeRunTimeTicks")));
+    const UserDataFields data = userData(json);
+    album.favourite = data.favourite;
+    album.playCount = data.playCount;
+    album.lastPlayed = data.lastPlayed;
+    album.coverRef = ownPrimary(json);
+    if (const auto type = serverReleaseType(json)) {
+        album.releaseType = *type;
+        album.releaseTypeFromServer = true;
+    }
+    return album;
+}
+
+QList<Album> parseAlbums(const QJsonArray &json)
+{
+    QList<Album> list;
+    list.reserve(json.size());
+    for (const QJsonValue &value : json)
+        list.append(parseAlbum(value.toObject()));
+    return list;
+}
+
+Artist parseArtist(const QJsonObject &json)
+{
+    Artist artist;
+    artist.id = text(json.value(QStringLiteral("Id")));
+    artist.name = text(json.value(QStringLiteral("Name")));
+    artist.coverRef = ownPrimary(json);
+    const QJsonArray backdrops = json.value(QStringLiteral("BackdropImageTags")).toArray();
+    const QString backdrop = backdrops.isEmpty() ? QString() : text(backdrops.at(0));
+    if (!backdrop.isEmpty())
+        artist.backdropRef = {artist.id, QStringLiteral("Backdrop"), backdrop};
+    artist.albumCount = qMax(0, integer(json.value(QStringLiteral("AlbumCount"))));
+    if (artist.albumCount == 0)
+        artist.albumCount = qMax(0, integer(json.value(QStringLiteral("ChildCount"))));
+    artist.trackCount = qMax(0, integer(json.value(QStringLiteral("SongCount"))));
+    artist.favourite = userData(json).favourite;
+    return artist;
+}
+
+QList<Artist> parseArtists(const QJsonArray &json)
+{
+    QList<Artist> list;
+    list.reserve(json.size());
+    for (const QJsonValue &value : json)
+        list.append(parseArtist(value.toObject()));
+    return list;
+}
+
+GenreBin parseGenreBin(const QJsonObject &json)
+{
+    GenreBin genre;
+    genre.id = text(json.value(QStringLiteral("Id")));
+    genre.name = text(json.value(QStringLiteral("Name")));
+    genre.recordCount = qMax(0, integer(json.value(QStringLiteral("AlbumCount"))));
+    if (genre.recordCount == 0)
+        genre.recordCount = qMax(0, integer(json.value(QStringLiteral("ChildCount"))));
+    return genre;
+}
+
+Playlist parsePlaylist(const QJsonObject &json)
+{
+    Playlist playlist;
+    playlist.id = text(json.value(QStringLiteral("Id")));
+    playlist.name = text(json.value(QStringLiteral("Name")));
+    playlist.trackCount = qMax(0, integer(json.value(QStringLiteral("ChildCount"))));
+    playlist.runtimeMs = ticksToMs(json.value(QStringLiteral("CumulativeRunTimeTicks")));
+    if (playlist.runtimeMs == 0)
+        playlist.runtimeMs = ticksToMs(json.value(QStringLiteral("RunTimeTicks")));
+    playlist.dateAdded = parseEmbyDate(text(json.value(QStringLiteral("DateCreated"))));
+    playlist.coverRef = ownPrimary(json);
+    return playlist;
+}
+
+QList<Playlist> parsePlaylists(const QJsonArray &json)
+{
+    QList<Playlist> list;
+    list.reserve(json.size());
+    for (const QJsonValue &value : json)
+        list.append(parsePlaylist(value.toObject()));
+    return list;
 }
 
 } // namespace strmqt::emby

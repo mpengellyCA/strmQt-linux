@@ -1271,7 +1271,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   - `music::GenreBin parseGenreBin(const QJsonObject &)`
   - `music::Playlist parsePlaylist(const QJsonObject &)`, `QList<music::Playlist> parsePlaylists(const QJsonArray &)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add these slots and definitions:
 
@@ -1436,12 +1436,12 @@ void MusicMapperTest::artistGenrePlaylistParse()
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_mapper`
 Expected: a compile error (`parseTrack` and the other new functions are undeclared).
 
-- [ ] **Step 3: Extend the header**
+- [x] **Step 3: Extend the header**
 
 Add `#include <QDateTime>` and `#include <optional>`, then these declarations after `splitFeatured`:
 
@@ -1460,7 +1460,7 @@ music::Playlist parsePlaylist(const QJsonObject &json);
 QList<music::Playlist> parsePlaylists(const QJsonArray &json);
 ```
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 In `EmbyMusicMapper.cpp`, add `#include "server/emby/MusicServerCapabilities.h"` and `#include "server/dto/MediaItem.h"`. Add these helpers inside the existing anonymous namespace:
 
@@ -1780,12 +1780,12 @@ QList<Playlist> parsePlaylists(const QJsonArray &json)
 
 `text()` reads a numeric `Id` such as `12345` as `"12345"`: `toVariant().toString()` on a double prints it without a decimal point for integral values. The `trackParsesEverything` test covers that case.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_mapper && ctest --preset dev -R tst_music_mapper --output-on-failure`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/server/emby/EmbyMusicMapper.h src/server/emby/EmbyMusicMapper.cpp tests/unit/tst_music_mapper.cpp
