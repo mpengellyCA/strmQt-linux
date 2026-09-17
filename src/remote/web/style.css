@@ -80,6 +80,18 @@ body {
   line-height: 1.45;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
+  /* A remote, not a document: long presses, drags and double taps must not
+     start a selection or the copy callout. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Fields still need a caret and selection to be edited. */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 body.has-mini {
