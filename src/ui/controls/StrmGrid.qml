@@ -46,6 +46,13 @@ FocusScope {
     // How close to the end of loaded content counts as "near", in items.
     property int prefetchThreshold: 30
 
+    // The same custom-card protocol as StrmRail.cardComponent. List mode
+    // ignores it: the row is the list-mode drawing for every grid.
+    property Component cardComponent: null
+    property int customCardWidth: 0
+    property int customCardHeight: 0
+    readonly property bool customCards: grid.cardComponent !== null
+
     signal itemActivated(int index)
     signal itemPlayRequested(int index)
     signal itemPlayedToggled(int index)
@@ -128,8 +135,10 @@ FocusScope {
         variant: grid.effectiveVariant
     }
 
-    readonly property int cardWidth: Math.round(metrics.implicitWidth * grid.cardScale)
-    readonly property int cardHeight: Math.round(metrics.implicitHeight * grid.cardScale)
+    readonly property int cardWidth: Math.round((grid.customCards ? grid.customCardWidth
+                                                                  : metrics.implicitWidth) * grid.cardScale)
+    readonly property int cardHeight: Math.round((grid.customCards ? grid.customCardHeight
+                                                                   : metrics.implicitHeight) * grid.cardScale)
     // One list row: art on the left at 16:9, then the labels, then the actions.
     readonly property int rowHeight: Math.round(Theme.scale(76) * grid.cardScale)
     readonly property int columns: grid.listMode
@@ -402,8 +411,9 @@ FocusScope {
             // enough once GridView reuse is enabled. Never let the published
             // pointer-hover index retain the identity this cell used to have.
             GridView.onPooled: cell.setHovered(false)
-            GridView.onReused: cell.setHovered((!grid.listMode && cardItem.hovered)
-                                               || (grid.listMode && rowHover.hovered))
+            GridView.onReused: cell.setHovered(grid.listMode ? rowHover.hovered
+                                               : grid.customCards ? cellHover.hovered
+                                               : cardItem.hovered)
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.
@@ -421,12 +431,50 @@ FocusScope {
                 grid.itemActivated(cell.index)
             }
 
+            HoverHandler {
+                id: cellHover
+                enabled: grid.customCards && !grid.listMode
+                onHoveredChanged: cell.setHovered(cellHover.hovered)
+            }
+
+            Loader {
+                id: cardLoader
+                anchors.centerIn: parent
+                active: grid.customCards && !grid.listMode
+                scale: grid.cardScale
+                sourceComponent: grid.cardComponent
+                onLoaded: {
+                    const card = cardLoader.item
+                    const bind = (name, value) => {
+                        if (name in card)
+                            card[name] = Qt.binding(value)
+                    }
+                    bind("model", () => cell.model)
+                    bind("index", () => cell.index)
+                    bind("current", () => cell.current)
+                    bind("hovered", () => cellHover.hovered)
+                    const connect = (name, handler) => {
+                        if (typeof card[name] === "function")
+                            card[name].connect(handler)
+                    }
+                    connect("activated", cell.open)
+                    connect("playRequested", () => {
+                        grid._cancelNavigationFocusForUser()
+                        grid.itemPlayRequested(cell.index)
+                    })
+                    connect("menuRequested", (mx, my) => {
+                        grid._cancelNavigationFocusForUser()
+                        grid.menuRequested(cell.index, mx, my)
+                    })
+                }
+            }
+
             // ── Poster / wide ──────────────────────────────────────────────
             StrmCard {
                 id: cardItem
                 anchors.centerIn: parent
-                visible: !grid.listMode
-                enabled: !grid.listMode
+                visible: !grid.listMode && !grid.customCards
+                enabled: !grid.listMode && !grid.customCards
                 // The size control rides on top of the card's own hover and
                 // focus raises, which multiply with it rather than replace it.
                 scale: grid.cardScale
@@ -434,7 +482,7 @@ FocusScope {
                 // Empty in list mode so a hidden card never pulls artwork the
                 // user is not being shown.
                 imageUrl: {
-                    if (grid.listMode)
+                    if (grid.listMode || grid.customCards)
                         return "";
                     const wide = grid.effectiveVariant === "still"
                                  || grid.effectiveVariant === "backdrop";

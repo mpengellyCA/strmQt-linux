@@ -23,6 +23,20 @@ FocusScope {
     property Item navigationFocusFallbackItem: null
     property bool navigationFocusRefillActive: false
 
+    // A different card in place of StrmCard (a Crate sleeve, a portrait, a
+    // station tile). The loaded item receives `model`, `index`, `current` and
+    // `hovered` when it declares them as plain properties, and the rail
+    // listens to its activated / playRequested / menuRequested signals. The
+    // cell stays the focus owner, so NavigationColumn, the focus restorer and
+    // paging behave exactly as they do for StrmCard. A hidden StrmCard cannot
+    // measure a custom card, so the caller states its size.
+    property Component cardComponent: null
+    property int customCardWidth: 0
+    property int customCardHeight: 0
+    readonly property bool customCards: rail.cardComponent !== null
+    // A Crate shelf draws its own heading.
+    property bool showHeading: true
+
     signal itemActivated(int index)
     signal itemPlayRequested(int index)
     // Additive to the brief, and the reason the overlay actions are not dead
@@ -126,8 +140,8 @@ FocusScope {
         variant: rail.cardVariant
     }
 
-    readonly property int cardWidth: metrics.implicitWidth
-    readonly property int cardHeight: metrics.implicitHeight
+    readonly property int cardWidth: rail.customCards ? rail.customCardWidth : metrics.implicitWidth
+    readonly property int cardHeight: rail.customCards ? rail.customCardHeight : metrics.implicitHeight
     // Headroom so a focused card's Theme.focusScale raise is not clipped by the
     // list's own clip rectangle.
     readonly property int rowPadding: Math.ceil(cardHeight * (Theme.focusScale - 1) / 2)
@@ -135,7 +149,7 @@ FocusScope {
 
     width: parent ? parent.width : implicitWidth
     implicitWidth: Theme.scale(800)
-    height: headingRow.height + Theme.spacingValue + list.height
+    height: headingRow.height + (rail.showHeading ? Theme.spacingValue : 0) + list.height
 
     // ── Scrolling ──────────────────────────────────────────────────────────
     function _clampX(x) {
@@ -202,7 +216,8 @@ FocusScope {
         anchors.top: parent.top
         anchors.leftMargin: Theme.pageMarginValue
         anchors.rightMargin: Theme.pageMarginValue
-        height: heading.implicitHeight
+        visible: rail.showHeading
+        height: rail.showHeading ? heading.implicitHeight : 0
 
         Text {
             id: heading
@@ -244,7 +259,7 @@ FocusScope {
         id: list
 
         anchors.top: headingRow.bottom
-        anchors.topMargin: Theme.spacingValue
+        anchors.topMargin: rail.showHeading ? Theme.spacingValue : 0
         anchors.left: parent.left
         anchors.right: parent.right
         height: rail.cardHeight + rail.rowPadding * 2
@@ -331,7 +346,7 @@ FocusScope {
             // owner while pooled, then synchronize it with the live handler
             // after the cell receives its new model identity.
             ListView.onPooled: cell.setHovered(false)
-            ListView.onReused: cell.setHovered(cardItem.hovered)
+            ListView.onReused: cell.setHovered(rail.customCards ? cellHover.hovered : cardItem.hovered)
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.
@@ -340,9 +355,62 @@ FocusScope {
                     rail._hoveredIndex = cell.index
             }
 
+            // One implementation of each verb, whichever card drew the cell.
+            function cardActivated() {
+                rail._cancelNavigationFocusForUser()
+                // A click makes this card the keyboard's place too, so a
+                // subsequent arrow key continues from where the user
+                // clicked. This is a *commit*, not a hover.
+                list.currentIndex = cell.index
+                list.forceActiveFocus(Qt.MouseFocusReason)
+                rail.itemActivated(cell.index)
+            }
+            function cardPlayRequested() {
+                rail._cancelNavigationFocusForUser()
+                rail.itemPlayRequested(cell.index)
+            }
+            function cardMenuRequested(mx, my) {
+                rail._cancelNavigationFocusForUser()
+                rail.menuRequested(cell.index, mx, my)
+            }
+
+            HoverHandler {
+                id: cellHover
+                enabled: rail.customCards
+                onHoveredChanged: cell.setHovered(cellHover.hovered)
+            }
+
+            Loader {
+                id: cardLoader
+                anchors.centerIn: parent
+                active: rail.customCards
+                sourceComponent: rail.cardComponent
+                // By name, not by type: a card declares only what it uses.
+                onLoaded: {
+                    const card = cardLoader.item
+                    const bind = (name, value) => {
+                        if (name in card)
+                            card[name] = Qt.binding(value)
+                    }
+                    bind("model", () => cell.model)
+                    bind("index", () => cell.index)
+                    bind("current", () => cell.ListView.isCurrentItem && list.activeFocus)
+                    bind("hovered", () => cellHover.hovered)
+                    const connect = (name, handler) => {
+                        if (typeof card[name] === "function")
+                            card[name].connect(handler)
+                    }
+                    connect("activated", cell.cardActivated)
+                    connect("playRequested", cell.cardPlayRequested)
+                    connect("menuRequested", cell.cardMenuRequested)
+                }
+            }
+
             StrmCard {
                 id: cardItem
                 anchors.centerIn: parent
+                visible: !rail.customCards
+                enabled: !rail.customCards
                 variant: rail.cardVariant
                 // A wide card asks for wide art. An episode's "poster" is a
                 // 16:9 still, so drawing it in a 2:3 frame crops it to a
@@ -351,6 +419,7 @@ FocusScope {
                 // item has nothing suitable, and then the poster is still
                 // the honest answer.
                 imageUrl: {
+                    if (rail.customCards) return "";
                     const wide = rail.cardVariant === "still" || rail.cardVariant === "backdrop";
                     const thumb = cell.model.thumbUrl !== undefined ? cell.model.thumbUrl : "";
                     if (wide && thumb.length > 0)
@@ -373,19 +442,8 @@ FocusScope {
 
                 onHoveredChanged: cell.setHovered(hovered)
 
-                onActivated: {
-                    rail._cancelNavigationFocusForUser()
-                    // A click makes this card the keyboard's place too, so a
-                    // subsequent arrow key continues from where the user
-                    // clicked. This is a *commit*, not a hover.
-                    list.currentIndex = cell.index
-                    list.forceActiveFocus(Qt.MouseFocusReason)
-                    rail.itemActivated(cell.index)
-                }
-                onPlayRequested: {
-                    rail._cancelNavigationFocusForUser()
-                    rail.itemPlayRequested(cell.index)
-                }
+                onActivated: cell.cardActivated()
+                onPlayRequested: cell.cardPlayRequested()
                 onPlayedToggled: {
                     rail._cancelNavigationFocusForUser()
                     rail.itemPlayedToggled(cell.index)
@@ -394,10 +452,7 @@ FocusScope {
                     rail._cancelNavigationFocusForUser()
                     rail.itemFavoriteToggled(cell.index)
                 }
-                onMenuRequested: (mx, my) => {
-                    rail._cancelNavigationFocusForUser()
-                    rail.menuRequested(cell.index, mx, my)
-                }
+                onMenuRequested: (mx, my) => cell.cardMenuRequested(mx, my)
             }
         }
 

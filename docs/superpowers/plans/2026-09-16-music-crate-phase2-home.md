@@ -1867,7 +1867,7 @@ MSG
 
 The cell stays the focus owner, and the view keeps its `currentIndex`, `NavigationColumn` behaviour, focus restorer and paging. Only the drawing changes. Hover comes from a `HoverHandler` on the cell, so the view's `hoveredIndex` keeps working and hover never moves focus.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/tst_card_component.cpp`:
 
@@ -2185,12 +2185,12 @@ target_compile_definitions(tst_card_component PRIVATE STRMQT_SOURCE_DIR="${CMAKE
 set_tests_properties(tst_card_component PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_card_component && ctest --preset dev -R tst_card_component --output-on-failure`
 Expected: FAIL. The probe does not load (`Cannot assign to non-existent property "showHeading"`), so `QVERIFY(m_root)` fails in every test.
 
-- [ ] **Step 3: Add the protocol to `StrmRail.qml`**
+- [x] **Step 3: Add the protocol to `StrmRail.qml`**
 
 After `property bool navigationFocusRefillActive: false`, add:
 
@@ -2319,7 +2319,7 @@ In the delegate `FocusScope { id: cell … }`:
 
 Keep `onPlayedToggled`, `onFavoriteToggled` and `onHoveredChanged` unchanged.
 
-- [ ] **Step 4: Add the protocol to `StrmGrid.qml`**
+- [x] **Step 4: Add the protocol to `StrmGrid.qml`**
 
 After `property bool navigationFocusRefillActive: false`, add:
 
@@ -2411,7 +2411,7 @@ In the delegate `FocusScope { id: cell … }`:
 
 The scaled `Loader` fills a cell whose size already includes `cardScale`, which matches how `StrmCard` scales.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev && ctest --preset dev -R "tst_card_component|tst_navigation_history|tst_home_rails|tst_qml_accessibility" --output-on-failure`
 Expected: PASS. `tst_card_component` runs 7 tests, and the existing rail and grid tests are unchanged.
@@ -2426,7 +2426,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: no new warnings. Properties and signals are reached by name (`card[name]`), so qmllint has no type to complain about.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/controls/StrmRail.qml src/ui/controls/StrmGrid.qml tests/unit/tst_card_component.cpp tests/CMakeLists.txt
