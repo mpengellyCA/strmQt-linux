@@ -179,6 +179,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ui/controls/Controls.cmake)
     include(${CMAKE_CURRENT_SOURCE_DIR}/ui/controls/Controls.cmake)
 endif()
 
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ui/music/Music.cmake)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/ui/music/Music.cmake)
+endif()
+
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ui/player/Player.cmake)
     include(${CMAKE_CURRENT_SOURCE_DIR}/ui/player/Player.cmake)
 endif()

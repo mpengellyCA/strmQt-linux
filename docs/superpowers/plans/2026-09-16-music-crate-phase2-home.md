@@ -2461,7 +2461,7 @@ None of these controls takes focus by itself except `SectionStrip` and `ShelfErr
 
 No control adds a colour literal beyond `"transparent"`, and a shadow is `Theme.shadowColor` on plain rectangles. `StrmCard` avoids a per-card `MultiEffect` because it breaks batching, and the sleeve follows it. The one exception is `CratePortrait`, which needs a circular mask; the Artists shelf holds at most 20 of them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/tst_crate_controls.cpp`:
 
@@ -2832,12 +2832,12 @@ target_compile_definitions(tst_crate_controls PRIVATE STRMQT_SOURCE_DIR="${CMAKE
 set_tests_properties(tst_crate_controls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_crate_controls && ctest --preset dev -R tst_crate_controls --output-on-failure`
 Expected: FAIL in `initTestCase`, because `src/ui/music/CrateHeading.qml` does not exist and staging the module fails.
 
-- [ ] **Step 3: Write the controls**
+- [x] **Step 3: Write the controls**
 
 `src/ui/music/CrateHeading.qml`:
 
@@ -3825,7 +3825,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ui/music/Music.cmake)
 endif()
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cmake --preset dev && cmake --build --preset dev && ctest --preset dev -R tst_crate_controls --output-on-failure`
 Expected: PASS, 10 tests.
@@ -3842,7 +3842,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: no new warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ui/music/ src/CMakeLists.txt tests/unit/tst_crate_controls.cpp tests/CMakeLists.txt
