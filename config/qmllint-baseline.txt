@@ -895,6 +895,7 @@ src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.seekR
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.seekRelative(10000);
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.setMuted(false);
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.setVolume(Math.round(value));
+src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.stop();
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.toggleMute();
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	PlayerCtl.togglePause();
 src/ui/player/OsdButtonRow.qml: Unqualified access [unqualified]	checked: PlayerCtl.muted

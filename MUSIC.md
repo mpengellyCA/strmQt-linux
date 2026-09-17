@@ -264,9 +264,8 @@ so the bar and the page share one answer instead of each deriving it.
 Additions over today's bar: shuffle and repeat (they are queue state and belong where
 the queue is controlled), favourite (music favouriting happens per-track, constantly,
 and walking to a page to do it is the friction), a queue peek popover, and the
-artist/album line as *links* rather than dead text. `Stop` leaves the audio bar — for
-music, stop is pause plus forgetting where you were, and nobody wants it; it stays in
-the video bar where it belongs.
+artist/album line as *links* rather than dead text. `Stop` stays in both bars: a paused
+session still holds the bar, and ending it should not mean opening the full player.
 
 The title split currently parses `" — "` out of `PlayerCtl.title` to reconstruct
 episode context (`MiniPlayer.qml:130`). For music that is guesswork over a string that

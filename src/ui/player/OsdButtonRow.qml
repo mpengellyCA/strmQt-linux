@@ -4,7 +4,7 @@ import StrmQt
 // OsdButtonRow — the player's transport (ARCHITECTURE.md).
 //
 // Jellyfin's videoosd bar, minus the things this client has no verb for:
-// previous · −10 s · play/pause · +10 s · next · previous/next chapter, then
+// previous · −10 s · play/pause · +10 s · next · stop · previous/next chapter, then
 // volume, audio, subtitles, chapters, queue, settings, stats and fullscreen.
 //
 // A control that cannot act is DISABLED, never hidden: a button that vanishes
@@ -188,7 +188,26 @@ FocusScope {
             }
 
             KeyNavigation.left: forwardButton
-            KeyNavigation.right: chapterPrevious
+            KeyNavigation.right: stopButton
+            KeyNavigation.up: row.focusAbove
+        }
+
+        // Stop is part of the transport, not a panel verb, so it stays in the
+        // row at compact widths. Main pops the player page on stopped().
+        StrmIconButton {
+            id: stopButton
+
+            anchors.verticalCenter: parent.verticalCenter
+            iconName: "stop"
+            tooltip: qsTr("Stop")
+            shortcut: row.shortcutFor("player.stop", "S")
+            onClicked: {
+                row.woken();
+                PlayerCtl.stop();
+            }
+
+            KeyNavigation.left: nextButton
+            KeyNavigation.right: row.compact ? muteButton : chapterPrevious
             KeyNavigation.up: row.focusAbove
         }
 
@@ -209,7 +228,7 @@ FocusScope {
             visible: !row.compact
             onClicked: row.jumpChapter(false)
 
-            KeyNavigation.left: nextButton
+            KeyNavigation.left: stopButton
             KeyNavigation.right: chapterNext
             KeyNavigation.up: row.focusAbove
         }
@@ -282,7 +301,7 @@ FocusScope {
                     PlayerCtl.toggleMute();
                 }
 
-                KeyNavigation.left: row.compact ? nextButton : chapterNext
+                KeyNavigation.left: row.compact ? stopButton : chapterNext
                 KeyNavigation.right: row.compact ? fullscreenButton : audioButton
                 KeyNavigation.up: row.focusAbove
             }

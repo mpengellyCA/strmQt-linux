@@ -22,8 +22,8 @@ import StrmQt
 //    and album as *links* rather than dead text; shuffle and repeat, because
 //    they are queue state and this is where the queue is controlled; favourite,
 //    because music favouriting happens per track and constantly; and a queue
-//    peek. Stop is gone — for music, stop is pause plus forgetting where you
-//    were, and nobody wants it. It stays in the video bar where it belongs.
+//    peek. Stop is in both modes: pausing still leaves a session holding the
+//    bar, and ending one should not require opening the full player.
 //
 // ── Contract with the owner (Main.qml) ────────────────────────────────────
 // In:   `playerOnTop`  — true while the player page is the top of the stack.
@@ -838,14 +838,13 @@ FocusScope {
                     KeyNavigation.up: scrubber
                 }
 
-                // Stop belongs to the video bar (MUSIC.md §4): for music it is
-                // pause plus forgetting where you were, and nobody wants it.
+                // Stop in both modes: a paused session still holds the bar,
+                // and ending it should not mean opening the full player first.
                 StrmIconButton {
                     id: stopButton
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: !mini.isAudio
                     activeFocusOnTab: false
                     iconName: "stop"
                     tooltip: qsTr("Stop")
