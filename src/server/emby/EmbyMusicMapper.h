@@ -27,6 +27,24 @@ FeaturedSplit splitFeatured(const QString &title);
 QDateTime parseEmbyDate(const QString &text);
 std::optional<music::ReleaseType> releaseTypeFromTag(const QString &tag);
 
+struct ReleaseEvidence
+{
+    QString serverTag;
+    QStringList albumArtistNames;
+    int trackCount = 0;
+    qint64 runtimeMs = 0;
+    QStringList trackPrimaryArtists; // first performer of each track
+};
+
+// Crate spec §3.3: server tag → "Various Artists" → ≥4 other performers →
+// Single (1–3 tracks, <20 min) → EP (≤7 tracks, <35 min) → Album.
+music::ReleaseType classifyRelease(const ReleaseEvidence &evidence);
+QList<music::Disc> groupDiscs(const QList<music::Track> &tracks);
+QString dominantFormat(const QList<music::Track> &tracks);
+// Fills trackCount, runtimeMs, discCount and formatSummary from the tracks, and
+// re-classifies the release unless the server supplied its type.
+void refineAlbumFromTracks(music::Album &album, const QList<music::Track> &tracks);
+
 music::Track parseTrack(const QJsonObject &json);
 QList<music::Track> parseTracks(const QJsonArray &json);
 music::Album parseAlbum(const QJsonObject &json);

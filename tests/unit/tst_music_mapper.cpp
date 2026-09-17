@@ -39,6 +39,10 @@ private slots:
     void trackToleratesJunk();
     void albumParses();
     void artistGenrePlaylistParse();
+    void classifyRelease_data();
+    void classifyRelease();
+    void discsGroupAndSum();
+    void refineAlbumFromTracks();
 };
 
 void MusicMapperTest::trackConvertsToAudioMediaItem()
@@ -405,6 +409,108 @@ void MusicMapperTest::artistGenrePlaylistParse()
     QCOMPARE(playlist.coverRef.tag, QStringLiteral("col"));
     QVERIFY(playlist.dateAdded.isValid());
     QCOMPARE(parseArtists(QJsonArray{QJsonObject{{"Id", "a"}}, QJsonObject{{"Id", "b"}}}).size(), 2);
+}
+
+void MusicMapperTest::classifyRelease_data()
+{
+    QTest::addColumn<QString>("tag");
+    QTest::addColumn<QStringList>("albumArtists");
+    QTest::addColumn<int>("tracks");
+    QTest::addColumn<qint64>("runtimeMs");
+    QTest::addColumn<QStringList>("performers");
+    QTest::addColumn<int>("expected");
+
+    const qint64 min = 60'000;
+    QTest::newRow("server tag wins") << "EP" << QStringList{"A"} << 12 << 60 * min
+                                     << QStringList{"A"} << int(ReleaseType::EP);
+    QTest::newRow("various artists") << "" << QStringList{"Various Artists"} << 20 << 70 * min
+                                     << QStringList{"A", "B"} << int(ReleaseType::Compilation);
+    QTest::newRow("four guests") << "" << QStringList{"DJ"} << 10 << 50 * min
+                                 << QStringList{"A", "B", "C", "D"} << int(ReleaseType::Compilation);
+    QTest::newRow("three guests is not") << "" << QStringList{"DJ"} << 10 << 50 * min
+                                         << QStringList{"A", "B", "C"} << int(ReleaseType::Album);
+    QTest::newRow("album artist among four") << "" << QStringList{"A"} << 10 << 50 * min
+                                             << QStringList{"A", "B", "C", "D"} << int(ReleaseType::Album);
+    QTest::newRow("single") << "" << QStringList{"A"} << 2 << 8 * min << QStringList{"A"}
+                            << int(ReleaseType::Single);
+    QTest::newRow("long 3-track is not single") << "" << QStringList{"A"} << 3 << 25 * min
+                                                << QStringList{"A"} << int(ReleaseType::EP);
+    QTest::newRow("ep") << "" << QStringList{"A"} << 6 << 24 * min << QStringList{"A"}
+                        << int(ReleaseType::EP);
+    QTest::newRow("unknown runtime stays album") << "" << QStringList{"A"} << 2 << qint64(0)
+                                                 << QStringList{"A"} << int(ReleaseType::Album);
+    QTest::newRow("album") << "" << QStringList{"A"} << 9 << 42 * min << QStringList{"A"}
+                           << int(ReleaseType::Album);
+}
+
+void MusicMapperTest::classifyRelease()
+{
+    QFETCH(QString, tag);
+    QFETCH(QStringList, albumArtists);
+    QFETCH(int, tracks);
+    QFETCH(qint64, runtimeMs);
+    QFETCH(QStringList, performers);
+    QFETCH(int, expected);
+    const ReleaseEvidence evidence{tag, albumArtists, tracks, runtimeMs, performers};
+    QCOMPARE(int(strmqt::emby::classifyRelease(evidence)), expected);
+}
+
+namespace {
+Track makeTrack(QString id, int disc, int number, qint64 ms, QString codec, int depth, int rate,
+                QString performer = QStringLiteral("A"))
+{
+    Track track;
+    track.id = std::move(id);
+    track.discNumber = disc;
+    track.trackNumber = number;
+    track.runtimeMs = ms;
+    track.format = deriveAudioFormat(codec, depth, rate, 0, 2);
+    track.artists = {{QString(), std::move(performer)}};
+    return track;
+}
+} // namespace
+
+void MusicMapperTest::discsGroupAndSum()
+{
+    const QList<Track> tracks = {
+        makeTrack("a", 2, 1, 1000, "flac", 16, 44100),
+        makeTrack("b", 1, 1, 2000, "flac", 16, 44100),
+        makeTrack("c", 0, 2, 3000, "flac", 16, 44100), // unknown disc → disc 1
+        makeTrack("d", 2, 2, 4000, "flac", 16, 44100),
+    };
+    const QList<Disc> discs = groupDiscs(tracks);
+    QCOMPARE(discs.size(), 2);
+    QCOMPARE(discs.at(0).number, 1);
+    QCOMPARE(discs.at(0).tracks.size(), 2);
+    QCOMPARE(discs.at(0).tracks.at(0).id, QStringLiteral("b")); // input order kept
+    QCOMPARE(discs.at(0).runtimeMs, Q_INT64_C(5000));
+    QCOMPARE(discs.at(1).number, 2);
+    QCOMPARE(discs.at(1).runtimeMs, Q_INT64_C(5000));
+    QVERIFY(groupDiscs({}).isEmpty());
+}
+
+void MusicMapperTest::refineAlbumFromTracks()
+{
+    Album album;
+    album.albumArtists = {{QString(), QStringLiteral("A")}};
+    const QList<Track> tracks = {
+        makeTrack("1", 1, 1, 200'000, "flac", 24, 96000),
+        makeTrack("2", 1, 2, 200'000, "flac", 24, 96000),
+        makeTrack("3", 2, 1, 200'000, "mp3", 0, 44100),
+    };
+    strmqt::emby::refineAlbumFromTracks(album, tracks);
+    QCOMPARE(album.trackCount, 3);
+    QCOMPARE(album.runtimeMs, Q_INT64_C(600000));
+    QCOMPARE(album.discCount, 2);
+    QCOMPARE(album.formatSummary, QStringLiteral("FLAC 24/96"));
+    QCOMPARE(album.releaseType, ReleaseType::Single); // 3 tracks, 10 min
+
+    Album tagged;
+    tagged.releaseType = ReleaseType::Compilation;
+    tagged.releaseTypeFromServer = true;
+    strmqt::emby::refineAlbumFromTracks(tagged, tracks);
+    QCOMPARE(tagged.releaseType, ReleaseType::Compilation);
+    QCOMPARE(dominantFormat({}), QString());
 }
 
 QTEST_GUILESS_MAIN(MusicMapperTest)

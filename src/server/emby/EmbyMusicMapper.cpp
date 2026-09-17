@@ -2,7 +2,10 @@
 
 #include <algorithm>
 
+#include <QHash>
+#include <QMap>
 #include <QRegularExpression>
+#include <QSet>
 
 #include "server/dto/MediaItem.h"
 #include "server/emby/MusicServerCapabilities.h"
@@ -268,6 +271,93 @@ std::optional<ReleaseType> releaseTypeFromTag(const QString &tag)
     return std::nullopt;
 }
 
+ReleaseType classifyRelease(const ReleaseEvidence &evidence)
+{
+    if (auto type = releaseTypeFromTag(evidence.serverTag))
+        return *type;
+
+    for (const QString &name : evidence.albumArtistNames) {
+        if (name.compare(QLatin1String("Various Artists"), Qt::CaseInsensitive) == 0)
+            return ReleaseType::Compilation;
+    }
+
+    QSet<QString> performers;
+    for (const QString &name : evidence.trackPrimaryArtists) {
+        if (!name.isEmpty())
+            performers.insert(name.toLower());
+    }
+    bool albumArtistPerforms = false;
+    for (const QString &name : evidence.albumArtistNames)
+        albumArtistPerforms = albumArtistPerforms || performers.contains(name.toLower());
+    if (performers.size() >= 4 && !albumArtistPerforms)
+        return ReleaseType::Compilation;
+
+    const qint64 minute = 60'000;
+    if (evidence.runtimeMs > 0) {
+        if (evidence.trackCount >= 1 && evidence.trackCount <= 3 && evidence.runtimeMs < 20 * minute)
+            return ReleaseType::Single;
+        if (evidence.trackCount >= 1 && evidence.trackCount <= 7 && evidence.runtimeMs < 35 * minute)
+            return ReleaseType::EP;
+    }
+    return ReleaseType::Album;
+}
+
+QList<Disc> groupDiscs(const QList<Track> &tracks)
+{
+    QMap<int, Disc> byNumber;
+    for (const Track &track : tracks) {
+        const int number = track.discNumber > 0 ? track.discNumber : 1;
+        Disc &disc = byNumber[number];
+        disc.number = number;
+        disc.runtimeMs += track.runtimeMs;
+        disc.tracks.append(track);
+    }
+    return byNumber.values();
+}
+
+QString dominantFormat(const QList<Track> &tracks)
+{
+    QHash<QString, int> counts;
+    QString best;
+    int bestCount = 0;
+    for (const Track &track : tracks) {
+        if (track.format.badge.isEmpty())
+            continue;
+        const int count = ++counts[track.format.badge];
+        if (count > bestCount) {
+            best = track.format.badge;
+            bestCount = count;
+        }
+    }
+    return best;
+}
+
+void refineAlbumFromTracks(Album &album, const QList<Track> &tracks)
+{
+    if (tracks.isEmpty())
+        return;
+    album.trackCount = static_cast<int>(tracks.size());
+    qint64 runtime = 0;
+    QSet<int> discs;
+    QStringList performers;
+    for (const Track &track : tracks) {
+        runtime += track.runtimeMs;
+        discs.insert(track.discNumber > 0 ? track.discNumber : 1);
+        if (!track.artists.isEmpty())
+            performers.append(track.artists.first().name);
+    }
+    album.runtimeMs = runtime;
+    album.discCount = static_cast<int>(discs.size());
+    album.formatSummary = dominantFormat(tracks);
+    if (album.releaseTypeFromServer)
+        return;
+    QStringList albumArtistNames;
+    for (const NamedRef &artist : album.albumArtists)
+        albumArtistNames.append(artist.name);
+    album.releaseType = classifyRelease({QString(), albumArtistNames, album.trackCount,
+                                         album.runtimeMs, performers});
+}
+
 Track parseTrack(const QJsonObject &json)
 {
     Track track;
@@ -376,6 +466,12 @@ Album parseAlbum(const QJsonObject &json)
     if (const auto type = serverReleaseType(json)) {
         album.releaseType = *type;
         album.releaseTypeFromServer = true;
+    }
+    if (!album.releaseTypeFromServer) {
+        QStringList names;
+        for (const NamedRef &artist : album.albumArtists)
+            names.append(artist.name);
+        album.releaseType = classifyRelease({QString(), names, album.trackCount, album.runtimeMs, {}});
     }
     return album;
 }

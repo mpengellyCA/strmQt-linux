@@ -1811,7 +1811,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   - `QString dominantFormat(const QList<music::Track> &tracks)`
   - `void refineAlbumFromTracks(music::Album &album, const QList<music::Track> &tracks)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```cpp
     void classifyRelease_data();
@@ -1926,12 +1926,12 @@ void MusicMapperTest::refineAlbumFromTracks()
 
 In `makeTrack`, the `"a"` literals convert to `QString` implicitly; this project does not define `QT_NO_CAST_FROM_ASCII`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_mapper`
 Expected: a compile error (`ReleaseEvidence` is undeclared).
 
-- [ ] **Step 3: Extend the header**
+- [x] **Step 3: Extend the header**
 
 ```cpp
 struct ReleaseEvidence
@@ -1953,7 +1953,7 @@ QString dominantFormat(const QList<music::Track> &tracks);
 void refineAlbumFromTracks(music::Album &album, const QList<music::Track> &tracks);
 ```
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Add `#include <QHash>`, `#include <QMap>` and `#include <QSet>` to the `.cpp`, then:
 
@@ -2059,12 +2059,12 @@ void refineAlbumFromTracks(Album &album, const QList<Track> &tracks)
 
 With the album-list fields from Task 10 (`ChildCount`, `CumulativeRunTimeTicks`), a 2-track, 8-minute release shows "Single" in the grid before its sleeve is opened. The `albumParses` test from Task 5 still passes: its first album has 5 tracks and 44 minutes (Album), and its second has 0 tracks, so no count rule fires.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_mapper && ctest --preset dev -R tst_music_mapper --output-on-failure`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/server/emby/EmbyMusicMapper.h src/server/emby/EmbyMusicMapper.cpp tests/unit/tst_music_mapper.cpp
