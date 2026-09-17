@@ -943,7 +943,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   - `music::AudioFormat parseAudioFormat(const QJsonObject &item)`: reads `MediaStreams`, falling back to `MediaSources[0].MediaStreams`
   - `struct FeaturedSplit { QString title; QStringList names; }` and `FeaturedSplit splitFeatured(const QString &title)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `#include "server/emby/EmbyMusicMapper.h"`, `#include <QJsonDocument>` and `#include <QJsonObject>` to `tst_music_mapper.cpp`. Add `using namespace strmqt::emby;`, plus this helper in an anonymous namespace above the class:
 
@@ -1057,12 +1057,12 @@ void MusicMapperTest::featuredSplit()
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_mapper`
 Expected: a compile error (`server/emby/EmbyMusicMapper.h` not found).
 
-- [ ] **Step 3: Write the header**
+- [x] **Step 3: Write the header**
 
 `src/server/emby/EmbyMusicMapper.h`:
 
@@ -1094,7 +1094,7 @@ FeaturedSplit splitFeatured(const QString &title);
 } // namespace strmqt::emby
 ```
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `src/server/emby/EmbyMusicMapper.cpp`:
 
@@ -1238,12 +1238,12 @@ FeaturedSplit splitFeatured(const QString &title)
 
 Add `server/emby/EmbyMusicMapper.h server/emby/EmbyMusicMapper.cpp` to `strmqt_core` after `EmbyDtoMapper`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_mapper && ctest --preset dev -R tst_music_mapper --output-on-failure`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/server/emby/EmbyMusicMapper.h src/server/emby/EmbyMusicMapper.cpp src/CMakeLists.txt tests/unit/tst_music_mapper.cpp

@@ -18,6 +18,7 @@ qt_add_library(strmqt_core STATIC
     server/dto/PlaybackTicket.h server/dto/PlaybackTicket.cpp
     server/dto/ServerInfo.h
     server/emby/EmbyDtoMapper.h server/emby/EmbyDtoMapper.cpp
+    server/emby/EmbyMusicMapper.h server/emby/EmbyMusicMapper.cpp
     server/emby/MusicServerCapabilities.h
     server/emby/EmbyClient.h server/emby/EmbyClient.cpp
     server/emby/EmbyWebSocket.h server/emby/EmbyWebSocket.cpp
