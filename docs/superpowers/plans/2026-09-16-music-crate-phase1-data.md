@@ -3204,7 +3204,7 @@ Composition rules for this task:
   - Not cached.
 - Cache writes are skipped when the session epoch changed while the request was in flight (`identityChanged` → `clear()` bumps the epoch).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/integration/tst_music_repository.cpp`:
 
@@ -3473,12 +3473,12 @@ strmqt_add_test(tst_music_repository
 target_include_directories(tst_music_repository PRIVATE mocks)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_repository`
 Expected: a compile error (`app/music/MusicRepository.h` not found).
 
-- [ ] **Step 3: Write the header**
+- [x] **Step 3: Write the header**
 
 ```cpp
 #pragma once
@@ -3547,7 +3547,7 @@ private:
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 ```cpp
 #include "app/music/MusicRepository.h"
@@ -3873,12 +3873,12 @@ Add `app/music/MusicRepository.h app/music/MusicRepository.cpp` to `strmqt_app`.
 
 The test's `artistProfileFailsOnlyOnTheArtist` gets a 404 on the artist `nobody`, which is a failure `Result` from `finishDocument`. Its "Solo" artist succeeds, and every secondary request 404s through the mock.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_repository && ctest --preset dev -R tst_music_repository --output-on-failure`
 Expected: PASS (7 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/music/MusicRepository.* src/CMakeLists.txt tests/integration/tst_music_repository.cpp tests/CMakeLists.txt

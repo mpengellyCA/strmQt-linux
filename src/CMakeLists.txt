@@ -52,6 +52,7 @@ qt_add_library(strmqt_app STATIC
     app/music/Fanout.h
     app/music/MusicFormat.h app/music/MusicFormat.cpp
     app/music/MusicQueryTranslator.h app/music/MusicQueryTranslator.cpp
+    app/music/MusicRepository.h app/music/MusicRepository.cpp
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp
