@@ -1539,15 +1539,9 @@ ApplicationWindow {
             root.openLibrary(libraryId, name, collectionType);
         }
         function onItemChosen(item) { Actions.openDetails(item); }
-        function onActionChosen(actionId) {
-            if (actionId === "library.search")
-                root.openSearch();
-            else if (actionId === "app.settings")
-                root.openSettings();
-            else if (actionId === "app.fullscreen")
-                root.visibility = root.visibility === Window.FullScreen
-                                  ? Window.Windowed : Window.FullScreen;
-        }
+        // Any command the palette lists, by id: the palette has already closed,
+        // so the handler sees the context the command is meant for.
+        function onActionChosen(actionId) { Input.trigger(actionId); }
     }
 
     // Crash-resume prompt (PLAN §3.5): offered once after an unclean exit.

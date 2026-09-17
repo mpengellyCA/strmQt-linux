@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "input/GamepadDecision.h"
 #include "input/InputMap.h"
+#include "input/KeyDelivery.h"
 #include "input/StickDecision.h"
 
 #include <SDL3/SDL.h>
@@ -12,8 +13,6 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QInputMethod>
-#include <QKeyEvent>
 #include <QTimer>
 #include <QWindow>
 
@@ -53,18 +52,6 @@ constexpr int kTriggerRelease = 12'000;
 // and the reason the player clamps it live with the pure function in
 // GamepadDecision.h, where they can be tested without a device.
 constexpr RepeatTuning kRepeat{};
-
-// True while whatever holds focus is a text editor. QGuiApplication::focusObject()
-// plus the ImEnabled input-method query is the standard way to ask, and it needs
-// no QML dependency — which matters, because this decision cannot be left to
-// Main.qml: its single-character shortcuts stand down while a field has focus,
-// so a pad button bound to a letter would land in the field instead of firing.
-bool textInputHasFocus()
-{
-    if (!QGuiApplication::focusObject())
-        return false;
-    return QGuiApplication::inputMethod()->queryFocusObject(Qt::ImEnabled, QVariant()).toBool();
-}
 
 // Slots for held directions. The stick and the D-pad get separate slots so
 // releasing one does not cancel a direction the other is still holding.
@@ -408,7 +395,12 @@ void GamepadManager::setDirection(quint32 deviceId, int slot, const QString &act
     repeat.emitted = 1;
     repeat.nextAtMs = kRepeat.delayMs;
     repeat.seeking = isSeekRepeat(m_context, actionId);
-    if (resolveKey(actionId, &repeat.key, &repeat.modifiers)) {
+    if (!InputMap::isNavigationAction(actionId)) {
+        // A held command (the right stick's volume) has nothing to hold down:
+        // each step is the action again, the repeats flagged as such.
+        repeat.command = true;
+        tap(actionId);
+    } else if (resolveKey(actionId, &repeat.key, &repeat.modifiers)) {
         m_input->noteInput(QStringLiteral("gamepad"));
         // The key goes DOWN and stays down for the whole hold, exactly as it
         // would on a keyboard: the first step is immediate, only the repeat
@@ -467,7 +459,9 @@ void GamepadManager::pump()
             const qint64 heldMs = repeat.heldFor.elapsed();
             if (heldMs < repeat.nextAtMs)
                 continue;
-            if (repeat.key != 0) {
+            if (repeat.command) {
+                tap(repeat.actionId, true);
+            } else if (repeat.key != 0) {
                 m_input->noteInput(QStringLiteral("gamepad"));
                 // A repeat step is a release/press pair *flagged as auto-repeat*,
                 // which is the shape a keyboard delivers one in. The flag is the
@@ -491,15 +485,28 @@ void GamepadManager::pump()
 
 void GamepadManager::tap(const QString &actionId)
 {
-    int key = 0;
-    int modifiers = 0;
-    if (!resolveKey(actionId, &key, &modifiers))
+    tap(actionId, false);
+}
+
+void GamepadManager::tap(const QString &actionId, bool autoRepeat)
+{
+    if (!m_input)
         return;
     m_input->noteInput(QStringLiteral("gamepad"));
-    // Discrete: neither half is an auto-repeat, so a control that commits on a
-    // plain release commits exactly once.
-    sendKey(key, modifiers, true, false);
-    sendKey(key, modifiers, false, false);
+    // By id: the handler runs whatever the action is bound to and whether or
+    // not the window is active. A navigation action reaches the focused control
+    // as its key through NavigationKeyHandler, as one discrete press.
+    //
+    // Queued, as the posted key it replaces was. A handler can change the
+    // interaction context, which releases every held direction — and this is
+    // called from inside the loops that walk them.
+    QMetaObject::invokeMethod(
+        this,
+        [this, actionId, autoRepeat] {
+            if (!m_input->trigger(actionId, autoRepeat))
+                qCDebug(logApp) << "gamepad: nothing handles" << actionId << "here";
+        },
+        Qt::QueuedConnection);
 }
 
 bool GamepadManager::resolveKey(const QString &actionId, int *key, int *modifiers) const
@@ -517,7 +524,8 @@ bool GamepadManager::resolveKey(const QString &actionId, int *key, int *modifier
         return false;
     }
     const int resolvedModifiers = m_input->modifiersFor(actionId);
-    if (shouldSuppressKey(resolved, resolvedModifiers, textInputHasFocus())) {
+    if (shouldSuppressKey(resolved, resolvedModifiers,
+                          keydelivery::textInputFocused(keydelivery::targetWindow()))) {
         // Menu resolves to "M" and Y to "/", and a text field takes both as
         // typing: it eats the key, the shortcut behind it never runs, and an
         // editor that inserts on the key alone would print it. The button goes
@@ -534,14 +542,10 @@ bool GamepadManager::resolveKey(const QString &actionId, int *key, int *modifier
 
 void GamepadManager::sendKey(int qtKey, int modifiers, bool pressed, bool autoRepeat)
 {
-    QWindow *window = QGuiApplication::focusWindow();
-    if (!window)
-        return;
-    // The text is deliberately empty: this is a command, not typing.
-    auto *event = new QKeyEvent(pressed ? QEvent::KeyPress : QEvent::KeyRelease, qtKey,
-                                static_cast<Qt::KeyboardModifiers>(modifiers), QString(),
-                                autoRepeat);
-    QCoreApplication::postEvent(window, event);
+    // Not focusWindow(): that is null whenever another application is active,
+    // and a pad on the sofa is exactly when it is.
+    if (QWindow *window = keydelivery::targetWindow())
+        keydelivery::postKey(window, qtKey, modifiers, pressed, autoRepeat);
 }
 
 void GamepadManager::pressHeldKey(quint32 deviceId, int qtKey, int modifiers)

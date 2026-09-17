@@ -270,12 +270,24 @@ them, because a picker raised from a film has to keep offering film lists.
 sheet, the remapping UI and every page, and it is what makes a rebind take effect
 everywhere at once — including on the gamepad.
 
-**Gamepad buttons carry no hardcoded keys.** A button resolves to an *action id*,
-which `InputMap` turns into whatever that action is currently bound to. The pad
-then synthesises that key. Consequences: a rebind moves the pad with it, and a
-gamepad hint shown in the UI is the binding that actually fires. An action with a
-gamepad hint must resolve to exactly one key — asserted in tests, because a hint
-without a working binding is worse than no hint.
+**Actions are invoked by id; keys are one way to reach them.** A gamepad button,
+a web remote tap and a command palette pick all name an *action id* and call
+`InputMap::trigger()`, which asks the registered handlers newest first until one
+answers (`invokeAction(actionId, autoRepeat) -> bool`). Commands — fullscreen,
+settings, stop, volume — are answered by the QML that owns them: `MappedShortcut`
+and the player page register themselves, and answer only while they are live. No
+key is synthesised, so a command works with the window in the background and
+whatever the key is bound to.
+
+The navigation actions (`InputMap::isNavigationAction`: arrows, Select, Back,
+paging, the context menu) are the exception, because their meaning belongs to the
+focused control. `NavigationKeyHandler`, registered first and so asked last,
+delivers the key currently bound to the action to the focused item. A rebind moves
+the pad and the phone with it, and a gamepad hint shown in the UI is the binding
+that actually fires. A navigation action with a gamepad hint must resolve to
+exactly one key — asserted in tests, because a hint without a working binding is
+worse than no hint. Keys posted to a background window still land because
+`WindowFocusKeeper` stops Qt clearing the focus chain on deactivation.
 
 The layout targets Xbox 360 / Xbox One, which is the PC standard and the layout
 SDL's own gamepad abstraction is modelled on. Mapping is context-dependent, so one

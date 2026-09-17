@@ -21,6 +21,8 @@ set_tests_properties(tst_home_rails PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offs
 strmqt_add_test(tst_playback_ticket unit/tst_playback_ticket.cpp)
 strmqt_add_test(tst_media_source unit/tst_media_source.cpp)
 strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
+# The action handler contract is also exercised against a QML-declared handler.
+target_link_libraries(tst_input_map PRIVATE Qt6::Qml)
 strmqt_add_test(tst_stick_decision unit/tst_stick_decision.cpp)
 strmqt_add_test(tst_gamepad_decision unit/tst_gamepad_decision.cpp)
 strmqt_add_test(tst_vlc_frame_buffers unit/tst_vlc_frame_buffers.cpp)
@@ -145,6 +147,16 @@ strmqt_add_test(tst_window_focus_keeper unit/tst_window_focus_keeper.cpp)
 target_include_directories(tst_window_focus_keeper PRIVATE ${CMAKE_SOURCE_DIR}/src/app)
 target_link_libraries(tst_window_focus_keeper PRIVATE Qt6::Quick)
 set_tests_properties(tst_window_focus_keeper PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# NavigationKeyHandler posts to a window, so it is QtGui and lives in the
+# executable; it is compiled straight into the test with the focus keeper that
+# lets its keys land while the app is in the background.
+strmqt_add_test(tst_navigation_key_handler unit/tst_navigation_key_handler.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/NavigationKeyHandler.cpp)
+target_include_directories(tst_navigation_key_handler PRIVATE ${CMAKE_SOURCE_DIR}/src
+                                                             ${CMAKE_SOURCE_DIR}/src/app)
+target_link_libraries(tst_navigation_key_handler PRIVATE Qt6::Quick)
+set_tests_properties(tst_navigation_key_handler PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
 # is deliberately QtCore-only; the unit is compiled straight into the test. The

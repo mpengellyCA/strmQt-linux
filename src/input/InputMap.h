@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPointer>
 #include <QSettings>
 #include <QString>
 #include <QStringList>
@@ -125,6 +126,32 @@ public:
     // the length of its name never could.
     Q_INVOKABLE bool isTypableSequence(const QString &sequence) const;
 
+    // ── Invoking an action by id ─────────────────────────────────────────────
+    // Keys are bound to actions, and actions are carried out by handlers — so
+    // anything that means an action (the web remote, a gamepad button, the
+    // command palette) asks for it by id instead of synthesizing whatever key
+    // happens to be bound to it. A synthesized key only worked when a key was
+    // bound at all, when it was a single key, when no text field would type it,
+    // and when the window was active enough for a Shortcut to match.
+    //
+    // A handler is any object with a method
+    //     bool invokeAction(QString actionId, bool autoRepeat)
+    // — in QML, `function invokeAction(actionId: string, autoRepeat: bool): bool`
+    // — that returns true when it carried the action out. It decides for itself
+    // whether it is live (its page on screen, the right context); trigger() asks
+    // the most recently registered handler first, so a page is asked before the
+    // shell that was built before it. MappedShortcut registers itself.
+    Q_INVOKABLE void registerHandler(QObject *handler);
+    Q_INVOKABLE void unregisterHandler(QObject *handler);
+    // True when a handler carried the action out.
+    Q_INVOKABLE bool trigger(const QString &actionId, bool autoRepeat = false);
+
+    // The actions that mean "this key, to whatever has focus": the arrows,
+    // Select, Back, paging and the context menu. What Down does depends on the
+    // focused control, and Qt's own key handling already knows, so their
+    // handler (NavigationKeyHandler) delivers the bound key rather than acting.
+    static bool isNavigationAction(const QString &actionId);
+
     QString lastInputDevice() const { return m_lastInputDevice; }
     bool gamepadActive() const { return m_lastInputDevice == QLatin1String("gamepad"); }
     // Reported by the UI on every real input event; unknown devices are ignored.
@@ -150,6 +177,7 @@ private:
     QSettings m_store;
     QHash<QString, QStringList> m_overrides; // actionId → current sequences
     QString m_lastInputDevice = QStringLiteral("keyboard");
+    QList<QPointer<QObject>> m_handlers; // oldest first
 };
 
 } // namespace strmqt

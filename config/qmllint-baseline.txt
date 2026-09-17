@@ -67,6 +67,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	else if (MusicCtl.tab === "pla
 src/ui/Main.qml: Unqualified access [unqualified]	else if (MusicCtl.tab === "playlists" && MusicCtl.playlists.count === 0)
 src/ui/Main.qml: Unqualified access [unqualified]	else if (MusicCtl.tab === "songs" && MusicCtl.songs.count === 0)
 src/ui/Main.qml: Unqualified access [unqualified]	else if (MusicCtl.tab === "songs" && MusicCtl.songs.count === 0)
+src/ui/Main.qml: Unqualified access [unqualified]	function onActionChosen(actionId) { Input.trigger(actionId); }
 src/ui/Main.qml: Unqualified access [unqualified]	function onItemChosen(item) { Actions.openDetails(item); }
 src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio && !root.playerOnTop)
 src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio || !miniPlayer.active || toRect.width <= 0) {
@@ -141,6 +142,8 @@ src/ui/components/CoverWash.qml: Unqualified access [unqualified]	visible: Prefs
 src/ui/controls/ItemMenu.qml: Unqualified access [unqualified]	Actions.performItemVerb(verb, item)
 src/ui/controls/ItemMenu.qml: Unqualified access [unqualified]	const policy = Actions.itemMenuPolicy(item, root.allowDetails,
 src/ui/controls/MappedShortcut.qml: Member "cursorPosition" not found on type "QQuickItem" [missing-property]	return item !== null && item.cursorPosition !== undefined;
+src/ui/controls/MappedShortcut.qml: Unqualified access [unqualified]	Component.onCompleted: Input.registerHandler(mapped)
+src/ui/controls/MappedShortcut.qml: Unqualified access [unqualified]	Component.onDestruction: Input.unregisterHandler(mapped)
 src/ui/controls/MappedShortcut.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
 src/ui/controls/MappedShortcut.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
 src/ui/controls/MappedShortcut.qml: Unqualified access [unqualified]	const list = Input.actions;
@@ -590,6 +593,10 @@ src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	readonly property 
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	readonly property bool filmsLoading: page.scopeMine && LibraryCtl.loading
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	target: DetailsCtl
 src/ui/pages/PersonPage.qml: Unqualified access [unqualified]	visible: Prefs.backdropEnabled && page.headshotUrl.length > 0
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Component.onCompleted: Input.registerHandler(actionHandler)
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Component.onCompleted: Input.registerHandler(mapped)
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Component.onDestruction: Input.unregisterHandler(actionHandler)
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Component.onDestruction: Input.unregisterHandler(mapped)
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	Input.noteInput("mouse");
@@ -618,12 +625,13 @@ src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.togglePa
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	PlayerCtl.togglePause();
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	const action = Input.actionForKey(event.key, event.modifiers, "player");
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	const bound = Input.bindings(mapped.actionId);
-src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	enabled: PlayerCtl.active && mapped.available && page.visible
-src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	enabled: PlayerCtl.active && mapped.available && page.visible
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	if (!page.visible || !PlayerCtl.active || page.playerVerbs.indexOf(actionId) < 0)
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	if (PlayerCtl.hasNext === true)
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	if (typeof PlayerCtl.nextChapter === "function")
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	if (typeof PlayerCtl.previousChapter === "function")
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	readonly property bool audioMode: PlayerCtl.isAudio === true
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	readonly property bool live: PlayerCtl.active && mapped.available && page.visible
+src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	readonly property bool live: PlayerCtl.active && mapped.available && page.visible
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	text: PlayerCtl.busy ? qsTr("Loading…") : qsTr("Buffering…")
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	text: PlayerCtl.errorMessage
 src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	text: qsTr("%1 — stop playback").arg(Input.binding("player.stop"))

@@ -75,6 +75,24 @@ Item {
         return item !== null && item.cursorPosition !== undefined;
     }
 
+    // ── The action, without the key ─────────────────────────────────────────
+    // The web remote, the gamepad and the command palette ask for an action by
+    // id (InputMap::trigger) rather than pressing whatever key it is bound to.
+    // This is the answer: the same `activated`, gated the way the Shortcuts
+    // below are — `active`, and on screen, which is what a window-scoped
+    // Shortcut checks for itself — but not on window activation, on a key being
+    // bound, or on a text field holding focus. None of those is a reason a
+    // command sent from a phone should not run.
+    function invokeAction(actionId: string, autoRepeat: bool): bool {
+        if (actionId !== mapped.actionId || !mapped.active || !mapped.visible)
+            return false;
+        mapped.activated();
+        return true;
+    }
+
+    Component.onCompleted: Input.registerHandler(mapped)
+    Component.onDestruction: Input.unregisterHandler(mapped)
+
     Shortcut {
         sequences: mapped._sequences.filter(s => !Input.isTypableSequence(s))
         enabled: mapped.active

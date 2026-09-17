@@ -1,3 +1,5 @@
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -32,6 +34,11 @@ private slots:
     void everyCatalogueSequenceClassifiesTheWayItsKeyReads();
     void keyLookupsResolveActions();
     void lastInputDeviceTracksTheUser();
+    void triggerAsksTheNewestLiveHandler();
+    void triggerSkipsGoneAndMalformedHandlers();
+    void triggerRefusesUnknownActions();
+    void triggerReachesAQmlHandler();
+    void navigationActionsAreTheFocusRelativeOnes();
 
 private:
     QString ini() const { return m_dir->filePath(QStringLiteral("input.ini")); }
@@ -609,6 +616,123 @@ void InputMapTest::everyCatalogueSequenceClassifiesTheWayItsKeyReads()
     // music.playPause) and the Backspace of nav.back / player.minimize.
     QVERIFY(multiCharTypable > 0);
     QVERIFY(m_map->isTypableSequence(m_map->binding(QStringLiteral("music.playPause"))));
+}
+
+namespace {
+
+// The handler contract as a C++ object: answers one action while `live`.
+class RecordingHandler : public QObject
+{
+    Q_OBJECT
+
+public:
+    RecordingHandler(QString actionId, bool live) : m_actionId(std::move(actionId)), m_live(live) {}
+
+    Q_INVOKABLE bool invokeAction(const QString &actionId, bool autoRepeat)
+    {
+        if (actionId != m_actionId || !m_live)
+            return false;
+        calls.append(autoRepeat);
+        return true;
+    }
+
+    QList<bool> calls;
+    QString m_actionId;
+    bool m_live = false;
+};
+
+} // namespace
+
+void InputMapTest::triggerAsksTheNewestLiveHandler()
+{
+    const QString settings = QStringLiteral("app.settings");
+    RecordingHandler shell(settings, true);
+    RecordingHandler page(settings, true);
+    RecordingHandler other(QStringLiteral("library.search"), true);
+    m_map->registerHandler(&shell);
+    m_map->registerHandler(&page);
+    m_map->registerHandler(&other);
+    m_map->registerHandler(&page); // a second registration changes nothing
+
+    // Newest first, and one that does not answer is passed over.
+    QVERIFY(m_map->trigger(settings, true));
+    QCOMPARE(page.calls, QList<bool>{true});
+    QVERIFY(shell.calls.isEmpty());
+
+    // A page that is not live (covered, wrong context) falls through to the shell.
+    page.m_live = false;
+    QVERIFY(m_map->trigger(settings));
+    QCOMPARE(shell.calls, QList<bool>{false});
+
+    m_map->unregisterHandler(&shell);
+    QVERIFY(!m_map->trigger(settings));
+}
+
+void InputMapTest::triggerSkipsGoneAndMalformedHandlers()
+{
+    const QString settings = QStringLiteral("app.settings");
+    RecordingHandler survivor(settings, true);
+    QObject noMethod;
+    m_map->registerHandler(&survivor);
+    m_map->registerHandler(&noMethod);
+    {
+        RecordingHandler gone(settings, true);
+        m_map->registerHandler(&gone);
+    }
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("has no invokeAction")));
+    QVERIFY(m_map->trigger(settings));
+    QCOMPARE(survivor.calls.size(), 1);
+}
+
+void InputMapTest::triggerRefusesUnknownActions()
+{
+    RecordingHandler handler(QStringLiteral("format.disk"), true);
+    m_map->registerHandler(&handler);
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unknown action")));
+    QVERIFY(!m_map->trigger(QStringLiteral("format.disk")));
+    QVERIFY(handler.calls.isEmpty());
+}
+
+// MappedShortcut and PlayerPage declare the method in QML with type
+// annotations; this is the signature trigger() has to find there.
+void InputMapTest::triggerReachesAQmlHandler()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQml
+        QtObject {
+            property string last: ""
+            property bool repeat: false
+            function invokeAction(actionId: string, autoRepeat: bool): bool {
+                if (actionId !== "app.fullscreen")
+                    return false
+                last = actionId
+                repeat = autoRepeat
+                return true
+            }
+        })", QUrl());
+    std::unique_ptr<QObject> handler(component.create());
+    QVERIFY2(handler, qPrintable(component.errorString()));
+    m_map->registerHandler(handler.get());
+
+    QVERIFY(m_map->trigger(QStringLiteral("app.fullscreen"), true));
+    QCOMPARE(handler->property("last").toString(), QStringLiteral("app.fullscreen"));
+    QCOMPARE(handler->property("repeat").toBool(), true);
+    QVERIFY(!m_map->trigger(QStringLiteral("app.settings")));
+}
+
+void InputMapTest::navigationActionsAreTheFocusRelativeOnes()
+{
+    for (const char *id : {"nav.up", "nav.down", "nav.left", "nav.right", "nav.select",
+                           "nav.back", "nav.pageUp", "nav.pageDown", "nav.contextMenu"}) {
+        QVERIFY2(InputMap::isNavigationAction(QString::fromLatin1(id)), id);
+        QVERIFY2(m_map->hasAction(QString::fromLatin1(id)), id);
+    }
+    // Commands, including the navigation-category ones a handler owns outright.
+    for (const char *id : {"nav.nextTab", "nav.previousLetter", "app.fullscreen",
+                           "player.stop", "music.playPause"})
+        QVERIFY2(!InputMap::isNavigationAction(QString::fromLatin1(id)), id);
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)

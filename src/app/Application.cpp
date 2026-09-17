@@ -18,17 +18,13 @@
 #include "remote/WebRemoteController.h"
 #include <QClipboard>
 #include <QGuiApplication>
-#include <QInputMethod>
-#include <QKeyEvent>
-#include <QPointer>
-#include <QWindow>
 #include "controllers/SearchController.h"
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
 #include "core/Log.h"
 #include "core/Settings.h"
-#include "input/GamepadDecision.h"
 #include "input/InputMap.h"
+#include "input/NavigationKeyHandler.h"
 #include "platform/HdrSupport.h"
 #include "platform/MprisPlayer.h"
 #include "platform/PowerInhibit.h"
@@ -97,11 +93,13 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // cards, context menus, the details page and the player; and one source of
     // truth for every binding (ARCHITECTURE.md).
     m_input = new InputMap(this);
+    // The first handler registered, so the last one asked: the arrows, Select
+    // and Back reach the focused control as their bound key.
+    m_input->registerHandler(new NavigationKeyHandler(m_input, this));
 #ifdef STRMQT_HAVE_SDL3
     // Constructed after InputMap because every pad button resolves through it:
-    // the pad synthesizes whatever key an action is *currently* bound to, so a
-    // rebind moves the gamepad with it. Degrades to keyboard-only when SDL
-    // cannot initialise.
+    // a button invokes an action by id, so a rebind moves nothing it depends
+    // on. Degrades to keyboard-only when SDL cannot initialise.
     m_gamepad = new GamepadManager(m_input, this);
 #endif
     m_actions = new ItemActions(m_client, m_player, this);
@@ -203,17 +201,14 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     });
 
     // Both remotes drive the desktop through the same paths the keyboard and
-    // pad use: a destination goes to Main.qml's RemoteCtl handler, and a key
-    // becomes whatever the user has bound that action to.
+    // pad use: a destination goes to Main.qml's RemoteCtl handler, and anything
+    // else is an action invoked by id (InputMap::trigger).
     connect(m_webRemoteServer, &WebRemoteServer::navigationRequested, m_remote,
             &RemoteControlService::navigationRequested);
-    connect(m_webRemoteServer, &WebRemoteServer::keyNavigationRequested, this,
-            [this](const QString &key) {
-                deliverRemoteAction(WebRemoteServer::actionForNavigationKey(key));
-            });
-    const auto toggleOsd = [this] { deliverRemoteAction(QStringLiteral("player.toggleOsd")); };
-    connect(m_webRemoteServer, &WebRemoteServer::osdToggleRequested, this, toggleOsd);
-    connect(m_remote, &RemoteControlService::osdToggleRequested, this, toggleOsd);
+    connect(m_webRemoteServer, &WebRemoteServer::actionRequested, this,
+            &Application::deliverRemoteAction);
+    connect(m_remote, &RemoteControlService::osdToggleRequested, this,
+            [this] { deliverRemoteAction(QStringLiteral("player.toggleOsd")); });
     m_webRemoteServer->setInteractionContext(m_interactionContext);
     connect(this, &Application::interactionContextChanged, m_webRemoteServer,
             [this] { m_webRemoteServer->setInteractionContext(m_interactionContext); });
@@ -382,70 +377,12 @@ void Application::deliverRemoteAction(const QString &actionId)
 {
     if (actionId.isEmpty() || !m_input)
         return;
-
-    // The phone is in someone's hand and the desktop window is usually not
-    // focused, so focusWindow() is often null: fall back to the visible
-    // top-level window rather than dropping the press.
-    QWindow *window = QGuiApplication::focusWindow();
-    if (!window) {
-        const QWindowList windows = QGuiApplication::topLevelWindows();
-        for (QWindow *candidate : windows) {
-            if (candidate->isVisible() && candidate->type() == Qt::Window) {
-                window = candidate;
-                break;
-            }
-        }
-    }
-    if (!window)
-        return;
-
-    // Fullscreen is a property of the window, not a key for a focused item, so
-    // it is applied directly. As a synthesized key it only fired once the
-    // compositor had activated the window, and KWin may refuse or delay that
-    // for a window in the background: a lost arrow is pressed again, a lost
-    // toggle just looks broken. Same toggle as Main.qml's app.fullscreen.
-    if (actionId == QLatin1String("app.fullscreen")) {
-        window->setVisibility(window->visibility() == QWindow::FullScreen ? QWindow::Windowed
-                                                                          : QWindow::FullScreen);
-        return;
-    }
-
-    const int key = m_input->keyFor(actionId);
-    if (key == 0) {
-        qCDebug(logApp) << "remote: no single-key binding for" << actionId;
-        return;
-    }
-    const int modifiers = m_input->modifiersFor(actionId);
-
-    // Same rule as the pad (GamepadDecision.h): a key a text field would type
-    // is a command, and must not land in the search box as a letter.
-    const QObject *focus = QGuiApplication::focusObject();
-    const bool textFocused = focus && QGuiApplication::inputMethod()
-                                          ->queryFocusObject(Qt::ImEnabled, QVariant())
-                                          .toBool();
-    if (shouldSuppressKey(key, modifiers, textFocused)) {
-        qCDebug(logApp) << "remote: not delivering typable key for" << actionId;
-        return;
-    }
-
+    // By id, never as a synthesized key: the handler runs whether or not the
+    // window is active, whatever the action is bound to, and a navigation
+    // action still reaches the focused control (NavigationKeyHandler).
     m_input->noteInput(QStringLiteral("gamepad"));
-    const auto post = [key, modifiers](QWindow *target) {
-        const auto mods = static_cast<Qt::KeyboardModifiers>(modifiers);
-        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyPress, key, mods, QString()));
-        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyRelease, key, mods, QString()));
-    };
-    if (window->isActive()) {
-        post(window);
-        return;
-    }
-    // Qt Quick routes keys to the active focus item of the active window. Ask
-    // for activation, and give the compositor a moment before the press lands.
-    window->requestActivate();
-    QPointer<QWindow> guard(window);
-    QTimer::singleShot(60, this, [guard, post] {
-        if (guard)
-            post(guard);
-    });
+    if (!m_input->trigger(actionId))
+        qCDebug(logApp) << "remote: nothing handles" << actionId << "here";
 }
 
 void Application::recomputeLiveUpdatePolicy()

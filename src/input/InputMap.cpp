@@ -953,6 +953,56 @@ bool InputMap::isTypableSequence(const QString &sequence) const
     return isTypableKey(parsed.key);
 }
 
+void InputMap::registerHandler(QObject *handler)
+{
+    if (!handler || m_handlers.contains(handler))
+        return;
+    m_handlers.append(handler);
+}
+
+void InputMap::unregisterHandler(QObject *handler)
+{
+    m_handlers.removeAll(handler);
+}
+
+bool InputMap::trigger(const QString &actionId, bool autoRepeat)
+{
+    if (!hasAction(actionId)) {
+        qCWarning(logApp) << "input map: trigger for unknown action" << actionId;
+        return false;
+    }
+    m_handlers.removeAll(nullptr);
+    // A snapshot: a handler may navigate, and a page it pushes registers more.
+    const QList<QPointer<QObject>> handlers = m_handlers;
+    for (auto it = handlers.crbegin(); it != handlers.crend(); ++it) {
+        QObject *handler = it->data();
+        if (!handler)
+            continue;
+        bool handled = false;
+        if (!QMetaObject::invokeMethod(handler, "invokeAction", Qt::DirectConnection,
+                                       qReturnArg(handled), actionId, autoRepeat)) {
+            qCWarning(logApp) << "input map: handler" << handler
+                              << "has no invokeAction(QString, bool)";
+            continue;
+        }
+        if (handled)
+            return true;
+    }
+    return false;
+}
+
+bool InputMap::isNavigationAction(const QString &actionId)
+{
+    static const QStringList navigation{
+        QStringLiteral("nav.up"),     QStringLiteral("nav.down"),
+        QStringLiteral("nav.left"),   QStringLiteral("nav.right"),
+        QStringLiteral("nav.select"), QStringLiteral("nav.back"),
+        QStringLiteral("nav.pageUp"), QStringLiteral("nav.pageDown"),
+        QStringLiteral("nav.contextMenu"),
+    };
+    return navigation.contains(actionId);
+}
+
 void InputMap::noteInput(const QString &device)
 {
     if (!isKnownDevice(device)) {

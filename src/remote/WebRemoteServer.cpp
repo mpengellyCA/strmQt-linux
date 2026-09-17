@@ -1711,11 +1711,11 @@ void WebRemoteServer::handleApiNavigate(QSslSocket *socket, const QJsonObject &b
                                           QStringLiteral("osd")};
     if (!dest.isEmpty() && destinations.contains(dest)) {
         if (dest == QLatin1String("osd"))
-            emit osdToggleRequested();
+            emit actionRequested(QStringLiteral("player.toggleOsd"));
         else
             emit navigationRequested(dest);
     } else if (!key.isEmpty() && navigationKeys().contains(key)) {
-        emit keyNavigationRequested(key);
+        emit actionRequested(actionForNavigationKey(key));
     } else {
         sendError(socket, 400, QStringLiteral("Unknown destination or key"));
         return;

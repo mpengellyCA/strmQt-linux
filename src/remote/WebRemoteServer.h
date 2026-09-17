@@ -80,9 +80,10 @@ signals:
     void connectedClientsChanged(int count);
     // "home" | "search" | "settings" | "back"
     void navigationRequested(const QString &destination);
-    // One of navigationKeys(). Application turns it into the bound key.
-    void keyNavigationRequested(const QString &key);
-    void osdToggleRequested();
+    // An InputMap action id: a navigation key resolved through
+    // actionForNavigationKey(), or "player.toggleOsd". Application invokes it
+    // by id (InputMap::trigger) — nothing is turned into a key here.
+    void actionRequested(const QString &actionId);
 
 private slots:
     void onStartedEncryptionHandshake(QSslSocket *socket);

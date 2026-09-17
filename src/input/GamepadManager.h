@@ -80,6 +80,7 @@ private:
         int key = 0;
         int modifiers = 0;
         bool seeking = false; // clamps the repeat rate: a scrub is not a cursor
+        bool command = false; // repeats by invoking the action, not with a held key
     };
 
     void poll();
@@ -99,6 +100,7 @@ private:
     void releaseAll();
     // A discrete press: press and release back to back, neither a repeat.
     void tap(const QString &actionId);
+    void tap(const QString &actionId, bool autoRepeat);
     // The A button while browsing: a tap selects, a hold opens the item menu.
     // False when this context has no hold gesture, and the caller taps as before.
     bool handleSelectButton(quint32 deviceId, bool pressed);

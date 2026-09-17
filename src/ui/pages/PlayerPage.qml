@@ -128,12 +128,27 @@ FocusScope {
 
         signal activated
 
+        readonly property bool live: PlayerCtl.active && mapped.available && page.visible
+
+        // By id, for the remote and the gamepad (InputMap::trigger). A repeat
+        // is spent here, as the Shortcut's own autoRepeat would spend it.
+        function invokeAction(actionId: string, autoRepeat: bool): bool {
+            if (actionId !== mapped.actionId || !mapped.live)
+                return false;
+            if (!autoRepeat || mapped.repeats)
+                mapped.activated();
+            return true;
+        }
+
+        Component.onCompleted: Input.registerHandler(mapped)
+        Component.onDestruction: Input.unregisterHandler(mapped)
+
         Shortcut {
             sequences: {
                 const bound = Input.bindings(mapped.actionId);
                 return (bound !== undefined && bound.length > 0) ? bound : mapped.fallback;
             }
-            enabled: PlayerCtl.active && mapped.available && page.visible
+            enabled: mapped.live
             autoRepeat: mapped.repeats
             onActivated: {
                 Input.noteInput("keyboard");
@@ -314,15 +329,39 @@ FocusScope {
         // Auto-repeat is the *wanted* behaviour for seek and volume — holding
         // Right must scrub — and is a bug everywhere else, where a held key
         // would machine-gun a toggle.
-        const repeatable = action === "player.seekBackward" || action === "player.seekForward"
-                        || action === "player.seekBackwardLong"
-                        || action === "player.seekForwardLong"
-                        || action === "player.volumeUp" || action === "player.volumeDown";
-        if (event.isAutoRepeat && !repeatable) {
+        if (event.isAutoRepeat && !page.isRepeatableAction(action)) {
             event.accepted = true;
             return;
         }
 
+        if (!page.runAction(action)) {
+            osd.wake();
+            event.accepted = false;
+            return;
+        }
+        event.accepted = true;
+    }
+
+    // Every action runAction() answers; the remote and the gamepad ask by id
+    // for exactly these.
+    readonly property var playerVerbs: [
+        "player.togglePause", "player.seekBackward", "player.seekForward",
+        "player.seekBackwardLong", "player.seekForwardLong", "player.volumeUp",
+        "player.volumeDown", "player.cycleAudio", "player.cycleSubtitle", "player.toggleOsd",
+        "player.frameNext", "player.framePrevious", "player.screenshot", "player.markLoop",
+        "player.minimize", "player.stop"
+    ]
+
+    function isRepeatableAction(action: string): bool {
+        return action === "player.seekBackward" || action === "player.seekForward"
+            || action === "player.seekBackwardLong" || action === "player.seekForwardLong"
+            || action === "player.volumeUp" || action === "player.volumeDown";
+    }
+
+    // The player's verbs, whichever way they arrive: from a key through the
+    // input map above, or by id from the remote and the gamepad below. False
+    // for an action the player does not answer.
+    function runAction(action: string): bool {
         switch (action) {
         case "player.togglePause":
             PlayerCtl.togglePause();
@@ -398,11 +437,30 @@ FocusScope {
             PlayerCtl.stop(); // Main pops the page on stopped()
             break;
         default:
-            osd.wake();
-            event.accepted = false;
-            return;
+            return false;
         }
-        event.accepted = true;
+        return true;
+    }
+
+    // By id (InputMap::trigger). The same two rules as a key: a hidden OSD
+    // spends the press on waking, and only seek and volume repeat.
+    Item {
+        id: actionHandler
+
+        function invokeAction(actionId: string, autoRepeat: bool): bool {
+            if (!page.visible || !PlayerCtl.active || page.playerVerbs.indexOf(actionId) < 0)
+                return false;
+            if (!page.audioMode && !osd.shown) {
+                osd.wake();
+                return true;
+            }
+            if (autoRepeat && !page.isRepeatableAction(actionId))
+                return true;
+            return page.runAction(actionId);
+        }
+
+        Component.onCompleted: Input.registerHandler(actionHandler)
+        Component.onDestruction: Input.unregisterHandler(actionHandler)
     }
 
     // Down is not a shortcut, it is structural navigation: it hands the

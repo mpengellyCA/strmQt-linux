@@ -205,7 +205,7 @@ void WebRemoteServerTest::pinAuthAndRateLimiting()
 
 void WebRemoteServerTest::keyNavigationSignal()
 {
-    QSignalSpy navSpy(m_server, &WebRemoteServer::keyNavigationRequested);
+    QSignalSpy navSpy(m_server, &WebRemoteServer::actionRequested);
 
     QNetworkRequest req(QUrl(QStringLiteral("https://127.0.0.1:%1/api/navigate").arg(m_port)));
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
@@ -223,7 +223,7 @@ void WebRemoteServerTest::keyNavigationSignal()
     QCOMPARE(reply->error(), QNetworkReply::NoError);
 
     QCOMPARE(navSpy.count(), 1);
-    QCOMPARE(navSpy.first().first().toString(), QStringLiteral("down"));
+    QCOMPARE(navSpy.first().first().toString(), QStringLiteral("nav.down"));
     reply->deleteLater();
 }
 
@@ -261,7 +261,7 @@ void WebRemoteServerTest::postWithoutJsonIsRefused()
 {
     // A cross-site <form> can post text/plain without a preflight; it must not
     // reach a handler.
-    QSignalSpy navSpy(m_server, &WebRemoteServer::keyNavigationRequested);
+    QSignalSpy navSpy(m_server, &WebRemoteServer::actionRequested);
     const Response res = request("POST", QStringLiteral("/api/navigate"),
                                  R"({"key":"select"})", "text/plain");
     QCOMPARE(res.status, 415);
@@ -270,9 +270,8 @@ void WebRemoteServerTest::postWithoutJsonIsRefused()
 
 void WebRemoteServerTest::navigationAllowlist()
 {
-    QSignalSpy keySpy(m_server, &WebRemoteServer::keyNavigationRequested);
+    QSignalSpy keySpy(m_server, &WebRemoteServer::actionRequested);
     QSignalSpy destSpy(m_server, &WebRemoteServer::navigationRequested);
-    QSignalSpy osdSpy(m_server, &WebRemoteServer::osdToggleRequested);
 
     QCOMPARE(request("POST", QStringLiteral("/api/navigate"), R"({"key":"format-disk"})").status, 400);
     QCOMPARE(keySpy.count(), 0);
@@ -287,8 +286,10 @@ void WebRemoteServerTest::navigationAllowlist()
     QCOMPARE(destSpy.count(), 1);
     QCOMPARE(destSpy.first().first().toString(), QStringLiteral("settings"));
 
+    const int actionsBefore = keySpy.count();
     QCOMPARE(request("POST", QStringLiteral("/api/navigate"), R"({"destination":"osd"})").status, 200);
-    QCOMPARE(osdSpy.count(), 1);
+    QCOMPARE(keySpy.count(), actionsBefore + 1);
+    QCOMPARE(keySpy.last().first().toString(), QStringLiteral("player.toggleOsd"));
     QCOMPARE(destSpy.count(), 1);
 }
 
