@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QEvent>
-#include <QFocusEvent>
 #include <QObject>
 
 // Keeps the focused item focused while the window is in the background.
@@ -16,12 +15,17 @@
 // re-seat focus by moving to a page; the sign-in screen had nothing that did,
 // so one click on another window stranded the remote there.
 //
-// Swallowing that one FocusOut leaves the chain exactly as it was. Focus moves
-// inside the window, and a FocusOut for any other reason, pass through
-// untouched; activation state (QWindow::active, Window.active in QML) is not
-// carried by this event and still changes.
+// Swallowing the window's FocusOut leaves the chain exactly as it was. The
+// reason cannot be relied on: the offscreen and X11 platforms report
+// Qt::ActiveWindowFocusReason, but KWin on Wayland reports
+// Qt::OtherFocusReason, so every FocusOut sent to the window is taken. That is
+// safe because a window only receives one when it stops being the focus window;
+// focus moving between items inside it never produces one. Activation state
+// (QWindow::active, Window.active in QML) is not carried by this event and still
+// changes.
 //
-// Measured on Qt 6.11.2 in tests/unit/tst_window_focus_keeper.cpp.
+// Measured on Qt 6.11.2 in tests/unit/tst_window_focus_keeper.cpp, and the
+// Wayland reason on KWin 6 with a probe window.
 namespace strmqt {
 
 class WindowFocusKeeper final : public QObject
@@ -32,8 +36,7 @@ public:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
-        if (event->type() == QEvent::FocusOut
-            && static_cast<QFocusEvent *>(event)->reason() == Qt::ActiveWindowFocusReason)
+        if (event->type() == QEvent::FocusOut)
             return true;
         return QObject::eventFilter(watched, event);
     }

@@ -101,6 +101,30 @@ private slots:
         QCOMPARE(result.presses, 2);
         QVERIFY(result.focusedAfterReturn);
     }
+
+    // KWin on Wayland deactivates with Qt::OtherFocusReason rather than
+    // Qt::ActiveWindowFocusReason; the offscreen platform cannot produce that,
+    // so the event it sends is delivered by hand.
+    void keeperIgnoresTheReasonTheCompositorGives()
+    {
+        for (const bool keep : {false, true}) {
+            QQuickWindow window;
+            window.resize(200, 200);
+            if (keep)
+                window.installEventFilter(new strmqt::WindowFocusKeeper(&window));
+            auto *item = new KeyCounter;
+            item->setParentItem(window.contentItem());
+            item->setFocus(true);
+            window.show();
+            window.requestActivate();
+            QVERIFY(QTest::qWaitForWindowActive(&window));
+            QVERIFY(item->hasActiveFocus());
+
+            QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+            QCoreApplication::sendEvent(&window, &focusOut);
+            QCOMPARE(window.activeFocusItem() == item, keep);
+        }
+    }
 };
 
 QTEST_MAIN(TestWindowFocusKeeper)
