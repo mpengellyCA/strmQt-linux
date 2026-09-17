@@ -230,3 +230,5 @@ if(STRMQT_WITH_VLC)
         target_link_libraries(tst_vlc_player PRIVATE Qt6::Gui PkgConfig::LIBVLC_PLAYER_TEST)
     endif()
 endif()
+
+strmqt_add_test(tst_music_cache unit/tst_music_cache.cpp)

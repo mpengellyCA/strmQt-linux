@@ -47,6 +47,8 @@ qt_add_library(strmqt_app STATIC
     app/controllers/DetailsController.h app/controllers/DetailsController.cpp
     app/ItemActions.h app/ItemActions.cpp
     app/PlayQueue.h app/PlayQueue.cpp
+    app/music/TtlCache.h
+    app/music/Fanout.h
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp

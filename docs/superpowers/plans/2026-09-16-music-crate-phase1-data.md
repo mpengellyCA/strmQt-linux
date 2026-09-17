@@ -2240,7 +2240,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
   `done` runs exactly once, queued on `context`'s thread, after `seal()` has been called and every added future has delivered to its sink. A cancelled future delivers `Result<T>::failure("cancelled")`. If `context` is destroyed first, nothing runs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/unit/tst_music_cache.cpp`:
 
@@ -2393,12 +2393,12 @@ Register it in `tests/CMakeLists.txt` after `tst_music_mapper`:
 strmqt_add_test(tst_music_cache unit/tst_music_cache.cpp)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_cache`
 Expected: a compile error (`app/music/Fanout.h` not found).
 
-- [ ] **Step 3: Write `TtlCache.h`**
+- [x] **Step 3: Write `TtlCache.h`**
 
 ```cpp
 #pragma once
@@ -2474,7 +2474,7 @@ private:
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 4: Write `Fanout.h`**
+- [x] **Step 4: Write `Fanout.h`**
 
 ```cpp
 #pragma once
@@ -2571,12 +2571,12 @@ Add the headers to `strmqt_app` in `src/CMakeLists.txt`, after `app/PlayQueue.h 
     app/music/Fanout.h
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_cache && ctest --preset dev -R tst_music_cache --output-on-failure`
 Expected: PASS (6 tests). If `fanoutReportsCancellation` delivers a default value instead of "cancelled", Qt ran the `.then` continuation on a cancelled future that already held no result. Change the `.then` lambda to take `QFuture<Result<T>> f` and deliver `failure("cancelled")` when `f.isCanceled() || f.resultCount() == 0`, otherwise `f.result()`. Keep that version.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/music/TtlCache.h src/app/music/Fanout.h src/CMakeLists.txt tests/unit/tst_music_cache.cpp tests/CMakeLists.txt
