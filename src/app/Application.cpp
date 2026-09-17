@@ -382,12 +382,6 @@ void Application::deliverRemoteAction(const QString &actionId)
 {
     if (actionId.isEmpty() || !m_input)
         return;
-    const int key = m_input->keyFor(actionId);
-    if (key == 0) {
-        qCDebug(logApp) << "remote: no single-key binding for" << actionId;
-        return;
-    }
-    const int modifiers = m_input->modifiersFor(actionId);
 
     // The phone is in someone's hand and the desktop window is usually not
     // focused, so focusWindow() is often null: fall back to the visible
@@ -404,6 +398,24 @@ void Application::deliverRemoteAction(const QString &actionId)
     }
     if (!window)
         return;
+
+    // Fullscreen is a property of the window, not a key for a focused item, so
+    // it is applied directly. As a synthesized key it only fired once the
+    // compositor had activated the window, and KWin may refuse or delay that
+    // for a window in the background: a lost arrow is pressed again, a lost
+    // toggle just looks broken. Same toggle as Main.qml's app.fullscreen.
+    if (actionId == QLatin1String("app.fullscreen")) {
+        window->setVisibility(window->visibility() == QWindow::FullScreen ? QWindow::Windowed
+                                                                          : QWindow::FullScreen);
+        return;
+    }
+
+    const int key = m_input->keyFor(actionId);
+    if (key == 0) {
+        qCDebug(logApp) << "remote: no single-key binding for" << actionId;
+        return;
+    }
+    const int modifiers = m_input->modifiersFor(actionId);
 
     // Same rule as the pad (GamepadDecision.h): a key a text field would type
     // is a command, and must not land in the search box as a letter.
