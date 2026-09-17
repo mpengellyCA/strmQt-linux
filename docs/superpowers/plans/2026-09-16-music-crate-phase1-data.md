@@ -5926,7 +5926,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
     - `static QString kindKey(StationKind)`, `static std::optional<StationKind> kindFromKey(const QString &)`
     - Kind keys: `heavyRotation, favourites, deepCuts, moreLike, shuffleAll`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add these includes to `tst_music_models.cpp`:
 
@@ -6051,12 +6051,12 @@ void MusicModelsTest::genreBinsAndStations()
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_models`
 Expected: a compile error (headers not found).
 
-- [ ] **Step 3: Write `TrackListModel`**
+- [x] **Step 3: Write `TrackListModel`**
 
 `TrackListModel.h`:
 
@@ -6245,7 +6245,7 @@ void TrackListModel::applyUserData(const QString &itemId, const UserDataPatch &p
 
 `MediaItemModel`'s media roles occupy `Qt::UserRole + 1` to about `+40`, so `+200` cannot collide. Add a `Q_ASSERT(MediaItemModel::SubtitleRole < DisplayTitleRole)` at the top of `roleNames()`.
 
-- [ ] **Step 4: Write `GenreBinModel`**
+- [x] **Step 4: Write `GenreBinModel`**
 
 `GenreBinModel.h`:
 
@@ -6352,7 +6352,7 @@ QVariantMap GenreBinModel::get(int row) const
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 5: Write `StationModel`**
+- [x] **Step 5: Write `StationModel`**
 
 `StationModel.h`:
 
@@ -6510,12 +6510,12 @@ Add to `strmqt_app`:
     app/music/models/StationModel.h app/music/models/StationModel.cpp
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_models && ctest --preset dev -R tst_music_models --output-on-failure`
 Expected: PASS (9 tests).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/music/models src/CMakeLists.txt tests/unit/tst_music_models.cpp

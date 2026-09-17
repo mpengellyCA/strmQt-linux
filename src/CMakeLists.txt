@@ -59,6 +59,9 @@ qt_add_library(strmqt_app STATIC
     app/music/models/AlbumGridModel.h app/music/models/AlbumGridModel.cpp
     app/music/models/ArtistGridModel.h app/music/models/ArtistGridModel.cpp
     app/music/models/PlaylistGridModel.h app/music/models/PlaylistGridModel.cpp
+    app/music/models/TrackListModel.h app/music/models/TrackListModel.cpp
+    app/music/models/GenreBinModel.h app/music/models/GenreBinModel.cpp
+    app/music/models/StationModel.h app/music/models/StationModel.cpp
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp
