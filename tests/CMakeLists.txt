@@ -139,6 +139,13 @@ strmqt_add_test(tst_shortcut_typing unit/tst_shortcut_typing.cpp)
 target_link_libraries(tst_shortcut_typing PRIVATE Qt6::Quick)
 set_tests_properties(tst_shortcut_typing PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Whether a background window keeps its focused item for the remote and the
+# gamepad (src/app/WindowFocusKeeper.h), measured on a real QQuickWindow.
+strmqt_add_test(tst_window_focus_keeper unit/tst_window_focus_keeper.cpp)
+target_include_directories(tst_window_focus_keeper PRIVATE ${CMAKE_SOURCE_DIR}/src/app)
+target_link_libraries(tst_window_focus_keeper PRIVATE Qt6::Quick)
+set_tests_properties(tst_window_focus_keeper PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # The wash tint is QtGui (QImage/QColor) and so cannot live in strmqt_app, which
 # is deliberately QtCore-only; the unit is compiled straight into the test. The
 # clamp is pure — an image in, a colour out — but the cache around it is driven

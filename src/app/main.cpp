@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "WindowFocusKeeper.h"
 #include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/RemoteControlService.h"
@@ -19,6 +20,7 @@
 
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QWindow>
 
 int main(int argc, char *argv[])
 {
@@ -72,6 +74,12 @@ int main(int argc, char *argv[])
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("StrmQt", "Main");
+
+    // The remote and the gamepad drive this window while another one is
+    // active; it has to keep its focused item for their keys to land.
+    const QList<QObject *> roots = engine.rootObjects();
+    if (auto *window = qobject_cast<QWindow *>(roots.value(0)))
+        window->installEventFilter(new strmqt::WindowFocusKeeper(window));
 
     return app.exec();
 }
