@@ -32,6 +32,11 @@ class MprisPlayer;
 namespace emby {
 class EmbyClient;
 }
+namespace music {
+class MusicPlayback;
+class MusicRepository;
+class MusicUserDataRelay;
+} // namespace music
 
 // Owns the application object graph (settings, secrets, Emby client, controllers).
 // QML sees only the controllers, wired up as context properties in main.cpp.
@@ -64,6 +69,9 @@ public:
     RemoteControlService *remote() const { return m_remote; }
     PlaylistController *playlists() const { return m_playlists; }
     MusicController *music() const { return m_music; }
+    music::MusicRepository *musicRepository() const { return m_musicRepository; }
+    music::MusicUserDataRelay *musicRelay() const { return m_musicRelay; }
+    music::MusicPlayback *musicPlayback() const { return m_musicPlayback; }
     LiveUpdateService *live() const { return m_live; }
     WebRemoteServer *webRemoteServer() const { return m_webRemoteServer; }
     WebRemoteController *webRemote() const { return m_webRemote; }
@@ -110,6 +118,9 @@ private:
     WebRemoteController *m_webRemote = nullptr;
     PlaylistController *m_playlists = nullptr;
     MusicController *m_music = nullptr;
+    music::MusicRepository *m_musicRepository = nullptr;
+    music::MusicUserDataRelay *m_musicRelay = nullptr;
+    music::MusicPlayback *m_musicPlayback = nullptr;
     PowerInhibit *m_powerInhibit = nullptr;
     MprisPlayer *m_mpris = nullptr;
     // Image id ("{itemId}/{imageType}/{tag}") of the sleeve MPRIS is showing or

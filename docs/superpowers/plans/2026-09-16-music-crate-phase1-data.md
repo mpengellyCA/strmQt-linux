@@ -7675,7 +7675,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 This task only wires objects together, so there is no new unit test. The phase gate below is its test: the full suite, the lint baseline and the self-test, where `Main.qml` constructs every page against the real context properties.
 
-- [ ] **Step 1: Declare the members**
+- [x] **Step 1: Declare the members**
 
 In `src/app/Application.h`, after the existing forward declarations inside `namespace strmqt {`:
 
@@ -7703,7 +7703,7 @@ Next to `MusicController *m_music = nullptr;`:
     music::MusicPlayback *m_musicPlayback = nullptr;
 ```
 
-- [ ] **Step 2: Construct and connect**
+- [x] **Step 2: Construct and connect**
 
 In `src/app/Application.cpp`, add these includes:
 
@@ -7738,7 +7738,7 @@ Insert this block immediately after `m_details->bindLiveUpdates(m_live);`:
 
 Includes in `Application.cpp` are relative to `src/app/`, as the existing `"ItemActions.h"` and `"controllers/…"` includes show. If the music headers include one another with the `app/` prefix, both forms resolve, because `src/` is on the include path.
 
-- [ ] **Step 3: Expose `MusicPlay`**
+- [x] **Step 3: Expose `MusicPlay`**
 
 In `src/app/main.cpp`, add `#include "music/MusicPlayback.h"` and, after the `MusicCtl` line:
 
@@ -7747,7 +7747,7 @@ In `src/app/main.cpp`, add `#include "music/MusicPlayback.h"` and, after the `Mu
     engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
 ```
 
-- [ ] **Step 4: Run the Phase 1 gate**
+- [x] **Step 4: Run the Phase 1 gate**
 
 ```bash
 cmake --preset dev && cmake --build --preset dev
@@ -7764,7 +7764,7 @@ Expected:
 
 If a test fails, fix the cause in the task that owns it. Do not skip or loosen the test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/Application.h src/app/Application.cpp src/app/main.cpp

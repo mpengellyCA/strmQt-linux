@@ -38,6 +38,10 @@
 #endif
 #include "app/models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
+#include "PlayQueue.h"
+#include "music/MusicPlayback.h"
+#include "music/MusicRepository.h"
+#include "music/MusicUserDataRelay.h"
 
 #include <QEventLoop>
 #include <QFutureWatcher>
@@ -157,6 +161,25 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_library->bindLiveUpdates(m_live);
     m_series->bindLiveUpdates(m_live);
     m_details->bindLiveUpdates(m_live);
+
+    // The music domain layer (Crate spec §3). One repository per account: it
+    // clears itself on EmbyClient::identityChanged. The relay turns every
+    // user-data change into in-place model patches plus cache invalidation;
+    // MusicPlayback owns the play verbs and is exposed to QML as MusicPlay.
+    m_musicRepository = new music::MusicRepository(m_client, this);
+    m_musicRelay = new music::MusicUserDataRelay(m_musicRepository, this);
+    m_musicRelay->bind(m_actions, m_live);
+    m_musicPlayback = new music::MusicPlayback(m_musicRepository, m_actions, this);
+    // What is playing changes the listening shelves (continue listening,
+    // recently played, artists you play). Marking them stale costs nothing
+    // until Music Home next asks.
+    connect(m_player->queue(), &PlayQueue::currentItemChanged, m_musicRepository,
+            [this] { m_musicRepository->markStale(music::Freshness::Listening); });
+    connect(m_live, &LiveUpdateService::libraryInvalidated, m_musicRepository,
+            [this](const QStringList &) { m_musicRepository->markStale(music::Freshness::Everything); });
+    connect(m_live, &LiveUpdateService::refreshRequested, m_musicRepository,
+            [this] { m_musicRepository->markStale(music::Freshness::Everything); });
+
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();

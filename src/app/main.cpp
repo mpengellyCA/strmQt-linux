@@ -14,6 +14,7 @@
 #include "controllers/SearchController.h"
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
+#include "music/MusicPlayback.h"
 #include "remote/WebRemoteController.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
@@ -55,6 +56,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("WebRemoteCtl"), app.webRemote());
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistCtl"), app.playlists());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicCtl"), app.music());
+    // Every music play verb (Crate spec §3.6): album, shuffle, radio, stations.
+    engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
     // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
     // CoverWash.qml reads the tints themselves.
     engine.rootContext()->setContextProperty(QStringLiteral("CoverTint"), app.coverTint());
