@@ -62,6 +62,20 @@
   </requires>
 
   <releases>
+    <release version="0.6.1" date="2026-09-16" type="development">
+      <description>
+        <p>
+          The Web Remote and gamepads now run app actions directly instead of
+          simulating key presses, so fullscreen, volume and playback commands work
+          while the window is in the background, and focus is no longer lost when
+          another window is clicked, including on the sign-in screen under Wayland.
+          Adds Stop to the video controls and the music mini player, keeps scrolling
+          the music queue from changing the volume, makes Settings navigable by
+          keyboard and gamepad, starts Home and library cursors at the top, and
+          disables text selection in the Web Remote.
+        </p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-09-16" type="development">
       <description>
         <p>
