@@ -86,6 +86,7 @@ private slots:
     void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
     void newerLeafPlayRetiresEveryAsynchronousQueueBuilder();
     void sessionResetRetiresQueueBuildersAndClearsRegisteredModels();
+    void playAllFromIfCurrentStampsTheSourceLabel();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -1003,6 +1004,28 @@ void ItemActionsQueueTest::sessionResetRetiresQueueBuildersAndClearsRegisteredMo
     QTest::qWait(240);
     QCOMPARE(queueSpy.count(), 0);
     QCOMPARE(m_player->queue()->rowCount(), 0);
+}
+
+// playAllFromIfCurrent is the async commit path MusicPlayback resolves through
+// (Task 17); the source label has to survive that same generation check, so a
+// superseded intent must not stamp a stale label onto whatever is playing now.
+void ItemActionsQueueTest::playAllFromIfCurrentStampsTheSourceLabel()
+{
+    const QVariantList items{QVariantMap{{"itemId", "301001"}, {"type", "Audio"}, {"name", "One"}},
+                             QVariantMap{{"itemId", "301002"}, {"type", "Audio"}, {"name", "Two"}}};
+    quint64 generation = m_actions->reservePlaybackIntent();
+    m_actions->playAllFromIfCurrent(items, 0, generation, QStringLiteral("Radio · Björk"));
+    QCOMPARE(m_player->queue()->sourceLabel(), QStringLiteral("Radio · Björk"));
+
+    generation = m_actions->reservePlaybackIntent();
+    m_actions->playAllFromIfCurrent(items, 1, generation);
+    QCOMPARE(m_player->queue()->sourceLabel(), QString());
+
+    // A superseded intent changes nothing, the label included.
+    const quint64 stale = m_actions->reservePlaybackIntent();
+    m_actions->reservePlaybackIntent();
+    m_actions->playAllFromIfCurrent(items, 0, stale, QStringLiteral("Stale"));
+    QCOMPARE(m_player->queue()->sourceLabel(), QString());
 }
 
 QTEST_GUILESS_MAIN(ItemActionsQueueTest)

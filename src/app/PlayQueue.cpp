@@ -242,6 +242,14 @@ QString PlayQueue::contextLabel() const
     return {};
 }
 
+void PlayQueue::setSourceLabel(const QString &label)
+{
+    if (m_sourceLabel == label)
+        return;
+    m_sourceLabel = label;
+    emit sourceLabelChanged();
+}
+
 // ── Contents ──────────────────────────────────────────────────────────────────
 
 void PlayQueue::setItems(QList<MediaItem> items, int startIndex)
@@ -264,6 +272,7 @@ void PlayQueue::setItems(QList<MediaItem> items, int startIndex)
 
     if (wasShuffled)
         emit shuffledChanged();
+    setSourceLabel({});
     emit queueChanged();
     notifyCursor();
 }
@@ -288,6 +297,7 @@ PlayQueue::Snapshot PlayQueue::snapshot() const
     snap.currentIndex = m_currentIndex;
     snap.shuffled = m_shuffled;
     snap.repeatMode = m_repeatMode;
+    snap.sourceLabel = m_sourceLabel;
     return snap;
 }
 
@@ -329,6 +339,7 @@ void PlayQueue::restore(const Snapshot &snapshot)
         emit repeatModeChanged();
     emit queueChanged();
     notifyCursor();
+    setSourceLabel(snapshot.sourceLabel);
 }
 
 void PlayQueue::enrichEntry(const MediaItem &item)
@@ -403,6 +414,7 @@ int PlayQueue::addToQueue(const QList<MediaItem> &items)
 
     emit queueChanged();
     notifyCursor();
+    setSourceLabel({});
     return static_cast<int>(valid.size());
 }
 
@@ -467,6 +479,7 @@ int PlayQueue::playNext(const QList<MediaItem> &items)
                          {QueueIndexRole});
     emit queueChanged();
     notifyCursor();
+    setSourceLabel({});
     return static_cast<int>(valid.size());
 }
 
@@ -544,6 +557,7 @@ void PlayQueue::clear()
     m_originalKeys.clear();
     m_currentIndex = -1;
     endResetModel();
+    setSourceLabel({});
     emit queueChanged();
     notifyCursor();
 }

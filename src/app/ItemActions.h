@@ -95,7 +95,10 @@ public:
     // accepted only while no newer direct/container play has superseded it.
     quint64 reservePlaybackIntent();
     bool isPlaybackIntentCurrent(quint64 generation) const;
-    void playAllFromIfCurrent(const QVariantList &items, int startIndex, quint64 generation);
+    // `sourceLabel` names where the queue came from ("Radio · Björk"); set after
+    // the queue is replaced, so PlayQueue's reset does not wipe it.
+    void playAllFromIfCurrent(const QVariantList &items, int startIndex, quint64 generation,
+                              const QString &sourceLabel = QString());
 
     // ── Batch verbs (MUSIC.md §7) ─────────────────────────────────────────
     // What a multi-selection in a track table can be done to. Both are the

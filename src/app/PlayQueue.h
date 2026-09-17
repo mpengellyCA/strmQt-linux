@@ -36,6 +36,11 @@ class PlayQueue : public QAbstractListModel
     // Where this queue came from, for the now-playing pane's "up next in
     // context" (MUSIC.md §4): "from Lift Yr Skinny Fists".
     Q_PROPERTY(QString contextLabel READ contextLabel NOTIFY queueChanged)
+    // Where the verb that filled this queue says it came from: "Sunburned
+    // Almanac", "Station · Heavy rotation", "Radio · Björk". Unlike
+    // contextLabel it is remembered, so it is dropped the moment the queue
+    // stops being that one thing: a new queue, a clear, or anything added.
+    Q_PROPERTY(QString sourceLabel READ sourceLabel NOTIFY sourceLabelChanged)
 
 public:
     enum RepeatMode
@@ -78,6 +83,7 @@ public:
         int currentIndex = -1;
         bool shuffled = false;
         RepeatMode repeatMode = RepeatOff;
+        QString sourceLabel;
 
         bool isValid() const { return !playOrder.isEmpty(); }
     };
@@ -99,6 +105,9 @@ public:
     // is reading. Empty when there is no single answer: a hand-assembled queue,
     // a shuffle across a whole library, or anything that is not music.
     QString contextLabel() const;
+
+    QString sourceLabel() const { return m_sourceLabel; }
+    void setSourceLabel(const QString &label);
 
     int currentIndex() const { return m_currentIndex; }
     // {} when the queue is empty.
@@ -163,6 +172,7 @@ signals:
     // into the promoted row only when it was already running.
     void currentItemDisplaced();
     void queueChanged();
+    void sourceLabelChanged();
     void shuffledChanged();
     void repeatModeChanged();
     // The queue ran out: advance() found nothing, or the last row was removed.
@@ -196,6 +206,7 @@ private:
     quint64 m_currentKey = 0;
     bool m_shuffled = false;
     RepeatMode m_repeatMode = RepeatOff;
+    QString m_sourceLabel;
 };
 
 } // namespace strmqt

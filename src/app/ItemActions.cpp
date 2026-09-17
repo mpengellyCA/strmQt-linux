@@ -517,7 +517,7 @@ bool ItemActions::isPlaybackIntentCurrent(quint64 generation) const
 }
 
 void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex,
-                                       quint64 generation)
+                                       quint64 generation, const QString &sourceLabel)
 {
     if (!isPlaybackIntentCurrent(generation))
         return;
@@ -542,6 +542,7 @@ void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex
     const int playableStart =
         std::clamp(playableBeforeStart, 0, static_cast<int>(playable.size()) - 1);
     m_player->playQueue(playable, playableStart);
+    m_player->queue()->setSourceLabel(sourceLabel);
     emit queueChanged();
 }
 

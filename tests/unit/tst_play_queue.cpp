@@ -75,6 +75,7 @@ private slots:
     void itemFromVariantRoundTripsAModelMap();
     void playCountSurvivesTheRoundTrip();
     void contextLabelNamesTheRecordTheQueueCameFrom();
+    void sourceLabelFollowsTheQueueItDescribes();
 };
 
 void PlayQueueTest::initTestCase()
@@ -697,6 +698,47 @@ void PlayQueueTest::largeDuplicateQueueSnapshotsByEntryIdentity()
             queue.itemAt(row).value(QStringLiteral("name")).toString());
     QCOMPARE(restoredNames, originalNames);
     QCOMPARE(queue.current().name, currentName);
+}
+
+// The header's warning about a remembered label outliving its queue: this
+// asserts the label is dropped exactly when the queue stops being the one
+// thing it named, and kept through everything that leaves that unchanged.
+void PlayQueueTest::sourceLabelFollowsTheQueueItDescribes()
+{
+    PlayQueue queue;
+    QSignalSpy changed(&queue, &PlayQueue::sourceLabelChanged);
+    const auto record = [] {
+        return QList<MediaItem>{track(QStringLiteral("a"), QStringLiteral("R"), QStringLiteral("X")),
+                                track(QStringLiteral("b"), QStringLiteral("R"), QStringLiteral("X")),
+                                track(QStringLiteral("c"), QStringLiteral("R"), QStringLiteral("X"))};
+    };
+
+    queue.setItems(record());
+    queue.setSourceLabel(QStringLiteral("Station · Heavy rotation"));
+    QCOMPARE(queue.sourceLabel(), QStringLiteral("Station · Heavy rotation"));
+    QCOMPARE(changed.count(), 1);
+    queue.setSourceLabel(QStringLiteral("Station · Heavy rotation"));
+    QCOMPARE(changed.count(), 1); // no-op sets are silent
+
+    queue.moveItem(2, 1);
+    queue.removeAt(2);
+    queue.setShuffled(true);
+    QCOMPARE(queue.sourceLabel(), QStringLiteral("Station · Heavy rotation"));
+
+    const PlayQueue::Snapshot snap = queue.snapshot();
+    queue.setItems({episode(1)});
+    QCOMPARE(queue.sourceLabel(), QString()); // a film/TV queue has no music provenance
+    queue.restore(snap);
+    QCOMPARE(queue.sourceLabel(), QStringLiteral("Station · Heavy rotation"));
+
+    QCOMPARE(queue.addToQueue(QList<MediaItem>{track(QStringLiteral("z"), QStringLiteral("Q"), QStringLiteral("Y"))}), 1);
+    QCOMPARE(queue.sourceLabel(), QString());
+
+    queue.setSourceLabel(QStringLiteral("Sunburned Almanac"));
+    QCOMPARE(queue.playNext(QList<MediaItem>{}), 0);
+    QCOMPARE(queue.sourceLabel(), QStringLiteral("Sunburned Almanac")); // nothing added: kept
+    queue.clear();
+    QCOMPARE(queue.sourceLabel(), QString());
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

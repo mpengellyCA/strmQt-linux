@@ -6829,7 +6829,7 @@ Rules. These keep the existing header's warning about a remembered label outlivi
 - `snapshot()`/`restore()` carry it, so a film interrupting a record gives the label back.
 - `contextLabel` is unchanged. The Phase 5 player shows `sourceLabel` when it is set, and `contextLabel` otherwise.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/unit/tst_play_queue.cpp`, add the slot `void sourceLabelFollowsTheQueueItDescribes();`:
 
@@ -6896,12 +6896,12 @@ void ItemActionsQueueTest::playAllFromIfCurrentStampsTheSourceLabel()
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_play_queue tst_item_actions_queue`
 Expected: a compile error (`sourceLabel` is not a member of `PlayQueue`).
 
-- [ ] **Step 3: Implement it in `PlayQueue`**
+- [x] **Step 3: Implement it in `PlayQueue`**
 
 `PlayQueue.h`:
 - Next to `contextLabel`, add:
@@ -6951,7 +6951,7 @@ Then make these edits:
 
 The earlier `return 0;` paths stay as they are, so adding nothing keeps the label.
 
-- [ ] **Step 4: Implement it in `ItemActions`**
+- [x] **Step 4: Implement it in `ItemActions`**
 
 `ItemActions.h:98`:
 
@@ -6979,12 +6979,12 @@ with:
     emit queueChanged();
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_play_queue tst_item_actions_queue && ctest --preset dev -R "tst_play_queue|tst_item_actions_queue" --output-on-failure`
 Expected: PASS, with every existing test still passing.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/PlayQueue.* src/app/ItemActions.* tests/unit/tst_play_queue.cpp tests/integration/tst_item_actions_queue.cpp
