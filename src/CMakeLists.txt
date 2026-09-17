@@ -12,6 +12,9 @@ qt_add_library(strmqt_core STATIC
     server/dto/UserProfile.h
     server/dto/ItemDetails.h
     server/dto/ItemsQuery.h
+    server/dto/music/MusicTypes.h
+    server/dto/music/MusicQuery.h
+    server/dto/music/MusicMediaItem.h server/dto/music/MusicMediaItem.cpp
     server/dto/PlaybackTicket.h server/dto/PlaybackTicket.cpp
     server/dto/ServerInfo.h
     server/emby/EmbyDtoMapper.h server/emby/EmbyDtoMapper.cpp

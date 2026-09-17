@@ -403,7 +403,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Consumes: `strmqt::MediaItem` (`src/server/dto/MediaItem.h`), `kTicksPerMs`.
 - Produces: every DTO in the index's Shared vocabulary, exactly as written below, plus `Playlist`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/unit/tst_music_mapper.cpp`:
 
@@ -552,12 +552,12 @@ Register it in `tests/CMakeLists.txt` after `strmqt_add_test(tst_emby_dto unit/t
 strmqt_add_test(tst_music_mapper unit/tst_music_mapper.cpp)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_mapper`
 Expected: a compile error (`server/dto/music/MusicMediaItem.h` not found).
 
-- [ ] **Step 3: Write `MusicTypes.h`**
+- [x] **Step 3: Write `MusicTypes.h`**
 
 ```cpp
 #pragma once
@@ -744,7 +744,7 @@ struct Page
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 4: Write `MusicQuery.h`**
+- [x] **Step 4: Write `MusicQuery.h`**
 
 ```cpp
 #pragma once
@@ -789,7 +789,7 @@ struct MusicQuery
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 5: Write `MusicMediaItem.h/.cpp`**
+- [x] **Step 5: Write `MusicMediaItem.h/.cpp`**
 
 `MusicMediaItem.h`:
 
@@ -913,12 +913,12 @@ Add these to `strmqt_core` in `src/CMakeLists.txt`, after `server/dto/ItemsQuery
     server/dto/music/MusicMediaItem.h server/dto/music/MusicMediaItem.cpp
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_mapper && ctest --preset dev -R tst_music_mapper --output-on-failure`
 Expected: PASS (4 tests).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/server/dto/music src/CMakeLists.txt tests/unit/tst_music_mapper.cpp tests/CMakeLists.txt
