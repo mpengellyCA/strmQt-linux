@@ -23,6 +23,12 @@ namespace strmqt::music {
 
 enum class Freshness { Listening, Favourites, Everything };
 
+struct NewAlbums
+{
+    QList<Album> albums;
+    int addedThisWeek = -1; // -1: the server cannot say
+};
+
 // The only music unit that talks to Emby (Crate spec §3.3). Composes several
 // requests into one music DTO, caches per account, and resolves on this
 // object's thread. Core failures fail the result; secondary failures come back
@@ -38,6 +44,18 @@ public:
     QFuture<Result<AlbumSleeve>> albumSleeve(const QString &albumId);
     QFuture<Result<ArtistProfile>> artistProfile(const QString &libraryId, const QString &artistId);
 
+    QFuture<Result<ContinueListening>> continueListening(const QString &libraryId);
+    QFuture<Result<QList<Album>>> recentAlbums(const QString &libraryId, int limit = 20);
+    QFuture<Result<NewAlbums>> newAlbums(const QString &libraryId, int limit = 20);
+    QFuture<Result<QList<GenreBin>>> allGenres(const QString &libraryId);
+    QFuture<Result<Page<GenreBin>>> genreBins(const QString &libraryId, int limit);
+    QFuture<Result<QList<Artist>>> topArtists(const QString &libraryId, int limit = 20);
+    QFuture<Result<QList<Album>>> forgottenFavourites(const QString &libraryId, int limit = 20);
+    QFuture<Result<QList<Album>>> randomAlbums(const QString &libraryId, int limit = 20);
+    static QList<Station> stations(const QList<Album> &coverPool, const Artist &topArtist);
+    QFuture<Result<QList<Track>>> resolveStation(const QString &libraryId, const Station &station);
+    void markStale(Freshness freshness);
+
     void clear();
     void setClockForTests(std::function<QDateTime()> clock);
     void setShuffleSeedForTests(quint32 seed);
@@ -50,6 +68,15 @@ private:
     QFuture<Result<QJsonDocument>> fetchItem(const QString &itemId);
     QFuture<Result<QList<Album>>> fetchAlbums(const ItemsQuery &query);
     QFuture<Result<QList<Track>>> fetchTracks(const ItemsQuery &query);
+    // requireCompleted selects Filters=IsPlayed. Ruling P1-9: the continue-
+    // listening hero query (limit 1) must NOT require a completed play — a
+    // partially played, never-finished track still has to be able to seed it.
+    // Recent albums / top artists keep the filter (default true).
+    QFuture<Result<QList<Track>>> playedHistory(const QString &libraryId, int limit,
+                                                bool requireCompleted = true);
+    QFuture<Result<QList<GenreBin>>> genreCountsFromAlbums(const QString &libraryId,
+                                                           QList<GenreBin> genres);
+    QFuture<Result<QList<ImageRef>>> genreCovers(const QString &libraryId, const QString &genreId);
     QDateTime now() const;
     bool epochIs(quint64 epoch) const { return epoch == m_epoch; }
 
@@ -59,6 +86,12 @@ private:
     quint64 m_epoch = 0;
     TtlCache<QList<Track>> m_trackCache{std::chrono::minutes(10)};
     TtlCache<AlbumSleeve> m_sleeveCache{std::chrono::minutes(10)};
+    TtlCache<ContinueListening> m_continueCache{std::chrono::minutes(5)};
+    TtlCache<QList<Album>> m_albumListCache{std::chrono::minutes(5)};
+    TtlCache<NewAlbums> m_newCache{std::chrono::minutes(5)};
+    TtlCache<QList<Artist>> m_artistListCache{std::chrono::minutes(5)};
+    TtlCache<QList<GenreBin>> m_genreCache{std::chrono::minutes(5)};
+    TtlCache<QList<ImageRef>> m_coverCache{std::chrono::milliseconds(-1)};
 };
 
 } // namespace strmqt::music

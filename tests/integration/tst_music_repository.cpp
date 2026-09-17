@@ -8,6 +8,7 @@
 #include "MockEmbyServer.h"
 #include "app/music/MusicRepository.h"
 #include "server/emby/EmbyClient.h"
+#include "server/emby/EmbyMusicMapper.h"
 #include "server/emby/MusicServerCapabilities.h"
 
 using namespace strmqt;
@@ -53,6 +54,16 @@ QJsonObject trackJson(const QString &id, const QString &albumId, int disc, int n
                                                     {"BitDepth", 16}, {"SampleRate", 44100}}}}};
 }
 
+QJsonObject playedTrack(const QString &id, const QString &albumId, const QString &artistId,
+                       const QString &lastPlayed, qint64 positionTicks = 0)
+{
+    QJsonObject track = trackJson(id, albumId, 1, 1, artistId);
+    track.insert("UserData", QJsonObject{{"Played", positionTicks == 0},
+                                         {"PlaybackPositionTicks", positionTicks},
+                                         {"LastPlayedDate", lastPlayed}});
+    return track;
+}
+
 template<class T> Result<T> waitFor(QFuture<Result<T>> future)
 {
     if (!QTest::qWaitFor([&] { return future.isFinished(); }, 5000))
@@ -79,6 +90,18 @@ private slots:
     void identityChangeClearsCaches();
     void artistProfileGroupsReleases();
     void artistProfileFailsOnlyOnTheArtist();
+
+    void continueListeningResumesTheNextTrack();
+    void continueListeningResumesPartiallyPlayedTrack();
+    void continueListeningIsEmptyWithoutHistory();
+    void recentAlbumsDedupeInPlayOrder();
+    void newAlbumsCountThisWeek();
+    void genreBinsSampleCoversOnce();
+    void topArtistsRankByPlays();
+    void stationsDescribeFiveTilesWithCovers();
+    void heavyRotationIsShuffledPlayedTracks();
+    void moreLikeDeduplicatesInstantMix();
+    void markStaleRefetchesListeningShelves();
 
 private:
     void routeAlbum(const QString &albumId, int trackCount);
@@ -247,6 +270,258 @@ void MusicRepositoryTest::artistProfileFailsOnlyOnTheArtist()
 
     const auto missing = waitFor(m_repo->artistProfile(kLibrary, QStringLiteral("nobody")));
     QVERIFY(!missing.ok());
+}
+
+void MusicRepositoryTest::continueListeningResumesTheNextTrack()
+{
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "1"}}, 200,
+                          page({playedTrack("al1-t3", "al1", "ar1", "2026-09-15T20:00:00Z")}));
+    routeAlbum(QStringLiteral("al1"), 4);
+
+    const auto result = waitFor(m_repo->continueListening(kLibrary));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QVERIFY(result.value.isValid());
+    QCOMPARE(result.value.album.id, QStringLiteral("al1"));
+    QCOMPARE(result.value.resumeIndex, 3); // finished track 3 → resume track 4
+    QCOMPARE(result.value.resumeTrack.id, QStringLiteral("al1-t4"));
+    QCOMPARE(result.value.progress, 0.75);
+
+    bool sawContinueQuery = false;
+    for (const auto &request : m_mock->requests()) {
+        const QUrlQuery q(request.query);
+        if (q.queryItemValue("SortBy") == QLatin1String("DatePlayed")
+            && q.queryItemValue("Limit") == QLatin1String("1")) {
+            sawContinueQuery = true;
+            // Ruling P1-9: the hero query must not require a completed play —
+            // a partially played, never-finished track must still be able to
+            // seed continue-listening. Recent/top/history queries (below)
+            // keep Filters=IsPlayed.
+            QVERIFY(!q.hasQueryItem("Filters"));
+            QCOMPARE(q.queryItemValue("SortOrder"), QStringLiteral("Descending"));
+        }
+    }
+    QVERIFY(sawContinueQuery);
+}
+
+void MusicRepositoryTest::continueListeningResumesPartiallyPlayedTrack()
+{
+    // Fix round 1, item 2: a partially played, never-completed track (Played
+    // false, PlaybackPositionTicks > 0) must resume at its OWN index, not the
+    // next one.
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "1"}}, 200,
+                          page({playedTrack("al1-t2", "al1", "ar1", "2026-09-15T20:00:00Z",
+                                            /*positionTicks=*/12'345)}));
+    routeAlbum(QStringLiteral("al1"), 4);
+
+    const auto result = waitFor(m_repo->continueListening(kLibrary));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QVERIFY(result.value.isValid());
+    QCOMPARE(result.value.album.id, QStringLiteral("al1"));
+    QCOMPARE(result.value.resumeIndex, 1); // "al1-t2" is index 1, partially played
+    QCOMPARE(result.value.resumeTrack.id, QStringLiteral("al1-t2"));
+}
+
+void MusicRepositoryTest::continueListeningIsEmptyWithoutHistory()
+{
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "1"}}, 200,
+                          page({}));
+    const auto result = waitFor(m_repo->continueListening(kLibrary));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QVERIFY(!result.value.isValid());
+}
+
+void MusicRepositoryTest::recentAlbumsDedupeInPlayOrder()
+{
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "200"}}, 200,
+                          page({playedTrack("x1", "alB", "ar1", "2026-09-15T20:00:00Z"),
+                                playedTrack("x2", "alA", "ar1", "2026-09-15T19:00:00Z"),
+                                playedTrack("x3", "alB", "ar1", "2026-09-15T18:00:00Z"),
+                                playedTrack("x4", "alC", "ar1", "2026-09-15T17:00:00Z")}));
+    // The server answers Ids in its own order; the repository restores play order.
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Ids", "alB,alA"}}, 200,
+                          page({albumJson("alA"), albumJson("alB")}));
+
+    const auto result = waitFor(m_repo->recentAlbums(kLibrary, 2));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 2);
+    QCOMPARE(result.value.at(0).id, QStringLiteral("alB"));
+    QCOMPARE(result.value.at(1).id, QStringLiteral("alA"));
+}
+
+void MusicRepositoryTest::newAlbumsCountThisWeek()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "MusicAlbum"}, {"SortBy", "DateCreated"}},
+                          200, page({albumJson("n1"), albumJson("n2")}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "MusicAlbum"}, {"Limit", "0"}}, 200,
+                          page({}, 6));
+    const auto result = waitFor(m_repo->newAlbums(kLibrary, 20));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.albums.size(), 2);
+    QCOMPARE(result.value.addedThisWeek, emby::caps::kMinDateCreated ? 6 : -1);
+    if (emby::caps::kMinDateCreated) {
+        bool sawBound = false;
+        for (const auto &request : m_mock->requests()) {
+            const QString bound = QUrlQuery(request.query).queryItemValue("MinDateCreated");
+            if (!bound.isEmpty()) {
+                sawBound = true;
+                QCOMPARE(QDateTime::fromString(bound, Qt::ISODate), m_now.addDays(-7));
+            }
+        }
+        QVERIFY(sawBound);
+    }
+}
+
+void MusicRepositoryTest::genreBinsSampleCoversOnce()
+{
+    QJsonArray genres{QJsonObject{{"Id", "g1"}, {"Name", "Jazz"}, {"AlbumCount", 3}},
+                      QJsonObject{{"Id", "g2"}, {"Name", "Rock"}, {"AlbumCount", 40}},
+                      QJsonObject{{"Id", "g3"}, {"Name", "Folk"}, {"AlbumCount", 12}}};
+    m_mock->addRoute("GET", "/MusicGenres", 200, page(genres));
+    if (!emby::caps::kGenreItemCounts) {
+        // Counts come from an album walk instead.
+        QJsonArray albums;
+        auto tagged = [](const QString &id, const QString &genreId, const QString &name) {
+            QJsonObject album = albumJson(id);
+            album.insert("GenreItems", QJsonArray{QJsonObject{{"Id", genreId}, {"Name", name}}});
+            return album;
+        };
+        for (int i = 0; i < 40; ++i)
+            albums.append(tagged("r" + QString::number(i), "g2", "Rock"));
+        for (int i = 0; i < 12; ++i)
+            albums.append(tagged("f" + QString::number(i), "g3", "Folk"));
+        for (int i = 0; i < 3; ++i)
+            albums.append(tagged("j" + QString::number(i), "g1", "Jazz"));
+        m_mock->addQueryRoute("GET", itemsPath(),
+                              Q{{"IncludeItemTypes", "MusicAlbum"}, {"Fields", "Genres"}}, 200, page(albums));
+    }
+    for (const char *id : {"g1", "g2", "g3"}) {
+        m_mock->addQueryRoute("GET", itemsPath(), Q{{"GenreIds", id}, {"SortBy", "Random"}}, 200,
+                              page({albumJson(QString("c-") + id)}));
+    }
+
+    const auto first = waitFor(m_repo->genreBins(kLibrary, 2));
+    QVERIFY2(first.ok(), qPrintable(first.error));
+    QCOMPARE(first.value.totalRecordCount, 3);
+    QCOMPARE(first.value.items.size(), 2);
+    QCOMPARE(first.value.items.at(0).name, QStringLiteral("Rock"));
+    QCOMPARE(first.value.items.at(0).recordCount, 40);
+    QCOMPARE(first.value.items.at(1).name, QStringLiteral("Folk"));
+    QCOMPARE(first.value.items.at(0).covers.size(), 1);
+
+    m_repo->markStale(Freshness::Everything);
+    const int before = m_mock->requestCount();
+    QVERIFY(waitFor(m_repo->genreBins(kLibrary, 2)).ok());
+    for (qsizetype i = before; i < m_mock->requests().size(); ++i)
+        QVERIFY(!QUrlQuery(m_mock->requests().at(i).query).hasQueryItem("GenreIds")); // covers cached
+}
+
+void MusicRepositoryTest::topArtistsRankByPlays()
+{
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "500"}}, 200,
+                          page({playedTrack("a", "al", "arX", "2026-09-15T20:00:00Z"),
+                                playedTrack("b", "al", "arY", "2026-09-15T19:00:00Z"),
+                                playedTrack("c", "al", "arY", "2026-09-15T18:00:00Z")}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Ids", "arY,arX"}}, 200,
+                          page({QJsonObject{{"Id", "arX"}, {"Name", "X"}}, QJsonObject{{"Id", "arY"}, {"Name", "Y"}}}));
+    const auto result = waitFor(m_repo->topArtists(kLibrary, 5));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 2);
+    QCOMPARE(result.value.at(0).id, QStringLiteral("arY"));
+}
+
+void MusicRepositoryTest::stationsDescribeFiveTilesWithCovers()
+{
+    QList<Album> pool;
+    for (int i = 0; i < 6; ++i)
+        pool.append(emby::parseAlbum(albumJson("p" + QString::number(i))));
+    Artist top;
+    top.id = QStringLiteral("ar1");
+    top.name = QStringLiteral("Nina Simone");
+
+    const QList<Station> withTop = MusicRepository::stations(pool, top);
+    QCOMPARE(withTop.size(), 5);
+    QCOMPARE(withTop.at(3).kind, StationKind::MoreLike);
+    QCOMPARE(withTop.at(3).label, QStringLiteral("More like Nina Simone"));
+    QCOMPARE(withTop.at(3).seedId, QStringLiteral("ar1"));
+    for (const Station &station : withTop)
+        QCOMPARE(station.covers.size(), 4);
+
+    const QList<Station> without = MusicRepository::stations({}, Artist{});
+    QCOMPARE(without.size(), 4);
+    QVERIFY(without.first().covers.isEmpty());
+}
+
+void MusicRepositoryTest::heavyRotationIsShuffledPlayedTracks()
+{
+    QJsonArray tracks;
+    QStringList insertionOrder;
+    for (int i = 0; i < 20; ++i) {
+        const QString id = "h" + QString::number(i);
+        tracks.append(trackJson(id, "al", 1, i + 1));
+        insertionOrder.append(id);
+    }
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "PlayCount"}, {"Filters", "IsPlayed"}}, 200,
+                          page(tracks));
+    Station station;
+    station.kind = StationKind::HeavyRotation;
+    const auto result = waitFor(m_repo->resolveStation(kLibrary, station));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 20);
+    QStringList ids;
+    for (const Track &track : result.value)
+        ids.append(track.id);
+    // Ruling P1-3: the brief's "!= alphabetically sorted" check was vacuous —
+    // "h0".."h19" don't sort into insertion order to begin with, so it passed
+    // even for an unshuffled result. Compare against the server's own
+    // (insertion) order instead; seed 7 (set in init()) makes this
+    // deterministic.
+    QVERIFY(ids != insertionOrder);
+    QCOMPARE(QSet<QString>(ids.cbegin(), ids.cend()).size(), 20);
+}
+
+void MusicRepositoryTest::moreLikeDeduplicatesInstantMix()
+{
+    m_mock->addRoute("GET", "/Items/ar1/InstantMix", 200,
+                     page({trackJson("m1", "al", 1, 1), trackJson("m2", "al", 1, 2), trackJson("m1", "al", 1, 1)}));
+    Station station;
+    station.kind = StationKind::MoreLike;
+    station.seedId = QStringLiteral("ar1");
+    const auto result = waitFor(m_repo->resolveStation(kLibrary, station));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 2);
+    QCOMPARE(QUrlQuery(m_mock->lastRequestFor("GET", "/Items/ar1/InstantMix").query).queryItemValue("UserId"),
+             kUserId);
+}
+
+void MusicRepositoryTest::markStaleRefetchesListeningShelves()
+{
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "DatePlayed"}, {"Limit", "200"}}, 200,
+                          page({playedTrack("x1", "alA", "ar1", "2026-09-15T20:00:00Z")}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Ids", "alA"}}, 200, page({albumJson("alA")}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Filters", "IsFavorite"}, {"IncludeItemTypes", "MusicAlbum"}},
+                          200, page({albumJson("fav")}));
+
+    QVERIFY(waitFor(m_repo->recentAlbums(kLibrary)).ok());
+    QVERIFY(waitFor(m_repo->forgottenFavourites(kLibrary)).ok());
+    int count = m_mock->requestCount();
+
+    m_repo->markStale(Freshness::Listening);
+    QVERIFY(waitFor(m_repo->forgottenFavourites(kLibrary)).ok());
+    QCOMPARE(m_mock->requestCount(), count); // favourites untouched
+    QVERIFY(waitFor(m_repo->recentAlbums(kLibrary)).ok());
+    QVERIFY(m_mock->requestCount() > count);
+
+    count = m_mock->requestCount();
+    m_repo->markStale(Freshness::Favourites);
+    QVERIFY(waitFor(m_repo->forgottenFavourites(kLibrary)).ok());
+    QVERIFY(m_mock->requestCount() > count);
 }
 
 QTEST_MAIN(MusicRepositoryTest)

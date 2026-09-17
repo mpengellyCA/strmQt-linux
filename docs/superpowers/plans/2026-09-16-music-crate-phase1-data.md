@@ -3931,7 +3931,7 @@ Cache keys and TTLs:
 
 Every "played" query sends `Filters=IsPlayed`, so never-played tracks do not sort into history.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add these slots to `MusicRepositoryTest`:
 
@@ -4188,12 +4188,12 @@ void MusicRepositoryTest::markStaleRefetchesListeningShelves()
 
 `playedTrack` gives every track `IndexNumber` 1. `continueListening` matches the resume position by track **id** in the album track list, so the mock order from `routeAlbum` (t1..t4) is what counts.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_repository`
 Expected: a compile error (`continueListening` and the other shelf methods are not members).
 
-- [ ] **Step 3: Extend the header**
+- [x] **Step 3: Extend the header**
 
 Add to `MusicRepository.h`, above the class:
 
@@ -4237,7 +4237,7 @@ Add these private members:
     TtlCache<QList<ImageRef>> m_coverCache{std::chrono::milliseconds(-1)};
 ```
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Move `Pending`, `ready`, `itemsOf`, `kAudio` and `kAlbum` into the anonymous namespace at the top of `MusicRepository.cpp`, if they are not already there. Then add the following.
 
@@ -4755,12 +4755,12 @@ Add `#include <QHash>` and `#include <algorithm>` to the `.cpp`.
 
 In `heavyRotationIsShuffledPlayedTracks`, seed 7 produces a fixed permutation. The assertion accepts any order except the identity, which a 20-element shuffle essentially never produces.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_repository && ctest --preset dev -R tst_music_repository --output-on-failure`
 Expected: PASS (17 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/music/MusicRepository.* tests/integration/tst_music_repository.cpp
