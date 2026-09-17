@@ -336,16 +336,20 @@ void MediaItemModel::clear()
     setItems({}, 0);
 }
 
-QVariantMap MediaItemModel::get(int row) const
+QVariantMap MediaItemModel::mapForItem(const MediaItem &item)
 {
     QVariantMap map;
-    const QModelIndex index = this->index(row);
-    if (!index.isValid())
-        return map;
     const auto &roles = mediaRoleNames();
     for (auto it = roles.cbegin(); it != roles.cend(); ++it)
-        map.insert(QString::fromLatin1(it.value()), data(index, it.key()));
+        map.insert(QString::fromLatin1(it.value()), dataForItem(item, it.key()));
     return map;
+}
+
+QVariantMap MediaItemModel::get(int row) const
+{
+    if (row < 0 || row >= m_items.size())
+        return {};
+    return mapForItem(m_items.at(row));
 }
 
 int MediaItemModel::indexOfNavigationIdentity(const QString &identity) const

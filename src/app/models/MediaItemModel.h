@@ -99,6 +99,10 @@ public:
     // Convenience for pushing a whole item into a Details page.
     Q_INVOKABLE QVariantMap get(int row) const;
 
+    // The map get() returns, for an item that is not in a model (music models
+    // build it from their DTOs so every consumer sees the same keys).
+    static QVariantMap mapForItem(const MediaItem &item);
+
     // Stable identity used by navigation focus restoration. Playlist entries
     // prefer their entry id so two occurrences of the same media item remain
     // distinguishable; ordinary rows use the media item id. The lookup is

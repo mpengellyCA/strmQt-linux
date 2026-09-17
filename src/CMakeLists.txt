@@ -53,6 +53,12 @@ qt_add_library(strmqt_app STATIC
     app/music/MusicFormat.h app/music/MusicFormat.cpp
     app/music/MusicQueryTranslator.h app/music/MusicQueryTranslator.cpp
     app/music/MusicRepository.h app/music/MusicRepository.cpp
+    app/music/UserDataPatch.h
+    app/music/models/MusicModelBase.h app/music/models/MusicModelBase.cpp
+    app/music/models/MusicListModel.h
+    app/music/models/AlbumGridModel.h app/music/models/AlbumGridModel.cpp
+    app/music/models/ArtistGridModel.h app/music/models/ArtistGridModel.cpp
+    app/music/models/PlaylistGridModel.h app/music/models/PlaylistGridModel.cpp
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp

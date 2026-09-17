@@ -16,6 +16,7 @@ strmqt_add_test(tst_music_query_translator unit/tst_music_query_translator.cpp)
 strmqt_add_test(tst_secrets_store unit/tst_secrets_store.cpp)
 
 strmqt_add_test(tst_models unit/tst_models.cpp)
+strmqt_add_test(tst_music_models unit/tst_music_models.cpp)
 strmqt_add_test(tst_search_sections unit/tst_search_sections.cpp)
 strmqt_add_test(tst_home_rails unit/tst_home_rails.cpp)
 target_link_libraries(tst_home_rails PRIVATE Qt6::Gui Qt6::Quick)

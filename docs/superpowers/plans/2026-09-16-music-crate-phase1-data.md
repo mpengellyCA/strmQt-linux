@@ -5090,7 +5090,7 @@ Roles (QML names). Every model also answers `get(row)` with its media-role map (
 
 `posterUrl` and `favorite` duplicate `coverUrl` and `favourite`, so `StrmRail`, `StrmGrid` and `ItemMenu` keep working unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/unit/tst_music_models.cpp`:
 
@@ -5256,12 +5256,12 @@ Register:
 strmqt_add_test(tst_music_models unit/tst_music_models.cpp)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_models`
 Expected: a compile error (headers not found).
 
-- [ ] **Step 3: Add `MediaItemModel::mapForItem`**
+- [x] **Step 3: Add `MediaItemModel::mapForItem`**
 
 In `MediaItemModel.h`, next to `dataForItem`:
 
@@ -5293,7 +5293,7 @@ QVariantMap MediaItemModel::get(int row) const
 
 `MediaItemModel::data()` is already a straight `dataForItem(m_items[row], role)` (`MediaItemModel.cpp:141`), so the two are equivalent. `mapForItemMatchesMediaModelGet` keeps them that way.
 
-- [ ] **Step 4: Write `UserDataPatch.h`, the base and the list template**
+- [x] **Step 4: Write `UserDataPatch.h`, the base and the list template**
 
 `src/app/music/UserDataPatch.h`:
 
@@ -5500,7 +5500,7 @@ protected:
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 5: Write the three grid models**
+- [x] **Step 5: Write the three grid models**
 
 `AlbumGridModel.h`:
 
@@ -5889,12 +5889,12 @@ Add to `strmqt_app`:
     app/music/models/PlaylistGridModel.h app/music/models/PlaylistGridModel.cpp
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_models tst_models && ctest --preset dev -R 'tst_music_models|tst_models' --output-on-failure`
 Expected: PASS (the existing `tst_models` covers the `get()` refactor).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/music/UserDataPatch.h src/app/music/models src/app/models/MediaItemModel.h src/app/models/MediaItemModel.cpp src/CMakeLists.txt tests/unit/tst_music_models.cpp tests/CMakeLists.txt
