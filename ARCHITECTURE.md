@@ -116,6 +116,18 @@ codebase look the way they do.
 | **InstantMix does not page, and its `TotalRecordCount` is the array's own size** | `StartIndex=5` answers a *fresh* randomised set, not the sixth row onward. One mix is one request; a second page would be a second station. |
 | A track seed comes back as InstantMix row 0 and does not count against `Limit` | `Limit=50` returns 51 rows. Right for "play this, then things like it", and no special case is needed. An album or artist seed is not itself audio and returns exactly `Limit`. |
 | **InstantMix rows are not distinct** | 500 asked for came back as 493 unique ids. `PlayQueue` keys entries rather than ids, so the repeats would survive to the queue panel; callers de-duplicate. |
+| `AudioCodecs` filters tracks, but on `MusicAlbum` it drops every album (4.9.5) | `AudioCodecs=flac` leaves 55,400 of 56,283 tracks and 0 of 5,037 albums. The Format filter applies to Songs only; `MusicQueryTranslator` never sends `AudioCodecs` for albums. |
+| No bit-depth or sample-rate filter exists | `MinBitDepth`, `MinAudioBitDepth`, `MinSampleRate` and five similar names are all ignored while hi-res tracks exist. "Hi-res only" is not offered. |
+| `Years` takes a comma-separated decade | `Years=1970,…,1979` is one request, so the Decade pill needs no premiere-date range. |
+| Nothing on the wire says EP, single or compilation | No `AlbumType`/`ReleaseType`, and album tags are empty. The release type is classified client-side. |
+| **Lyrics are an embedded text subtitle stream, not a lyrics endpoint** | `/Audio/{id}/Lyrics` is a 500 and `/Items/{id}/Lyrics` a 404. A track with lyrics has a `Subtitle` stream titled `Lyrics`; `/Items/{id}/{mediaSourceId}/Subtitles/{index}/Stream.js` returns `TrackEvents[].Text`, untimed in every sample. |
+| `/Artists/{id}/Similar` returns similar artists | The artist page's Similar row is one request. |
+| `MinDateCreated` filters albums | "N added this week" is one `Limit=0` request. |
+| **Albums keep no play data** | An album whose tracks were just played still reports `PlayCount: 0`, `Played: false` and no `LastPlayedDate`, so `SortBy=PlayCount`/`DatePlayed` on `MusicAlbum` is meaningless. Album play history is derived from tracks. |
+| `/MusicGenres` returns no item counts | `Fields=ItemCounts` adds nothing; a genre's size needs its own query. |
+| **List queries hide track play counts and last-played dates** | An `Audio` list sorted by `DatePlayed` is correctly ordered, but each row reports `PlayCount: 0` and no `LastPlayedDate`. `Fields=UserDataPlayCount,UserDataLastPlayedDate` makes the list carry the real values. |
+| Audio lists carry `MediaStreams` and album lists carry `RunTimeTicks` | Format badges and album runtimes need no per-item fetch. |
+| `GenreItems[].Id` is a JSON number | Artist ids on the same item are strings. Id parsing accepts both. |
 
 ---
 

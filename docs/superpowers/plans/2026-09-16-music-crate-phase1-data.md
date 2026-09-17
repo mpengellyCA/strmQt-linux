@@ -291,12 +291,12 @@ This task measures the real server. It does not write application logic, but lat
   - `const char *kSimilarArtistsPath` (contains `{id}`; empty when `kSimilarArtists` is false)
   - `const char *kHiResQueryKey`, `kHiResQueryValue` (the measured hi-res parameter; both empty when `kHiResFilter` is false)
 
-- [ ] **Step 1: Check the session**
+- [x] **Step 1: Check the session**
 
 Run: `./build/dev/strmqt-cli libraries`
 Expected: a library list, with music library `1868998` or another music library. If it prints `error: not logged in. Run: strmqt-cli login --user NAME`, **stop** and ask the user to run `! ./build/dev/strmqt-cli login --user <their name>`, then continue. Use whichever music library id is listed as `$LIB` below. Never write the server URL, user name or token into any file.
 
-- [ ] **Step 2: Collect sample ids**
+- [x] **Step 2: Collect sample ids**
 
 ```bash
 CLI=./build/dev/strmqt-cli; LIB=<music library id>
@@ -306,7 +306,7 @@ $CLI get /Users/{uid}/Items ParentId=$LIB IncludeItemTypes=Audio Recursive=true 
 
 Note one album id `$ALBUM`, one track id `$TRACK` and one album-artist id `$ARTIST` from the output. They are measurement inputs only. Do not commit them.
 
-- [ ] **Step 3: Run V1–V10**
+- [x] **Step 3: Run V1–V10**
 
 For each check, run the commands and record the verdict. Compare `TotalRecordCount` values with `| grep TotalRecordCount`.
 
@@ -325,7 +325,7 @@ For each check, run the commands and record the verdict. Compare `TotalRecordCou
 | V9 | Are MediaStreams present on list queries? | inspect `/tmp/claude-tracks.json` | `kMediaStreamsOnLists` true if each item has `MediaStreams` with an Audio stream; otherwise check `MediaSources[0].MediaStreams` and set false |
 | V10 | Is album runtime present on lists? | inspect `/tmp/claude-albums.json` for `RunTimeTicks` or `CumulativeRunTimeTicks` | true if either is non-zero |
 
-- [ ] **Step 4: Record the results**
+- [x] **Step 4: Record the results**
 
 Create `docs/superpowers/plans/2026-09-16-music-crate-verifications.md` with one section per check, using this format:
 
@@ -376,7 +376,7 @@ Add one row per measured behaviour to the `| Behaviour | Consequence |` table in
 
 If V4 is true, also write the working lyrics path and response shape into the verifications file. Phase 5 Task "Lyrics" reads it from there.
 
-- [ ] **Step 5: Build and commit**
+- [x] **Step 5: Build and commit**
 
 Run: `cmake --build --preset dev`
 Expected: the build succeeds.
