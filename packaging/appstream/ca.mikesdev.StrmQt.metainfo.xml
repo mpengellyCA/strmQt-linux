@@ -62,6 +62,19 @@
   </requires>
 
   <releases>
+    <release version="0.6.0" date="2026-09-16" type="development">
+      <description>
+        <p>
+          Rebuilds the Web Remote into a full mobile companion: a now-playing screen
+          with chapters, audio and subtitle tracks, subtitle styling, quality and
+          transcoding, playback speed and sync, and queue editing; consistent library
+          browsing with search, sorting, filters, shuffle and drill-down into shows,
+          albums and playlists; and a touchpad or D-pad remote that reliably drives
+          the TV interface. Hardens the remote server against cross-site requests
+          and oversized requests.
+        </p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-09-15" type="development">
       <description>
         <p>

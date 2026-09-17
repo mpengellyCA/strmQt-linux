@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(StrmQt VERSION 0.5.1 LANGUAGES CXX)
+project(StrmQt VERSION 0.6.0 LANGUAGES CXX)
 
 option(STRMQT_WERROR "Treat compiler warnings as errors" OFF)
 
