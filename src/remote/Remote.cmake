@@ -13,6 +13,12 @@ qt_add_resources(strmqt_remote "strmqt_webremote_assets"
         ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/index.html
         ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/style.css
         ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/app.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/api.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/store.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/ui.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/player.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/browse.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/remote.js
         ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/manifest.json
         ${CMAKE_CURRENT_SOURCE_DIR}/remote/web/icon.svg
 )

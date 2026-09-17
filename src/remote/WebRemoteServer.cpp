@@ -7,39 +7,191 @@
 #include "app/controllers/HomeController.h"
 #include "app/controllers/PlayerController.h"
 #include "app/controllers/SessionController.h"
+#include "app/models/MediaItemModel.h"
 #include "core/Log.h"
 #include "core/Settings.h"
 #include "playback/PlayerBackend.h"
+#include "server/dto/ItemDetails.h"
 #include "server/dto/ItemsQuery.h"
+#include "server/dto/Library.h"
 #include "server/emby/EmbyClient.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QRegularExpression>
 #include <QSslServer>
 #include <QSslSocket>
 #include <QUrlQuery>
 #include <QUuid>
 
+#include <memory>
+
 namespace strmqt {
 
 namespace {
+
+// A request line plus headers larger than this is not a browser talking to us.
+constexpr qsizetype kMaxHeaderBytes = 64 * 1024;
+// Every JSON body the remote sends is a handful of fields.
+constexpr qsizetype kMaxBodyBytes = 1024 * 1024;
+
+constexpr int kStatusCoalesceMs = 120;
+constexpr int kStatusTickMs = 5000;
+constexpr int kKeepAliveMs = 20000;
 
 QByteArray mimeTypeForPath(const QString &path)
 {
     if (path.endsWith(QLatin1String(".html"))) return "text/html; charset=utf-8";
     if (path.endsWith(QLatin1String(".css"))) return "text/css; charset=utf-8";
-    if (path.endsWith(QLatin1String(".js"))) return "application/javascript; charset=utf-8";
+    if (path.endsWith(QLatin1String(".js"))) return "text/javascript; charset=utf-8";
     if (path.endsWith(QLatin1String(".json"))) return "application/json";
     if (path.endsWith(QLatin1String(".svg"))) return "image/svg+xml";
     if (path.endsWith(QLatin1String(".png"))) return "image/png";
     if (path.endsWith(QLatin1String(".jpg")) || path.endsWith(QLatin1String(".jpeg"))) return "image/jpeg";
     if (path.endsWith(QLatin1String(".ttf"))) return "font/ttf";
     return "application/octet-stream";
+}
+
+bool isSafeId(const QString &value)
+{
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
+    return re.match(value).hasMatch();
+}
+
+QStringList splitList(const QString &value)
+{
+    QStringList out;
+    const QStringList parts = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        const QString trimmed = part.trimmed();
+        if (!trimmed.isEmpty())
+            out.append(trimmed);
+    }
+    return out;
+}
+
+QString queryValue(const QUrlQuery &q, const char *name)
+{
+    return q.queryItemValue(QString::fromLatin1(name), QUrl::FullyDecoded);
+}
+
+QJsonObject imageRefJson(const MediaItem::ImageRef &ref)
+{
+    if (!ref.isValid())
+        return {};
+    QJsonObject o;
+    o[QStringLiteral("itemId")] = ref.itemId;
+    o[QStringLiteral("type")] = ref.imageType;
+    o[QStringLiteral("tag")] = ref.tag;
+    return o;
+}
+
+// The desktop's four accents (Theme.qml). The phone follows whichever is set so
+// it reads as the same product.
+QString accentHex(const QString &name)
+{
+    if (name == QLatin1String("emby")) return QStringLiteral("#52B54B");
+    if (name == QLatin1String("jellyfin")) return QStringLiteral("#AA5CC3");
+    if (name == QLatin1String("breeze")) return QStringLiteral("#3DAEE9");
+    return QStringLiteral("#F0A02A");
+}
+
+QString repeatModeName(PlayQueue::RepeatMode mode)
+{
+    switch (mode) {
+    case PlayQueue::RepeatAll: return QStringLiteral("all");
+    case PlayQueue::RepeatOne: return QStringLiteral("one");
+    default: return QStringLiteral("off");
+    }
+}
+
+// The item map ItemActions and PlayQueue take, built from a server item. Same
+// role names as MediaItemModel::get(), so the verbs see exactly what a desktop
+// card would have handed them.
+QVariantMap itemMap(const MediaItem &item)
+{
+    QVariantMap map;
+    const auto &roles = MediaItemModel::mediaRoleNames();
+    for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+        map.insert(QString::fromLatin1(it.value()), MediaItemModel::dataForItem(item, it.key()));
+    // Not model roles, but resolve() reads them: they let an episode started
+    // from the phone continue its series.
+    map.insert(QStringLiteral("seriesId"), item.seriesId);
+    map.insert(QStringLiteral("seasonId"), item.seasonId);
+    return map;
+}
+
+// Minimal map for rows the phone already holds (an episode list it is playing
+// from). Enough for the queue to label and start each row.
+QVariantMap itemMapFromClient(const QJsonObject &o)
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("itemId"), o.value(QLatin1String("id")).toString());
+    map.insert(QStringLiteral("name"), o.value(QLatin1String("name")).toString());
+    map.insert(QStringLiteral("type"), o.value(QLatin1String("type")).toString());
+    map.insert(QStringLiteral("seriesName"), o.value(QLatin1String("seriesName")).toString());
+    map.insert(QStringLiteral("seriesId"), o.value(QLatin1String("seriesId")).toString());
+    map.insert(QStringLiteral("seasonId"), o.value(QLatin1String("seasonId")).toString());
+    map.insert(QStringLiteral("indexNumber"), o.value(QLatin1String("indexNumber")).toInt(-1));
+    map.insert(QStringLiteral("parentIndexNumber"),
+               o.value(QLatin1String("parentIndexNumber")).toInt(-1));
+    map.insert(QStringLiteral("runtimeMs"), o.value(QLatin1String("runtimeMs")).toVariant());
+    map.insert(QStringLiteral("album"), o.value(QLatin1String("album")).toString());
+    map.insert(QStringLiteral("albumId"), o.value(QLatin1String("albumId")).toString());
+    return map;
+}
+
+ItemsQuery itemsQueryFrom(const QUrlQuery &q)
+{
+    ItemsQuery query;
+    query.parentId = queryValue(q, "parentId");
+    query.searchTerm = queryValue(q, "search");
+    query.sortBy = queryValue(q, "sortBy");
+    if (query.sortBy.isEmpty())
+        query.sortBy = QStringLiteral("SortName");
+    query.sortDescending = queryValue(q, "sortOrder") == QLatin1String("Descending");
+    query.includeItemTypes = splitList(queryValue(q, "types"));
+    query.filters = splitList(queryValue(q, "filters"));
+    query.genreIds = splitList(queryValue(q, "genreIds"));
+    query.personIds = splitList(queryValue(q, "personIds"));
+    query.studioIds = splitList(queryValue(q, "studioIds"));
+    query.artistIds = splitList(queryValue(q, "artistIds"));
+    query.albumArtistIds = splitList(queryValue(q, "albumArtistIds"));
+    // A letter jump as a name range (ItemsQuery): NameStartsWith times out on
+    // large artist lists, and "#" has no prefix form at all.
+    const QString letter = queryValue(q, "letter").toUpper();
+    if (letter == QLatin1String("#")) {
+        query.nameLessThan = QStringLiteral("A");
+    } else if (letter.size() == 1 && letter.at(0) >= QLatin1Char('A')
+               && letter.at(0) <= QLatin1Char('Z')) {
+        query.nameStartsWithOrGreater = letter;
+        if (letter.at(0) != QLatin1Char('Z'))
+            query.nameLessThan = QString(QChar(letter.at(0).unicode() + 1));
+    }
+    query.recursive = queryValue(q, "recursive") == QLatin1String("true");
+    query.startIndex = qMax(0, queryValue(q, "startIndex").toInt());
+    const QString limit = queryValue(q, "limit");
+    query.limit = limit.isEmpty() ? 60 : qBound(1, limit.toInt(), 200);
+    query.fields = {QStringLiteral("Overview"), QStringLiteral("PremiereDate")};
+    return query;
+}
+
+ItemsQuery itemsQueryFrom(const QJsonObject &o)
+{
+    QUrlQuery q;
+    for (auto it = o.begin(); it != o.end(); ++it) {
+        const QJsonValue v = it.value();
+        q.addQueryItem(it.key(), v.isBool() ? (v.toBool() ? QStringLiteral("true")
+                                                          : QStringLiteral("false"))
+                                            : v.toVariant().toString());
+    }
+    return itemsQueryFrom(q);
 }
 
 } // namespace
@@ -72,22 +224,67 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
         qCWarning(logApp) << "webremote server errorOccurred:" << error;
     });
 
+    m_statusCoalesce.setSingleShot(true);
+    m_statusCoalesce.setInterval(kStatusCoalesceMs);
+    connect(&m_statusCoalesce, &QTimer::timeout, this, &WebRemoteServer::broadcastPlayerStatus);
+
+    m_statusTick.setInterval(kStatusTickMs);
+    connect(&m_statusTick, &QTimer::timeout, this, [this] {
+        if (m_player && m_player->active() && !m_player->paused() && !m_sseClients.isEmpty())
+            broadcastPlayerStatus();
+    });
+
+    m_keepAlive.setInterval(kKeepAliveMs);
+    connect(&m_keepAlive, &QTimer::timeout, this, [this] {
+        // An SSE comment line: ignored by EventSource, but it is traffic.
+        for (const auto &socket : std::as_const(m_sseClients)) {
+            if (socket && socket->state() == QAbstractSocket::ConnectedState)
+                socket->write(": keep-alive\n\n");
+        }
+    });
+
     // Player signal bindings for live status push
     if (m_player) {
-        connect(m_player, &PlayerController::activeChanged, this, &WebRemoteServer::broadcastPlayerStatus);
-        connect(m_player, &PlayerController::pausedChanged, this, &WebRemoteServer::broadcastPlayerStatus);
-        connect(m_player, &PlayerController::titleChanged, this, &WebRemoteServer::broadcastPlayerStatus);
-        connect(m_player, &PlayerController::volumeChanged, this, &WebRemoteServer::broadcastPlayerStatus);
-        connect(m_player, &PlayerController::mutedChanged, this, &WebRemoteServer::broadcastPlayerStatus);
-        connect(m_player, &PlayerController::sourcesChanged, this, &WebRemoteServer::broadcastPlayerStatus);
+        const auto schedule = [this] { scheduleStatus(); };
+        connect(m_player, &PlayerController::activeChanged, this, schedule);
+        connect(m_player, &PlayerController::pausedChanged, this, schedule);
+        connect(m_player, &PlayerController::busyChanged, this, schedule);
+        connect(m_player, &PlayerController::bufferingChanged, this, schedule);
+        connect(m_player, &PlayerController::isAudioChanged, this, schedule);
+        connect(m_player, &PlayerController::titleChanged, this, schedule);
+        connect(m_player, &PlayerController::durationChanged, this, schedule);
+        connect(m_player, &PlayerController::streamMethodChanged, this, schedule);
+        connect(m_player, &PlayerController::errorMessageChanged, this, schedule);
+        connect(m_player, &PlayerController::volumeChanged, this, schedule);
+        connect(m_player, &PlayerController::mutedChanged, this, schedule);
+        connect(m_player, &PlayerController::playbackSpeedChanged, this, schedule);
+        connect(m_player, &PlayerController::audioDelayChanged, this, schedule);
+        connect(m_player, &PlayerController::subtitleDelayChanged, this, schedule);
+        connect(m_player, &PlayerController::sourcesChanged, this, schedule);
+        connect(m_player, &PlayerController::sourceIndexChanged, this, schedule);
+        connect(m_player, &PlayerController::upNextChanged, this, schedule);
+        connect(m_player, &PlayerController::chaptersChanged, this, schedule);
+        connect(m_player, &PlayerController::currentChapterChanged, this, schedule);
+        connect(m_player, &PlayerController::seeked, this, schedule);
         connect(m_player, &PlayerController::queueStateChanged, this, [this] {
-            broadcastPlayerStatus();
+            scheduleStatus();
             broadcastQueue();
         });
-        if (m_player->queue()) {
-            connect(m_player->queue(), &PlayQueue::queueChanged, this, &WebRemoteServer::broadcastQueue);
-            connect(m_player->queue(), &PlayQueue::currentChanged, this, &WebRemoteServer::broadcastQueue);
+        if (auto *backend = qobject_cast<PlayerBackend *>(m_player->backendObject()))
+            connect(backend, &PlayerBackend::tracksChanged, this, schedule);
+        if (PlayQueue *queue = m_player->queue()) {
+            connect(queue, &PlayQueue::queueChanged, this, &WebRemoteServer::broadcastQueue);
+            connect(queue, &PlayQueue::currentChanged, this, &WebRemoteServer::broadcastQueue);
+            connect(queue, &PlayQueue::shuffledChanged, this, schedule);
+            connect(queue, &PlayQueue::repeatModeChanged, this, schedule);
         }
+    }
+    if (m_settings) {
+        const auto schedule = [this] { scheduleStatus(); };
+        connect(m_settings, &Settings::maxBitrateKbpsChanged, this, schedule);
+        connect(m_settings, &Settings::playbackModeChanged, this, schedule);
+        connect(m_settings, &Settings::subtitleStyleChanged, this, schedule);
+        connect(m_settings, &Settings::themeAccentChanged, this, schedule);
     }
 }
 
@@ -132,6 +329,8 @@ bool WebRemoteServer::start()
         return false;
     }
 
+    m_statusTick.start();
+    m_keepAlive.start();
     qCInfo(logApp) << "webremote: listening on" << bindAddr.toString() << port;
     emit runningChanged(true);
     return true;
@@ -139,6 +338,9 @@ bool WebRemoteServer::start()
 
 void WebRemoteServer::stop()
 {
+    m_statusTick.stop();
+    m_keepAlive.stop();
+    m_statusCoalesce.stop();
     for (auto &socket : m_sseClients) {
         if (socket) {
             socket->disconnectFromHost();
@@ -184,11 +386,59 @@ bool WebRemoteServer::regenerateCertificate()
     return ok;
 }
 
+void WebRemoteServer::setInteractionContext(const QString &context)
+{
+    if (m_interactionContext == context)
+        return;
+    m_interactionContext = context;
+    scheduleStatus();
+}
+
+namespace {
+
+struct NavigationKey {
+    const char *key;
+    const char *action;
+};
+
+constexpr NavigationKey kNavigationKeys[] = {
+    {"up", "nav.up"},
+    {"down", "nav.down"},
+    {"left", "nav.left"},
+    {"right", "nav.right"},
+    {"select", "nav.select"},
+    {"back", "nav.back"},
+    {"menu", "nav.contextMenu"},
+    {"pageUp", "nav.pageUp"},
+    {"pageDown", "nav.pageDown"},
+    {"prevTab", "nav.previousTab"},
+    {"nextTab", "nav.nextTab"},
+    {"toggleMenu", "app.toggleMenu"},
+    {"fullscreen", "app.fullscreen"},
+};
+
+} // namespace
+
+QStringList WebRemoteServer::navigationKeys()
+{
+    QStringList keys;
+    for (const NavigationKey &entry : kNavigationKeys)
+        keys.append(QString::fromLatin1(entry.key));
+    return keys;
+}
+
+QString WebRemoteServer::actionForNavigationKey(const QString &key)
+{
+    for (const NavigationKey &entry : kNavigationKeys) {
+        if (key == QLatin1String(entry.key))
+            return QString::fromLatin1(entry.action);
+    }
+    return {};
+}
+
 void WebRemoteServer::onStartedEncryptionHandshake(QSslSocket *socket)
 {
-    qCInfo(logApp) << "webremote: startedEncryptionHandshake" << socket;
     connect(socket, &QSslSocket::encrypted, this, [this, socket] {
-        qCInfo(logApp) << "webremote: socket encrypted:" << socket;
         // Dequeue from QSslServer/QTcpServer internal pending queue to prevent queue buildup
         m_server->nextPendingConnection();
 
@@ -197,7 +447,6 @@ void WebRemoteServer::onStartedEncryptionHandshake(QSslSocket *socket)
             handleReadyRead(socket, *buffer);
         });
         connect(socket, &QAbstractSocket::disconnected, this, &WebRemoteServer::onClientDisconnected);
-        connect(socket, &QAbstractSocket::disconnected, socket, &QObject::deleteLater);
         if (socket->bytesAvailable() > 0) {
             handleReadyRead(socket, *buffer);
         }
@@ -211,24 +460,27 @@ void WebRemoteServer::onClientDisconnected()
     if (!socket)
         return;
 
-    qCInfo(logApp) << "webremote: client disconnected:" << socket;
-    m_sseClients.removeAll(socket);
-    emit connectedClientsChanged(m_sseClients.size());
+    if (m_sseClients.removeAll(socket) > 0)
+        emit connectedClientsChanged(m_sseClients.size());
 }
 
 void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 {
-    const QByteArray incoming = socket->readAll();
-    qCInfo(logApp) << "webremote: handleReadyRead incoming bytes:" << incoming.size();
-    buffer.append(incoming);
+    buffer.append(socket->readAll());
 
     while (!buffer.isEmpty()) {
-        const int headerEnd = static_cast<int>(buffer.indexOf("\r\n\r\n"));
-        if (headerEnd < 0)
+        const qsizetype headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd < 0) {
+            if (buffer.size() > kMaxHeaderBytes) {
+                sendResponse(socket, 431, "text/plain", "Request headers too large");
+                buffer.clear();
+                socket->disconnectFromHost();
+            }
             return; // Headers incomplete
+        }
 
         const QByteArray headerBlock = buffer.left(headerEnd);
-        const QList<QByteArray> lines = headerBlock.split('\r');
+        const QList<QByteArray> lines = headerBlock.split('\n');
 
         HttpRequest req;
         qsizetype contentLength = 0;
@@ -240,14 +492,21 @@ void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 
         for (qsizetype i = 1; i < lines.size(); ++i) {
             const QByteArray line = lines[i].trimmed();
-            const int colon = static_cast<int>(line.indexOf(':'));
+            const qsizetype colon = line.indexOf(':');
             if (colon <= 0)
                 continue;
-            const QByteArray key = line.left(colon).toLower();
+            const QByteArray key = line.left(colon).trimmed().toLower();
             const QByteArray val = line.mid(colon + 1).trimmed();
             req.headers.insert(key, val);
             if (key == "content-length")
-                contentLength = val.toLongLong();
+                contentLength = qMax<qsizetype>(0, val.toLongLong());
+        }
+
+        if (contentLength > kMaxBodyBytes) {
+            sendResponse(socket, 413, "text/plain", "Request body too large");
+            buffer.clear();
+            socket->disconnectFromHost();
+            return;
         }
 
         const qsizetype bodyStart = headerEnd + 4;
@@ -263,36 +522,33 @@ void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 
 void WebRemoteServer::dispatchRequest(QSslSocket *socket, const HttpRequest &req)
 {
-    qCInfo(logApp) << "webremote: dispatchRequest" << req.method << req.path;
+    qCDebug(logApp) << "webremote:" << req.method << req.path;
 
-    // Handle CORS preflight
+    // The page and its API share one origin, so there is no cross-origin
+    // client to serve. No CORS headers are sent: a page elsewhere in the
+    // phone's browser must not be able to drive the TV.
     if (req.method == QLatin1String("OPTIONS")) {
         sendResponse(socket, 204, "text/plain", "");
         return;
     }
 
-    // Static Assets
-    if (req.method == QLatin1String("GET")) {
-        if (req.path == QLatin1String("/") || req.path == QLatin1String("/index.html")) {
-            handleStaticFile(socket, QStringLiteral(":/webremote/index.html"));
-            return;
-        }
-        if (req.path == QLatin1String("/app.js")) {
-            handleStaticFile(socket, QStringLiteral(":/webremote/app.js"));
-            return;
-        }
-        if (req.path == QLatin1String("/style.css")) {
-            handleStaticFile(socket, QStringLiteral(":/webremote/style.css"));
-            return;
-        }
-        if (req.path == QLatin1String("/manifest.json")) {
-            handleStaticFile(socket, QStringLiteral(":/webremote/manifest.json"));
-            return;
-        }
-        if (req.path == QLatin1String("/icon.svg")) {
-            handleStaticFile(socket, QStringLiteral(":/webremote/icon.svg"));
-            return;
-        }
+    if (req.method == QLatin1String("GET") && !req.path.startsWith(QLatin1String("/api/"))) {
+        if (!handleStaticFile(socket, req.path))
+            sendResponse(socket, 404, "text/plain", "Not Found");
+        return;
+    }
+
+    if (!req.path.startsWith(QLatin1String("/api/"))) {
+        sendResponse(socket, 404, "text/plain", "Not Found");
+        return;
+    }
+
+    // A JSON body is required on every POST. Besides being what the page sends,
+    // it forces a preflight for any cross-origin form or fetch, which fails.
+    if (req.method == QLatin1String("POST")
+        && !req.headers.value("content-type").startsWith("application/json")) {
+        sendError(socket, 415, QStringLiteral("Expected application/json"));
+        return;
     }
 
     // PIN Authentication Check
@@ -300,106 +556,192 @@ void WebRemoteServer::dispatchRequest(QSslSocket *socket, const HttpRequest &req
         if (req.method == QLatin1String("GET")) {
             QJsonObject res;
             res[QStringLiteral("required")] = m_settings ? m_settings->webRemoteRequirePin() : false;
+            res[QStringLiteral("authorized")] =
+                !(m_settings && m_settings->webRemoteRequirePin()) || isAuthorized(req);
             sendJson(socket, 200, res);
             return;
         }
         if (req.method == QLatin1String("POST")) {
-            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-            handleApiAuthPin(socket, body);
+            handleApiAuthPin(socket, QJsonDocument::fromJson(req.body).object());
             return;
         }
     }
 
-    if (m_settings && m_settings->webRemoteRequirePin()) {
-        if (req.path.startsWith(QLatin1String("/api/")) && !isAuthorized(req)) {
-            QJsonObject err;
-            err[QStringLiteral("error")] = QStringLiteral("Unauthorized");
-            err[QStringLiteral("requirePin")] = true;
-            sendJson(socket, 401, err);
-            return;
-        }
-    }
-
-    // API Routes
-    if (req.path == QLatin1String("/api/status")) {
-        handleApiStatus(socket);
-        return;
-    }
-    if (req.path == QLatin1String("/api/queue")) {
-        handleApiQueue(socket);
-        return;
-    }
-    if (req.path == QLatin1String("/api/home")) {
-        handleApiHome(socket);
-        return;
-    }
-    if (req.path == QLatin1String("/api/libraries")) {
-        handleApiLibraries(socket);
-        return;
-    }
-    if (req.path.startsWith(QLatin1String("/api/library/")) && req.path.endsWith(QLatin1String("/items"))) {
-        handleApiLibraryItems(socket, req);
-        return;
-    }
-    if (req.path.startsWith(QLatin1String("/api/item/"))) {
-        const QString itemId = req.path.mid(10);
-        handleApiItemDetails(socket, itemId);
-        return;
-    }
-    if (req.path == QLatin1String("/api/search")) {
-        const QString q = QUrlQuery(req.url).queryItemValue(QStringLiteral("q"));
-        handleApiSearch(socket, q);
-        return;
-    }
-    if (req.path.startsWith(QLatin1String("/api/image/"))) {
-        const QStringList parts = req.path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-        // /api/image/{id}/{type}
-        if (parts.size() >= 4) {
-            handleApiImage(socket, parts.at(2), parts.at(3));
-            return;
-        }
-    }
-    if (req.path == QLatin1String("/api/play") && req.method == QLatin1String("POST")) {
-        handleApiPlay(socket, QJsonDocument::fromJson(req.body).object());
-        return;
-    }
-    if (req.path == QLatin1String("/api/playback") && req.method == QLatin1String("POST")) {
-        handleApiPlayback(socket, QJsonDocument::fromJson(req.body).object());
-        return;
-    }
-    if (req.path == QLatin1String("/api/volume") && req.method == QLatin1String("POST")) {
-        handleApiVolume(socket, QJsonDocument::fromJson(req.body).object());
-        return;
-    }
-    if (req.path == QLatin1String("/api/stream") && req.method == QLatin1String("POST")) {
-        handleApiStream(socket, QJsonDocument::fromJson(req.body).object());
-        return;
-    }
-    if (req.path == QLatin1String("/api/navigate") && req.method == QLatin1String("POST")) {
-        handleApiNavigate(socket, QJsonDocument::fromJson(req.body).object());
-        return;
-    }
-    if (req.path == QLatin1String("/api/events") && req.method == QLatin1String("GET")) {
-        handleApiEvents(socket);
+    if (m_settings && m_settings->webRemoteRequirePin() && !isAuthorized(req)) {
+        QJsonObject err;
+        err[QStringLiteral("error")] = QStringLiteral("Unauthorized");
+        err[QStringLiteral("requirePin")] = true;
+        sendJson(socket, 401, err);
         return;
     }
 
-    sendResponse(socket, 404, "text/plain", "Not Found");
+    if (!dispatchApi(socket, req))
+        sendError(socket, 404, QStringLiteral("Unknown endpoint"));
 }
 
-void WebRemoteServer::handleStaticFile(QSslSocket *socket, const QString &resPath)
+bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
 {
-    QFile file(resPath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        sendResponse(socket, 404, "text/plain", "File not found");
-        return;
+    const bool get = req.method == QLatin1String("GET");
+    const bool post = req.method == QLatin1String("POST");
+    const QString &path = req.path;
+    const QStringList parts = path.split(QLatin1Char('/'), Qt::SkipEmptyParts); // "api", ...
+    const QJsonObject body = post ? QJsonDocument::fromJson(req.body).object() : QJsonObject();
+
+    if (get) {
+        if (path == QLatin1String("/api/status")) {
+            sendJson(socket, 200, currentStatusJson());
+            return true;
+        }
+        if (path == QLatin1String("/api/queue")) {
+            sendJsonArray(socket, 200, currentQueueJson());
+            return true;
+        }
+        if (path == QLatin1String("/api/events")) {
+            handleApiEvents(socket);
+            return true;
+        }
+        if (path == QLatin1String("/api/home")) {
+            handleApiHome(socket);
+            return true;
+        }
+        if (path == QLatin1String("/api/libraries")) {
+            handleApiLibraries(socket);
+            return true;
+        }
+        if (path == QLatin1String("/api/items")) {
+            handleApiItems(socket, req);
+            return true;
+        }
+        if (path == QLatin1String("/api/artists")) {
+            handleApiArtists(socket, req);
+            return true;
+        }
+        if (path == QLatin1String("/api/search")) {
+            handleApiSearch(socket, QUrlQuery(req.url).queryItemValue(QStringLiteral("q"),
+                                                                        QUrl::FullyDecoded));
+            return true;
+        }
+        // Back-compat for the old page's grid: /api/library/{id}/items
+        if (parts.size() == 4 && parts.at(1) == QLatin1String("library")
+            && parts.at(3) == QLatin1String("items") && isSafeId(parts.at(2))) {
+            HttpRequest scoped = req;
+            QUrlQuery q(req.url);
+            q.removeAllQueryItems(QStringLiteral("parentId"));
+            q.addQueryItem(QStringLiteral("parentId"), parts.at(2));
+            scoped.url.setQuery(q);
+            handleApiItems(socket, scoped);
+            return true;
+        }
+        if (parts.size() >= 3 && parts.at(1) == QLatin1String("item") && isSafeId(parts.at(2))) {
+            const QString id = parts.at(2);
+            if (parts.size() == 3) {
+                handleApiItemDetails(socket, id);
+                return true;
+            }
+            if (parts.size() == 4 && parts.at(3) == QLatin1String("seasons")) {
+                handleApiSeasons(socket, id);
+                return true;
+            }
+            if (parts.size() == 4 && parts.at(3) == QLatin1String("episodes")) {
+                handleApiEpisodes(socket, id, req);
+                return true;
+            }
+            if (parts.size() == 4 && parts.at(3) == QLatin1String("playlist")) {
+                handleApiPlaylistItems(socket, id);
+                return true;
+            }
+        }
+        // /api/image/{id}/{type}
+        if (parts.size() == 4 && parts.at(1) == QLatin1String("image")) {
+            handleApiImage(socket, parts.at(2), parts.at(3), req);
+            return true;
+        }
+        return false;
     }
+
+    if (!post)
+        return false;
+
+    if (path == QLatin1String("/api/play")) {
+        handleApiPlay(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/playback")) {
+        handleApiPlayback(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/queue")) {
+        handleApiQueueAction(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/volume")) {
+        handleApiVolume(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/stream")) {
+        handleApiStream(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/quality")) {
+        handleApiQuality(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/subtitles/style")) {
+        handleApiSubtitleStyle(socket, body);
+        return true;
+    }
+    if (path == QLatin1String("/api/navigate")) {
+        handleApiNavigate(socket, body);
+        return true;
+    }
+    // /api/item/{id}/favorite and /api/item/{id}/played
+    if (parts.size() == 4 && parts.at(1) == QLatin1String("item") && isSafeId(parts.at(2))
+        && (parts.at(3) == QLatin1String("favorite") || parts.at(3) == QLatin1String("played"))) {
+        handleApiUserData(socket, parts.at(2), parts.at(3), body);
+        return true;
+    }
+    return false;
+}
+
+bool WebRemoteServer::handleStaticFile(QSslSocket *socket, const QString &path)
+{
+    // Fonts are the desktop's own (Theme.qml), served from the same resources so
+    // the phone renders in the product's type rather than the handset's default.
+    static const QHash<QString, QString> fonts{
+        {QStringLiteral("/fonts/archivo.ttf"), QStringLiteral(":/fonts/Archivo[wdth,wght].ttf")},
+        {QStringLiteral("/fonts/public-sans.ttf"), QStringLiteral(":/fonts/PublicSans[wght].ttf")},
+        {QStringLiteral("/fonts/plex-mono.ttf"), QStringLiteral(":/fonts/IBMPlexMono-Medium.ttf")},
+    };
+
+    QString resPath;
+    bool immutable = false;
+    if (path == QLatin1String("/") || path == QLatin1String("/index.html")) {
+        resPath = QStringLiteral(":/webremote/index.html");
+    } else if (fonts.contains(path)) {
+        resPath = fonts.value(path);
+        immutable = true;
+    } else {
+        // Flat names only: no directory can be named, so nothing outside the
+        // remote's own resource prefix is reachable.
+        static const QRegularExpression safe(
+            QStringLiteral("^/([a-z0-9][a-z0-9-]*\\.(?:js|css|svg|json|png))$"));
+        const QRegularExpressionMatch match = safe.match(path);
+        if (!match.hasMatch())
+            return false;
+        resPath = QStringLiteral(":/webremote/") + match.captured(1);
+    }
+
+    QFile file(resPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
     const QByteArray data = file.readAll();
-    file.close();
 
     QHash<QByteArray, QByteArray> headers;
-    headers["Cache-Control"] = "public, max-age=3600";
+    // The page ships inside the binary, so an upgrade changes it under the same
+    // URL. Revalidate every load rather than run last version's script.
+    headers["Cache-Control"] = immutable ? "public, max-age=604800" : "no-cache";
     sendResponse(socket, 200, mimeTypeForPath(resPath), data, headers);
+    return true;
 }
 
 bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
@@ -410,6 +752,7 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
         if (m_authorizedTokens.contains(token))
             return true;
     }
+    // EventSource and <img> cannot set headers.
     const QString queryToken = QUrlQuery(req.url).queryItemValue(QStringLiteral("token"));
     if (!queryToken.isEmpty() && m_authorizedTokens.contains(queryToken))
         return true;
@@ -428,7 +771,7 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
     }
 
     const QString pin = body.value(QLatin1String("pin")).toString();
-    if (m_settings && pin == m_settings->webRemotePin()) {
+    if (m_settings && !pin.isEmpty() && pin == m_settings->webRemotePin()) {
         m_failedPinAttempts = 0;
         const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_authorizedTokens.insert(token);
@@ -444,74 +787,213 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
     }
 }
 
+// ── Serialisation ────────────────────────────────────────────────────────────
+
+QJsonObject WebRemoteServer::itemJson(const MediaItem &it)
+{
+    QJsonObject o;
+    o[QStringLiteral("id")] = it.id;
+    o[QStringLiteral("name")] = it.name;
+    o[QStringLiteral("type")] = it.type;
+    const auto putString = [&o](const char *key, const QString &value) {
+        if (!value.isEmpty())
+            o[QLatin1String(key)] = value;
+    };
+    putString("seriesId", it.seriesId);
+    putString("seriesName", it.seriesName);
+    putString("seasonId", it.seasonId);
+    putString("seasonName", it.seasonName);
+    putString("officialRating", it.officialRating);
+    putString("premiereDate", it.premiereDate);
+    putString("endDate", it.endDate);
+    putString("status", it.status);
+    putString("albumArtist", it.albumArtist);
+    putString("album", it.album);
+    putString("albumId", it.albumId);
+    putString("playlistItemId", it.playlistItemId);
+    if (it.indexNumber >= 0)
+        o[QStringLiteral("indexNumber")] = it.indexNumber;
+    if (it.parentIndexNumber >= 0)
+        o[QStringLiteral("parentIndexNumber")] = it.parentIndexNumber;
+    if (it.productionYear > 0)
+        o[QStringLiteral("year")] = it.productionYear;
+    if (it.communityRating > 0)
+        o[QStringLiteral("communityRating")] = it.communityRating;
+    if (it.runtimeTicks > 0)
+        o[QStringLiteral("runtimeMs")] = it.runtimeMs();
+    if (it.playbackPositionTicks > 0)
+        o[QStringLiteral("positionMs")] = it.positionMs();
+    if (it.playedPercentage > 0)
+        o[QStringLiteral("playedPercentage")] = it.playedPercentage;
+    if (it.childCount > 0)
+        o[QStringLiteral("childCount")] = it.childCount;
+    if (it.unplayedItemCount > 0)
+        o[QStringLiteral("unplayedCount")] = it.unplayedItemCount;
+    o[QStringLiteral("played")] = it.played;
+    o[QStringLiteral("favorite")] = it.favorite;
+    o[QStringLiteral("resumable")] = it.isResumable();
+    if (!it.artists.isEmpty())
+        o[QStringLiteral("artists")] = QJsonArray::fromStringList(it.artists);
+    if (!it.artistIds.isEmpty())
+        o[QStringLiteral("artistIds")] = QJsonArray::fromStringList(it.artistIds);
+
+    QJsonObject images;
+    const QJsonObject cover = imageRefJson(it.coverSource());
+    if (!cover.isEmpty())
+        images[QStringLiteral("cover")] = cover;
+    const QJsonObject thumb = imageRefJson(it.thumbSource());
+    if (!thumb.isEmpty())
+        images[QStringLiteral("thumb")] = thumb;
+    if (!it.backdropImageTags.isEmpty()) {
+        images[QStringLiteral("backdrop")] =
+            imageRefJson({it.id, QStringLiteral("Backdrop"), it.backdropImageTags.first()});
+    } else if (!it.parentBackdropImageTag.isEmpty() && !it.parentBackdropItemId.isEmpty()) {
+        images[QStringLiteral("backdrop")] = imageRefJson(
+            {it.parentBackdropItemId, QStringLiteral("Backdrop"), it.parentBackdropImageTag});
+    }
+    // An episode's own Primary is a still; the phone wants the series poster
+    // for a portrait slot.
+    if (!it.seriesId.isEmpty()) {
+        QJsonObject series;
+        series[QStringLiteral("itemId")] = it.seriesId;
+        series[QStringLiteral("type")] = QStringLiteral("Primary");
+        images[QStringLiteral("seriesPoster")] = series;
+    }
+    o[QStringLiteral("images")] = images;
+    return o;
+}
+
+QJsonObject WebRemoteServer::pageJson(const QList<MediaItem> &items, int total, int startIndex)
+{
+    QJsonArray arr;
+    for (const MediaItem &item : items)
+        arr.append(itemJson(item));
+    QJsonObject o;
+    o[QStringLiteral("items")] = arr;
+    // /Persons-class endpoints report 0 while returning rows (ARCHITECTURE.md);
+    // never report fewer than were delivered.
+    o[QStringLiteral("total")] = qMax(total, startIndex + static_cast<int>(items.size()));
+    o[QStringLiteral("startIndex")] = startIndex;
+    return o;
+}
+
 QJsonObject WebRemoteServer::currentStatusJson() const
 {
     QJsonObject obj;
     obj[QStringLiteral("version")] = QStringLiteral(STRMQT_VERSION);
 
+    QJsonObject app;
+    app[QStringLiteral("context")] = m_interactionContext;
+    app[QStringLiteral("accent")] =
+        accentHex(m_settings ? m_settings->themeAccent() : QString());
+    app[QStringLiteral("signedIn")] = m_client && m_client->hasSession();
+    obj[QStringLiteral("app")] = app;
+
+    if (m_settings) {
+        QJsonObject quality;
+        quality[QStringLiteral("maxBitrateKbps")] = m_settings->maxBitrateKbps();
+        quality[QStringLiteral("playbackMode")] = m_settings->playbackMode();
+        obj[QStringLiteral("quality")] = quality;
+
+        QJsonObject style;
+        style[QStringLiteral("scale")] = m_settings->subtitleScale();
+        style[QStringLiteral("color")] = m_settings->subtitleColor();
+        style[QStringLiteral("background")] = m_settings->subtitleBackground();
+        style[QStringLiteral("position")] = m_settings->subtitlePosition();
+        obj[QStringLiteral("subtitleStyle")] = style;
+    }
+
     QJsonObject playback;
     if (!m_player) {
         playback[QStringLiteral("active")] = false;
-    } else {
-        playback[QStringLiteral("active")] = m_player->active();
-        playback[QStringLiteral("paused")] = m_player->paused();
-        playback[QStringLiteral("positionMs")] = m_player->positionMs();
-        playback[QStringLiteral("durationMs")] = m_player->durationMs();
-        playback[QStringLiteral("title")] = m_player->title();
-        playback[QStringLiteral("streamMethod")] = m_player->streamMethod();
-        playback[QStringLiteral("volume")] = m_player->volume();
-        playback[QStringLiteral("muted")] = m_player->muted();
+        obj[QStringLiteral("playback")] = playback;
+        return obj;
+    }
 
-        // Extract current item details if playing
-        if (m_player->queue() && m_player->queue()->currentIndex() >= 0) {
-            const auto entry = m_player->queue()->currentItem();
-            playback[QStringLiteral("itemId")] = entry.value(QStringLiteral("itemId")).toString();
-            playback[QStringLiteral("subtitle")] = entry.value(QStringLiteral("artist")).toString().isEmpty()
-                                                  ? entry.value(QStringLiteral("series")).toString()
-                                                  : entry.value(QStringLiteral("artist")).toString();
-            playback[QStringLiteral("mediaType")] = entry.value(QStringLiteral("type")).toString();
-            playback[QStringLiteral("queueIndex")] = m_player->queue()->currentIndex();
-        }
+    playback[QStringLiteral("active")] = m_player->active();
+    playback[QStringLiteral("paused")] = m_player->paused();
+    playback[QStringLiteral("busy")] = m_player->busy();
+    playback[QStringLiteral("buffering")] = m_player->buffering();
+    playback[QStringLiteral("isAudio")] = m_player->isAudio();
+    playback[QStringLiteral("positionMs")] = m_player->positionMs();
+    playback[QStringLiteral("durationMs")] = m_player->durationMs();
+    playback[QStringLiteral("bufferedEndMs")] = m_player->bufferedEndMs();
+    playback[QStringLiteral("title")] = m_player->title();
+    playback[QStringLiteral("streamMethod")] = m_player->streamMethod();
+    playback[QStringLiteral("errorMessage")] = m_player->errorMessage();
+    playback[QStringLiteral("volume")] = m_player->volume();
+    playback[QStringLiteral("maxVolume")] = PlayerController::maxVolume();
+    playback[QStringLiteral("muted")] = m_player->muted();
+    playback[QStringLiteral("speed")] = m_player->playbackSpeed();
+    playback[QStringLiteral("audioDelayMs")] = m_player->audioDelayMs();
+    playback[QStringLiteral("subtitleDelayMs")] = m_player->subtitleDelayMs();
 
-        if (auto *be = qobject_cast<PlayerBackend *>(m_player->backendObject())) {
-            playback[QStringLiteral("currentAudioIndex")] = be->currentAudioTrackId();
-            playback[QStringLiteral("currentSubtitleIndex")] = be->currentSubtitleTrackId();
-        }
+    if (PlayQueue *queue = m_player->queue()) {
+        if (queue->currentIndex() >= 0)
+            playback[QStringLiteral("item")] = itemJson(queue->current());
+        QJsonObject q;
+        q[QStringLiteral("index")] = queue->currentIndex();
+        q[QStringLiteral("count")] = queue->rowCount();
+        q[QStringLiteral("shuffled")] = queue->shuffled();
+        q[QStringLiteral("repeat")] = repeatModeName(queue->repeatMode());
+        q[QStringLiteral("hasNext")] = m_player->hasNext();
+        q[QStringLiteral("hasPrevious")] = m_player->hasPrevious();
+        q[QStringLiteral("contextLabel")] = queue->contextLabel();
+        playback[QStringLiteral("queue")] = q;
+    }
 
-        // Audio & Subtitle Streams
-        QJsonArray audioArr;
-        for (const QVariant &st : m_player->audioStreams()) {
-            const QVariantMap m = st.toMap();
-            QJsonObject s;
-            s[QStringLiteral("index")] = m.value(QStringLiteral("index")).toInt();
-            s[QStringLiteral("title")] = m.value(QStringLiteral("title")).toString();
-            s[QStringLiteral("language")] = m.value(QStringLiteral("language")).toString();
-            s[QStringLiteral("codec")] = m.value(QStringLiteral("codec")).toString();
-            s[QStringLiteral("channels")] = m.value(QStringLiteral("channels")).toInt();
-            audioArr.append(s);
-        }
-        playback[QStringLiteral("audioStreams")] = audioArr;
+    QJsonObject upNext;
+    upNext[QStringLiteral("visible")] = m_player->upNextVisible();
+    upNext[QStringLiteral("seconds")] = m_player->upNextSecondsRemaining();
+    const QVariantMap next = m_player->nextItem();
+    if (!next.isEmpty()) {
+        QJsonObject n;
+        n[QStringLiteral("id")] = next.value(QStringLiteral("itemId")).toString();
+        n[QStringLiteral("name")] = next.value(QStringLiteral("label")).toString().isEmpty()
+                                        ? next.value(QStringLiteral("name")).toString()
+                                        : next.value(QStringLiteral("label")).toString();
+        upNext[QStringLiteral("item")] = n;
+    }
+    playback[QStringLiteral("upNext")] = upNext;
 
-        QJsonArray subArr;
-        for (const QVariant &st : m_player->subtitleStreams()) {
-            const QVariantMap m = st.toMap();
-            QJsonObject s;
-            s[QStringLiteral("index")] = m.value(QStringLiteral("index")).toInt();
-            s[QStringLiteral("title")] = m.value(QStringLiteral("title")).toString();
-            s[QStringLiteral("language")] = m.value(QStringLiteral("language")).toString();
-            s[QStringLiteral("isDefault")] = m.value(QStringLiteral("isDefault")).toBool();
-            s[QStringLiteral("isForced")] = m.value(QStringLiteral("isForced")).toBool();
-            subArr.append(s);
-        }
-        playback[QStringLiteral("subtitleStreams")] = subArr;
+    QJsonArray chapters;
+    for (const QVariant &chapter : m_player->chapters()) {
+        const QVariantMap m = chapter.toMap();
+        QJsonObject c;
+        c[QStringLiteral("name")] = m.value(QStringLiteral("name")).toString();
+        c[QStringLiteral("startMs")] = m.value(QStringLiteral("startMs")).toLongLong();
+        chapters.append(c);
+    }
+    playback[QStringLiteral("chapters")] = chapters;
+    playback[QStringLiteral("currentChapter")] = m_player->currentChapter();
+
+    // Versions. The stream lists inside each source are the server's view and
+    // are dropped here: the phone picks tracks from the engine's lists below.
+    QJsonArray sources;
+    for (const QVariant &source : m_player->sources()) {
+        QVariantMap m = source.toMap();
+        m.remove(QStringLiteral("audioStreams"));
+        m.remove(QStringLiteral("subtitleStreams"));
+        sources.append(QJsonObject::fromVariantMap(m));
+    }
+    playback[QStringLiteral("sources")] = sources;
+    playback[QStringLiteral("sourceIndex")] = m_player->sourceIndex();
+    QVariantMap current = m_player->currentSource();
+    current.remove(QStringLiteral("audioStreams"));
+    current.remove(QStringLiteral("subtitleStreams"));
+    playback[QStringLiteral("currentSource")] = QJsonObject::fromVariantMap(current);
+
+    // Tracks as the ENGINE numbers them — the only ids setAudioTrack() and
+    // setSubtitleTrack() accept, and the only lists that include external files.
+    if (auto *be = qobject_cast<PlayerBackend *>(m_player->backendObject())) {
+        playback[QStringLiteral("audioTracks")] = QJsonArray::fromVariantList(be->audioTracks());
+        playback[QStringLiteral("subtitleTracks")] =
+            QJsonArray::fromVariantList(be->subtitleTracks());
+        playback[QStringLiteral("currentAudioTrackId")] = be->currentAudioTrackId();
+        playback[QStringLiteral("currentSubtitleTrackId")] = be->currentSubtitleTrackId();
     }
 
     obj[QStringLiteral("playback")] = playback;
-    // Mirror playback fields into root of obj for direct access by client
-    for (auto it = playback.begin(); it != playback.end(); ++it) {
-        obj.insert(it.key(), it.value());
-    }
-
     return obj;
 }
 
@@ -521,71 +1003,110 @@ QJsonArray WebRemoteServer::currentQueueJson() const
     if (!m_player || !m_player->queue())
         return arr;
 
-    for (int i = 0; i < m_player->queue()->rowCount(); ++i) {
-        const QVariantMap item = m_player->queue()->itemAt(i);
-        QJsonObject o;
-        o[QStringLiteral("id")] = item.value(QStringLiteral("itemId")).toString();
-        o[QStringLiteral("name")] = item.value(QStringLiteral("name")).toString();
-        o[QStringLiteral("artist")] = item.value(QStringLiteral("artist")).toString();
-        o[QStringLiteral("series")] = item.value(QStringLiteral("series")).toString();
-        o[QStringLiteral("type")] = item.value(QStringLiteral("type")).toString();
+    PlayQueue *queue = m_player->queue();
+    for (int i = 0; i < queue->rowCount(); ++i) {
+        const QVariantMap row = queue->itemAt(i);
+        QJsonObject o = itemJson(PlayQueue::itemFromVariant(row));
+        o[QStringLiteral("label")] = row.value(QStringLiteral("label")).toString();
+        o[QStringLiteral("current")] = i == queue->currentIndex();
         arr.append(o);
     }
     return arr;
 }
 
-void WebRemoteServer::handleApiStatus(QSslSocket *socket)
-{
-    sendJson(socket, 200, currentStatusJson());
-}
-
-void WebRemoteServer::handleApiQueue(QSslSocket *socket)
-{
-    const QByteArray data = QJsonDocument(currentQueueJson()).toJson(QJsonDocument::Compact);
-    sendResponse(socket, 200, "application/json", data);
-}
+// ── Browse ───────────────────────────────────────────────────────────────────
 
 void WebRemoteServer::handleApiHome(QSslSocket *socket)
 {
-    QJsonObject homeObj;
-    const auto serializeModel = [](MediaItemModel *m) -> QJsonArray {
-        QJsonArray arr;
-        if (!m) return arr;
-        for (int i = 0; i < m->rowCount(); ++i) {
-            const QModelIndex idx = m->index(i);
-            QJsonObject o;
-            o[QStringLiteral("id")] = m->data(idx, MediaItemModel::IdRole).toString();
-            o[QStringLiteral("name")] = m->data(idx, MediaItemModel::NameRole).toString();
-            o[QStringLiteral("type")] = m->data(idx, MediaItemModel::TypeRole).toString();
-            o[QStringLiteral("seriesName")] = m->data(idx, MediaItemModel::SeriesNameRole).toString();
-            o[QStringLiteral("playedPercentage")] = m->data(idx, MediaItemModel::ProgressRole).toDouble() * 100.0;
-            arr.append(o);
-        }
-        return arr;
-    };
-
-    if (m_home) {
-        homeObj[QStringLiteral("resume")] = serializeModel(m_home->resume());
-        homeObj[QStringLiteral("nextUp")] = serializeModel(m_home->nextUp());
-        homeObj[QStringLiteral("favorites")] = serializeModel(m_home->favorites());
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
     }
 
-    sendJson(socket, 200, homeObj);
+    // Four kinds of request fan out; the reply goes when the last one lands.
+    struct Pending {
+        QJsonObject result;
+        QList<Library> libraries;
+        QHash<QString, QJsonArray> latest;
+        int outstanding = 0;
+    };
+    auto pending = std::make_shared<Pending>();
+    QPointer<QSslSocket> safeSocket(socket);
+
+    const auto finishOne = [this, pending, safeSocket] {
+        if (--pending->outstanding > 0)
+            return;
+        QJsonArray latest;
+        for (const Library &lib : std::as_const(pending->libraries)) {
+            const QJsonArray items = pending->latest.value(lib.id);
+            if (items.isEmpty())
+                continue;
+            QJsonObject rail;
+            rail[QStringLiteral("libraryId")] = lib.id;
+            rail[QStringLiteral("name")] = lib.name;
+            rail[QStringLiteral("collectionType")] = lib.collectionType;
+            rail[QStringLiteral("items")] = items;
+            latest.append(rail);
+        }
+        pending->result[QStringLiteral("latest")] = latest;
+        if (safeSocket)
+            sendJson(safeSocket, 200, pending->result);
+    };
+
+    pending->outstanding = 3;
+    m_client->resumeItems(20).then(this, [pending, finishOne](const Result<ItemsPage> &res) {
+        pending->result[QStringLiteral("resume")] =
+            res.ok() ? pageJson(res.value.items, res.value.totalRecordCount, 0)
+                                 .value(QStringLiteral("items"))
+                     : QJsonArray();
+        finishOne();
+    });
+    m_client->nextUp(20).then(this, [pending, finishOne](const Result<ItemsPage> &res) {
+        pending->result[QStringLiteral("nextUp")] =
+            res.ok() ? pageJson(res.value.items, res.value.totalRecordCount, 0)
+                                 .value(QStringLiteral("items"))
+                     : QJsonArray();
+        finishOne();
+    });
+    m_client->userViews().then(this, [this, pending, finishOne](const Result<QList<Library>> &res) {
+        if (res.ok()) {
+            for (const Library &lib : res.value) {
+                // Latest is meaningless for curated sets.
+                if (lib.collectionType == QLatin1String("playlists")
+                    || lib.collectionType == QLatin1String("boxsets"))
+                    continue;
+                pending->libraries.append(lib);
+                ++pending->outstanding;
+                const QString id = lib.id;
+                m_client->latestItems(id, 16).then(
+                    this, [pending, finishOne, id](const Result<QList<MediaItem>> &latest) {
+                        if (latest.ok()) {
+                            QJsonArray arr;
+                            for (const MediaItem &item : latest.value)
+                                arr.append(itemJson(item));
+                            pending->latest.insert(id, arr);
+                        }
+                        finishOne();
+                    });
+            }
+        }
+        finishOne();
+    });
 }
 
 void WebRemoteServer::handleApiLibraries(QSslSocket *socket)
 {
-    if (!m_client) {
-        sendJson(socket, 200, {});
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
         return;
     }
 
     QPointer<QSslSocket> safeSocket(socket);
     m_client->userViews().then(this, [this, safeSocket](const Result<QList<Library>> &res) {
-        if (!safeSocket || !safeSocket->isOpen())
+        if (!safeSocket)
             return;
         if (!res.ok()) {
-            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Failed to fetch views\"}");
+            sendError(safeSocket, 502, QStringLiteral("Could not load libraries: %1").arg(res.error));
             return;
         }
         QJsonArray arr;
@@ -594,215 +1115,377 @@ void WebRemoteServer::handleApiLibraries(QSslSocket *socket)
             o[QStringLiteral("id")] = lib.id;
             o[QStringLiteral("name")] = lib.name;
             o[QStringLiteral("type")] = lib.collectionType;
+            if (!lib.primaryImageTag.isEmpty())
+                o[QStringLiteral("image")] = imageRefJson(
+                    {lib.id, QStringLiteral("Primary"), lib.primaryImageTag});
             arr.append(o);
         }
-        const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(safeSocket, 200, "application/json", data);
+        sendJsonArray(safeSocket, 200, arr);
     });
 }
 
-void WebRemoteServer::handleApiLibraryItems(QSslSocket *socket, const HttpRequest &req)
+void WebRemoteServer::handleApiItems(QSslSocket *socket, const HttpRequest &req)
 {
-    if (!m_client) {
-        sendJson(socket, 200, {});
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
         return;
     }
 
-    // /api/library/{id}/items
-    const QStringList parts = req.path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    const QString libId = parts.size() >= 3 ? parts.at(2) : QString();
-
-    const QUrlQuery q(req.url);
-    ItemsQuery query;
-    query.parentId = libId;
-    query.startIndex = q.queryItemValue(QStringLiteral("startIndex")).toInt();
-    query.limit = q.queryItemValue(QStringLiteral("limit")).isEmpty() ? 50 : q.queryItemValue(QStringLiteral("limit")).toInt();
-    query.sortBy = q.queryItemValue(QStringLiteral("sortBy")).isEmpty() ? QStringLiteral("SortName") : q.queryItemValue(QStringLiteral("sortBy"));
-    query.sortDescending = (q.queryItemValue(QStringLiteral("sortOrder")) == QLatin1String("Descending"));
-
+    const ItemsQuery query = itemsQueryFrom(QUrlQuery(req.url));
     QPointer<QSslSocket> safeSocket(socket);
-    m_client->items(query).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
-        if (!safeSocket || !safeSocket->isOpen())
+    m_client->items(query).then(this, [this, safeSocket, query](const Result<ItemsPage> &res) {
+        if (!safeSocket)
             return;
         if (!res.ok()) {
-            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Failed to fetch items\"}");
+            sendError(safeSocket, 502, QStringLiteral("Could not load items: %1").arg(res.error));
             return;
         }
-        QJsonArray arr;
-        for (const MediaItem &it : res.value.items) {
-            QJsonObject o;
-            o[QStringLiteral("id")] = it.id;
-            o[QStringLiteral("name")] = it.name;
-            o[QStringLiteral("type")] = it.type;
-            o[QStringLiteral("productionYear")] = it.productionYear;
-            o[QStringLiteral("seriesName")] = it.seriesName;
-            arr.append(o);
+        sendJson(safeSocket, 200,
+                 pageJson(res.value.items, res.value.totalRecordCount, query.startIndex));
+    });
+}
+
+void WebRemoteServer::handleApiArtists(QSslSocket *socket, const HttpRequest &req)
+{
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+
+    const ItemsQuery query = itemsQueryFrom(QUrlQuery(req.url));
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->albumArtists(query).then(this, [this, safeSocket, query](const Result<ItemsPage> &res) {
+        if (!safeSocket)
+            return;
+        if (!res.ok()) {
+            sendError(safeSocket, 502, QStringLiteral("Could not load artists: %1").arg(res.error));
+            return;
         }
-        const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(safeSocket, 200, "application/json", data);
+        sendJson(safeSocket, 200,
+                 pageJson(res.value.items, res.value.totalRecordCount, query.startIndex));
     });
 }
 
 void WebRemoteServer::handleApiItemDetails(QSslSocket *socket, const QString &itemId)
 {
-    if (!m_client) {
-        sendResponse(socket, 500, "application/json", "{}");
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
         return;
     }
 
     QPointer<QSslSocket> safeSocket(socket);
-    m_client->itemDetails(itemId).then(this, [this, safeSocket, itemId](const Result<ItemDetails> &res) {
-        if (!safeSocket || !safeSocket->isOpen())
+    m_client->itemDetails(itemId).then(this, [this, safeSocket](const Result<ItemDetails> &res) {
+        if (!safeSocket)
             return;
         if (!res.ok()) {
-            sendResponse(safeSocket, 404, "application/json", "{\"error\":\"Item not found\"}");
+            sendError(safeSocket, 404, QStringLiteral("Item not found"));
             return;
         }
         const ItemDetails &d = res.value;
-        QJsonObject o;
-        o[QStringLiteral("id")] = d.item.id;
-        o[QStringLiteral("name")] = d.item.name;
-        o[QStringLiteral("type")] = d.item.type;
+        QJsonObject o = itemJson(d.item);
         o[QStringLiteral("overview")] = d.item.overview;
-        o[QStringLiteral("productionYear")] = d.item.productionYear;
-        o[QStringLiteral("runtimeTicks")] = d.item.runtimeTicks;
+        o[QStringLiteral("tagline")] = d.tagline;
+        if (d.criticRating > 0)
+            o[QStringLiteral("criticRating")] = d.criticRating;
 
-        QJsonArray genreArr;
-        for (const QString &g : d.genres)
-            genreArr.append(g);
-        o[QStringLiteral("genres")] = genreArr;
+        QJsonArray genres;
+        for (const NamedId &g : d.genreItems)
+            genres.append(QJsonObject::fromVariantMap(g.toVariantMap()));
+        o[QStringLiteral("genres")] = genres;
 
-        // If it's a TV series, fetch episodes
-        if (d.item.type == QLatin1String("Series")) {
-            m_client->episodes(itemId, QString()).then(this, [this, safeSocket, o](const Result<ItemsPage> &epRes) mutable {
-                if (!safeSocket || !safeSocket->isOpen())
-                    return;
-                QJsonArray epArr;
-                if (epRes.ok()) {
-                    for (const MediaItem &ep : epRes.value.items) {
-                        QJsonObject epObj;
-                        epObj[QStringLiteral("id")] = ep.id;
-                        epObj[QStringLiteral("name")] = ep.name;
-                        epObj[QStringLiteral("indexNumber")] = ep.indexNumber;
-                        epObj[QStringLiteral("parentIndexNumber")] = ep.parentIndexNumber;
-                        epArr.append(epObj);
-                    }
-                }
-                o[QStringLiteral("episodes")] = epArr;
-                sendJson(safeSocket, 200, o);
-            });
-            return;
+        QJsonArray studios;
+        for (const NamedId &s : d.studios)
+            studios.append(QJsonObject::fromVariantMap(s.toVariantMap()));
+        o[QStringLiteral("studios")] = studios;
+
+        QJsonArray people;
+        for (const Person &p : d.people) {
+            if (people.size() >= 24)
+                break;
+            people.append(QJsonObject::fromVariantMap(p.toVariantMap()));
         }
+        o[QStringLiteral("people")] = people;
 
+        QJsonArray sources;
+        for (qsizetype i = 0; i < d.mediaSources.size(); ++i) {
+            const MediaSource &src = d.mediaSources.at(i);
+            QJsonObject s;
+            s[QStringLiteral("index")] = static_cast<int>(i);
+            s[QStringLiteral("name")] = src.displayName();
+            s[QStringLiteral("resolution")] = src.resolutionLabel();
+            s[QStringLiteral("container")] = src.container;
+            s[QStringLiteral("bitrate")] = src.bitrate;
+            s[QStringLiteral("size")] = src.size;
+            s[QStringLiteral("isHdr")] = src.isHdr();
+            s[QStringLiteral("audioCount")] = static_cast<int>(src.audioStreams().size());
+            s[QStringLiteral("subtitleCount")] = static_cast<int>(src.subtitleStreams().size());
+            sources.append(s);
+        }
+        o[QStringLiteral("mediaSources")] = sources;
+        o[QStringLiteral("chapterCount")] = static_cast<int>(d.chapters.size());
+        o[QStringLiteral("isContainer")] = ItemActions::isContainer(d.item.type);
         sendJson(safeSocket, 200, o);
     });
 }
 
+void WebRemoteServer::handleApiSeasons(QSslSocket *socket, const QString &seriesId)
+{
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->seasons(seriesId).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
+        if (!safeSocket)
+            return;
+        if (!res.ok()) {
+            sendError(safeSocket, 502, QStringLiteral("Could not load seasons: %1").arg(res.error));
+            return;
+        }
+        sendJson(safeSocket, 200, pageJson(res.value.items, res.value.totalRecordCount, 0));
+    });
+}
+
+void WebRemoteServer::handleApiEpisodes(QSslSocket *socket, const QString &seriesId,
+                                        const HttpRequest &req)
+{
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+    QString seasonId = QUrlQuery(req.url).queryItemValue(QStringLiteral("seasonId"));
+    if (!seasonId.isEmpty() && !isSafeId(seasonId)) {
+        sendError(socket, 400, QStringLiteral("Invalid season id"));
+        return;
+    }
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->episodes(seriesId, seasonId).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
+        if (!safeSocket)
+            return;
+        if (!res.ok()) {
+            sendError(safeSocket, 502, QStringLiteral("Could not load episodes: %1").arg(res.error));
+            return;
+        }
+        sendJson(safeSocket, 200, pageJson(res.value.items, res.value.totalRecordCount, 0));
+    });
+}
+
+void WebRemoteServer::handleApiPlaylistItems(QSslSocket *socket, const QString &playlistId)
+{
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->playlistItems(playlistId, 0, 500)
+        .then(this, [this, safeSocket](const Result<ItemsPage> &res) {
+            if (!safeSocket)
+                return;
+            if (!res.ok()) {
+                sendError(safeSocket, 502,
+                          QStringLiteral("Could not load the playlist: %1").arg(res.error));
+                return;
+            }
+            sendJson(safeSocket, 200, pageJson(res.value.items, res.value.totalRecordCount, 0));
+        });
+}
+
 void WebRemoteServer::handleApiSearch(QSslSocket *socket, const QString &query)
 {
-    if (!m_client || query.isEmpty()) {
-        sendJson(socket, 200, {});
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+    if (query.trimmed().isEmpty()) {
+        sendJson(socket, 200, pageJson({}, 0, 0));
         return;
     }
 
     ItemsQuery q;
-    q.searchTerm = query;
-    q.limit = 30;
+    q.searchTerm = query.trimmed();
+    q.limit = 80;
     q.recursive = true;
+    q.includeItemTypes = {QStringLiteral("Movie"),       QStringLiteral("Series"),
+                          QStringLiteral("Episode"),     QStringLiteral("MusicAlbum"),
+                          QStringLiteral("MusicArtist"), QStringLiteral("Audio"),
+                          QStringLiteral("BoxSet"),      QStringLiteral("Playlist"),
+                          QStringLiteral("MusicVideo"),  QStringLiteral("Video")};
 
     QPointer<QSslSocket> safeSocket(socket);
     m_client->items(q).then(this, [this, safeSocket](const Result<ItemsPage> &res) {
-        if (!safeSocket || !safeSocket->isOpen())
+        if (!safeSocket)
             return;
         if (!res.ok()) {
-            sendResponse(safeSocket, 500, "application/json", "{\"error\":\"Search failed\"}");
+            sendError(safeSocket, 502, QStringLiteral("Search failed: %1").arg(res.error));
             return;
         }
-        QJsonArray arr;
-        for (const MediaItem &it : res.value.items) {
-            QJsonObject o;
-            o[QStringLiteral("id")] = it.id;
-            o[QStringLiteral("name")] = it.name;
-            o[QStringLiteral("type")] = it.type;
-            o[QStringLiteral("seriesName")] = it.seriesName;
-            arr.append(o);
-        }
-        const QByteArray data = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-        sendResponse(safeSocket, 200, "application/json", data);
+        sendJson(safeSocket, 200, pageJson(res.value.items, res.value.totalRecordCount, 0));
     });
 }
 
-void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId, const QString &imageType)
+void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId,
+                                     const QString &imageType, const HttpRequest &req)
 {
     if (!m_client || !m_client->hasSession()) {
         sendResponse(socket, 404, "text/plain", "No session");
         return;
     }
 
-    // Sanitize itemId and imageType against path traversal
-    static const QRegularExpression safeRegex(QStringLiteral("^[a-zA-Z0-9_-]+$"));
-    if (!safeRegex.match(itemId).hasMatch() || !safeRegex.match(imageType).hasMatch()) {
+    static const QRegularExpression typeRegex(QStringLiteral("^[A-Za-z]{1,24}$"));
+    if (!isSafeId(itemId) || !typeRegex.match(imageType).hasMatch()) {
         sendResponse(socket, 400, "text/plain", "Invalid image parameters");
         return;
     }
+    const QUrlQuery q(req.url);
+    const int width = qBound(64, q.queryItemValue(QStringLiteral("w")).toInt() > 0
+                                     ? q.queryItemValue(QStringLiteral("w")).toInt()
+                                     : 400,
+                             1920);
+    QString tag = q.queryItemValue(QStringLiteral("tag"));
+    if (!tag.isEmpty() && !isSafeId(tag))
+        tag.clear();
 
-    const QUrl imageUrl = m_client->imageUrl(itemId, imageType, 400);
+    const QUrl imageUrl = m_client->imageUrl(itemId, imageType, width, tag);
 
-    QNetworkRequest req(imageUrl);
-    req.setRawHeader("X-Emby-Token", m_client->accessToken().toUtf8());
+    QNetworkRequest netReq(imageUrl);
+    netReq.setRawHeader("X-Emby-Token", m_client->accessToken().toUtf8());
 
     QPointer<QSslSocket> safeSocket(socket);
-    QNetworkReply *reply = m_imageNam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, safeSocket, reply, imageUrl] {
+    const bool tagged = !tag.isEmpty();
+    QNetworkReply *reply = m_imageNam->get(netReq);
+    connect(reply, &QNetworkReply::finished, this, [this, safeSocket, reply, tagged] {
         reply->deleteLater();
-        if (!safeSocket || !safeSocket->isOpen())
+        if (!safeSocket)
             return;
         if (reply->error() != QNetworkReply::NoError) {
-            qCWarning(logApp) << "webremote: image fetch failed for" << imageUrl << reply->errorString();
             sendResponse(safeSocket, 404, "text/plain", "Image not found");
             return;
         }
         const QByteArray data = reply->readAll();
         const QByteArray cType = reply->rawHeader("Content-Type");
         QHash<QByteArray, QByteArray> headers;
-        headers["Cache-Control"] = "public, max-age=86400";
+        // A tag names one version of the image, so a tagged URL never changes.
+        headers["Cache-Control"] = tagged ? "private, max-age=2592000, immutable"
+                                          : "private, max-age=3600";
         sendResponse(safeSocket, 200, cType.isEmpty() ? "image/jpeg" : cType, data, headers);
     });
 }
 
+// ── Verbs ────────────────────────────────────────────────────────────────────
+
 void WebRemoteServer::handleApiPlay(QSslSocket *socket, const QJsonObject &body)
 {
-    const QString itemId = body.value(QLatin1String("itemId")).toString();
-    const QString mode = body.value(QLatin1String("mode")).toString();
-
-    if (!m_actions || itemId.isEmpty()) {
-        sendJson(socket, 400, {});
+    if (!m_actions) {
+        sendError(socket, 503, QStringLiteral("Playback is not available"));
         return;
     }
 
-    QVariantMap item = m_actions->itemFor(itemId);
-    if (item.isEmpty()) {
-        item.insert(QStringLiteral("itemId"), itemId);
-        item.insert(QStringLiteral("name"), QString());
+    const QString mode = body.value(QLatin1String("mode")).toString(QStringLiteral("play"));
+
+    // Rows the phone already holds, started at one of them: an episode list,
+    // an album's tracks, a playlist.
+    if (mode == QLatin1String("list")) {
+        QVariantList items;
+        for (const QJsonValue &v : body.value(QLatin1String("items")).toArray()) {
+            const QJsonObject o = v.toObject();
+            if (isSafeId(o.value(QLatin1String("id")).toString()))
+                items.append(itemMapFromClient(o));
+        }
+        if (items.isEmpty()) {
+            sendError(socket, 400, QStringLiteral("Nothing to play"));
+            return;
+        }
+        const int start = qBound(0, body.value(QLatin1String("startIndex")).toInt(),
+                                 static_cast<int>(items.size()) - 1);
+        m_actions->playAllFrom(items, start);
+        sendOk(socket);
+        return;
     }
 
-    if (mode == QLatin1String("next")) {
-        m_actions->playNext(item);
-    } else if (mode == QLatin1String("queue")) {
-        m_actions->addToQueue(item);
-    } else {
-        m_actions->play(item);
+    // A library, genre or search narrowed on the phone, shuffled as a whole.
+    if (mode == QLatin1String("shuffleQuery")) {
+        ItemsQuery query = itemsQueryFrom(body.value(QLatin1String("query")).toObject());
+        query.startIndex = 0;
+        m_actions->shuffleFiltered(query);
+        sendOk(socket);
+        return;
     }
 
-    QJsonObject resp;
-    resp[QStringLiteral("ok")] = true;
-    sendJson(socket, 200, resp);
+    const QString itemId = body.value(QLatin1String("itemId")).toString();
+    if (!isSafeId(itemId)) {
+        sendError(socket, 400, QStringLiteral("Missing item id"));
+        return;
+    }
+    const QString collectionType = body.value(QLatin1String("collectionType")).toString();
+
+    if (mode == QLatin1String("playAll")) {
+        m_actions->playAll(itemId, collectionType);
+        sendOk(socket);
+        return;
+    }
+    if (mode == QLatin1String("shuffle") && body.value(QLatin1String("type")).toString()
+                                                == QLatin1String("Series")) {
+        m_actions->shuffleSeries(itemId);
+        sendOk(socket);
+        return;
+    }
+    if (mode == QLatin1String("shuffle")) {
+        m_actions->shuffle(itemId, collectionType);
+        sendOk(socket);
+        return;
+    }
+
+    if (!m_client || !m_client->hasSession()) {
+        sendError(socket, 503, QStringLiteral("StrmQt is not signed in to a server"));
+        return;
+    }
+
+    // Every other verb takes the whole item — its type decides whether "play"
+    // means the item or its contents, and its position decides "resume".
+    QPointer<QSslSocket> safeSocket(socket);
+    m_client->itemDetails(itemId).then(this, [this, safeSocket, mode](const Result<ItemDetails> &res) {
+        if (!safeSocket)
+            return;
+        if (!res.ok()) {
+            sendError(safeSocket, 404, QStringLiteral("Item not found"));
+            return;
+        }
+        const QVariantMap map = itemMap(res.value.item);
+        if (mode == QLatin1String("next"))
+            m_actions->playNext(map);
+        else if (mode == QLatin1String("queue"))
+            m_actions->addToQueue(map);
+        else if (mode == QLatin1String("resume"))
+            m_actions->resume(map);
+        else if (mode == QLatin1String("fromStart"))
+            m_actions->playFromStart(map);
+        else if (mode == QLatin1String("instantMix"))
+            m_actions->instantMix(map);
+        else
+            m_actions->play(map);
+        sendOk(safeSocket);
+    });
+}
+
+void WebRemoteServer::handleApiUserData(QSslSocket *socket, const QString &itemId,
+                                        const QString &field, const QJsonObject &body)
+{
+    if (!m_actions) {
+        sendError(socket, 503, QStringLiteral("Not available"));
+        return;
+    }
+    const bool value = body.value(QLatin1String("value")).toBool();
+    if (field == QLatin1String("favorite"))
+        m_actions->setFavorite(itemId, value);
+    else
+        m_actions->setPlayed(itemId, value);
+    sendOk(socket);
 }
 
 void WebRemoteServer::handleApiPlayback(QSslSocket *socket, const QJsonObject &body)
 {
     if (!m_player) {
-        sendJson(socket, 500, {});
+        sendError(socket, 503, QStringLiteral("Playback is not available"));
         return;
     }
 
@@ -812,11 +1495,9 @@ void WebRemoteServer::handleApiPlayback(QSslSocket *socket, const QJsonObject &b
     if (action == QLatin1String("togglePause")) {
         m_player->togglePause();
     } else if (action == QLatin1String("play")) {
-        if (m_player->paused())
-            m_player->togglePause();
+        m_player->setPaused(false);
     } else if (action == QLatin1String("pause")) {
-        if (!m_player->paused())
-            m_player->togglePause();
+        m_player->setPaused(true);
     } else if (action == QLatin1String("stop")) {
         m_player->stop();
     } else if (action == QLatin1String("next")) {
@@ -824,24 +1505,98 @@ void WebRemoteServer::handleApiPlayback(QSslSocket *socket, const QJsonObject &b
     } else if (action == QLatin1String("previous")) {
         m_player->playPrevious();
     } else if (action == QLatin1String("seekTo")) {
-        m_player->seekTo(val.toVariant().toLongLong());
+        m_player->seekTo(qMax<qint64>(0, val.toVariant().toLongLong()));
     } else if (action == QLatin1String("seekRelative")) {
         m_player->seekRelative(val.toVariant().toLongLong());
     } else if (action == QLatin1String("jumpQueue")) {
-        if (m_player->queue()) {
+        if (m_player->queue())
             m_player->queue()->jumpTo(val.toInt());
+    } else if (action == QLatin1String("setSpeed")) {
+        const double speed = val.toDouble();
+        if (speed < 0.25 || speed > 4.0) {
+            sendError(socket, 400, QStringLiteral("Speed must be between 0.25 and 4"));
+            return;
         }
+        m_player->setPlaybackSpeed(speed);
+    } else if (action == QLatin1String("setAudioDelay")) {
+        m_player->setAudioDelayMs(qBound(-10000, val.toInt(), 10000));
+    } else if (action == QLatin1String("setSubtitleDelay")) {
+        m_player->setSubtitleDelayMs(qBound(-60000, val.toInt(), 60000));
+    } else if (action == QLatin1String("nextChapter")) {
+        m_player->nextChapter();
+    } else if (action == QLatin1String("previousChapter")) {
+        m_player->previousChapter();
+    } else if (action == QLatin1String("seekChapter")) {
+        m_player->seekToChapter(val.toInt());
+    } else if (action == QLatin1String("setShuffle")) {
+        if (m_player->queue())
+            m_player->queue()->setShuffled(val.toBool());
+    } else if (action == QLatin1String("setRepeat")) {
+        if (PlayQueue *queue = m_player->queue()) {
+            const QString mode = val.toString();
+            queue->setRepeatMode(mode == QLatin1String("all")   ? PlayQueue::RepeatAll
+                                 : mode == QLatin1String("one") ? PlayQueue::RepeatOne
+                                                                : PlayQueue::RepeatOff);
+        }
+    } else if (action == QLatin1String("cancelUpNext")) {
+        m_player->cancelUpNext();
+    } else if (action == QLatin1String("setSource")) {
+        m_player->setPreferredSource(val.toInt());
+    } else if (action == QLatin1String("reloadStream")) {
+        m_player->reloadStream();
+    } else if (action == QLatin1String("frameStep")) {
+        m_player->frameStep(val.toInt() < 0 ? -1 : 1);
+    } else if (action == QLatin1String("screenshot")) {
+        const QString path = m_player->takeScreenshot();
+        QJsonObject resp;
+        resp[QStringLiteral("ok")] = !path.isEmpty();
+        resp[QStringLiteral("path")] = path;
+        sendJson(socket, path.isEmpty() ? 500 : 200, resp);
+        return;
+    } else {
+        sendError(socket, 400, QStringLiteral("Unknown playback action"));
+        return;
     }
 
-    QJsonObject resp;
-    resp[QStringLiteral("ok")] = true;
-    sendJson(socket, 200, resp);
+    sendOk(socket);
+}
+
+void WebRemoteServer::handleApiQueueAction(QSslSocket *socket, const QJsonObject &body)
+{
+    PlayQueue *queue = m_player ? m_player->queue() : nullptr;
+    if (!queue) {
+        sendError(socket, 503, QStringLiteral("Playback is not available"));
+        return;
+    }
+    const QString action = body.value(QLatin1String("action")).toString();
+    const int index = body.value(QLatin1String("index")).toInt(-1);
+    const int count = queue->rowCount();
+    const bool validIndex = index >= 0 && index < count;
+
+    if (action == QLatin1String("jump") && validIndex) {
+        queue->jumpTo(index);
+    } else if (action == QLatin1String("remove") && validIndex) {
+        queue->removeAt(index);
+    } else if (action == QLatin1String("move") && validIndex) {
+        const int to = body.value(QLatin1String("to")).toInt(-1);
+        if (to < 0 || to >= count) {
+            sendError(socket, 400, QStringLiteral("Invalid destination"));
+            return;
+        }
+        queue->moveItem(index, to);
+    } else if (action == QLatin1String("clear")) {
+        queue->clear();
+    } else {
+        sendError(socket, 400, QStringLiteral("Unknown queue action or index"));
+        return;
+    }
+    sendOk(socket);
 }
 
 void WebRemoteServer::handleApiVolume(QSslSocket *socket, const QJsonObject &body)
 {
     if (!m_player) {
-        sendJson(socket, 500, {});
+        sendError(socket, 503, QStringLiteral("Playback is not available"));
         return;
     }
 
@@ -851,41 +1606,99 @@ void WebRemoteServer::handleApiVolume(QSslSocket *socket, const QJsonObject &bod
     if (action == QLatin1String("set")) {
         m_player->setVolume(val);
     } else if (action == QLatin1String("up")) {
-        m_player->setVolume(m_player->volume() + 5);
+        m_player->adjustVolume(5);
     } else if (action == QLatin1String("down")) {
-        m_player->setVolume(m_player->volume() - 5);
+        m_player->adjustVolume(-5);
     } else if (action == QLatin1String("mute")) {
         m_player->setMuted(true);
     } else if (action == QLatin1String("unmute")) {
         m_player->setMuted(false);
     } else if (action == QLatin1String("toggleMute")) {
-        m_player->setMuted(!m_player->muted());
+        m_player->toggleMute();
+    } else {
+        sendError(socket, 400, QStringLiteral("Unknown volume action"));
+        return;
     }
 
-    QJsonObject resp;
-    resp[QStringLiteral("ok")] = true;
-    sendJson(socket, 200, resp);
+    sendOk(socket);
 }
 
 void WebRemoteServer::handleApiStream(QSslSocket *socket, const QJsonObject &body)
 {
     if (!m_player) {
-        sendJson(socket, 500, {});
+        sendError(socket, 503, QStringLiteral("Playback is not available"));
         return;
     }
 
+    // Engine track ids, as listed in status.playback.audioTracks/subtitleTracks.
     const QString type = body.value(QLatin1String("type")).toString();
-    const int trackId = body.value(QLatin1String("trackId")).toInt();
+    const int trackId = body.value(QLatin1String("trackId")).toInt(-1);
 
-    if (type == QLatin1String("audio")) {
+    if (type == QLatin1String("audio") && trackId >= 0) {
         m_player->setAudioTrack(trackId);
     } else if (type == QLatin1String("subtitle")) {
-        m_player->setSubtitleTrack(trackId);
+        m_player->setSubtitleTrack(trackId); // -1 turns subtitles off
+    } else {
+        sendError(socket, 400, QStringLiteral("Unknown track"));
+        return;
     }
 
-    QJsonObject resp;
-    resp[QStringLiteral("ok")] = true;
-    sendJson(socket, 200, resp);
+    sendOk(socket);
+}
+
+void WebRemoteServer::handleApiQuality(QSslSocket *socket, const QJsonObject &body)
+{
+    if (!m_settings) {
+        sendError(socket, 503, QStringLiteral("Settings are not available"));
+        return;
+    }
+    if (body.contains(QLatin1String("maxBitrateKbps"))) {
+        const int kbps = body.value(QLatin1String("maxBitrateKbps")).toInt(-1);
+        if (kbps < 0) {
+            sendError(socket, 400, QStringLiteral("Invalid bitrate"));
+            return;
+        }
+        m_settings->setMaxBitrateKbps(kbps);
+    }
+    if (body.contains(QLatin1String("playbackMode"))) {
+        const QString mode = body.value(QLatin1String("playbackMode")).toString();
+        static const QStringList modes{QStringLiteral("auto"), QStringLiteral("directPlay"),
+                                       QStringLiteral("transcode")};
+        if (!modes.contains(mode)) {
+            sendError(socket, 400, QStringLiteral("Invalid playback mode"));
+            return;
+        }
+        m_settings->setPlaybackMode(mode);
+    }
+    // Application pushes the new preferences to the client on the settings
+    // signals above, synchronously, so a reload here already asks with them.
+    if (body.value(QLatin1String("apply")).toBool() && m_player)
+        m_player->reloadStream();
+    sendOk(socket);
+}
+
+void WebRemoteServer::handleApiSubtitleStyle(QSslSocket *socket, const QJsonObject &body)
+{
+    if (!m_settings) {
+        sendError(socket, 503, QStringLiteral("Settings are not available"));
+        return;
+    }
+    if (body.contains(QLatin1String("scale")))
+        m_settings->setSubtitleScale(body.value(QLatin1String("scale")).toInt());
+    if (body.contains(QLatin1String("position")))
+        m_settings->setSubtitlePosition(body.value(QLatin1String("position")).toInt());
+    if (body.contains(QLatin1String("background")))
+        m_settings->setSubtitleBackground(body.value(QLatin1String("background")).toInt());
+    if (body.contains(QLatin1String("color"))) {
+        static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+        const QString color = body.value(QLatin1String("color")).toString();
+        if (!hex.match(color).hasMatch()) {
+            sendError(socket, 400, QStringLiteral("Invalid colour"));
+            return;
+        }
+        m_settings->setSubtitleColor(color);
+    }
+    sendOk(socket);
 }
 
 void WebRemoteServer::handleApiNavigate(QSslSocket *socket, const QJsonObject &body)
@@ -893,115 +1706,157 @@ void WebRemoteServer::handleApiNavigate(QSslSocket *socket, const QJsonObject &b
     const QString dest = body.value(QLatin1String("destination")).toString();
     const QString key = body.value(QLatin1String("key")).toString();
 
-    if (!dest.isEmpty()) {
+    static const QStringList destinations{QStringLiteral("home"), QStringLiteral("search"),
+                                          QStringLiteral("settings"), QStringLiteral("back"),
+                                          QStringLiteral("osd")};
+    if (!dest.isEmpty() && destinations.contains(dest)) {
         if (dest == QLatin1String("osd"))
             emit osdToggleRequested();
         else
             emit navigationRequested(dest);
-    } else if (!key.isEmpty()) {
+    } else if (!key.isEmpty() && navigationKeys().contains(key)) {
         emit keyNavigationRequested(key);
+    } else {
+        sendError(socket, 400, QStringLiteral("Unknown destination or key"));
+        return;
     }
 
-    QJsonObject resp;
-    resp[QStringLiteral("ok")] = true;
-    sendJson(socket, 200, resp);
+    sendOk(socket);
 }
+
+// ── Events ───────────────────────────────────────────────────────────────────
 
 void WebRemoteServer::handleApiEvents(QSslSocket *socket)
 {
-    QByteArray sseHeaders =
+    const QByteArray sseHeaders =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream; charset=utf-8\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: keep-alive\r\n"
-        "Access-Control-Allow-Origin: *\r\n\r\n";
+        "X-Accel-Buffering: no\r\n\r\n";
 
     socket->write(sseHeaders);
-    socket->flush();
+    // Reconnect quickly after a phone wakes.
+    socket->write("retry: 2000\n\n");
 
-    m_sseClients.append(socket);
-    emit connectedClientsChanged(m_sseClients.size());
+    if (!m_sseClients.contains(socket)) {
+        m_sseClients.append(socket);
+        emit connectedClientsChanged(m_sseClients.size());
+    }
 
-    // Push initial status and queue
     const QByteArray statusData = QJsonDocument(currentStatusJson()).toJson(QJsonDocument::Compact);
-    socket->write("event: status\r\ndata: " + statusData + "\r\n\r\n");
+    socket->write("event: status\ndata: " + statusData + "\n\n");
 
     const QByteArray queueData = QJsonDocument(currentQueueJson()).toJson(QJsonDocument::Compact);
-    socket->write("event: queue\r\ndata: " + queueData + "\r\n\r\n");
+    socket->write("event: queue\ndata: " + queueData + "\n\n");
     socket->flush();
 }
 
 void WebRemoteServer::broadcastSse(const QString &eventName, const QByteArray &data)
 {
-    const QByteArray msg = "event: " + eventName.toUtf8() + "\r\ndata: " + data + "\r\n\r\n";
+    const QByteArray msg = "event: " + eventName.toUtf8() + "\ndata: " + data + "\n\n";
 
+    bool changed = false;
     auto it = m_sseClients.begin();
     while (it != m_sseClients.end()) {
         QSslSocket *sock = *it;
-        if (!sock || !sock->isOpen() || sock->state() != QAbstractSocket::ConnectedState) {
+        if (!sock || sock->state() != QAbstractSocket::ConnectedState || sock->write(msg) == -1) {
             it = m_sseClients.erase(it);
-            emit connectedClientsChanged(m_sseClients.size());
+            changed = true;
             continue;
         }
-        if (sock->write(msg) == -1) {
-            it = m_sseClients.erase(it);
-            emit connectedClientsChanged(m_sseClients.size());
-            continue;
-        }
-        sock->flush();
         ++it;
     }
+    if (changed)
+        emit connectedClientsChanged(m_sseClients.size());
+}
+
+void WebRemoteServer::scheduleStatus()
+{
+    if (!m_sseClients.isEmpty() && !m_statusCoalesce.isActive())
+        m_statusCoalesce.start();
 }
 
 void WebRemoteServer::broadcastPlayerStatus()
 {
+    if (m_sseClients.isEmpty())
+        return;
     const QByteArray data = QJsonDocument(currentStatusJson()).toJson(QJsonDocument::Compact);
     broadcastSse(QStringLiteral("status"), data);
 }
 
 void WebRemoteServer::broadcastQueue()
 {
+    if (m_sseClients.isEmpty())
+        return;
     const QByteArray data = QJsonDocument(currentQueueJson()).toJson(QJsonDocument::Compact);
     broadcastSse(QStringLiteral("queue"), data);
 }
 
+// ── Responses ────────────────────────────────────────────────────────────────
+
 void WebRemoteServer::sendResponse(QSslSocket *socket, int statusCode, const QByteArray &contentType,
                                    const QByteArray &body, const QHash<QByteArray, QByteArray> &extraHeaders)
 {
-    if (!socket || !socket->isOpen())
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState)
         return;
 
     QByteArray statusText = "OK";
-    if (statusCode == 204) statusText = "No Content";
-    else if (statusCode == 400) statusText = "Bad Request";
-    else if (statusCode == 401) statusText = "Unauthorized";
-    else if (statusCode == 403) statusText = "Forbidden";
-    else if (statusCode == 404) statusText = "Not Found";
-    else if (statusCode == 429) statusText = "Too Many Requests";
-    else if (statusCode == 500) statusText = "Internal Server Error";
+    switch (statusCode) {
+    case 204: statusText = "No Content"; break;
+    case 400: statusText = "Bad Request"; break;
+    case 401: statusText = "Unauthorized"; break;
+    case 403: statusText = "Forbidden"; break;
+    case 404: statusText = "Not Found"; break;
+    case 413: statusText = "Payload Too Large"; break;
+    case 415: statusText = "Unsupported Media Type"; break;
+    case 429: statusText = "Too Many Requests"; break;
+    case 431: statusText = "Request Header Fields Too Large"; break;
+    case 500: statusText = "Internal Server Error"; break;
+    case 502: statusText = "Bad Gateway"; break;
+    case 503: statusText = "Service Unavailable"; break;
+    default: break;
+    }
 
+    // Keep-alive: a library grid is dozens of image requests, and a fresh TLS
+    // handshake for each one is most of what made the old page feel slow.
     QByteArray res = "HTTP/1.1 " + QByteArray::number(statusCode) + " " + statusText + "\r\n" +
                      "Content-Type: " + contentType + "\r\n" +
                      "Content-Length: " + QByteArray::number(body.size()) + "\r\n" +
-                     "Connection: close\r\n" +
-                     "Access-Control-Allow-Origin: *\r\n" +
-                     "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                     "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+                     "X-Content-Type-Options: nosniff\r\n";
 
     for (auto it = extraHeaders.cbegin(); it != extraHeaders.cend(); ++it) {
         res += it.key() + ": " + it.value() + "\r\n";
     }
     res += "\r\n" + body;
 
-    qCInfo(logApp) << "webremote: sendResponse" << statusCode << "bytes:" << res.size();
     socket->write(res);
-    socket->flush();
 }
 
 void WebRemoteServer::sendJson(QSslSocket *socket, int statusCode, const QJsonObject &json)
 {
     const QByteArray body = QJsonDocument(json).toJson(QJsonDocument::Compact);
-    sendResponse(socket, statusCode, "application/json", body);
+    sendResponse(socket, statusCode, "application/json", body, {{"Cache-Control", "no-store"}});
+}
+
+void WebRemoteServer::sendJsonArray(QSslSocket *socket, int statusCode, const QJsonArray &json)
+{
+    const QByteArray body = QJsonDocument(json).toJson(QJsonDocument::Compact);
+    sendResponse(socket, statusCode, "application/json", body, {{"Cache-Control", "no-store"}});
+}
+
+void WebRemoteServer::sendOk(QSslSocket *socket)
+{
+    QJsonObject resp;
+    resp[QStringLiteral("ok")] = true;
+    sendJson(socket, 200, resp);
+}
+
+void WebRemoteServer::sendError(QSslSocket *socket, int statusCode, const QString &message)
+{
+    QJsonObject err;
+    err[QStringLiteral("error")] = message;
+    sendJson(socket, statusCode, err);
 }
 
 } // namespace strmqt

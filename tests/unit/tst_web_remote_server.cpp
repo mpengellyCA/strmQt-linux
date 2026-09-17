@@ -32,8 +32,26 @@ private slots:
     void pinRequirementCheck();
     void pinAuthAndRateLimiting();
     void keyNavigationSignal();
+    void postWithoutJsonIsRefused();
+    void navigationAllowlist();
+    void navigationKeysMapToActions();
+    void staticFilesAreWhitelisted();
+    void apiSendsNoCorsHeaders();
+    void statusCarriesQualityAndApp();
+    void qualityWritesSettings();
+    void subtitleStyleValidatesColour();
+    void playbackWithoutPlayerIsUnavailable();
 
 private:
+    struct Response {
+        int status = -1;
+        QByteArray body;
+        QNetworkReply::NetworkError error = QNetworkReply::NoError;
+        QHash<QByteArray, QByteArray> headers;
+    };
+    Response request(const QByteArray &method, const QString &path, const QByteArray &body = {},
+                     const QByteArray &contentType = "application/json");
+
     QTemporaryDir m_dir;
     Settings *m_settings = nullptr;
     WebRemoteServer *m_server = nullptr;
@@ -207,6 +225,148 @@ void WebRemoteServerTest::keyNavigationSignal()
     QCOMPARE(navSpy.count(), 1);
     QCOMPARE(navSpy.first().first().toString(), QStringLiteral("down"));
     reply->deleteLater();
+}
+
+WebRemoteServerTest::Response WebRemoteServerTest::request(const QByteArray &method,
+                                                           const QString &path,
+                                                           const QByteArray &body,
+                                                           const QByteArray &contentType)
+{
+    QNetworkRequest req(QUrl(QStringLiteral("https://127.0.0.1:%1%2").arg(m_port).arg(path)));
+    QSslConfiguration sslConf = QSslConfiguration::defaultConfiguration();
+    sslConf.setCaCertificates({m_cert});
+    sslConf.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(sslConf);
+    if (method == "POST" && !contentType.isEmpty())
+        req.setRawHeader("Content-Type", contentType);
+
+    QNetworkReply *reply = method == "POST" ? m_nam->post(req, body) : m_nam->get(req);
+    reply->ignoreSslErrors();
+    QSignalSpy spy(reply, &QNetworkReply::finished);
+    Response res;
+    if (!spy.wait(5000)) {
+        reply->deleteLater();
+        return res;
+    }
+    res.status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    res.error = reply->error();
+    res.body = reply->readAll();
+    for (const auto &pair : reply->rawHeaderPairs())
+        res.headers.insert(pair.first.toLower(), pair.second);
+    reply->deleteLater();
+    return res;
+}
+
+void WebRemoteServerTest::postWithoutJsonIsRefused()
+{
+    // A cross-site <form> can post text/plain without a preflight; it must not
+    // reach a handler.
+    QSignalSpy navSpy(m_server, &WebRemoteServer::keyNavigationRequested);
+    const Response res = request("POST", QStringLiteral("/api/navigate"),
+                                 R"({"key":"select"})", "text/plain");
+    QCOMPARE(res.status, 415);
+    QCOMPARE(navSpy.count(), 0);
+}
+
+void WebRemoteServerTest::navigationAllowlist()
+{
+    QSignalSpy keySpy(m_server, &WebRemoteServer::keyNavigationRequested);
+    QSignalSpy destSpy(m_server, &WebRemoteServer::navigationRequested);
+    QSignalSpy osdSpy(m_server, &WebRemoteServer::osdToggleRequested);
+
+    QCOMPARE(request("POST", QStringLiteral("/api/navigate"), R"({"key":"format-disk"})").status, 400);
+    QCOMPARE(keySpy.count(), 0);
+
+    for (const QString &key : WebRemoteServer::navigationKeys()) {
+        const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("key"), key}}).toJson();
+        QCOMPARE(request("POST", QStringLiteral("/api/navigate"), body).status, 200);
+    }
+    QCOMPARE(keySpy.count(), WebRemoteServer::navigationKeys().size());
+
+    QCOMPARE(request("POST", QStringLiteral("/api/navigate"), R"({"destination":"settings"})").status, 200);
+    QCOMPARE(destSpy.count(), 1);
+    QCOMPARE(destSpy.first().first().toString(), QStringLiteral("settings"));
+
+    QCOMPARE(request("POST", QStringLiteral("/api/navigate"), R"({"destination":"osd"})").status, 200);
+    QCOMPARE(osdSpy.count(), 1);
+    QCOMPARE(destSpy.count(), 1);
+}
+
+void WebRemoteServerTest::navigationKeysMapToActions()
+{
+    for (const QString &key : WebRemoteServer::navigationKeys())
+        QVERIFY2(!WebRemoteServer::actionForNavigationKey(key).isEmpty(), qPrintable(key));
+    QCOMPARE(WebRemoteServer::actionForNavigationKey(QStringLiteral("back")), QStringLiteral("nav.back"));
+    QCOMPARE(WebRemoteServer::actionForNavigationKey(QStringLiteral("menu")), QStringLiteral("nav.contextMenu"));
+    QCOMPARE(WebRemoteServer::actionForNavigationKey(QStringLiteral("prevTab")), QStringLiteral("nav.previousTab"));
+    QVERIFY(WebRemoteServer::actionForNavigationKey(QStringLiteral("nav.back")).isEmpty());
+}
+
+void WebRemoteServerTest::staticFilesAreWhitelisted()
+{
+    const Response js = request("GET", QStringLiteral("/app.js"));
+    QCOMPARE(js.status, 200);
+    QVERIFY(js.headers.value("content-type").startsWith("text/javascript"));
+    // Shipped inside the binary: an upgrade must not leave a phone on stale script.
+    QCOMPARE(js.headers.value("cache-control"), QByteArray("no-cache"));
+
+    QCOMPARE(request("GET", QStringLiteral("/index.html")).status, 200);
+    QCOMPARE(request("GET", QStringLiteral("/nope.js")).status, 404);
+    // Only flat names under the remote's own prefix resolve.
+    QCOMPARE(request("GET", QStringLiteral("/%2e%2e/fonts/x.ttf")).status, 404);
+    QCOMPARE(request("GET", QStringLiteral("/sub/app.js")).status, 404);
+    QCOMPARE(request("GET", QStringLiteral("/App.JS")).status, 404);
+}
+
+void WebRemoteServerTest::apiSendsNoCorsHeaders()
+{
+    const Response res = request("GET", QStringLiteral("/api/status"));
+    QCOMPARE(res.status, 200);
+    QVERIFY(!res.headers.contains("access-control-allow-origin"));
+    QCOMPARE(res.headers.value("x-content-type-options"), QByteArray("nosniff"));
+}
+
+void WebRemoteServerTest::statusCarriesQualityAndApp()
+{
+    m_settings->setMaxBitrateKbps(20000);
+    m_server->setInteractionContext(QStringLiteral("browse"));
+    const Response res = request("GET", QStringLiteral("/api/status"));
+    QCOMPARE(res.status, 200);
+    const QJsonObject obj = QJsonDocument::fromJson(res.body).object();
+    QCOMPARE(obj.value(QStringLiteral("quality")).toObject().value(QStringLiteral("maxBitrateKbps")).toInt(), 20000);
+    const QJsonObject app = obj.value(QStringLiteral("app")).toObject();
+    QCOMPARE(app.value(QStringLiteral("context")).toString(), QStringLiteral("browse"));
+    QVERIFY(app.value(QStringLiteral("accent")).toString().startsWith(QLatin1Char('#')));
+    QVERIFY(obj.contains(QStringLiteral("subtitleStyle")));
+    QCOMPARE(obj.value(QStringLiteral("playback")).toObject().value(QStringLiteral("active")).toBool(), false);
+}
+
+void WebRemoteServerTest::qualityWritesSettings()
+{
+    QCOMPARE(request("POST", QStringLiteral("/api/quality"),
+                     R"({"maxBitrateKbps":4000,"playbackMode":"transcode"})").status, 200);
+    QCOMPARE(m_settings->maxBitrateKbps(), 4000);
+    QCOMPARE(m_settings->playbackMode(), QStringLiteral("transcode"));
+
+    QCOMPARE(request("POST", QStringLiteral("/api/quality"), R"({"playbackMode":"warp"})").status, 400);
+    QCOMPARE(m_settings->playbackMode(), QStringLiteral("transcode"));
+    QCOMPARE(request("POST", QStringLiteral("/api/quality"), R"({"maxBitrateKbps":-5})").status, 400);
+    QCOMPARE(m_settings->maxBitrateKbps(), 4000);
+}
+
+void WebRemoteServerTest::subtitleStyleValidatesColour()
+{
+    QCOMPARE(request("POST", QStringLiteral("/api/subtitles/style"), R"({"color":"#FFE066"})").status, 200);
+    QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
+    QCOMPARE(request("POST", QStringLiteral("/api/subtitles/style"), R"({"color":"red;x"})").status, 400);
+    QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
+}
+
+void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()
+{
+    QCOMPARE(request("POST", QStringLiteral("/api/playback"), R"({"action":"togglePause"})").status, 503);
+    QCOMPARE(request("GET", QStringLiteral("/api/libraries")).status, 503);
+    QCOMPARE(request("GET", QStringLiteral("/api/unknown")).status, 404);
 }
 
 QTEST_MAIN(WebRemoteServerTest)

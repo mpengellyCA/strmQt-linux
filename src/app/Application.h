@@ -76,6 +76,8 @@ signals:
 
 private:
     void shutdown();
+    // Posts the key bound to an InputMap action to the app window, for remotes.
+    void deliverRemoteAction(const QString &actionId);
     void wirePlaybackIntegrations();
     void applyWheelScrollPolicy();
     void recomputeLiveUpdatePolicy();

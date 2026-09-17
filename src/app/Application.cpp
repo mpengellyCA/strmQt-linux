@@ -17,13 +17,17 @@
 #include "remote/WebRemoteServer.h"
 #include "remote/WebRemoteController.h"
 #include <QClipboard>
+#include <QGuiApplication>
+#include <QInputMethod>
 #include <QKeyEvent>
+#include <QPointer>
 #include <QWindow>
 #include "controllers/SearchController.h"
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
 #include "core/Log.h"
 #include "core/Settings.h"
+#include "input/GamepadDecision.h"
 #include "input/InputMap.h"
 #include "platform/HdrSupport.h"
 #include "platform/MprisPlayer.h"
@@ -198,24 +202,21 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
             cb->setText(text);
     });
 
-    connect(m_webRemoteServer, &WebRemoteServer::keyNavigationRequested, this, [](const QString &key) {
-        Qt::Key qtKey = Qt::Key_unknown;
-        if (key == QLatin1String("up")) qtKey = Qt::Key_Up;
-        else if (key == QLatin1String("down")) qtKey = Qt::Key_Down;
-        else if (key == QLatin1String("left")) qtKey = Qt::Key_Left;
-        else if (key == QLatin1String("right")) qtKey = Qt::Key_Right;
-        else if (key == QLatin1String("select")) qtKey = Qt::Key_Return;
-        else if (key == QLatin1String("back")) qtKey = Qt::Key_Back;
-
-        if (qtKey != Qt::Key_unknown) {
-            if (QWindow *w = QGuiApplication::focusWindow()) {
-                QKeyEvent press(QEvent::KeyPress, qtKey, Qt::NoModifier);
-                QCoreApplication::sendEvent(w, &press);
-                QKeyEvent release(QEvent::KeyRelease, qtKey, Qt::NoModifier);
-                QCoreApplication::sendEvent(w, &release);
-            }
-        }
-    });
+    // Both remotes drive the desktop through the same paths the keyboard and
+    // pad use: a destination goes to Main.qml's RemoteCtl handler, and a key
+    // becomes whatever the user has bound that action to.
+    connect(m_webRemoteServer, &WebRemoteServer::navigationRequested, m_remote,
+            &RemoteControlService::navigationRequested);
+    connect(m_webRemoteServer, &WebRemoteServer::keyNavigationRequested, this,
+            [this](const QString &key) {
+                deliverRemoteAction(WebRemoteServer::actionForNavigationKey(key));
+            });
+    const auto toggleOsd = [this] { deliverRemoteAction(QStringLiteral("player.toggleOsd")); };
+    connect(m_webRemoteServer, &WebRemoteServer::osdToggleRequested, this, toggleOsd);
+    connect(m_remote, &RemoteControlService::osdToggleRequested, this, toggleOsd);
+    m_webRemoteServer->setInteractionContext(m_interactionContext);
+    connect(this, &Application::interactionContextChanged, m_webRemoteServer,
+            [this] { m_webRemoteServer->setInteractionContext(m_interactionContext); });
 
     connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
         if (m_settings->webRemoteEnabled())
@@ -375,6 +376,64 @@ void Application::setInteractionContext(const QString &context)
         m_gamepad->setContext(wanted);
 #endif
     emit interactionContextChanged();
+}
+
+void Application::deliverRemoteAction(const QString &actionId)
+{
+    if (actionId.isEmpty() || !m_input)
+        return;
+    const int key = m_input->keyFor(actionId);
+    if (key == 0) {
+        qCDebug(logApp) << "remote: no single-key binding for" << actionId;
+        return;
+    }
+    const int modifiers = m_input->modifiersFor(actionId);
+
+    // The phone is in someone's hand and the desktop window is usually not
+    // focused, so focusWindow() is often null: fall back to the visible
+    // top-level window rather than dropping the press.
+    QWindow *window = QGuiApplication::focusWindow();
+    if (!window) {
+        const QWindowList windows = QGuiApplication::topLevelWindows();
+        for (QWindow *candidate : windows) {
+            if (candidate->isVisible() && candidate->type() == Qt::Window) {
+                window = candidate;
+                break;
+            }
+        }
+    }
+    if (!window)
+        return;
+
+    // Same rule as the pad (GamepadDecision.h): a key a text field would type
+    // is a command, and must not land in the search box as a letter.
+    const QObject *focus = QGuiApplication::focusObject();
+    const bool textFocused = focus && QGuiApplication::inputMethod()
+                                          ->queryFocusObject(Qt::ImEnabled, QVariant())
+                                          .toBool();
+    if (shouldSuppressKey(key, modifiers, textFocused)) {
+        qCDebug(logApp) << "remote: not delivering typable key for" << actionId;
+        return;
+    }
+
+    m_input->noteInput(QStringLiteral("gamepad"));
+    const auto post = [key, modifiers](QWindow *target) {
+        const auto mods = static_cast<Qt::KeyboardModifiers>(modifiers);
+        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyPress, key, mods, QString()));
+        QCoreApplication::postEvent(target, new QKeyEvent(QEvent::KeyRelease, key, mods, QString()));
+    };
+    if (window->isActive()) {
+        post(window);
+        return;
+    }
+    // Qt Quick routes keys to the active focus item of the active window. Ask
+    // for activation, and give the compositor a moment before the press lands.
+    window->requestActivate();
+    QPointer<QWindow> guard(window);
+    QTimer::singleShot(60, this, [guard, post] {
+        if (guard)
+            post(guard);
+    });
 }
 
 void Application::recomputeLiveUpdatePolicy()
