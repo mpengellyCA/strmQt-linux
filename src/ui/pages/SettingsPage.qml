@@ -450,6 +450,26 @@ FocusScope {
         return false;
     }
 
+    // The pane scrolls to whatever the keyboard lands on. Stepping down by focus
+    // alone moved the ring below the fold and left the view where it was, so
+    // on any section taller than the window the selection simply vanished.
+    function revealInContent(item) {
+        if (!item || !page.isInsideContent(item) || item === contentColumn)
+            return;
+        const top = item.mapToItem(contentColumn, 0, 0).y;
+        const bottom = top + item.height;
+        const margin = Theme.spacingLoose;
+        const maxY = Math.max(0, contentFlick.contentHeight - contentFlick.height);
+        let y = contentFlick.contentY;
+        if (top - margin < y)
+            y = top - margin;
+        else if (bottom + margin > y + contentFlick.height)
+            y = bottom + margin - contentFlick.height;
+        contentFlick.contentY = Math.max(0, Math.min(maxY, y));
+    }
+
+    Window.onActiveFocusItemChanged: page.revealInContent(page.Window.activeFocusItem)
+
     function focusContent() {
         contentColumn.forceActiveFocus(Qt.OtherFocusReason);
         const next = contentColumn.nextItemInFocusChain(true);
@@ -503,6 +523,12 @@ FocusScope {
         model: page.sections
         currentIndex: page.currentSection
         keyNavigationWraps: false
+        // Stated, not inherited: ListView binds keyNavigationEnabled to
+        // `interactive` unless it is set, and the rail below is only
+        // interactive when its sections overflow. With all eight on screen —
+        // every normal window — Up and Down did nothing at all, so a pad, a
+        // keyboard or the web remote could not leave the Server section.
+        keyNavigationEnabled: true
         spacing: Theme.spacingTight
         interactive: contentHeight > height
         boundsBehavior: Flickable.StopAtBounds
