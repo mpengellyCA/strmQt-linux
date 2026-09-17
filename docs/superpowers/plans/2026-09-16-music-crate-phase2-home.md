@@ -127,7 +127,7 @@ Before Task 9 re-baselines, the script reports new `[unqualified]` context-prope
   - `MusicModelBase *typedModel() const`
   - `Q_INVOKABLE void retry()`, signals `stateChanged()`, `retryRequested()`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/tst_music_lane.cpp`:
 
@@ -304,12 +304,12 @@ Append to `tests/CMakeLists.txt`:
 strmqt_add_test(tst_music_lane unit/tst_music_lane.cpp)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_lane`
 Expected: FAIL to compile with `app/controllers/music/MusicLane.h: No such file or directory`.
 
-- [ ] **Step 3: Write `MusicLane`**
+- [x] **Step 3: Write `MusicLane`**
 
 `src/app/controllers/music/MusicLane.h`:
 
@@ -464,12 +464,12 @@ Add to the `qt_add_library(strmqt_app STATIC …)` list in `src/CMakeLists.txt`,
     app/controllers/music/MusicLane.h app/controllers/music/MusicLane.cpp
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_lane && ctest --preset dev -R tst_music_lane --output-on-failure`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/controllers/music/MusicLane.h src/app/controllers/music/MusicLane.cpp src/CMakeLists.txt tests/unit/tst_music_lane.cpp tests/CMakeLists.txt
