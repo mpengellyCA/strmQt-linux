@@ -88,6 +88,7 @@ private slots:
     void demotionStaysWithinSelectedSource();
     void preferredSourceHonouredAtStart();
     void setPreferredSourceSwitchesVersionMidSession();
+    void reloadStreamRefetchesTicketInPlace();
     void sourceSurfaceExposesStreams();
     void unplayableSourceSelectionIsIgnored();
 
@@ -987,6 +988,47 @@ void PlayerControllerTest::setPreferredSourceSwitchesVersionMidSession()
                                     .body)
             .object();
     QCOMPARE(body.value(QLatin1String("MediaSourceId")).toString(), QStringLiteral("ms4242hd"));
+}
+
+void PlayerControllerTest::reloadStreamRefetchesTicketInPlace()
+{
+    m_controller->playItem(QStringLiteral("4242"), QStringLiteral("Dune"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_controller->setPreferredSource(1);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(310'000);
+
+    const auto countTicketRequests = [this] {
+        int count = 0;
+        for (const auto &request : m_mock->requests()) {
+            if (request.method == QLatin1String("POST") &&
+                request.path == QLatin1String("/Items/4242/PlaybackInfo"))
+                ++count;
+        }
+        return count;
+    };
+    const int ticketsBefore = countTicketRequests();
+    const int queueCountBefore = m_controller->queue()->rowCount();
+
+    // A quality change is decided when a stream starts; reloading asks the
+    // server again, in place: same item, same version, same position, same queue.
+    m_controller->reloadStream();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(countTicketRequests(), ticketsBefore + 1);
+    QCOMPARE(m_backend->loadedStarts[2], Q_INT64_C(310000));
+    QVERIFY(m_backend->loadedUrls[2].query().contains(QStringLiteral("ms4242hd")));
+    QCOMPARE(m_controller->sourceIndex(), 1);
+    QCOMPARE(m_controller->queue()->rowCount(), queueCountBefore);
+    QVERIFY(m_controller->active());
+
+    // With nothing playing it is a no-op rather than a start.
+    m_controller->stop();
+    const int loadsAfterStop = static_cast<int>(m_backend->loadedUrls.size());
+    m_controller->reloadStream();
+    QTest::qWait(50);
+    QCOMPARE(static_cast<int>(m_backend->loadedUrls.size()), loadsAfterStop);
 }
 
 void PlayerControllerTest::sourceSurfaceExposesStreams()

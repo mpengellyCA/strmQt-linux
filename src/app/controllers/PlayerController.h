@@ -168,6 +168,12 @@ public:
     // the current position, ladder restarts at the top rung of the new source);
     // otherwise it is remembered for the next playItem() that does not override it.
     Q_INVOKABLE void setPreferredSource(int index);
+    // Ask the server for the current item's stream again, in place: same item,
+    // same version, same position, same queue, top of the ladder. The bitrate
+    // cap and playback mode travel inside PlaybackInfo, so this is what makes a
+    // quality change apply to the film already playing rather than the next one.
+    // No-op when no server session is running.
+    Q_INVOKABLE void reloadStream();
 
     // Speed and A/V sync (ARCHITECTURE.md). The backend has carried these since
     // M3 and nothing exposed them, so no UI could reach them.

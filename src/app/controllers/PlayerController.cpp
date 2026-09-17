@@ -596,6 +596,55 @@ void PlayerController::setPreferredSource(int index)
     startAttempt(m_lastPositionMs);
 }
 
+void PlayerController::reloadStream()
+{
+    if (!m_active || !m_reporting || m_itemId.isEmpty())
+        return;
+
+    const bool keepPaused = paused();
+    const QString sourceId = hasTicket() ? currentCandidate()->mediaSourceId : QString();
+    // Supersedes any recovery in flight: its reply would otherwise land on top
+    // of this one and reload a second time.
+    const int recoveryToken = ++m_recoveryToken;
+    const int generation = m_generation;
+    const QString itemId = m_itemId;
+    m_recovering = true;
+    m_watchdog.stop();
+    qCInfo(logPlayback) << "reloading stream for" << itemId << "at" << m_lastPositionMs << "ms";
+
+    m_client->playbackInfo(itemId, m_lastPositionMs * kTicksPerMs)
+        .then(this, [this, generation, recoveryToken, itemId, sourceId,
+                     keepPaused](const Result<PlaybackTicket> &result) {
+            if (generation != m_generation || recoveryToken != m_recoveryToken || !m_active ||
+                itemId != m_itemId)
+                return;
+            m_recovering = false;
+            if (!result.ok()) {
+                // The stream already playing is still fine; say why nothing changed.
+                qCWarning(logPlayback) << "stream reload failed:" << result.error;
+                emit sourceSwitchFailed(tr("Could not reload the stream: %1").arg(result.error));
+                if (!paused())
+                    m_watchdog.start();
+                return;
+            }
+            m_ticket = result.value;
+            m_ticketItemId = m_itemId;
+            qsizetype index = m_ticket.indexOfSourceId(sourceId);
+            if (index < 0 || !m_ticket.sources[index].isValid())
+                index = m_ticket.defaultSourceIndex();
+            m_sourceIndex = -1;
+            selectSource(index);
+            emit sourcesChanged();
+            m_rung = 0;
+            m_stallStep = 0;
+            m_healthyTicks = 0;
+            m_recoverRetries = 0;
+            emit streamMethodChanged();
+            m_initiallyPaused = keepPaused;
+            startAttempt(m_lastPositionMs);
+        });
+}
+
 void PlayerController::playUrl(const QUrl &url, const QString &title)
 {
     // A raw URL replaces the playing item like any other start does, and the
