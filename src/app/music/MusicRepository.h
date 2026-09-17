@@ -56,6 +56,13 @@ public:
     QFuture<Result<QList<Track>>> resolveStation(const QString &libraryId, const Station &station);
     void markStale(Freshness freshness);
 
+    QFuture<Result<Page<Album>>> browseAlbums(const MusicQuery &query, int startIndex, int limit);
+    QFuture<Result<Page<Artist>>> browseArtists(const MusicQuery &query, int startIndex, int limit);
+    QFuture<Result<Page<Track>>> browseTracks(const MusicQuery &query, int startIndex, int limit);
+    QFuture<Result<Page<Playlist>>> browsePlaylists(const MusicQuery &query, int startIndex, int limit);
+    QFuture<Result<QList<Track>>> sampleTracks(const MusicQuery &query, int limit = 200);
+    void noteUserDataChanged(const QString &itemId);
+
     void clear();
     void setClockForTests(std::function<QDateTime()> clock);
     void setShuffleSeedForTests(quint32 seed);

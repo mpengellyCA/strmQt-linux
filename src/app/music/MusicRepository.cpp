@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "app/music/Fanout.h"
+#include "app/music/MusicQueryTranslator.h"
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
 #include "server/emby/EmbyMusicMapper.h"
@@ -67,6 +68,19 @@ ItemsQuery libraryQuery(const QString &libraryId, const QString &type)
     query.includeItemTypes = {type};
     query.recursive = true;
     return query;
+}
+
+template<class T, class Parse>
+Result<Page<T>> toPage(const Result<QJsonDocument> &result, int startIndex, Parse parse)
+{
+    if (!result.ok())
+        return Result<Page<T>>::failure(result.error);
+    Page<T> page;
+    page.items = parse(itemsOf(result.value));
+    page.startIndex = startIndex;
+    page.totalRecordCount = qMax(result.value.object().value(QStringLiteral("TotalRecordCount")).toInt(),
+                                 startIndex + static_cast<int>(page.items.size()));
+    return Result<Page<T>>::success(page);
 }
 
 } // namespace
@@ -852,6 +866,93 @@ QFuture<Result<QList<Track>>> MusicRepository::resolveStation(const QString &lib
             std::shuffle(r.value.begin(), r.value.end(), m_rng);
         return r;
     });
+}
+
+QFuture<Result<Page<Album>>> MusicRepository::browseAlbums(const MusicQuery &query, int startIndex, int limit)
+{
+    MusicQuery scoped = query;
+    scoped.section = Section::Albums;
+    const ItemsQuery items = MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit);
+    return fetchItems(items).then(this, [startIndex](Result<QJsonDocument> r) {
+        return toPage<Album>(r, startIndex, &emby::parseAlbums);
+    });
+}
+
+QFuture<Result<Page<Artist>>> MusicRepository::browseArtists(const MusicQuery &query, int startIndex, int limit)
+{
+    MusicQuery scoped = query;
+    scoped.section = Section::Artists;
+    const ItemsQuery items = MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit);
+    QUrlQuery params = emby::EmbyClient::artistParams(QStringLiteral("{uid}"), items);
+    params.addQueryItem(QStringLiteral("Fields"), QStringLiteral("ItemCounts,DateCreated"));
+    const QString path = query.artistMode == ArtistMode::AlbumArtists ? QStringLiteral("/Artists/AlbumArtists")
+                                                                      : QStringLiteral("/Artists");
+    return m_client->getJson(path, params).then(this, [startIndex](Result<QJsonDocument> r) {
+        return toPage<Artist>(r, startIndex, &emby::parseArtists);
+    });
+}
+
+QFuture<Result<Page<Track>>> MusicRepository::browseTracks(const MusicQuery &query, int startIndex, int limit)
+{
+    MusicQuery scoped = query;
+    scoped.section = Section::Songs;
+    QUrlQuery params = emby::EmbyClient::itemsParams(MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit));
+    if (query.format == FormatFilter::HiRes && emby::caps::kHiResFilter
+        && MusicQueryTranslator::formatFilterable(Section::Songs)) {
+        params.addQueryItem(QString::fromLatin1(emby::caps::kHiResQueryKey),
+                            QString::fromLatin1(emby::caps::kHiResQueryValue));
+    }
+    return m_client->getJson(QStringLiteral("/Users/{uid}/Items"), params)
+        .then(this, [startIndex](Result<QJsonDocument> r) {
+            return toPage<Track>(r, startIndex, &emby::parseTracks);
+        });
+}
+
+QFuture<Result<Page<Playlist>>> MusicRepository::browsePlaylists(const MusicQuery &query, int startIndex, int limit)
+{
+    MusicQuery scoped = query;
+    scoped.section = Section::Playlists;
+    const ItemsQuery items = MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit);
+    return fetchItems(items).then(this, [startIndex](Result<QJsonDocument> r) {
+        return toPage<Playlist>(r, startIndex, &emby::parsePlaylists);
+    });
+}
+
+QFuture<Result<QList<Track>>> MusicRepository::sampleTracks(const MusicQuery &query, int limit)
+{
+    MusicQuery scoped = query;
+    scoped.section = Section::Songs;
+    scoped.sortKey = QStringLiteral("random");
+    scoped.letter.clear();
+    return browseTracks(scoped, 0, limit).then(this, [](Result<Page<Track>> r) {
+        if (!r.ok())
+            return Result<QList<Track>>::failure(r.error);
+        return Result<QList<Track>>::success(r.value.items);
+    });
+}
+
+void MusicRepository::noteUserDataChanged(const QString &itemId)
+{
+    if (itemId.isEmpty())
+        return;
+    auto hasTrack = [&](const QList<Track> &tracks) {
+        return std::any_of(tracks.cbegin(), tracks.cend(), [&](const Track &t) { return t.id == itemId; });
+    };
+    m_trackCache.removeIf([&](const QString &, const QList<Track> &tracks) { return hasTrack(tracks); });
+    m_sleeveCache.removeIf([&](const QString &, const AlbumSleeve &sleeve) {
+        if (sleeve.album.id == itemId)
+            return true;
+        for (const Disc &disc : sleeve.discs) {
+            if (hasTrack(disc.tracks))
+                return true;
+        }
+        return std::any_of(sleeve.moreByArtist.cbegin(), sleeve.moreByArtist.cend(),
+                           [&](const Album &album) { return album.id == itemId; });
+    });
+    m_continueCache.removeIf([&](const QString &, const ContinueListening &entry) {
+        return entry.album.id == itemId || entry.resumeTrack.id == itemId;
+    });
+    markStale(Freshness::Favourites);
 }
 
 } // namespace strmqt::music

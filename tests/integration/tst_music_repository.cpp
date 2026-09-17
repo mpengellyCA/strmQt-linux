@@ -103,6 +103,12 @@ private slots:
     void moreLikeDeduplicatesInstantMix();
     void markStaleRefetchesListeningShelves();
 
+    void browseAlbumsPagesWithTheTranslatedQuery();
+    void browseArtistsPicksTheEndpointByMode();
+    void browseTracksAddsHiResOnlyWhenMeasured();
+    void sampleTracksIsRandomAcrossTheFilteredScope();
+    void userDataChangeDropsCachesHoldingTheItem();
+
 private:
     void routeAlbum(const QString &albumId, int trackCount);
 
@@ -522,6 +528,101 @@ void MusicRepositoryTest::markStaleRefetchesListeningShelves()
     m_repo->markStale(Freshness::Favourites);
     QVERIFY(waitFor(m_repo->forgottenFavourites(kLibrary)).ok());
     QVERIFY(m_mock->requestCount() > count);
+}
+
+void MusicRepositoryTest::browseAlbumsPagesWithTheTranslatedQuery()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "MusicAlbum"}, {"StartIndex", "50"}}, 200,
+                          page({albumJson("b1"), albumJson("b2")}, 10)); // under-reported total
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    query.sortKey = QStringLiteral("year");
+    query.descending = true;
+    query.favouritesOnly = true;
+    const auto result = waitFor(m_repo->browseAlbums(query, 50, 50));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.items.size(), 2);
+    QCOMPARE(result.value.startIndex, 50);
+    QCOMPARE(result.value.totalRecordCount, 52);
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    QCOMPARE(sent.queryItemValue("SortBy"), QStringLiteral("ProductionYear,PremiereDate,SortName"));
+    QCOMPARE(sent.queryItemValue("SortOrder"), QStringLiteral("Descending"));
+    QCOMPARE(sent.queryItemValue("Filters"), QStringLiteral("IsFavorite"));
+    QCOMPARE(sent.queryItemValue("ParentId"), kLibrary);
+}
+
+void MusicRepositoryTest::browseArtistsPicksTheEndpointByMode()
+{
+    const QByteArray body = page({QJsonObject{{"Id", "ar1"}, {"Name", "A"}, {"AlbumCount", 4}}}, 1);
+    m_mock->addRoute("GET", "/Artists/AlbumArtists", 200, body);
+    m_mock->addRoute("GET", "/Artists", 200, body);
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    query.section = Section::Artists;
+    query.letter = QStringLiteral("A");
+
+    const auto filed = waitFor(m_repo->browseArtists(query, 0, 100));
+    QVERIFY2(filed.ok(), qPrintable(filed.error));
+    QCOMPARE(filed.value.items.first().albumCount, 4);
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", "/Artists/AlbumArtists").query);
+    QCOMPARE(sent.queryItemValue("UserId"), kUserId);
+    QCOMPARE(sent.queryItemValue("NameStartsWithOrGreater"), QStringLiteral("A"));
+    QCOMPARE(sent.queryItemValue("NameLessThan"), QStringLiteral("B"));
+    QVERIFY(sent.queryItemValue("Fields").contains("ItemCounts"));
+
+    query.artistMode = ArtistMode::Everyone;
+    QVERIFY(waitFor(m_repo->browseArtists(query, 0, 100)).ok());
+    QCOMPARE(m_mock->lastRequestFor("GET", "/Artists").path, QStringLiteral("/Artists"));
+}
+
+void MusicRepositoryTest::browseTracksAddsHiResOnlyWhenMeasured()
+{
+    m_mock->addRoute("GET", itemsPath(), 200, page({trackJson("t", "al", 1, 1)}));
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    query.section = Section::Songs;
+    query.format = FormatFilter::HiRes;
+    QVERIFY(waitFor(m_repo->browseTracks(query, 0, 100)).ok());
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    const QString key = QString::fromLatin1(emby::caps::kHiResQueryKey);
+    if (emby::caps::kHiResFilter && emby::caps::kAudioCodecsFiltersAudio)
+        QCOMPARE(sent.queryItemValue(key), QString::fromLatin1(emby::caps::kHiResQueryValue));
+    else
+        QVERIFY(key.isEmpty() || !sent.hasQueryItem(key));
+}
+
+void MusicRepositoryTest::sampleTracksIsRandomAcrossTheFilteredScope()
+{
+    m_mock->addRoute("GET", itemsPath(), 200, page({trackJson("s1", "al", 1, 1)}));
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    query.section = Section::Albums;
+    query.sortKey = QStringLiteral("name");
+    query.letter = QStringLiteral("Q");
+    query.genreIds = {QStringLiteral("g1")};
+    const auto result = waitFor(m_repo->sampleTracks(query, 150));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    QCOMPARE(sent.queryItemValue("IncludeItemTypes"), QStringLiteral("Audio"));
+    QCOMPARE(sent.queryItemValue("SortBy"), QStringLiteral("Random"));
+    QCOMPARE(sent.queryItemValue("GenreIds"), QStringLiteral("g1"));
+    QCOMPARE(sent.queryItemValue("Limit"), QStringLiteral("150"));
+    QVERIFY(!sent.hasQueryItem("NameLessThan"));
+}
+
+void MusicRepositoryTest::userDataChangeDropsCachesHoldingTheItem()
+{
+    routeAlbum(QStringLiteral("al1"), 3);
+    routeAlbum(QStringLiteral("al2"), 3);
+    QVERIFY(waitFor(m_repo->albumSleeve(QStringLiteral("al1"))).ok());
+    QVERIFY(waitFor(m_repo->albumSleeve(QStringLiteral("al2"))).ok());
+    const int cached = m_mock->requestCount();
+
+    m_repo->noteUserDataChanged(QStringLiteral("al1-t2"));
+    QVERIFY(waitFor(m_repo->albumSleeve(QStringLiteral("al2"))).ok());
+    QCOMPARE(m_mock->requestCount(), cached); // untouched album stays cached
+    QVERIFY(waitFor(m_repo->albumSleeve(QStringLiteral("al1"))).ok());
+    QVERIFY(m_mock->requestCount() > cached);
 }
 
 QTEST_MAIN(MusicRepositoryTest)

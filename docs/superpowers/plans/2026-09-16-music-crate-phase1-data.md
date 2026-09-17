@@ -4798,7 +4798,7 @@ Rules:
   - `ParentId` stays the library.
 - `noteUserDataChanged(id)` removes every cached track list, sleeve and continue-listening entry that contains the id (as an album, track or more-by album), then calls `markStale(Freshness::Favourites)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add these slots:
 
@@ -4909,12 +4909,12 @@ void MusicRepositoryTest::userDataChangeDropsCachesHoldingTheItem()
 
 `routeAlbum` does not route "more by" for `ar1`, so those requests 404 and come back as empty secondaries, which is fine for these tests.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_repository`
 Expected: a compile error (`browseAlbums` is not a member).
 
-- [ ] **Step 3: Extend the header**
+- [x] **Step 3: Extend the header**
 
 Add `#include "server/dto/music/MusicQuery.h"` if it is not already included. Add these public members:
 
@@ -4927,7 +4927,7 @@ Add `#include "server/dto/music/MusicQuery.h"` if it is not already included. Ad
     void noteUserDataChanged(const QString &itemId);
 ```
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Add `#include "app/music/MusicQueryTranslator.h"`. Put this helper in the anonymous namespace:
 
@@ -5041,12 +5041,12 @@ void MusicRepository::noteUserDataChanged(const QString &itemId)
 
 `ItemsQuery.limit` of 0 is sent as `Limit=0`, and `startIndex` is echoed as given.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_repository && ctest --preset dev -R tst_music_repository --output-on-failure`
 Expected: PASS (22 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/app/music/MusicRepository.* tests/integration/tst_music_repository.cpp
