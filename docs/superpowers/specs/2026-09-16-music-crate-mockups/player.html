@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500;600&family=Public+Sans:wght@300..700&display=swap" rel="stylesheet">
+<style>
+:root{--ground:#0C0B0A;--surface:#141210;--raised:#1D1A17;--overlay:#262220;--hair:#2E2A26;--amber:#F0A02A;--t1:#F5F1EA;--t2:#A29A8E;--t3:#6f685f;
+--display:'Archivo',sans-serif;--body:'Public Sans',sans-serif;--mono:'IBM Plex Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#070605;color:var(--t1);font-family:var(--body);padding:32px 40px 80px}
+.intro{max-width:1100px;margin:0 auto 28px}
+.intro h1{font-family:var(--display);font-stretch:112%;font-weight:800;font-size:30px}
+.intro p{color:var(--t2);margin-top:8px;line-height:1.55;font-size:15px}
+.dir{max-width:1320px;margin:0 auto 18px;cursor:pointer;border-radius:14px;border:2px solid transparent;padding:14px}
+.dir:hover{background:#0f0d0b}.dir.selected{border-color:var(--amber);background:#110e0a}
+.dir-head{display:flex;align-items:baseline;gap:14px;margin:0 6px 12px}
+.dir-head .letter{font-family:var(--mono);color:var(--amber);font-size:13px;border:1px solid var(--amber);border-radius:4px;padding:2px 7px}
+.dir-head h2{font-family:var(--display);font-weight:700;font-size:22px}
+.dir-head span{color:var(--t2);font-size:14px}
+.frame{position:relative;height:700px;border-radius:10px;overflow:hidden;background:var(--ground);border:1px solid var(--hair)}
+.notes{max-width:1320px;margin:0 auto 56px;color:var(--t2);font-size:13.5px;line-height:1.6;padding:0 22px;columns:2;column-gap:40px}
+.notes b{color:var(--t1)}
+.c1{background:radial-gradient(circle at 30% 35%,#e8c27a 0 18%,transparent 19%),linear-gradient(160deg,#7a2d1c,#2a0f0a)}
+.c3{background:linear-gradient(135deg,#2e4a5c 0 50%,#c9b48a 50% 100%)}
+.c4{background:radial-gradient(circle at 70% 70%,#f2eee4 0 22%,#1b1b1b 23%)}
+.c5{background:conic-gradient(from 30deg,#6b8f71,#1f3527,#c4a35a,#6b8f71)}
+.c6{background:linear-gradient(#0d0d0d 0 60%,#b33a2c 60% 64%,#0d0d0d 64%)}
+.c7{background:radial-gradient(ellipse at 50% 120%,#f5a35c,#7d2f4f 55%,#1d0f24)}
+.c9{background:linear-gradient(200deg,#d9d3c3,#8c8676)}
+.c10{background:linear-gradient(90deg,#1e2d6b 0 33%,#e6d9b8 33% 66%,#b8412f 66%)}
+.c11{background:radial-gradient(circle at 20% 80%,#50b3a2 0 30%,transparent 31%),#233}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--t2);text-transform:uppercase}
+.wash{position:absolute;inset:0;background:linear-gradient(180deg,rgba(122,45,28,.42),rgba(12,11,10,.2) 55%,var(--ground))}
+.pp{width:64px;height:64px;border-radius:50%;background:var(--t1);color:#111;display:grid;place-items:center;font-size:20px}
+.tr{display:flex;gap:26px;align-items:center;font-size:22px}
+.tr .dim{color:var(--t2);font-size:18px}
+.tr .act{color:var(--amber);font-size:18px}
+.scrub{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:12px;color:var(--t2)}
+.scrub .l{flex:1;height:4px;background:#3a342e;border-radius:2px;position:relative}
+.scrub .l:after{content:"";position:absolute;left:0;top:0;bottom:0;width:38%;background:var(--amber);border-radius:2px}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--hair)}
+.tabs span{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:15px;text-transform:uppercase;color:var(--t3);padding-bottom:10px}
+.tabs span.on{color:var(--t1);box-shadow:inset 0 -3px var(--amber)}
+.q{display:grid;grid-template-columns:30px 1fr 50px;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(46,42,38,.7);font-size:14px}
+.q .n{font-family:var(--mono);font-size:12px;color:var(--t3);text-align:right}
+.q .d{font-family:var(--mono);font-size:12px;color:var(--t2);text-align:right}
+.q small{display:block;color:var(--t2);font-size:12px}
+.q.now{color:var(--amber)}.q.now .n{color:var(--amber)}
+.q.played{color:var(--t3)}
+.readout{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--t2)}
+.readout b{color:var(--amber);font-weight:500}
+
+/* A */
+.A .grid{position:relative;display:grid;grid-template-columns:500px 1fr;gap:56px;padding:48px 56px;height:100%}
+.A .cover{width:500px;height:500px;box-shadow:0 40px 90px rgba(0,0,0,.7);border-radius:3px}
+.A .under{margin-top:18px;display:flex;justify-content:space-between}
+.A h3{font-family:var(--display);font-stretch:120%;font-weight:850;font-size:58px;line-height:.92;letter-spacing:-.02em;text-transform:uppercase;margin:10px 0 12px}
+.A .by{font-size:17px;color:var(--t2)} .A .by b{color:var(--t1)}
+.A .ctl{margin:28px 0 30px}
+.A .ctl .scrub{margin-bottom:22px}
+.A .tabs{margin-bottom:6px}
+
+/* B */
+.B .wrap{position:relative;display:grid;grid-template-columns:1fr 440px;height:100%}
+.B .stage{position:relative;padding:40px 56px}
+.B .deck{position:relative;height:420px;margin-top:10px}
+.B .vinyl{position:absolute;left:190px;top:10px;width:400px;height:400px;border-radius:50%;background:repeating-radial-gradient(circle,#0e0e0e 0 2px,#1c1c1c 2px 3px);box-shadow:0 30px 80px rgba(0,0,0,.7);animation:spin 6s linear infinite}
+.B .vinyl:before{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 0 40deg,rgba(255,255,255,.07) 60deg,transparent 80deg 220deg,rgba(255,255,255,.05) 240deg,transparent 260deg)}
+.B .vinyl:after{content:"";position:absolute;inset:138px;border-radius:50%;background:radial-gradient(circle at 30% 35%,#e8c27a 0 18%,transparent 19%),linear-gradient(160deg,#7a2d1c,#2a0f0a);box-shadow:0 0 0 1px #000}
+@keyframes spin{to{transform:rotate(360deg)}}
+.B .sleeve{position:absolute;left:0;top:0;width:420px;height:420px;box-shadow:20px 30px 70px rgba(0,0,0,.7);border-radius:2px}
+.B .info{margin-top:28px;display:flex;align-items:flex-end;gap:30px}
+.B .info h3{font-family:var(--display);font-stretch:118%;font-weight:850;font-size:40px;line-height:1;text-transform:uppercase}
+.B .info .by{color:var(--t2);font-size:15px;margin-top:6px} .B .info .by b{color:var(--t1)}
+.B .info .tr{margin-left:auto}
+.B .stage .scrub{margin-top:22px}
+.B .side{position:relative;background:rgba(20,18,16,.82);border-left:1px solid var(--hair);padding:36px 28px}
+.B .side .albhead{display:flex;gap:14px;align-items:center;margin:18px 0 10px}
+.B .side .albhead .cv{width:52px;height:52px;border-radius:2px}
+.B .side .albhead b{font-family:var(--display);font-weight:700;font-size:16px;display:block}
+
+/* C */
+.C .bg{position:absolute;inset:-40px;background:radial-gradient(circle at 30% 35%,#e8c27a 0 18%,transparent 19%),linear-gradient(160deg,#7a2d1c,#2a0f0a);filter:blur(60px) saturate(.8);opacity:.55}
+.C .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,11,10,.2),rgba(12,11,10,.55) 50%,rgba(12,11,10,.96) 78%)}
+.C .content{position:absolute;inset:0;padding:40px 56px}
+.C .top{display:flex;gap:40px;align-items:flex-end}
+.C .cover{width:300px;height:300px;box-shadow:0 30px 70px rgba(0,0,0,.6);border-radius:3px;flex:none}
+.C h3{font-family:var(--display);font-stretch:125%;font-weight:900;font-size:104px;line-height:.86;letter-spacing:-.035em;text-transform:uppercase}
+.C .by{font-size:18px;color:#d9cfc2;margin-top:14px} .C .by b{color:var(--t1)}
+.C .ctlrow{display:flex;align-items:center;gap:40px;margin-top:34px}
+.C .ctlrow .scrub{flex:1}
+.C .strip{position:absolute;left:56px;right:0;bottom:30px}
+.C .strip .mono{margin-bottom:12px;display:flex;gap:20px}
+.C .strip .mono span.on{color:var(--amber)}
+.C .sleeves{display:flex;gap:16px}
+.C .sl{width:132px;flex:none}
+.C .sl .cv{width:132px;height:132px;border-radius:3px}
+.C .sl p{font-size:13px;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.C .sl small{color:var(--t2);font-size:11.5px;font-family:var(--mono)}
+.C .sl.now .cv{outline:3px solid var(--amber);outline-offset:3px}
+.C .sl.played{opacity:.4}
+</style>
+</head>
+<body>
+<div class="intro">
+  <h1>Full-screen player: which one?</h1>
+  <p>All three are the full-screen Now Playing view in the Crate style. The docked bar stays as in the Home mockup: a square cover flush to the left, links for title, artist and album, the transport controls, and a 2 px playhead along the top edge. Today's "continuous sleeve" animation still carries the cover from the bar into this view. <b>Queue, lyrics and album</b> are reachable in all three; they differ in what takes centre stage.</p>
+</div>
+
+<div class="dir" data-choice="sleeve" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">A</span><h2>Sleeve and liner</h2><span>A huge cover on the left, loud type on the right, and tabs for Up next, Lyrics, Album and Credits.</span></div>
+  <div class="frame A"><div class="wash"></div>
+    <div class="grid">
+      <div><div class="cover c1"></div>
+        <div class="under"><span class="readout"><b>FLAC</b> 24-BIT / 96 kHz · 2,304 kbps</span><span class="readout">DIRECT PLAY</span></div></div>
+      <div>
+        <div class="mono">Playing from · Sunburned Almanac</div>
+        <h3>Glass<br>Harbour</h3>
+        <div class="by"><b>Hollow Coves</b> · Sunburned Almanac · 2023</div>
+        <div class="ctl">
+          <div class="scrub">1:52<div class="l"></div>4:57</div>
+          <div class="tr"><span class="act">⇄</span><span>⏮</span><span class="pp">❚❚</span><span>⏭</span><span class="dim">↻</span><span class="dim" style="margin-left:auto">♡</span><span class="dim">＋</span><span class="dim">⋯</span></div>
+        </div>
+        <div class="tabs"><span class="on">Up next</span><span>Lyrics</span><span>Album</span><span>Credits</span></div>
+        <div class="q played"><span class="n">4</span><span>Weathervane<small>Hollow Coves</small></span><span class="d">3:41</span></div>
+        <div class="q now"><span class="n">▶</span><span>Glass Harbour<small>Hollow Coves</small></span><span class="d">4:57</span></div>
+        <div class="q"><span class="n">6</span><span>Saltwater Letters<small>Hollow Coves</small></span><span class="d">5:12</span></div>
+        <div class="q"><span class="n">7</span><span>The Almanac<small>Hollow Coves feat. Mara Quell</small></span><span class="d">6:03</span></div>
+      </div>
+    </div></div>
+</div>
+<div class="notes"><p><b>Good:</b> the clearest hierarchy, and the closest match to Home's hero, so going from Home to the player feels like one continuous move. The tabs keep lyrics and credits a single press away without cluttering the view.</p><p><b>Cost:</b> it's the safest of the three. The cover is static, so the only motion is the wash and the sleeve animation.</p></div>
+
+<div class="dir" data-choice="vinyl" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">B</span><h2>Out of the sleeve</h2><span>The record slides out of its sleeve and spins while playing. The album's tracklist sits on the side.</span></div>
+  <div class="frame B"><div class="wash"></div>
+    <div class="wrap">
+      <div class="stage">
+        <div class="mono">Playing from · Sunburned Almanac</div>
+        <div class="deck"><div class="vinyl"></div><div class="sleeve c1"></div></div>
+        <div class="info"><div><h3>Glass Harbour</h3><div class="by"><b>Hollow Coves</b> · 2023</div></div>
+          <div class="tr"><span class="act">⇄</span><span>⏮</span><span class="pp">❚❚</span><span>⏭</span><span class="dim">↻</span><span class="dim">♡</span></div></div>
+        <div class="scrub">1:52<div class="l"></div>4:57</div>
+        <div class="readout" style="margin-top:12px"><b>FLAC</b> 24/96 · DIRECT PLAY</div>
+      </div>
+      <div class="side">
+        <div class="tabs"><span>Up next</span><span class="on">Album</span><span>Lyrics</span></div>
+        <div class="albhead"><div class="cv c1"></div><div><b>Sunburned Almanac</b><span class="mono">Side A · 12 tracks · 48 min</span></div></div>
+        <div class="q played"><span class="n">3</span><span>Low Tide Radio</span><span class="d">4:10</span></div>
+        <div class="q played"><span class="n">4</span><span>Weathervane</span><span class="d">3:41</span></div>
+        <div class="q now"><span class="n">▶</span><span>Glass Harbour</span><span class="d">4:57</span></div>
+        <div class="q"><span class="n">6</span><span>Saltwater Letters</span><span class="d">5:12</span></div>
+        <div class="q"><span class="n">7</span><span>The Almanac</span><span class="d">6:03</span></div>
+        <div class="q"><span class="n">8</span><span>Sextant</span><span class="d">2:48</span></div>
+      </div>
+    </div></div>
+</div>
+<div class="notes"><p><b>Good:</b> the most memorable. The spinning disc is the "is it playing?" signal: it slows to a stop on pause and slides back into the sleeve on stop. It's pure tactile Crate.</p><p><b>Cost:</b> the animation runs for as long as music plays, so it needs care on low-power hardware (one rotating layer, paused when the window is hidden). It also doesn't fit a digital-only single as well as it fits an album.</p></div>
+
+<div class="dir" data-choice="poster" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">C</span><h2>Gig poster</h2><span>The cover blurs into the whole room, the title is set huge, and the queue is a strip of sleeves to flick through.</span></div>
+  <div class="frame C"><div class="bg"></div><div class="shade"></div>
+    <div class="content">
+      <div class="mono" style="margin-bottom:20px">Playing from · Sunburned Almanac · <span style="color:var(--amber)">FLAC 24/96</span></div>
+      <div class="top"><div class="cover c1"></div>
+        <div><h3>Glass<br>Harbour</h3><div class="by"><b>Hollow Coves</b> · Sunburned Almanac</div></div></div>
+      <div class="ctlrow"><div class="tr"><span class="act">⇄</span><span>⏮</span><span class="pp">❚❚</span><span>⏭</span><span class="dim">↻</span></div>
+        <div class="scrub">1:52<div class="l"></div>4:57</div><div class="tr"><span class="dim">♡</span><span class="dim">≡</span><span class="dim">❝</span></div></div>
+      <div class="strip">
+        <div class="mono"><span class="on">Up next</span><span>Lyrics</span><span>Credits</span></div>
+        <div class="sleeves">
+          <div class="sl played"><div class="cv c1"></div><p>Weathervane</p><small>3:41</small></div>
+          <div class="sl now"><div class="cv c1"></div><p>Glass Harbour</p><small>NOW</small></div>
+          <div class="sl"><div class="cv c1"></div><p>Saltwater Letters</p><small>5:12</small></div>
+          <div class="sl"><div class="cv c7"></div><p>Dusk Report</p><small>4:20</small></div>
+          <div class="sl"><div class="cv c3"></div><p>Northern Lines</p><small>6:11</small></div>
+          <div class="sl"><div class="cv c10"></div><p>Tricolour Summer</p><small>3:02</small></div>
+          <div class="sl"><div class="cv c5"></div><p>Fernwork</p><small>7:45</small></div>
+        </div>
+      </div>
+    </div></div>
+</div>
+<div class="notes"><p><b>Good:</b> it looks spectacular on a TV from across the room, and the queue strip makes a mixed queue (shuffle, stations) readable as covers. Left and right on the D-pad flick through what's coming.</p><p><b>Cost:</b> very long titles need to shrink to fit. The blurred background has to respect the existing colour clamp that protects amber focus contrast. And the strip shows fewer upcoming tracks than a list.</p></div>
+</body>
+</html>

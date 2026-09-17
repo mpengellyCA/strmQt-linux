@@ -16,3 +16,6 @@ packaging/arch/src/
 packaging/arch/strmqt/
 *.pkg.tar.zst
 *.AppImage
+
+# Brainstorming companion scratch
+.superpowers/

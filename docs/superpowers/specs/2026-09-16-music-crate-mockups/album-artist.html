@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500;600&family=Public+Sans:wght@300..700&display=swap" rel="stylesheet">
+<style>
+:root{--ground:#0C0B0A;--surface:#141210;--raised:#1D1A17;--overlay:#262220;--hair:#2E2A26;--amber:#F0A02A;--t1:#F5F1EA;--t2:#A29A8E;--t3:#6f685f;
+--display:'Archivo',sans-serif;--body:'Public Sans',sans-serif;--mono:'IBM Plex Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#070605;color:var(--t1);font-family:var(--body);padding:32px 40px 80px}
+.intro{max-width:1100px;margin:0 auto 28px}
+.intro h1{font-family:var(--display);font-stretch:112%;font-weight:800;font-size:30px}
+.intro p{color:var(--t2);margin-top:8px;line-height:1.55;font-size:15px}
+h2.lab{max-width:1320px;margin:0 auto 12px;font-family:var(--display);font-weight:700;font-size:20px;padding:0 6px}
+h2.lab span{font-family:var(--body);font-weight:400;color:var(--t2);font-size:14px;margin-left:10px}
+.frame{max-width:1320px;margin:0 auto 20px;position:relative;height:720px;border-radius:10px;overflow:hidden;background:var(--ground);border:1px solid var(--hair);display:flex}
+.rail{width:64px;background:var(--surface);border-right:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding-top:18px;gap:18px;flex:none}
+.rail i{display:block;width:22px;height:22px;border-radius:5px;background:var(--overlay)}.rail i.on{background:var(--amber)}
+.main{flex:1;position:relative;overflow:hidden}
+.notes{max-width:1320px;margin:0 auto 56px;color:var(--t2);font-size:13.5px;line-height:1.6;padding:0 8px;columns:2;column-gap:40px}
+.notes b{color:var(--t1)}
+.c1{background:radial-gradient(circle at 30% 35%,#e8c27a 0 18%,transparent 19%),linear-gradient(160deg,#7a2d1c,#2a0f0a)}
+.c3{background:linear-gradient(135deg,#2e4a5c 0 50%,#c9b48a 50% 100%)}
+.c4{background:radial-gradient(circle at 70% 70%,#f2eee4 0 22%,#1b1b1b 23%)}
+.c5{background:conic-gradient(from 30deg,#6b8f71,#1f3527,#c4a35a,#6b8f71)}
+.c6{background:linear-gradient(#0d0d0d 0 60%,#b33a2c 60% 64%,#0d0d0d 64%)}
+.c7{background:radial-gradient(ellipse at 50% 120%,#f5a35c,#7d2f4f 55%,#1d0f24)}
+.c9{background:linear-gradient(200deg,#d9d3c3,#8c8676)}
+.c10{background:linear-gradient(90deg,#1e2d6b 0 33%,#e6d9b8 33% 66%,#b8412f 66%)}
+.c11{background:radial-gradient(circle at 20% 80%,#50b3a2 0 30%,transparent 31%),#233}
+.c12{background:linear-gradient(45deg,#3b2a4d,#0b0b12)}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--t2);text-transform:uppercase}
+.btn{font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:11px 18px;border-radius:999px;background:var(--t1);color:#111;white-space:nowrap}
+.btn.ghost{background:transparent;color:var(--t1);border:1px solid #4a443d}
+.wash{position:absolute;inset:0 0 auto 0;height:420px;background:linear-gradient(180deg,rgba(122,45,28,.42),rgba(12,11,10,0))}
+.badge{font-family:var(--mono);font-size:10.5px;padding:2px 6px;border:1px solid #4a443d;border-radius:3px;color:var(--t2)}
+.badge.hi{border-color:var(--amber);color:var(--amber)}
+
+/* album */
+.al .pad{position:relative;display:grid;grid-template-columns:340px 1fr;gap:44px;padding:36px 44px}
+.al .cover{width:340px;height:340px;border-radius:3px;box-shadow:0 30px 70px rgba(0,0,0,.7)}
+.al .liner{margin-top:22px;border-top:1px solid var(--hair);padding-top:14px}
+.al .liner dl{display:grid;grid-template-columns:90px 1fr;gap:6px 10px;font-size:13px}
+.al .liner dt{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--t3);text-transform:uppercase;padding-top:2px}
+.al .liner dd{color:var(--t2)}
+.al .liner dd a{color:var(--t1);text-decoration:underline;text-decoration-color:#4a443d;text-underline-offset:3px}
+.al h3{font-family:var(--display);font-stretch:120%;font-weight:850;font-size:60px;line-height:.92;letter-spacing:-.02em;text-transform:uppercase;margin:10px 0 12px}
+.al .by{font-size:17px;color:var(--t2)} .al .by b{color:var(--t1);text-decoration:underline;text-decoration-color:var(--amber);text-underline-offset:4px}
+.al .facts{display:flex;gap:10px;align-items:center;margin:14px 0 20px}
+.al .btns{display:flex;gap:10px;margin-bottom:24px}
+.al .disc{display:flex;align-items:baseline;gap:12px;margin:14px 0 4px}
+.al .disc b{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:15px;text-transform:uppercase}
+.al .row{display:grid;grid-template-columns:34px 1fr 90px 50px 24px;gap:12px;align-items:center;padding:9px 8px;border-bottom:1px solid rgba(46,42,38,.7);font-size:14px}
+.al .row .n{font-family:var(--mono);font-size:12px;color:var(--t3);text-align:right}
+.al .row .d{font-family:var(--mono);font-size:12px;color:var(--t2);text-align:right}
+.al .row small{color:var(--t2)}
+.al .row.now{color:var(--amber)} .al .row.now .n{color:var(--amber)}
+.al .row.focus{outline:2px solid var(--amber);outline-offset:-2px;border-radius:4px}
+.al .more{margin-top:26px}
+.al .more .shelf{display:flex;gap:16px;margin-top:10px}
+.al .more .shelf div{width:96px;height:96px;border-radius:3px}
+
+/* artist */
+.ar .hero{position:relative;height:300px;overflow:hidden}
+.ar .hero .img{position:absolute;inset:0;background:radial-gradient(circle at 75% 40%,#c7a27a 0 12%,#6b4a36 30%,#241812 60%,#0c0b0a 90%);opacity:.9}
+.ar .hero .fade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(12,11,10,.95) 0 35%,rgba(12,11,10,.2) 70%),linear-gradient(180deg,transparent 60%,var(--ground))}
+.ar .hero .txt{position:absolute;left:44px;bottom:30px}
+.ar .hero h3{font-family:var(--display);font-stretch:125%;font-weight:900;font-size:84px;line-height:.88;letter-spacing:-.03em;text-transform:uppercase;margin:8px 0 14px}
+.ar .hero .btns{display:flex;gap:10px;margin-top:16px}
+.ar .body{padding:6px 44px;display:grid;grid-template-columns:1fr 400px;gap:40px}
+.ar .tabs{display:flex;gap:26px;border-bottom:1px solid var(--hair);margin-bottom:18px}
+.ar .tabs span{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:16px;text-transform:uppercase;color:var(--t3);padding-bottom:10px}
+.ar .tabs span small{font-family:var(--mono);font-weight:400;font-size:11px;margin-left:6px}
+.ar .tabs span.on{color:var(--t1);box-shadow:inset 0 -3px var(--amber)}
+.ar .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.ar .alb div.cv{aspect-ratio:1;border-radius:3px}
+.ar .alb p{font-size:13px;margin-top:8px}
+.ar .alb small{font-family:var(--mono);color:var(--t2);font-size:11px}
+.ar .alb.focus div.cv{outline:3px solid var(--amber);outline-offset:3px}
+.ar .top h4{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:16px;text-transform:uppercase;border-bottom:1px solid var(--hair);padding-bottom:10px;margin-bottom:4px}
+.ar .tt{display:grid;grid-template-columns:22px 40px 1fr 44px;gap:12px;align-items:center;padding:7px 0;border-bottom:1px solid rgba(46,42,38,.7);font-size:13.5px}
+.ar .tt .n{font-family:var(--mono);font-size:12px;color:var(--t3)}
+.ar .tt .cv{width:40px;height:40px;border-radius:2px}
+.ar .tt small{display:block;color:var(--t2);font-size:12px}
+.ar .tt .d{font-family:var(--mono);font-size:12px;color:var(--t2);text-align:right}
+.ar .sim{margin-top:20px}
+.ar .sim .row{display:flex;gap:14px;margin-top:10px}
+.ar .sim .row div{text-align:center;font-size:12px;color:var(--t2)}
+.ar .sim .row i{display:block;width:64px;height:64px;border-radius:50%;margin-bottom:6px}
+</style>
+</head>
+<body>
+<div class="intro">
+  <h1>Album and artist pages</h1>
+  <p>Both pages in the Crate style, for review rather than a choice. The album page reads like the <b>back of a sleeve</b>: the cover with liner notes underneath, and the tracklist split into disc sides. The artist page is a <b>poster header</b> with releases filed the way a shop files them. Tell me in the terminal what to change.</p>
+</div>
+
+<h2 class="lab">Album <span>the back of a sleeve</span></h2>
+<div class="frame al"><div class="rail"><i></i><i></i><i class="on"></i><i></i></div>
+  <div class="main"><div class="wash"></div>
+    <div class="pad">
+      <div>
+        <div class="cover c1"></div>
+        <div class="liner"><dl>
+          <dt>Released</dt><dd>14 April 2023</dd>
+          <dt>Genre</dt><dd><a>Post-rock</a> · <a>Ambient</a></dd>
+          <dt>Label</dt><dd>Driftwood Records</dd>
+          <dt>Format</dt><dd>FLAC 24-bit / 96 kHz</dd>
+          <dt>Added</dt><dd>3 weeks ago · played 7×</dd>
+        </dl></div>
+      </div>
+      <div>
+        <div class="mono">Album · 2023</div>
+        <h3>Sunburned<br>Almanac</h3>
+        <div class="by"><b>Hollow Coves</b></div>
+        <div class="facts"><span class="badge hi">HI-RES 24/96</span><span class="badge">2 DISCS</span><span class="mono" style="letter-spacing:.08em">12 tracks · 48 min</span></div>
+        <div class="btns"><span class="btn">▶ Play</span><span class="btn ghost">⇄ Shuffle</span><span class="btn ghost">◎ Album radio</span><span class="btn ghost">＋ Playlist</span><span class="btn ghost">♡</span></div>
+        <div class="disc"><b>Side A</b><span class="mono">Disc 1 · 24 min</span></div>
+        <div class="row"><span class="n">1</span><span>Low Tide Radio</span><span></span><span class="d">4:10</span><span style="color:var(--t3)">♡</span></div>
+        <div class="row now"><span class="n">▶</span><span>Glass Harbour</span><span></span><span class="d">4:57</span><span>♥</span></div>
+        <div class="row focus"><span class="n">3</span><span>The Almanac <small>feat. Mara Quell</small></span><span></span><span class="d">6:03</span><span style="color:var(--t3)">♡</span></div>
+        <div class="disc"><b>Side B</b><span class="mono">Disc 2 · 24 min</span></div>
+        <div class="row"><span class="n">1</span><span>Sextant</span><span></span><span class="d">2:48</span><span style="color:var(--t3)">♡</span></div>
+        <div class="row"><span class="n">2</span><span>Saltwater Letters</span><span></span><span class="d">5:12</span><span style="color:var(--t3)">♡</span></div>
+        <div class="more"><span class="mono">More by Hollow Coves</span><div class="shelf"><div class="c6"></div><div class="c3"></div><div class="c11"></div><div class="c9"></div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="notes"><p><b>Tracklist:</b> discs appear as "Side A / Side B" headings only when there's more than one disc. A single disc gets no heading at all. The artist column only appears for tracks by someone other than the album artist, and "feat." credits are dimmed next to the title. <b>Album radio</b> is the existing instant-mix verb.</p><p><b>Liner notes</b> only show rows the server actually filled in. Genres are links that open Albums with that genre's pill set. <b>More by</b> is one extra request inside the album-sleeve composition and hides when the artist has nothing else.</p></div>
+
+<h2 class="lab">Artist <span>poster header, releases filed like a shop</span></h2>
+<div class="frame ar"><div class="rail"><i></i><i></i><i class="on"></i><i></i></div>
+  <div class="main">
+    <div class="hero"><div class="img"></div><div class="fade"></div>
+      <div class="txt"><div class="mono">Artist · 6 records · 71 tracks</div><h3>Hollow<br>Coves</h3>
+        <div class="btns"><span class="btn">⇄ Shuffle artist</span><span class="btn ghost">◎ Artist radio</span><span class="btn ghost">♡ Following</span></div></div></div>
+    <div class="body">
+      <div>
+        <div class="tabs"><span class="on">Albums<small>4</small></span><span>EPs &amp; Singles<small>2</small></span><span>Appears on<small>5</small></span></div>
+        <div class="grid">
+          <div class="alb focus"><div class="cv c1"></div><p>Sunburned Almanac</p><small>2023 · HI-RES</small></div>
+          <div class="alb"><div class="cv c6"></div><p>Red Weather</p><small>2020</small></div>
+          <div class="alb"><div class="cv c3"></div><p>Northern Lines</p><small>2017</small></div>
+          <div class="alb"><div class="cv c11"></div><p>Tidepool Hymns</p><small>2014</small></div>
+        </div>
+      </div>
+      <div class="top">
+        <h4>Most played</h4>
+        <div class="tt"><span class="n">1</span><div class="cv c1"></div><span>Glass Harbour<small>Sunburned Almanac</small></span><span class="d">4:57</span></div>
+        <div class="tt"><span class="n">2</span><div class="cv c6"></div><span>Rust Belt Choir<small>Red Weather</small></span><span class="d">5:40</span></div>
+        <div class="tt"><span class="n">3</span><div class="cv c3"></div><span>Compass Rose<small>Northern Lines</small></span><span class="d">3:58</span></div>
+        <div class="tt"><span class="n">4</span><div class="cv c7"></div><span>The Almanac<small>Mara Quell — guest</small></span><span class="d">6:03</span></div>
+        <div class="sim"><span class="mono">Similar artists</span><div class="row"><div><i class="c7"></i>Mara Quell</div><div><i class="c10"></i>Les Voisins</div><div><i class="c5"></i>Oda Lind</div><div><i class="c12"></i>Vale Quartet</div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="notes"><p><b>Releases</b> are tabbed Albums / EPs &amp; Singles / Appears on, with tabs that have no releases hidden. Grouping comes from `releaseType` plus the album-artist vs track-artist split, all worked out in `ArtistProfile`, never in QML.</p><p><b>Similar artists</b> uses Emby's <code>/Items/{id}/Similar</code> and hides if it returns nothing. The hero uses the artist's backdrop when there is one, and otherwise their portrait with the cover wash.</p></div>
+</body>
+</html>

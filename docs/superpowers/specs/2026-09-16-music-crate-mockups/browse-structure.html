@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500;600&family=Public+Sans:wght@300..700&display=swap" rel="stylesheet">
+<style>
+:root{--ground:#0C0B0A;--surface:#141210;--raised:#1D1A17;--overlay:#262220;--hair:#2E2A26;--amber:#F0A02A;--t1:#F5F1EA;--t2:#A29A8E;--t3:#6f685f;
+--display:'Archivo',sans-serif;--body:'Public Sans',sans-serif;--mono:'IBM Plex Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#070605;color:var(--t1);font-family:var(--body);padding:32px 40px 80px}
+.intro{max-width:1100px;margin:0 auto 28px}
+.intro h1{font-family:var(--display);font-stretch:112%;font-weight:800;font-size:30px}
+.intro p{color:var(--t2);margin-top:8px;line-height:1.55;font-size:15px}
+.dir{max-width:1320px;margin:0 auto 18px;cursor:pointer;border-radius:14px;border:2px solid transparent;padding:14px}
+.dir:hover{background:#0f0d0b}.dir.selected{border-color:var(--amber);background:#110e0a}
+.dir-head{display:flex;align-items:baseline;gap:14px;margin:0 6px 12px}
+.dir-head .letter{font-family:var(--mono);color:var(--amber);font-size:13px;border:1px solid var(--amber);border-radius:4px;padding:2px 7px}
+.dir-head h2{font-family:var(--display);font-weight:700;font-size:22px}
+.dir-head span{color:var(--t2);font-size:14px}
+.frame{position:relative;height:640px;border-radius:10px;overflow:hidden;background:var(--ground);border:1px solid var(--hair);display:flex}
+.rail{width:64px;background:var(--surface);border-right:1px solid var(--hair);display:flex;flex-direction:column;align-items:center;padding-top:18px;gap:18px;flex:none}
+.rail i{display:block;width:22px;height:22px;border-radius:5px;background:var(--overlay)}.rail i.on{background:var(--amber)}
+.main{flex:1;position:relative;overflow:hidden}
+.notes{max-width:1320px;margin:0 auto 56px;color:var(--t2);font-size:13.5px;line-height:1.6;padding:0 22px;columns:2;column-gap:40px}
+.notes b{color:var(--t1)}
+.cv{border-radius:3px}
+.c1{background:radial-gradient(circle at 30% 35%,#e8c27a 0 18%,transparent 19%),linear-gradient(160deg,#7a2d1c,#2a0f0a)}
+.c2{background:repeating-linear-gradient(90deg,#101820 0 6px,#d8d2c4 6px 8px),#101820}
+.c3{background:linear-gradient(135deg,#2e4a5c 0 50%,#c9b48a 50% 100%)}
+.c4{background:radial-gradient(circle at 70% 70%,#f2eee4 0 22%,#1b1b1b 23%)}
+.c5{background:conic-gradient(from 30deg,#6b8f71,#1f3527,#c4a35a,#6b8f71)}
+.c6{background:linear-gradient(#0d0d0d 0 60%,#b33a2c 60% 64%,#0d0d0d 64%)}
+.c7{background:radial-gradient(ellipse at 50% 120%,#f5a35c,#7d2f4f 55%,#1d0f24)}
+.c8{background:repeating-radial-gradient(circle at 50% 50%,#1a1a1a 0 4px,#3a3a3a 4px 5px)}
+.c9{background:linear-gradient(200deg,#d9d3c3,#8c8676)}
+.c10{background:linear-gradient(90deg,#1e2d6b 0 33%,#e6d9b8 33% 66%,#b8412f 66%)}
+.c11{background:radial-gradient(circle at 20% 80%,#50b3a2 0 30%,transparent 31%),#233}
+.c12{background:linear-gradient(45deg,#3b2a4d,#0b0b12)}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:18px}
+.alb .cv{aspect-ratio:1}
+.alb p{font-size:13px;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.alb small{color:var(--t2);font-size:12px}
+.alb.focus .cv{outline:3px solid var(--amber);outline-offset:3px}
+.bigtitle{font-family:var(--display);font-stretch:120%;font-weight:850;font-size:46px;letter-spacing:-.02em;line-height:1}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--t2);text-transform:uppercase}
+.pill{font-size:13px;padding:8px 14px;border-radius:999px;border:1px solid #3a342e;color:var(--t1);white-space:nowrap}
+.pill.on{background:var(--t1);color:#111;border-color:var(--t1);font-weight:600}
+.pill.set{border-color:var(--amber);color:var(--amber)}
+
+/* A — section strip */
+.A .pad{padding:24px 34px}
+.A .sections{display:flex;gap:28px;align-items:baseline;border-bottom:1px solid var(--hair);padding-bottom:0}
+.A .sections span{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:22px;text-transform:uppercase;color:var(--t3);padding-bottom:12px}
+.A .sections span.on{color:var(--t1);box-shadow:inset 0 -3px var(--amber)}
+.A .filters{display:flex;gap:8px;margin:16px 0 18px;align-items:center}
+.A .filters .sort{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--t2)}
+.A .dividers{position:absolute;right:0;top:120px;bottom:0;width:30px;display:flex;flex-direction:column;gap:2px;padding:6px 0}
+.A .dividers b{font-family:var(--mono);font-size:10px;color:var(--t2);background:var(--surface);border:1px solid var(--hair);border-right:none;border-radius:4px 0 0 4px;text-align:center;padding:2px 0}
+.A .dividers b.on{background:var(--amber);color:#111;border-color:var(--amber);width:36px;margin-left:-6px}
+.A .grid{padding-right:28px}
+
+/* B — sub-rail */
+.B .sub{width:230px;border-right:1px solid var(--hair);padding:26px 20px;flex:none;background:linear-gradient(180deg,#141210,#0c0b0a)}
+.B .sub .bigtitle{font-size:30px;margin-bottom:22px}
+.B .sub .it{display:flex;justify-content:space-between;padding:9px 10px;border-radius:6px;font-size:14px;color:var(--t2)}
+.B .sub .it small{font-family:var(--mono);font-size:11px;color:var(--t3)}
+.B .sub .it.on{background:var(--raised);color:var(--t1);box-shadow:inset 3px 0 var(--amber)}
+.B .sub .mono{margin:22px 10px 8px}
+.B .sub .crate{display:flex;gap:10px;align-items:center;padding:7px 10px;font-size:13.5px;color:var(--t1)}
+.B .sub .crate i{width:10px;height:10px;border-radius:2px;background:var(--amber)}
+.B .body{padding:26px 30px;flex:1;position:relative}
+.B .head{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.B .head .bigtitle{font-size:34px}
+.B .head .pill:first-of-type{margin-left:auto}
+.B .panel{position:absolute;right:0;top:0;bottom:0;width:300px;background:var(--overlay);border-left:1px solid #3a342e;padding:24px;box-shadow:-30px 0 60px rgba(0,0,0,.5)}
+.B .panel h5{font-family:var(--display);font-stretch:118%;font-weight:800;font-size:18px;text-transform:uppercase;margin-bottom:16px}
+.B .panel .grp{margin-bottom:18px}
+.B .panel .grp .mono{margin-bottom:8px}
+.B .panel .chips{display:flex;flex-wrap:wrap;gap:6px}
+.B .panel .chips .pill{font-size:12px;padding:6px 10px}
+.B .grid{grid-template-columns:repeat(4,1fr)}
+
+/* C — sentence */
+.C .pad{padding:28px 36px}
+.C .crumbs{display:flex;gap:18px}
+.C .crumbs span{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--t3);text-transform:uppercase}
+.C .crumbs span.on{color:var(--amber)}
+.C .sentence{font-family:var(--display);font-stretch:112%;font-weight:300;font-size:40px;line-height:1.15;letter-spacing:-.015em;margin:14px 0 6px;max-width:1000px}
+.C .sentence b{font-weight:850;border-bottom:3px solid #4a443d;padding:0 2px;cursor:pointer}
+.C .sentence b.set{border-color:var(--amber)}
+.C .sentence b.focus{background:var(--amber);color:#111;border-color:var(--amber)}
+.C .pop{position:absolute;left:470px;top:150px;width:240px;background:var(--overlay);border:1px solid #3a342e;border-radius:10px;padding:8px;box-shadow:0 20px 50px rgba(0,0,0,.6);z-index:3}
+.C .pop div{padding:8px 10px;font-size:14px;display:flex;justify-content:space-between;border-radius:6px}
+.C .pop div small{font-family:var(--mono);font-size:11px;color:var(--t2)}
+.C .pop div.on{background:var(--raised);box-shadow:inset 3px 0 var(--amber)}
+.C .meta{display:flex;gap:16px;align-items:center;margin:4px 0 20px}
+.C .meta .mono{letter-spacing:.1em}
+.C .meta .az{margin-left:auto;display:flex;gap:1px}
+.C .meta .az b{font-family:var(--mono);font-size:11px;color:var(--t2);width:18px;text-align:center}
+.C .meta .az b.on{color:#111;background:var(--amber);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="intro">
+  <h1>Library: how do you move around and filter?</h1>
+  <p>All three show the <b>Albums</b> view of the library, in the Crate style, filtered to Jazz from the 1970s. They differ in two things: <b>where the section switcher lives</b> (Home / Albums / Artists / Songs / Genres / Playlists), and <b>what filtering looks like</b>. Each replaces today's shared FilterBar. Pick one, or tell me which parts to mix.</p>
+</div>
+
+<div class="dir" data-choice="strip" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">A</span><h2>Section strip + pills + crate dividers</h2><span>Everything is visible at once, and A–Z works like the tab dividers in a record bin.</span></div>
+  <div class="frame A"><div class="rail"><i></i><i></i><i class="on"></i><i></i></div>
+    <div class="main"><div class="pad">
+      <div class="sections"><span>Home</span><span class="on">Albums</span><span>Artists</span><span>Songs</span><span>Genres</span><span>Playlists</span></div>
+      <div class="filters"><span class="pill set">Genre: Jazz ✕</span><span class="pill set">Decade: 70s ✕</span><span class="pill">Format ▾</span><span class="pill">♡ Favourites</span><span class="pill">Unplayed</span><span class="sort">412 → 61 RECORDS · SORT: DATE ADDED ↓</span></div>
+      <div class="grid">
+        <div class="alb focus"><div class="cv c3"></div><p>Northern Lines</p><small>Arlo Fenn · 1974</small></div>
+        <div class="alb"><div class="cv c9"></div><p>Paper Weather</p><small>Juno Hart · 1971</small></div>
+        <div class="alb"><div class="cv c4"></div><p>Moonface</p><small>The Pale Ones · 1978</small></div>
+        <div class="alb"><div class="cv c10"></div><p>Tricolour Summer</p><small>Les Voisins · 1976</small></div>
+        <div class="alb"><div class="cv c5"></div><p>Fernwork</p><small>Oda Lind · 1972</small></div>
+        <div class="alb"><div class="cv c12"></div><p>Night Office</p><small>Vale Quartet · 1975</small></div>
+        <div class="alb"><div class="cv c8"></div><p>Groove Study</p><small>Ines Moor · 1979</small></div>
+        <div class="alb"><div class="cv c11"></div><p>Tidepool</p><small>Kelp · 1973</small></div>
+        <div class="alb"><div class="cv c1"></div><p>Low Brass</p><small>Hollow Coves · 1970</small></div>
+        <div class="alb"><div class="cv c7"></div><p>Dusk Report</p><small>Mara Quell · 1977</small></div>
+        <div class="alb"><div class="cv c2"></div><p>Barcode Hymns</p><small>Static Choir · 1974</small></div>
+        <div class="alb"><div class="cv c6"></div><p>Red Seam</p><small>Tokyo Parallel · 1978</small></div>
+      </div></div>
+      <div class="dividers"><b>#</b><b>A</b><b>B</b><b>C</b><b>D</b><b>E</b><b>F</b><b class="on">G</b><b>H</b><b>I</b><b>J</b><b>K</b><b>L</b><b>M</b><b>N</b><b>O</b><b>P</b><b>R</b><b>S</b><b>T</b><b>V</b><b>W</b></div>
+    </div></div>
+</div>
+<div class="notes"><p><b>Good:</b> active filters are always visible and removed with one press. The sections behave like today's tabs (shoulder buttons cycle them), so it's the easiest to learn.</p><p><b>Cost:</b> it takes the most vertical space. Genre still needs a dropdown with search, because 289 genres won't fit as pills.</p></div>
+
+<div class="dir" data-choice="subrail" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">B</span><h2>Music sub-rail + saved crates + filter drawer</h2><span>A shop-floor sidebar with your own saved "crates" (named filters), and a drawer for filtering.</span></div>
+  <div class="frame B"><div class="rail"><i></i><i></i><i class="on"></i><i></i></div>
+    <div class="sub">
+      <div class="bigtitle">MUSIC</div>
+      <div class="it">Home</div>
+      <div class="it on">Albums <small>5,037</small></div>
+      <div class="it">Artists <small>2,394</small></div>
+      <div class="it">Songs <small>56,283</small></div>
+      <div class="it">Genres <small>289</small></div>
+      <div class="it">Playlists <small>38</small></div>
+      <div class="mono">Your crates</div>
+      <div class="crate"><i></i>70s Jazz</div>
+      <div class="crate"><i style="background:#6FBF73"></i>Hi-res only</div>
+      <div class="crate"><i style="background:#8a7ad6"></i>Sunday morning</div>
+      <div class="crate" style="color:var(--t3)">+ Save current filter</div>
+    </div>
+    <div class="main" style="display:flex"><div class="body">
+      <div class="head"><span class="bigtitle">ALBUMS</span><span class="mono" style="margin-left:10px">61 of 5,037</span><span class="pill set">Filters · 2</span><span class="pill">Date added ↓</span></div>
+      <div class="grid">
+        <div class="alb focus"><div class="cv c3"></div><p>Northern Lines</p><small>Arlo Fenn</small></div>
+        <div class="alb"><div class="cv c9"></div><p>Paper Weather</p><small>Juno Hart</small></div>
+        <div class="alb"><div class="cv c4"></div><p>Moonface</p><small>The Pale Ones</small></div>
+        <div class="alb"><div class="cv c10"></div><p>Tricolour Summer</p><small>Les Voisins</small></div>
+        <div class="alb"><div class="cv c5"></div><p>Fernwork</p><small>Oda Lind</small></div>
+        <div class="alb"><div class="cv c12"></div><p>Night Office</p><small>Vale Quartet</small></div>
+        <div class="alb"><div class="cv c8"></div><p>Groove Study</p><small>Ines Moor</small></div>
+        <div class="alb"><div class="cv c11"></div><p>Tidepool</p><small>Kelp</small></div>
+      </div>
+      <div class="panel"><h5>Filter</h5>
+        <div class="grp"><div class="mono">Genre</div><div class="chips"><span class="pill set">Jazz</span><span class="pill">Soul</span><span class="pill">Funk</span><span class="pill">🔍 289…</span></div></div>
+        <div class="grp"><div class="mono">Decade</div><div class="chips"><span class="pill">60s</span><span class="pill set">70s</span><span class="pill">80s</span><span class="pill">90s</span><span class="pill">00s</span><span class="pill">10s</span><span class="pill">20s</span></div></div>
+        <div class="grp"><div class="mono">Format</div><div class="chips"><span class="pill">Hi-res</span><span class="pill">Lossless</span><span class="pill">Lossy</span></div></div>
+        <div class="grp"><div class="mono">Status</div><div class="chips"><span class="pill">♡ Favourites</span><span class="pill">Unplayed</span><span class="pill">Played</span></div></div>
+        <div class="grp"><span class="pill on">Show 61 albums</span></div>
+      </div>
+    </div></div>
+  </div>
+</div>
+<div class="notes"><p><b>Good:</b> counts are always visible, the grid gets the most room, and saved crates are a real power-user feature that shows up on Home too. The drawer has space for richer filters.</p><p><b>Cost:</b> two rails side by side (app rail and music rail), and filters are hidden until you open the drawer. Saved crates also need local storage (settings), which is a small addition.</p></div>
+
+<div class="dir" data-choice="sentence" onclick="toggleSelect(this)">
+  <div class="dir-head"><span class="letter">C</span><h2>The sentence</h2><span>The header <i>is</i> the filter: each bold word is a control you can change.</span></div>
+  <div class="frame C"><div class="rail"><i></i><i></i><i class="on"></i><i></i></div>
+    <div class="main"><div class="pad">
+      <div class="crumbs"><span>Home</span><span class="on">Albums</span><span>Artists</span><span>Songs</span><span>Genres</span><span>Playlists</span></div>
+      <div class="sentence">Show me <b>albums</b> of <b class="set">jazz</b> from the <b class="set focus">1970s</b>, <b>any format</b>, newest <b>added</b> first.</div>
+      <div class="pop"><div>Any decade</div><div>1960s <small>38</small></div><div class="on">1970s <small>61</small></div><div>1980s <small>74</small></div><div>1990s <small>102</small></div></div>
+      <div class="meta"><span class="mono">61 records · 42 hrs</span><span class="pill">▶ Play all</span><span class="pill">⇄ Shuffle</span><div class="az"><b>#</b><b>A</b><b>B</b><b>C</b><b>D</b><b>E</b><b>F</b><b class="on">G</b><b>H</b><b>I</b><b>J</b><b>K</b><b>L</b><b>M</b><b>N</b><b>O</b><b>P</b><b>R</b><b>S</b><b>T</b><b>W</b></div></div>
+      <div class="grid">
+        <div class="alb"><div class="cv c3"></div><p>Northern Lines</p><small>Arlo Fenn</small></div>
+        <div class="alb"><div class="cv c9"></div><p>Paper Weather</p><small>Juno Hart</small></div>
+        <div class="alb"><div class="cv c4"></div><p>Moonface</p><small>The Pale Ones</small></div>
+        <div class="alb"><div class="cv c10"></div><p>Tricolour Summer</p><small>Les Voisins</small></div>
+        <div class="alb"><div class="cv c5"></div><p>Fernwork</p><small>Oda Lind</small></div>
+        <div class="alb"><div class="cv c12"></div><p>Night Office</p><small>Vale Quartet</small></div>
+      </div></div>
+    </div></div>
+</div>
+<div class="notes"><p><b>Good:</b> it's the most distinctive, and the loud headline type turns the filter into the page's hero. The state reads as plain English, and with a D-pad you just walk left and right through the bold words.</p><p><b>Cost:</b> the sentence has to be rewritten for each section (songs, artists), it gets long when many filters are set, and it's harder to translate.</p></div>
+</body>
+</html>
