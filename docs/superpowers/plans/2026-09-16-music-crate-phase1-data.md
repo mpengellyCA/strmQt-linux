@@ -6544,7 +6544,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 This is the spec's user-data sink (§3.4). One place turns every user-data change into model patches plus cache invalidation, so no page refetches after a heart tap.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/unit/tst_music_user_data_relay.cpp`:
 
@@ -6649,12 +6649,12 @@ Add to `tests/CMakeLists.txt`:
 strmqt_add_test(tst_music_user_data_relay unit/tst_music_user_data_relay.cpp)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_music_user_data_relay`
 Expected: a compile error (`MusicUserDataRelay.h` not found).
 
-- [ ] **Step 3: Write the relay**
+- [x] **Step 3: Write the relay**
 
 `src/app/music/MusicUserDataRelay.h`:
 
@@ -6791,12 +6791,12 @@ Add to `strmqt_app`:
     app/music/MusicUserDataRelay.h app/music/MusicUserDataRelay.cpp
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_user_data_relay && ctest --preset dev -R tst_music_user_data_relay --output-on-failure`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/music/MusicUserDataRelay.* src/CMakeLists.txt tests/unit/tst_music_user_data_relay.cpp tests/CMakeLists.txt

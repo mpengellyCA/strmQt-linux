@@ -62,6 +62,7 @@ qt_add_library(strmqt_app STATIC
     app/music/models/TrackListModel.h app/music/models/TrackListModel.cpp
     app/music/models/GenreBinModel.h app/music/models/GenreBinModel.cpp
     app/music/models/StationModel.h app/music/models/StationModel.cpp
+    app/music/MusicUserDataRelay.h app/music/MusicUserDataRelay.cpp
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp
