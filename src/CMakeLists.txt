@@ -172,6 +172,7 @@ qt_add_qml_module(strmqt
         ui/pages/MusicPage.qml
         ui/pages/PlaylistPage.qml
         ui/pages/PersonPage.qml
+        ui/pages/MusicHomePage.qml
 )
 
 # Shared control library (ARCHITECTURE.md). Owned as its own CMake fragment so the

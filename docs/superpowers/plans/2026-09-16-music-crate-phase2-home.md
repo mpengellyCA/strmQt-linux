@@ -4327,7 +4327,7 @@ Focus model:
 - A shelf's rail keeps its own `NavigationColumn` behaviour (Task 4), so Down from one shelf lands in the column it left.
 - Hover never moves focus: every Crate control only scales on hover.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 `src/ui/pages/MusicHomePage.qml`:
 
@@ -5145,7 +5145,7 @@ Notes for the implementer:
 
 In `src/CMakeLists.txt`, add `ui/pages/MusicHomePage.qml` to the `qt_add_qml_module` `QML_FILES` list, directly after `ui/pages/PersonPage.qml`.
 
-- [ ] **Step 2: Build and lint**
+- [x] **Step 2: Build and lint**
 
 Run:
 
@@ -5156,7 +5156,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: the build succeeds. The lint script reports new lines **only** for `MusicHomePage.qml`, and each is `[unqualified]` on `MusicHomeCtl`, `MusicPlay`, `Actions`, `PlayerCtl` or `App`, as every page's context properties do. Any line in a fatal category (`is not a type`, `was not found`, `unavailable`, `incompatible-type`), or any warning on a Crate control, is a failure to fix now. Task 9 re-baselines.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/ui/pages/MusicHomePage.qml src/CMakeLists.txt
