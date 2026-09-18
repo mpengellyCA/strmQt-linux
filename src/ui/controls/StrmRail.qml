@@ -36,6 +36,20 @@ FocusScope {
     readonly property bool customCards: rail.cardComponent !== null
     // A Crate shelf draws its own heading.
     property bool showHeading: true
+    // The side gutter the heading and the card list keep inside the rail's own
+    // width. It is the page margin because a rail normally spans the page, and
+    // the cards have to line up with everything else on it.
+    //
+    // A rail nested inside something that has ALREADY paid the page margin —
+    // the More-by shelf in MusicAlbumPage's track-table footer — sets `gutter: 0`
+    // instead, so its first sleeve sits on the same rule as the rows above it.
+    // The alternative a consumer reaches for first is translating the rail out
+    // by a margin and inflating its width, and that is worse than it looks: it
+    // pushes the hover chevrons and the edge fades outside the enclosing clip
+    // rectangle, where they are simply never drawn. Same reasoning as
+    // `showHeading` above — the control offers the opt-out, the consumer does
+    // not fight it from outside.
+    property int gutter: Theme.pageMarginValue
 
     signal itemActivated(int index)
     signal itemPlayRequested(int index)
@@ -214,8 +228,8 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.leftMargin: Theme.pageMarginValue
-        anchors.rightMargin: Theme.pageMarginValue
+        anchors.leftMargin: rail.gutter
+        anchors.rightMargin: rail.gutter
         visible: rail.showHeading
         height: rail.showHeading ? heading.implicitHeight : 0
 
@@ -266,8 +280,8 @@ FocusScope {
 
         orientation: ListView.Horizontal
         spacing: Theme.spacingValue
-        leftMargin: Theme.pageMarginValue
-        rightMargin: Theme.pageMarginValue
+        leftMargin: rail.gutter
+        rightMargin: rail.gutter
         focus: true
         clip: true
         model: rail.railModel

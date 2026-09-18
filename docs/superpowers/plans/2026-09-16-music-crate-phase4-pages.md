@@ -2449,7 +2449,7 @@ The design is spec §6.1: the back of a sleeve.
 
 Two strings in this file are pinned by `tst_navigation_history` (Task 9), so write them exactly: `Actions.openArtist(AlbumCtl.artistId, AlbumCtl.artist)` and the absence of any `MusicCtl`.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 `src/ui/pages/MusicAlbumPage.qml`:
 
@@ -2998,7 +2998,7 @@ Notes for the implementer:
 - If Phase 2's `CrateSleeve` has no `hiRes` or `badge` property, the contract table in the index is wrong, not this page. Check `src/ui/music/CrateSleeve.qml` and remove only the assignment it lacks.
 - `albumMenu.popupForItem` offers Details for an album. That is today's behaviour for album cards in the library, and it routes back to this page through `Actions`.
 
-- [ ] **Step 2: List the page**
+- [x] **Step 2: List the page**
 
 In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/AlbumPage.qml`:
 
@@ -3006,7 +3006,7 @@ In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/AlbumPage.qml`:
         ui/pages/MusicAlbumPage.qml
 ```
 
-- [ ] **Step 3: Build and lint**
+- [x] **Step 3: Build and lint**
 
 Run:
 
@@ -3022,7 +3022,7 @@ Expected:
 
 The page is not routed until Task 9, so the self-test does not load it yet.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ui/pages/MusicAlbumPage.qml src/CMakeLists.txt
