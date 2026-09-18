@@ -663,8 +663,8 @@ ApplicationWindow {
                     ["series", seriesComponent], ["player", playerComponent],
                     ["search", searchComponent], ["settings", settingsComponent],
                     ["person", personComponent], ["playlist", playlistComponent],
-                    ["artist", artistComponent], ["album", albumComponent], ["musicHome", musicHomeComponent],
-                    ["musicBrowse", musicBrowseComponent]
+                    ["artist", artistComponent], ["album", albumComponent],
+                    ["musicHome", musicHomeComponent], ["musicBrowse", musicBrowseComponent]
                 ];
                 let failures = 0;
                 for (let i = 0; i < pages.length; ++i) {

@@ -3,6 +3,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -23,6 +24,7 @@ private slots:
     void productionRetargetOrderingRetainsDepartingScopes();
     void itemPolicyIsCentralizedAcrossQmlSurfaces();
     void musicBrowsePageInstantiatesOnlyTheActiveSection();
+    void musicInteractionContextNamesPagesThatExist();
     void searchTrackOwnerRestoresAcrossResultLifecycle();
     void restoresVirtualFocusAcrossDelayedRefill();
     void pendingBackRestoreHonorsUserOverride();
@@ -1481,12 +1483,60 @@ void NavigationHistoryTest::musicBrowsePageInstantiatesOnlyTheActiveSection()
     }
     const qsizetype handler = source.indexOf("function onSectionChanged()");
     const qsizetype capture = source.indexOf("page.captureActiveView();", handler);
-    const qsizetype swapSection = source.indexOf("page.loadedSection = MusicBrowseCtl.section;", handler);
+    const qsizetype swapSection =
+        source.indexOf("page.loadedSection = MusicBrowseCtl.section;", handler);
     QVERIFY(handler >= 0);
     QVERIFY(capture > handler);
     QVERIFY(swapSection > capture);
     QVERIFY(source.contains("onLoaded: Qt.callLater(page.restoreActiveView)"));
-    QVERIFY(source.contains("view.restoreNavigationFocus(String(state.identity), Number(state.index))"));
+    QVERIFY(source.contains(
+        "view.restoreNavigationFocus(String(state.identity), Number(state.index))"));
+}
+
+void NavigationHistoryTest::musicInteractionContextNamesPagesThatExist()
+{
+    // Main.qml decides `interactionContext` by matching objectName strings, and
+    // every music shortcut on the browse page is gated on the answer being
+    // "music". Nothing links the two halves, so a typo on either side silently
+    // disables Space / S / L / R on a page that still looks completely right —
+    // which is why the objectNames are pinned against their own declarations
+    // rather than trusted to stay spelled the same.
+    const auto sourceFor = [](const QString &relativePath) {
+        QFile file(QStringLiteral(STRMQT_SOURCE_DIR "/") + relativePath);
+        if (!file.open(QIODevice::ReadOnly))
+            return QByteArray{};
+        return file.readAll();
+    };
+
+    const QByteArray main = sourceFor(QStringLiteral("src/ui/Main.qml"));
+    QVERIFY(!main.isEmpty());
+
+    const qsizetype contextAt = main.indexOf("readonly property string interactionContext:");
+    QVERIFY(contextAt >= 0);
+    const qsizetype musicAt = main.indexOf("? \"music\" : \"browse\"", contextAt);
+    QVERIFY2(musicAt > contextAt,
+             "the music branch of interactionContext has moved or changed shape");
+    const QByteArray branch = main.mid(contextAt, musicAt - contextAt);
+
+    // Every objectName the branch names must be one Main.qml actually sets.
+    const QRegularExpression named(QStringLiteral("objectName === \"([A-Za-z]+)\""));
+    auto it = named.globalMatch(QString::fromUtf8(branch));
+    QStringList pages;
+    while (it.hasNext())
+        pages << it.next().captured(1);
+    QVERIFY2(pages.contains(QStringLiteral("musicBrowsePage")),
+             "the browse page is no longer part of the music interaction context");
+    for (const QString &page : std::as_const(pages)) {
+        const QByteArray declaration = "objectName: \"" + page.toUtf8() + "\"";
+        QVERIFY2(main.contains(declaration),
+                 qPrintable(QStringLiteral("interactionContext names %1, which Main.qml never sets")
+                                .arg(page)));
+    }
+
+    // And the page's own shortcuts must be asking for that same answer.
+    const QByteArray browse = sourceFor(QStringLiteral("src/ui/pages/MusicBrowsePage.qml"));
+    QVERIFY(!browse.isEmpty());
+    QVERIFY(browse.contains("App.interactionContext === \"music\""));
 }
 
 void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()

@@ -19,6 +19,11 @@ import StrmQt
 // `setNameStartsWith()`, `clearFilters()`, and optionally `watchedFilter` +
 // `setWatchedFilter()` for the Unwatched / Watched / Favorites row.
 //
+// Two signals are not optional: the `Connections` block below handles
+// `queryChanged` and `scopeChanged`, and since MusicPage's departure took
+// `ignoreUnknownSignals` with it, a controller missing either one warns at
+// runtime and leaves the bar silently out of sync.
+//
 // Three rows of intent, in one bar:
 //
 //   sort field ▸ direction   what order
