@@ -58,6 +58,7 @@ private slots:
     void playlistFetchesDoNotStrandEachOther();
     void playlistSessionResetRetiresBothWalksAndMutations();
     void playlistBrowseFilteringIsControllerOwned();
+    void playlistSummaryAndCoversFollowMembers();
     void playlistQueuePolicyPreservesDuplicateEntries();
     void playlistSelectionRemovalValidatesEntryIdentity();
     void playlistReorderValidatesBoundsAndRestoresEntry();
@@ -1073,6 +1074,58 @@ void ContentControllersTest::playlistBrowseFilteringIsControllerOwned()
              QStringLiteral("morning"));
     playlists.setFilterText({});
     QCOMPARE(playlists.filteredPlaylists()->rowCount(), 3);
+}
+
+void ContentControllersTest::playlistSummaryAndCoversFollowMembers()
+{
+    PlaylistController playlists(m_client);
+    QSignalSpy spy(&playlists, &PlaylistController::summaryChanged);
+    QVERIFY(playlists.currentSummary().isEmpty());
+    QVERIFY(playlists.currentCovers().isEmpty());
+
+    // Seven six-minute tracks over five albums, in member order b, a, b, c, a,
+    // d, e. Five distinct albums, not three: with only three the collage cap
+    // is never reached, and a build that dropped the cap entirely would pass
+    // this test unchanged. The order also makes "in member order" load-bearing,
+    // since b and a first appear before c, d and e.
+    const QStringList albums{QStringLiteral("alb-b"), QStringLiteral("alb-a"),
+                             QStringLiteral("alb-b"), QStringLiteral("alb-c"),
+                             QStringLiteral("alb-a"), QStringLiteral("alb-d"),
+                             QStringLiteral("alb-e")};
+    QList<MediaItem> members;
+    for (int i = 0; i < albums.size(); ++i) {
+        MediaItem item;
+        item.id = QStringLiteral("track%1").arg(i);
+        item.name = QStringLiteral("Track %1").arg(i);
+        item.type = QStringLiteral("Audio");
+        item.playlistItemId = QStringLiteral("entry%1").arg(i);
+        item.albumId = albums.at(i);
+        item.albumPrimaryImageTag = QStringLiteral("tag-") + albums.at(i);
+        item.runtimeTicks = 6LL * 60LL * 10'000'000LL;
+        members.append(item);
+    }
+    playlists.items()->setItems(members, members.size());
+
+    QVERIFY(spy.count() >= 1);
+    QCOMPARE(playlists.currentSummary(), QStringLiteral("7 tracks · 42 min"));
+    const QStringList covers = playlists.currentCovers();
+    // Four, not five: the collage holds four covers however many albums the
+    // playlist spans, and alb-e — the fifth distinct album — is the one left out.
+    QCOMPARE(covers.size(), 4);
+    QVERIFY(covers.at(0).contains(QStringLiteral("alb-b")));
+    QVERIFY(covers.at(1).contains(QStringLiteral("alb-a")));
+    QVERIFY(covers.at(2).contains(QStringLiteral("alb-c")));
+    QVERIFY(covers.at(3).contains(QStringLiteral("alb-d")));
+    for (const QString &cover : covers)
+        QVERIFY(!cover.contains(QStringLiteral("alb-e")));
+
+    const int beforeClear = spy.count();
+    playlists.items()->setItems({}, 0);
+    QVERIFY(playlists.currentSummary().isEmpty());
+    QVERIFY(playlists.currentCovers().isEmpty());
+    // Emptying is a change like any other: a page bound to these properties
+    // only repaints if the clear announces itself.
+    QCOMPARE(spy.count(), beforeClear + 1);
 }
 
 void ContentControllersTest::playlistQueuePolicyPreservesDuplicateEntries()

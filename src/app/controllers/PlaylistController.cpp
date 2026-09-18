@@ -1,5 +1,6 @@
 #include "PlaylistController.h"
 
+#include "app/music/MusicFormat.h"
 #include "core/Log.h"
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
@@ -89,6 +90,14 @@ PlaylistController::PlaylistController(emby::EmbyClient *client, QObject *parent
     m_filteredPlaylists->setFilterRole(MediaItemModel::NameRole);
     m_filteredPlaylists->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_filteredPlaylists->setDynamicSortFilter(true);
+
+    // The summary follows the member model rather than the verbs, so a load,
+    // removal, reorder or reset each keep it right without remembering to.
+    connect(m_items, &QAbstractItemModel::modelReset, this, &PlaylistController::updateSummary);
+    connect(m_items, &QAbstractItemModel::rowsInserted, this, &PlaylistController::updateSummary);
+    connect(m_items, &QAbstractItemModel::rowsRemoved, this, &PlaylistController::updateSummary);
+    connect(m_items, &QAbstractItemModel::rowsMoved, this, &PlaylistController::updateSummary);
+    connect(m_items, &QAbstractItemModel::dataChanged, this, &PlaylistController::updateSummary);
 }
 
 void PlaylistController::resetSessionState()
@@ -110,6 +119,35 @@ void PlaylistController::resetSessionState()
     setError({});
     emit currentChanged();
     emit playlistsChanged();
+}
+
+void PlaylistController::updateSummary()
+{
+    constexpr int kCollageCovers = 4;
+    QString summary;
+    QStringList covers;
+    const QList<MediaItem> &members = m_items->items();
+    if (!members.isEmpty()) {
+        qint64 runtimeMs = 0;
+        for (const MediaItem &member : members) {
+            runtimeMs += member.runtimeMs();
+            if (covers.size() < kCollageCovers) {
+                const QString cover =
+                    MediaItemModel::dataForItem(member, MediaItemModel::PosterUrlRole).toString();
+                if (!cover.isEmpty() && !covers.contains(cover))
+                    covers.append(cover);
+            }
+        }
+        summary = music::formatTrackCount(static_cast<int>(members.size()));
+        const QString length = music::formatRuntime(runtimeMs);
+        if (!length.isEmpty())
+            summary += QStringLiteral(" · ") + length;
+    }
+    if (summary == m_currentSummary && covers == m_currentCovers)
+        return;
+    m_currentSummary = summary;
+    m_currentCovers = covers;
+    emit summaryChanged();
 }
 
 void PlaylistController::refresh()

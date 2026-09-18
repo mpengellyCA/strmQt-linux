@@ -7,6 +7,7 @@
 #include <QSet>
 #include <QSortFilterProxyModel>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <QVariantList>
 
@@ -38,6 +39,11 @@ class PlaylistController : public QObject
     Q_PROPERTY(QString currentName READ currentName NOTIFY currentChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorChanged)
+    // The Crate playlist page's header (spec §6.3), derived from the members:
+    // "31 tracks · 2 h 4 min", and up to four distinct album covers in member
+    // order for the collage. Both are empty while there are no members.
+    Q_PROPERTY(QString currentSummary READ currentSummary NOTIFY summaryChanged)
+    Q_PROPERTY(QStringList currentCovers READ currentCovers NOTIFY summaryChanged)
 
 public:
     explicit PlaylistController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -50,6 +56,8 @@ public:
     QString currentName() const { return m_currentName; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_error; }
+    QString currentSummary() const { return m_currentSummary; }
+    QStringList currentCovers() const { return m_currentCovers; }
 
     // ── The list is walked to the END, not paged on demand ────────────────────
     // Measured on the target server: 1,564 playlists, and one request returns at
@@ -123,6 +131,7 @@ signals:
     void currentChanged();
     void loadingChanged();
     void errorChanged();
+    void summaryChanged();
     void playlistsChanged();
     // A verb succeeded and the UI should say so.
     void actionSucceeded(const QString &message);
@@ -164,6 +173,7 @@ private:
     void finishPendingMoveFocus();
     void setLoading(bool loading);
     void setError(const QString &message);
+    void updateSummary();
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_playlists;
@@ -173,6 +183,8 @@ private:
     QString m_currentId;
     QString m_currentName;
     QString m_error;
+    QString m_currentSummary;
+    QStringList m_currentCovers;
     bool m_loading = false;
     // Two counters, not one. The playlist LIST and the OPEN playlist's members
     // are independent fetches that supersede only themselves: create(),

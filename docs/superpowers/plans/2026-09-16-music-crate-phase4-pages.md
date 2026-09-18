@@ -1856,7 +1856,7 @@ MSG
 
 The summary is derived from `m_items`, so every path that changes the members also updates it: the member walk, a removal, a reorder, a reload and a session reset. No verb has to remember to call it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `tests/integration/tst_content_controllers.cpp`, declare the slot after `playlistBrowseFilteringIsControllerOwned();`:
 
@@ -1908,12 +1908,12 @@ void ContentControllersTest::playlistSummaryAndCoversFollowMembers()
 
 Six-minute tracks keep the total (30 min) clear of `formatRuntime`'s rounding to the nearest minute.
 
-- [ ] **Step 2: Run the test and watch it fail**
+- [x] **Step 2: Run the test and watch it fail**
 
 Run: `cmake --build --preset dev --target tst_content_controllers`
 Expected: FAIL: `'class strmqt::PlaylistController' has no member named 'summaryChanged'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/app/controllers/PlaylistController.h`, add `#include <QStringList>` to the includes. After the `errorMessage` property:
 
@@ -1998,12 +1998,12 @@ void PlaylistController::updateSummary()
 
 `dataChanged` fires for every user-data patch (a heart, a play count), and each one walks the members again. That costs O(n) over at most `kMemberRowLimit` (10,000) rows of plain field reads, and the early return means QML sees no signal when nothing moved.
 
-- [ ] **Step 4: Run the test and watch it pass**
+- [x] **Step 4: Run the test and watch it pass**
 
 Run: `cmake --build --preset dev --target tst_content_controllers && ctest --preset dev -R tst_content_controllers --output-on-failure`
 Expected: PASS, including every existing playlist test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/controllers/PlaylistController.h src/app/controllers/PlaylistController.cpp \
