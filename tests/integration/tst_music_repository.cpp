@@ -110,6 +110,7 @@ private slots:
     void browseTracksAddsHiResOnlyWhenMeasured();
     void sampleTracksIsRandomAcrossTheFilteredScope();
     void userDataChangeDropsCachesHoldingTheItem();
+    void artistTracksAreRandomAndScopedToTheArtist();
 
 private:
     void routeAlbum(const QString &albumId, int trackCount);
@@ -681,6 +682,33 @@ void MusicRepositoryTest::userDataChangeDropsCachesHoldingTheItem()
     QCOMPARE(m_mock->requestCount(), cached); // untouched album stays cached
     QVERIFY(waitFor(m_repo->albumSleeve(QStringLiteral("al1"))).ok());
     QVERIFY(m_mock->requestCount() > cached);
+}
+
+// ⇄ Shuffle artist: one random draw of everything the artist performs on. It
+// is not scoped to a library and never cached, because each press is a new draw.
+void MusicRepositoryTest::artistTracksAreRandomAndScopedToTheArtist()
+{
+    m_mock->addQueryRoute(QStringLiteral("GET"), itemsPath(),
+                          Q{{"ArtistIds", "ar1"}, {"IncludeItemTypes", "Audio"}, {"SortBy", "Random"}},
+                          200, page({trackJson("r2", "alX", 1, 2), trackJson("r1", "alY", 1, 1)}));
+
+    const auto first = waitFor(m_repo->artistTracks(QStringLiteral("ar1"), 150));
+    QVERIFY2(first.ok(), qPrintable(first.error));
+    QCOMPARE(first.value.size(), 2);
+    QCOMPARE(first.value.at(0).id, QStringLiteral("r2")); // the server's order, untouched
+
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("150"));
+    QVERIFY(!query.hasQueryItem(QStringLiteral("ParentId")));
+
+    const int before = m_mock->requestCount();
+    const auto second = waitFor(m_repo->artistTracks(QStringLiteral("ar1"), 150));
+    QVERIFY(second.ok());
+    QCOMPARE(m_mock->requestCount(), before + 1);
+
+    const auto none = waitFor(m_repo->artistTracks(QString()));
+    QVERIFY(!none.ok());
 }
 
 QTEST_MAIN(MusicRepositoryTest)

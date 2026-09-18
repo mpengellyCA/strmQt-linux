@@ -70,6 +70,13 @@ void MusicPlayback::shuffleAlbum(const QString &albumId, const QString &title)
                  tr("Shuffle · %1").arg(title));
 }
 
+void MusicPlayback::shuffleArtist(const QString &artistId, const QString &name)
+{
+    const quint64 generation = m_actions->reservePlaybackIntent();
+    playResolved(m_repository->artistTracks(artistId), generation, 0, Order::AsGiven,
+                 tr("Shuffle · %1").arg(name));
+}
+
 void MusicPlayback::radio(const QString &seedId, const QString &seedName)
 {
     const quint64 generation = m_actions->reservePlaybackIntent();

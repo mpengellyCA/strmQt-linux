@@ -119,7 +119,7 @@ ctest --preset dev -R <test_name> --output-on-failure
   - `QFuture<Result<QList<Track>>> MusicRepository::artistTracks(const QString &artistId, int limit = 200)`
   - `Q_INVOKABLE void MusicPlayback::shuffleArtist(const QString &artistId, const QString &name)`, with label `"Shuffle · " + name`
 
-- [ ] **Step 1: Write the failing repository test**
+- [x] **Step 1: Write the failing repository test**
 
 In `tests/integration/tst_music_repository.cpp`, add this slot at the end of the `private slots:` list:
 
@@ -158,7 +158,7 @@ void MusicRepositoryTest::artistTracksAreRandomAndScopedToTheArtist()
 }
 ```
 
-- [ ] **Step 2: Write the failing playback test**
+- [x] **Step 2: Write the failing playback test**
 
 In `tests/integration/tst_music_playback.cpp`, add `#include <QUrlQuery>` after `#include <QSignalSpy>`. Then add this slot at the end of the `private slots:` list:
 
@@ -189,12 +189,12 @@ void MusicPlaybackTest::shuffleArtistQueuesTheServersRandomDraw()
 }
 ```
 
-- [ ] **Step 3: Run the tests and watch them fail to compile**
+- [x] **Step 3: Run the tests and watch them fail to compile**
 
 Run: `cmake --build --preset dev --target tst_music_repository tst_music_playback`
 Expected: FAIL, with `'class strmqt::music::MusicRepository' has no member named 'artistTracks'` and `… MusicPlayback' has no member named 'shuffleArtist'`.
 
-- [ ] **Step 4: Implement `artistTracks`**
+- [x] **Step 4: Implement `artistTracks`**
 
 In `src/app/music/MusicRepository.h`, directly after the `artistProfile` declaration:
 
@@ -224,7 +224,7 @@ QFuture<Result<QList<Track>>> MusicRepository::artistTracks(const QString &artis
 }
 ```
 
-- [ ] **Step 5: Implement `shuffleArtist`**
+- [x] **Step 5: Implement `shuffleArtist`**
 
 In `src/app/music/MusicPlayback.h`, directly after the `shuffleAlbum` declaration:
 
@@ -245,12 +245,12 @@ void MusicPlayback::shuffleArtist(const QString &artistId, const QString &name)
 }
 ```
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [x] **Step 6: Run the tests and watch them pass**
 
 Run: `cmake --build --preset dev && ctest --preset dev -R 'tst_music_repository|tst_music_playback' --output-on-failure`
 Expected: PASS for both executables, including `artistTracksAreRandomAndScopedToTheArtist` and `shuffleArtistQueuesTheServersRandomDraw`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/music/MusicRepository.h src/app/music/MusicRepository.cpp \

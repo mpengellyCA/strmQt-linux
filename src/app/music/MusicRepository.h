@@ -43,6 +43,10 @@ public:
     QFuture<Result<QList<Track>>> albumTracks(const QString &albumId);
     QFuture<Result<AlbumSleeve>> albumSleeve(const QString &albumId);
     QFuture<Result<ArtistProfile>> artistProfile(const QString &libraryId, const QString &artistId);
+    // A random draw of the artist's tracks everywhere they perform (ArtistIds),
+    // for ⇄ Shuffle artist. SortBy=Random cannot page, so this is one request,
+    // and it is never cached: each press is a new draw.
+    QFuture<Result<QList<Track>>> artistTracks(const QString &artistId, int limit = 200);
 
     QFuture<Result<ContinueListening>> continueListening(const QString &libraryId);
     QFuture<Result<QList<Album>>> recentAlbums(const QString &libraryId, int limit = 20);

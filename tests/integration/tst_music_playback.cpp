@@ -72,6 +72,7 @@ private slots:
     void failureLeavesTheQueueAndReports();
     void lastVerbWins();
     void playQueryQueuesTheFilteredScopeInOrder();
+    void shuffleArtistQueuesTheServersRandomDraw();
 
 private:
     PlayQueue *queue() const { return m_player->queue(); }
@@ -226,6 +227,25 @@ void MusicPlaybackTest::playQueryQueuesTheFilteredScopeInOrder()
     QCOMPARE(sent.queryItemValue("Limit"), QStringLiteral("500"));
     QCOMPARE(sent.queryItemValue("SortBy"), QStringLiteral("Album,ParentIndexNumber,IndexNumber,SortName"));
     QVERIFY(!sent.hasQueryItem("NameStartsWithOrGreater"));
+}
+
+void MusicPlaybackTest::shuffleArtistQueuesTheServersRandomDraw()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"ArtistIds", "ar1"}, {"SortBy", "Random"}}, 200,
+                          page({trackJson("m2", "x", 2), trackJson("m1", "x", 1)}));
+
+    m_playback->shuffleArtist(QStringLiteral("ar1"), QStringLiteral("Björk"));
+
+    // The server already shuffled. A second shuffle here would be harmless but
+    // would make the order untestable, so the draw is queued as given.
+    QTRY_COMPARE(queueIds(queue()), (QStringList{QStringLiteral("m2"), QStringLiteral("m1")}));
+    QCOMPARE(queue()->currentIndex(), 0);
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("Shuffle · Björk"));
+    QVERIFY(!queue()->shuffled());
+
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("200"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")), QStringLiteral("Audio"));
 }
 
 QTEST_GUILESS_MAIN(MusicPlaybackTest)

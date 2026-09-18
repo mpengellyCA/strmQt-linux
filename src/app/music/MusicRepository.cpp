@@ -367,6 +367,21 @@ QFuture<Result<ArtistProfile>> MusicRepository::artistProfile(const QString &lib
     return pending.future();
 }
 
+QFuture<Result<QList<Track>>> MusicRepository::artistTracks(const QString &artistId, int limit)
+{
+    if (artistId.isEmpty())
+        return ready(Result<QList<Track>>::failure(QStringLiteral("no artist")));
+
+    ItemsQuery query;
+    query.artistIds = {artistId};
+    query.includeItemTypes = {kAudio};
+    query.recursive = true;
+    query.sortBy = QStringLiteral("Random");
+    query.fields = trackFields();
+    query.limit = limit;
+    return fetchTracks(query);
+}
+
 void MusicRepository::markStale(Freshness freshness)
 {
     switch (freshness) {
