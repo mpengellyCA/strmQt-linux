@@ -39,6 +39,7 @@
 #include "app/models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
 #include "PlayQueue.h"
+#include "controllers/music/MusicHomeController.h"
 #include "music/MusicPlayback.h"
 #include "music/MusicRepository.h"
 #include "music/MusicUserDataRelay.h"
@@ -180,6 +181,12 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     connect(m_live, &LiveUpdateService::refreshRequested, m_musicRepository,
             [this] { m_musicRepository->markStale(music::Freshness::Everything); });
 
+    // Music Home (Crate spec §4). Every model it owns, the hidden hero album
+    // included, is patched in place by the relay when user data changes.
+    m_musicHome = new music::MusicHomeController(m_musicRepository, m_musicPlayback, this);
+    for (music::MusicModelBase *model : m_musicHome->models())
+        m_musicRelay->addModel(model);
+
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();
@@ -316,6 +323,7 @@ void Application::teardownAuthenticatedSession()
     m_details->resetSessionState();
     m_playlists->resetSessionState();
     m_music->resetSessionState();
+    m_musicHome->resetSessionState();
 
     // ItemActions retires optimistic mutations and asynchronous queue builders,
     // and clears any dynamically registered rail model not owned above.

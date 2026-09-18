@@ -2,6 +2,7 @@
 #include "WindowFocusKeeper.h"
 #include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
+#include "controllers/music/MusicHomeController.h"
 #include "controllers/RemoteControlService.h"
 #include "CoverTintService.h"
 #include "EmbyImageProvider.h"
@@ -58,6 +59,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("MusicCtl"), app.music());
     // Every music play verb (Crate spec §3.6): album, shuffle, radio, stations.
     engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
+    engine.rootContext()->setContextProperty(QStringLiteral("MusicHomeCtl"), app.musicHome());
     // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
     // CoverWash.qml reads the tints themselves.
     engine.rootContext()->setContextProperty(QStringLiteral("CoverTint"), app.coverTint());

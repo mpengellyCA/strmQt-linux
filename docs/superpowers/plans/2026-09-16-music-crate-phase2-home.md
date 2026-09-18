@@ -1774,7 +1774,7 @@ MSG
 
 This task only wires objects together, so it has no new unit test. The full suite and the self-test are its test: `Main.qml` constructs every page against the real context properties. `MusicHomePage` does not exist yet, so the self-test here only proves that start-up is clean.
 
-- [ ] **Step 1: Declare the member**
+- [x] **Step 1: Declare the member**
 
 In `src/app/Application.h`, add a line to the `namespace music { … }` forward declarations that Phase 1 added:
 
@@ -1794,7 +1794,7 @@ Next to `m_musicPlayback`:
     music::MusicHomeController *m_musicHome = nullptr;
 ```
 
-- [ ] **Step 2: Construct, register the models, reset on sign-out**
+- [x] **Step 2: Construct, register the models, reset on sign-out**
 
 In `src/app/Application.cpp`, add:
 
@@ -1818,7 +1818,7 @@ In `teardownAuthenticatedSession()`, directly after `m_music->resetSessionState(
     m_musicHome->resetSessionState();
 ```
 
-- [ ] **Step 3: Expose `MusicHomeCtl`**
+- [x] **Step 3: Expose `MusicHomeCtl`**
 
 In `src/app/main.cpp`, add `#include "controllers/music/MusicHomeController.h"`. After the `MusicPlay` line that Phase 1 added:
 
@@ -1826,7 +1826,7 @@ In `src/app/main.cpp`, add `#include "controllers/music/MusicHomeController.h"`.
     engine.rootContext()->setContextProperty(QStringLiteral("MusicHomeCtl"), app.musicHome());
 ```
 
-- [ ] **Step 4: Build, test, self-test**
+- [x] **Step 4: Build, test, self-test**
 
 Run:
 
@@ -1837,7 +1837,7 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./bui
 
 Expected: every test passes; the self-test prints no `selftest FAIL` line and ends with `exit=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/Application.h src/app/Application.cpp src/app/main.cpp
