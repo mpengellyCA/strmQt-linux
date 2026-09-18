@@ -250,6 +250,13 @@ strmqt_add_test(tst_music_playback
 )
 target_include_directories(tst_music_playback PRIVATE mocks)
 
+strmqt_add_test(tst_album_artist_controllers
+    integration/tst_album_artist_controllers.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h
+)
+target_include_directories(tst_album_artist_controllers PRIVATE mocks)
+
 strmqt_add_test(tst_music_home_controller
     integration/tst_music_home_controller.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp

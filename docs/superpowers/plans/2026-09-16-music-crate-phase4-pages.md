@@ -284,7 +284,7 @@ Rules both controllers follow:
 - Replies carry the generation they were started with, and a superseded reply is dropped.
 - A failure keeps the id, sets `error` and leaves `retry()` able to try again.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/tst_album_artist_controllers.cpp`:
 
@@ -901,12 +901,12 @@ strmqt_add_test(tst_album_artist_controllers
 target_include_directories(tst_album_artist_controllers PRIVATE mocks)
 ```
 
-- [ ] **Step 2: Run the test and watch it fail**
+- [x] **Step 2: Run the test and watch it fail**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_album_artist_controllers`
 Expected: FAIL: `app/controllers/music/AlbumController.h: No such file or directory`.
 
-- [ ] **Step 3: Write `AlbumController`**
+- [x] **Step 3: Write `AlbumController`**
 
 `src/app/controllers/music/AlbumController.h`:
 
@@ -1351,7 +1351,7 @@ QString AlbumController::relativeAge(const QDateTime &then, const QDateTime &now
 
 `QFuture::then(QObject *context, …)` runs the continuation on the controller's thread and drops it if the controller is destroyed first. That is the same pattern `MusicPlayback` uses. `MusicModelBase::clear()` comes from `MusicListModel<T>` (Phase 1 Task 11).
 
-- [ ] **Step 4: Write `ArtistController`**
+- [x] **Step 4: Write `ArtistController`**
 
 `src/app/controllers/music/ArtistController.h`:
 
@@ -1672,7 +1672,7 @@ void ArtistController::resetSessionState()
 
 The "Guest on" rule tests album-artist ids, not names. A compilation filed under "Various Artists" therefore captions as a guest appearance, which is what spec §6.2 wants. A track with no album artists at all keeps the plain album title, because there is nothing to compare against.
 
-- [ ] **Step 5: Register the sources**
+- [x] **Step 5: Register the sources**
 
 In `src/CMakeLists.txt`, inside the `strmqt_app` source list, directly after the `app/music/MusicPlayback.cpp` entry Phase 1 added:
 
@@ -1683,7 +1683,7 @@ In `src/CMakeLists.txt`, inside the `strmqt_app` source list, directly after the
 
 If Phase 2 or 3 already added `app/controllers/music/…` entries, place these two lines after the last of them, keeping the block alphabetical.
 
-- [ ] **Step 6: Run the test and watch it pass**
+- [x] **Step 6: Run the test and watch it pass**
 
 Run: `cmake --build --preset dev --target tst_album_artist_controllers && ctest --preset dev -R tst_album_artist_controllers --output-on-failure`
 Expected: PASS (11 tests).
@@ -1696,7 +1696,7 @@ Then run the neighbouring suites to confirm nothing moved:
 Run: `ctest --preset dev -R "tst_music_(repository|playback|models)" --output-on-failure`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/controllers/music/AlbumController.h src/app/controllers/music/AlbumController.cpp \
