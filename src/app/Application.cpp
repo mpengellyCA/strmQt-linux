@@ -39,6 +39,7 @@
 #include "app/models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
 #include "PlayQueue.h"
+#include "controllers/music/MusicBrowseController.h"
 #include "controllers/music/MusicHomeController.h"
 #include "music/MusicPlayback.h"
 #include "music/MusicRepository.h"
@@ -187,6 +188,12 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     for (music::MusicModelBase *model : m_musicHome->models())
         m_musicRelay->addModel(model);
 
+    // Music Browse (Crate spec §5). Its five section models are patched in place
+    // by the relay, so a favourite set on a sleeve anywhere shows here too.
+    m_musicBrowse = new music::MusicBrowseController(m_musicRepository, m_musicPlayback, this);
+    for (music::MusicModelBase *model : m_musicBrowse->models())
+        m_musicRelay->addModel(model);
+
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();
@@ -324,6 +331,7 @@ void Application::teardownAuthenticatedSession()
     m_playlists->resetSessionState();
     m_music->resetSessionState();
     m_musicHome->resetSessionState();
+    m_musicBrowse->resetSessionState();
 
     // ItemActions retires optimistic mutations and asynchronous queue builders,
     // and clears any dynamically registered rail model not owned above.

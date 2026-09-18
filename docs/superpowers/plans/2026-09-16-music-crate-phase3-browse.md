@@ -2303,7 +2303,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 This task only wires objects together, so it has no new unit test. The full suite and the self-test are its test. No page reads `MusicBrowseCtl` yet, so the self-test here only proves that start-up is clean.
 
-- [ ] **Step 1: Declare the member**
+- [x] **Step 1: Declare the member**
 
 In `src/app/Application.h`, add to the `namespace music { … }` forward declarations (beside `class MusicHomeController;`):
 
@@ -2323,7 +2323,7 @@ Next to `m_musicHome`:
     music::MusicBrowseController *m_musicBrowse = nullptr;
 ```
 
-- [ ] **Step 2: Construct, register the models, reset on sign-out**
+- [x] **Step 2: Construct, register the models, reset on sign-out**
 
 In `src/app/Application.cpp`, add beside the `MusicHomeController.h` include:
 
@@ -2347,7 +2347,7 @@ In `teardownAuthenticatedSession()`, directly after `m_musicHome->resetSessionSt
     m_musicBrowse->resetSessionState();
 ```
 
-- [ ] **Step 3: Expose `MusicBrowseCtl`**
+- [x] **Step 3: Expose `MusicBrowseCtl`**
 
 In `src/app/main.cpp`, add `#include "controllers/music/MusicBrowseController.h"` beside the `MusicHomeController.h` include. After the `MusicHomeCtl` line:
 
@@ -2355,7 +2355,7 @@ In `src/app/main.cpp`, add `#include "controllers/music/MusicBrowseController.h"
     engine.rootContext()->setContextProperty(QStringLiteral("MusicBrowseCtl"), app.musicBrowse());
 ```
 
-- [ ] **Step 4: Build, test, self-test**
+- [x] **Step 4: Build, test, self-test**
 
 Run:
 
@@ -2366,7 +2366,7 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./bui
 
 Expected: every test passes; the self-test prints no `selftest FAIL` line and ends with `exit=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/Application.h src/app/Application.cpp src/app/main.cpp
