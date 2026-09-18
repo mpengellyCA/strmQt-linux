@@ -68,11 +68,16 @@ TextField {
     // Only there when there is something to clear; an always-on × is noise.
     StrmIconButton {
         id: clearButton
+        objectName: "searchFieldClear"
 
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: parent.right
         anchors.rightMargin: Theme.scale(4)
         visible: field.clearVisible
+        // StrmIconButton defaults activeFocusOnTab to `enabled`, which ignores
+        // `visible`: an empty field would otherwise hold a Tab stop for a
+        // button nobody can see.
+        activeFocusOnTab: field.clearVisible
         iconName: "close"
         tooltip: qsTr("Clear search")
         round: true
