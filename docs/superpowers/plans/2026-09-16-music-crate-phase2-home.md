@@ -3881,7 +3881,7 @@ The shelf is **one tab stop** (`activeFocusOnTab: focusable`). It shows exactly 
 
 Up from the rail moves to the heading's action button when there is one; Up from there, or from a shelf with no action, is declined so the page moves on. Down from the action button returns to the rail. The action button is out of the Tab chain, so the shelf stays one stop.
 
-- [ ] **Step 1: Extend the failing test**
+- [x] **Step 1: Extend the failing test**
 
 In `tests/unit/tst_crate_controls.cpp`:
 
@@ -4051,12 +4051,12 @@ void CrateControlsTest::shelfUpReachesTheActionThenDeclines()
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --build --preset dev --target tst_crate_controls && ctest --preset dev -R tst_crate_controls --output-on-failure`
 Expected: FAIL in `initTestCase`, because `src/ui/music/CrateShelf.qml` does not exist.
 
-- [ ] **Step 3: Write `CrateShelf`**
+- [x] **Step 3: Write `CrateShelf`**
 
 `src/ui/music/CrateShelf.qml`:
 
@@ -4263,7 +4263,7 @@ FocusScope {
 
 Append `ui/music/CrateShelf.qml` to the `qt_target_qml_sources` list in `src/ui/music/Music.cmake`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cmake --preset dev && cmake --build --preset dev && ctest --preset dev -R "tst_crate_controls|tst_card_component" --output-on-failure`
 Expected: PASS. `tst_crate_controls` now runs 15 tests.
@@ -4278,7 +4278,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: no new warnings. `lane` is `var`, so its members are dynamic lookups.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ui/music/CrateShelf.qml src/ui/music/Music.cmake tests/unit/tst_crate_controls.cpp

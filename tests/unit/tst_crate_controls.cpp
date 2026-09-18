@@ -35,6 +35,11 @@ Item {
     property int retried: 0
     property string lastSection: ""
     property bool leftEscaped: false
+    property int shelfActivated: -1
+    property int shelfActions: 0
+    property bool upEscaped: false
+
+    Keys.onUpPressed: root.upEscaped = true
     readonly property color hiResTone: Theme.crateBadgeHiRes
     readonly property string displayFamily: Theme.fontDisplay
     readonly property string monoFamily: Theme.fontMono
@@ -112,20 +117,75 @@ Item {
         message: "Could not load"
         onRetry: root.retried++
     }
+
+    ListModel { id: shelfRows }
+
+    QtObject {
+        id: fakeLane
+        objectName: "fakeLane"
+
+        property var model: shelfRows
+        property bool loading: false
+        property string error: ""
+        readonly property bool empty: !fakeLane.loading && fakeLane.error.length === 0 && shelfRows.count === 0
+        property int retries: 0
+
+        function retry() { fakeLane.retries++ }
+    }
+
+    CrateShelf {
+        id: shelf
+        objectName: "shelf"
+        y: 660
+        width: 1000
+        title: "Pull one out"
+        lane: fakeLane
+        actionText: "Reshuffle"
+        actionIcon: "refresh"
+        navigationFocusKey: "probe-shelf"
+        cardWidth: 100
+        cardHeight: 140
+        skeletonShape: "round"
+        delegate: Component {
+            CrateSleeve {
+                property var model
+                property int index: -1
+                objectName: "shelfSleeve-" + (model ? model.itemId : "")
+                size: 100
+                title: model ? model.title : ""
+            }
+        }
+        onItemActivated: index => root.shelfActivated = index
+        onActionTriggered: root.shelfActions++
+    }
+
+    function setLane(loading, error) {
+        fakeLane.loading = loading
+        fakeLane.error = error
+    }
+
+    function fillShelf() {
+        shelfRows.clear()
+        shelfRows.append({ itemId: "a", title: "A" })
+        shelfRows.append({ itemId: "b", title: "B" })
+        shelfRows.append({ itemId: "c", title: "C" })
+    }
 }
 )QML";
 
 const QStringList kControls = {
     QStringLiteral("FocusRing"),      QStringLiteral("StrmIcon"),    QStringLiteral("StrmTooltip"),
     QStringLiteral("StrmIconButton"), QStringLiteral("StrmButton"),  QStringLiteral("StrmImage"),
-    QStringLiteral("StrmAvatar"),
+    QStringLiteral("StrmAvatar"),     QStringLiteral("StrmCard"),    QStringLiteral("StrmScrollBar"),
+    QStringLiteral("NavigationFocusRestorer"), QStringLiteral("NavigationColumn"),
+    QStringLiteral("StrmRail"),       QStringLiteral("StrmSkeleton"),
 };
 
 const QStringList kMusic = {
     QStringLiteral("CrateHeading"), QStringLiteral("CrateKicker"),  QStringLiteral("CrateBadge"),
     QStringLiteral("CoverCollage"), QStringLiteral("CrateSleeve"),  QStringLiteral("CratePortrait"),
     QStringLiteral("StationTile"),  QStringLiteral("GenreBinTile"), QStringLiteral("SectionStrip"),
-    QStringLiteral("ShelfError"),
+    QStringLiteral("ShelfError"),   QStringLiteral("CrateShelf"),
 };
 
 QQuickItem *findItem(QQuickItem *from, const QString &name)
@@ -216,6 +276,12 @@ private slots:
     void stripCyclesWithoutMovingItsKey();
     void stripKeyboardChoosesAndDeclinesLeftAtTheEdge();
     void shelfErrorRetries();
+    void shelfHidesWhileTheLaneIsEmpty();
+    void shelfSkeletonHasTheRealShape();
+    void shelfErrorLineRetriesTheLane();
+    void shelfDrawsTheDelegateAndForwardsActivation();
+    void shelfErrorAndRailSwapFocusReactively();
+    void shelfUpReachesTheActionThenDeclines();
 
 private:
     QTemporaryDir m_dir;
@@ -360,6 +426,122 @@ void CrateControlsTest::shelfErrorRetries()
     error->forceActiveFocus();
     QTest::keyClick(&m_view, Qt::Key_Return);
     QTRY_COMPARE(m_root->property("retried").toInt(), 1);
+}
+
+void CrateControlsTest::shelfHidesWhileTheLaneIsEmpty()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(shelf);
+    QVERIFY(!shelf->isVisible());
+    QVERIFY(!shelf->property("focusable").toBool());
+}
+
+void CrateControlsTest::shelfSkeletonHasTheRealShape()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(QMetaObject::invokeMethod(m_root, "setLane", Q_ARG(QVariant, true), Q_ARG(QVariant, QString())));
+    QTRY_VERIFY(shelf->isVisible());
+    QVERIFY(shelf->property("showSkeleton").toBool());
+    QVERIFY(!shelf->property("focusable").toBool());
+    QQuickItem *first = findItem(shelf, QStringLiteral("crateShelfSkeleton-0"));
+    QVERIFY(first);
+    QVERIFY(first->isVisible());
+    QCOMPARE(qRound(first->width()), 100);
+    QCOMPARE(qRound(first->property("radius").toReal()), 50); // round: a portrait's circle
+    QQuickItem *rail = shelf->property("rail").value<QQuickItem *>();
+    QVERIFY(rail);
+    QVERIFY(!rail->isVisible());
+}
+
+void CrateControlsTest::shelfErrorLineRetriesTheLane()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(QMetaObject::invokeMethod(m_root, "setLane", Q_ARG(QVariant, false),
+                                      Q_ARG(QVariant, QStringLiteral("Couldn't load"))));
+    QTRY_VERIFY(shelf->property("showError").toBool());
+    QVERIFY(!shelf->property("showSkeleton").toBool());
+    QVERIFY(shelf->property("focusable").toBool());
+    shelf->forceActiveFocus();
+    QTest::keyClick(&m_view, Qt::Key_Return);
+    QObject *lane = m_root->findChild<QObject *>(QStringLiteral("fakeLane"));
+    QVERIFY(lane);
+    QTRY_COMPARE(lane->property("retries").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(m_root, "setLane", Q_ARG(QVariant, false), Q_ARG(QVariant, QString())));
+}
+
+void CrateControlsTest::shelfDrawsTheDelegateAndForwardsActivation()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(QMetaObject::invokeMethod(m_root, "fillShelf"));
+    QTRY_VERIFY(findItem(shelf, QStringLiteral("shelfSleeve-b")));
+    QVERIFY(!shelf->property("showSkeleton").toBool());
+    QVERIFY(!shelf->property("showError").toBool());
+    QQuickItem *rail = shelf->property("rail").value<QQuickItem *>();
+    QVERIFY(rail->isVisible());
+
+    QQuickItem *b = findItem(shelf, QStringLiteral("shelfSleeve-b"));
+    QTest::mouseClick(&m_view, Qt::LeftButton, {}, b->mapToScene(QPointF(50, 50)).toPoint());
+    QTRY_COMPARE(m_root->property("shelfActivated").toInt(), 1);
+}
+
+void CrateControlsTest::shelfErrorAndRailSwapFocusReactively()
+{
+    QQuickItem *shelf = item("shelf");
+    QQuickItem *rail = shelf->property("rail").value<QQuickItem *>();
+    QVERIFY(rail);
+    shelf->forceActiveFocus();
+    QTRY_VERIFY(rail->hasActiveFocus());
+
+    QVERIFY(QMetaObject::invokeMethod(m_root, "setLane", Q_ARG(QVariant, false),
+                                      Q_ARG(QVariant, QStringLiteral("Couldn't load"))));
+    QQuickItem *error = findItem(shelf, QStringLiteral("crateShelfError"));
+    QVERIFY(error);
+    QTRY_VERIFY(error->hasActiveFocus());
+    QVERIFY(!rail->hasActiveFocus());
+
+    // Error clears and the lane still has the rows fillShelf() left in it: the
+    // scope's remembered focus child must swap back to the rail on its own.
+    QVERIFY(QMetaObject::invokeMethod(m_root, "setLane", Q_ARG(QVariant, false), Q_ARG(QVariant, QString())));
+    QTRY_VERIFY(rail->hasActiveFocus());
+    QVERIFY(!error->hasActiveFocus());
+}
+
+void CrateControlsTest::shelfUpReachesTheActionThenDeclines()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(QMetaObject::invokeMethod(m_root, "fillShelf"));
+    m_root->setProperty("upEscaped", false);
+    shelf->forceActiveFocus();
+    QQuickItem *rail = shelf->property("rail").value<QQuickItem *>();
+    QTRY_VERIFY(rail->hasActiveFocus());
+
+    QTest::keyClick(&m_view, Qt::Key_Up);
+    QQuickItem *action = findItem(shelf, QStringLiteral("crateShelfAction"));
+    QVERIFY(action);
+    QTRY_VERIFY(action->hasActiveFocus());
+    QVERIFY(!m_root->property("upEscaped").toBool());
+
+    QTest::keyClick(&m_view, Qt::Key_Return);
+    QTRY_COMPARE(m_root->property("shelfActions").toInt(), 1);
+
+    QTest::keyClick(&m_view, Qt::Key_Up);
+    QVERIFY(m_root->property("upEscaped").toBool());
+
+    QTest::keyClick(&m_view, Qt::Key_Down);
+    QTRY_VERIFY(rail->hasActiveFocus());
+
+    // Re-enter the action button, then let focus leave the shelf entirely —
+    // the page moving on after a declined Up, rather than a Down that returns
+    // it to the rail itself. The shelf's remembered focus child must follow
+    // back to the rail, not stay parked on the action button: otherwise the
+    // shelf's next forceActiveFocus() (Tab, or the page restoring a place)
+    // reopens on the action button instead of the rail.
+    QTest::keyClick(&m_view, Qt::Key_Up);
+    QTRY_VERIFY(action->hasActiveFocus());
+    m_root->forceActiveFocus();
+    QVERIFY(!action->hasActiveFocus());
+    shelf->forceActiveFocus();
+    QTRY_VERIFY(rail->hasActiveFocus());
 }
 
 QTEST_MAIN(CrateControlsTest)

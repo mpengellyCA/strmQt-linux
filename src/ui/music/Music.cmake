@@ -11,4 +11,5 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/music/GenreBinTile.qml
     ui/music/SectionStrip.qml
     ui/music/ShelfError.qml
+    ui/music/CrateShelf.qml
 )
