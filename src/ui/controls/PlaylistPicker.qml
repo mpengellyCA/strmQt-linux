@@ -45,7 +45,7 @@ FocusScope {
     // "which library does this playlist belong to" from the playlist's media
     // type, and that is the only thing the music library's Playlists tab has to
     // filter on — Emby publishes no media type on the playlist itself
-    // (measured; see MusicController::loadPlaylists). Consumers set it once,
+    // (measured). Consumers set it once,
     // declaratively, rather than passing it per show().
     property string mediaType: ""
     property bool opened: false

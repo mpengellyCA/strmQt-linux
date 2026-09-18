@@ -84,8 +84,7 @@ public:
     Q_INVOKABLE void refresh();
     // The walk, as a resume rather than a restart: nothing to do when the list
     // is already complete or a walk is running, and otherwise it picks up from
-    // the page that stopped it. The same contract MusicController::loadGenres()
-    // has, and for the same reason — a walk that broke on page 2 is not a
+    // the page that stopped it. A walk that broke on page 2 is not a
     // finished list, so a surface about to read the list may always ask.
     Q_INVOKABLE void ensureAllPlaylists();
     Q_INVOKABLE void openFiltered(int row);
@@ -150,8 +149,8 @@ signals:
     void currentRemoved();
     // The SET of playlists changed: one was created, renamed or deleted. This
     // controller answers by refreshing its own list, but it is not the only
-    // list of playlists in the app — MusicController keeps an audio-scoped one
-    // for the music library's Playlists tab, and nothing else would ever tell
+    // list of playlists in the app — music browse keeps an audio-scoped one
+    // for its Playlists section, and nothing else would ever tell
     // it that the playlist the user just made from a track exists. Emitted
     // alongside refresh(), never instead of it.
     void playlistsMutated();

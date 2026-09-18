@@ -12,6 +12,7 @@
 #include "app/ItemActions.h"
 #include "app/PlayQueue.h"
 #include "app/controllers/PlayerController.h"
+#include "app/controllers/PlaylistController.h"
 #include "app/controllers/music/MusicBrowseController.h"
 #include "app/controllers/music/MusicLane.h"
 #include "app/music/MusicPlayback.h"
@@ -50,6 +51,11 @@ QJsonObject albumJson(const QString &id)
 QJsonObject artistJson(const QString &id)
 {
     return {{"Id", id}, {"Name", "Artist " + id}, {"Type", "MusicArtist"}};
+}
+
+QJsonObject playlistJson(const QString &id, const QString &name)
+{
+    return {{"Id", id}, {"Name", name}, {"Type", "Playlist"}, {"ChildCount", 4}};
 }
 
 QJsonObject trackJson(const QString &id, const QString &albumId, int number)
@@ -113,6 +119,9 @@ private slots:
     void genreOptionsCarryCountsFromAllGenres();
     void lettersAndSectionsCycle();
     void routeStateRoundTrips();
+    void libraryRetargetDropsTheInFlightPage();
+    void createdPlaylistsReappearInThePlaylistsSection();
+    void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
 private:
     PlayQueue *queue() const { return m_player->queue(); }
@@ -533,6 +542,179 @@ void MusicBrowseControllerTest::routeStateRoundTrips()
     other.restore(kLibrary, QStringLiteral("songs"), QStringLiteral("not json"));
     QCOMPARE(other.section(), QStringLiteral("songs"));
     QCOMPARE(other.routeState(), state); // unreadable state keeps the live query
+}
+
+// Ported here when MusicController went (Task 10): tst_content_controllers'
+// musicRetargetDropsTheInFlightPage covered this for the old controller, and no
+// browse test covered a LIBRARY retarget (the epoch), only a superseded query
+// (the lane generation). Clearing the models is not enough on its own: the reply
+// already in flight put the old library's albums straight back, under the new
+// library's name.
+void MusicBrowseControllerTest::libraryRetargetDropsTheInFlightPage()
+{
+    const auto otherLibrary = QStringLiteral("2000001");
+    // The plain route is the delayed one and answers the first library; the
+    // query route wins for the second and answers at once. So the OLD reply is
+    // the one that lands last, which is the ordering this guards. A query route
+    // cannot be the delayed one — MockEmbyServer builds it with delayMs 0 and
+    // setRouteDelay never reaches it (measured).
+    m_mock->addRoute("GET", itemsPath(), 200, page({albumJson("old")}, 1));
+    m_mock->setRouteDelay("GET", itemsPath(), 300);
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"ParentId", otherLibrary}}, 200,
+                          page({albumJson("new")}, 1));
+
+    // Every id the model has ever published, so a row that appears and is then
+    // replaced still fails: the old library's albums must never be visible at
+    // all, not merely be gone by the end.
+    QStringList seen;
+    const auto connection = connect(m_ctl->albums(), &QAbstractItemModel::modelReset, this,
+                                    [&] { seen += modelIds(m_ctl->albums()); });
+
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    QTRY_VERIFY(requestsTo(itemsPath(), Q{{"ParentId", kLibrary}}) >= 1);
+    QVERIFY(m_ctl->albumsLane()->loading());
+
+    m_ctl->open(otherLibrary, QStringLiteral("albums"));
+    QCOMPARE(m_ctl->libraryId(), otherLibrary);
+    QCOMPARE(m_ctl->albums()->count(), 0);
+
+    QTRY_COMPARE(modelIds(m_ctl->albums()), QStringList{QStringLiteral("new")});
+    QTest::qWait(450); // the first library's reply has certainly landed by now
+    // Delivered, not cancelled: without this the assertion below could pass
+    // because nothing ever came back.
+    QCOMPARE(m_mock->abortedResponseCount(itemsPath()), 0);
+    QCOMPARE(modelIds(m_ctl->albums()), QStringList{QStringLiteral("new")});
+    QVERIFY(!seen.contains(QStringLiteral("old")));
+    QVERIFY(!m_ctl->albumsLane()->loading());
+    disconnect(connection);
+}
+
+// Ported here when MusicController went (Task 10): tst_music_query's
+// createdPlaylistsReappearInTheMusicTab was the only cover for this. A playlist
+// made from a track has to turn up in the section whose job is to list it.
+// PlaylistController refreshes its own list and cannot know about this one, so
+// Application joins the two with a signal rather than asking a page to relay it
+// — and the connection made below is the one Application makes.
+void MusicBrowseControllerTest::createdPlaylistsReappearInThePlaylistsSection()
+{
+    // ParentId is what tells the browse section's audio-scoped query apart from
+    // PlaylistController's own unscoped walk over the same REST path.
+    const Q browseQuery{{"ParentId", kLibrary}, {"IncludeItemTypes", "Playlist"}};
+    m_mock->addQueryRoute("GET", itemsPath(), browseQuery, 200,
+                          page({playlistJson("pl1", "Road Trip")}));
+    m_mock->addRoute("POST", "/Playlists", 200,
+                     QByteArrayLiteral("{\"Id\":\"pl2\",\"ItemAddedCount\":1}"));
+
+    PlaylistController playlists(m_client);
+    QSignalSpy mutated(&playlists, &PlaylistController::playlistsMutated);
+    connect(&playlists, &PlaylistController::playlistsMutated, m_ctl,
+            [this] { m_ctl->notePlaylistsMutated(); });
+
+    m_ctl->open(kLibrary, QStringLiteral("playlists"));
+    QTRY_COMPARE(modelIds(m_ctl->playlists()), QStringList{QStringLiteral("pl1")});
+    const int before = requestsTo(itemsPath(), browseQuery);
+    // Fully loaded — one row of a total of one. This is the state a paging
+    // retry cannot serve, and the state the section is in most of the time.
+    QVERIFY(!m_ctl->playlists()->canLoadMore());
+
+    // On screen: refetch now, or the playlist the user just made is missing from
+    // the grid they made it in front of.
+    m_mock->addQueryRoute("GET", itemsPath(), browseQuery, 200,
+                          page({playlistJson("pl1", "Road Trip"), playlistJson("pl2", "New One")}));
+    playlists.create(QStringLiteral("New One"), {QStringLiteral("t1")});
+    QTRY_COMPARE(mutated.count(), 1);
+    QTRY_COMPARE(requestsTo(itemsPath(), browseQuery), before + 1);
+    QTRY_COMPARE(modelIds(m_ctl->playlists()), (QStringList{QStringLiteral("pl1"), QStringLiteral("pl2")}));
+
+    // Not on screen: empty it and let the section's own load-when-visible path
+    // pay for the request when it is next looked at — one request instead of one
+    // per playlist created while browsing albums.
+    m_ctl->setSection(QStringLiteral("albums"));
+    QTRY_VERIFY(!m_ctl->albumsLane()->loading());
+    const int hidden = requestsTo(itemsPath(), browseQuery);
+    playlists.create(QStringLiteral("Another"), {QStringLiteral("t1")});
+    QTRY_COMPARE(mutated.count(), 2);
+    QTest::qWait(120);
+    QCOMPARE(requestsTo(itemsPath(), browseQuery), hidden);
+    QCOMPARE(m_ctl->playlists()->count(), 0);
+
+    // …and paid on return, so the rows that come back are the new set.
+    m_ctl->setSection(QStringLiteral("playlists"));
+    QTRY_COMPARE(requestsTo(itemsPath(), browseQuery), hidden + 1);
+    QTRY_COMPARE(modelIds(m_ctl->playlists()), (QStringList{QStringLiteral("pl1"), QStringLiteral("pl2")}));
+}
+
+// Ported here when MusicController went (Task 10): tst_music_query's
+// sessionResetClearsScopeAndAllowsSameLibraryForNextUser was the only cover for
+// resetSessionState. Everything the old identity scoped goes, in-flight replies
+// for it land on a dead epoch, and the next account may open the same library id.
+void MusicBrowseControllerTest::sessionResetClearsScopeAndAllowsSameLibraryForNextUser()
+{
+    const auto userB = QStringLiteral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    const QString itemsB = QStringLiteral("/Users/%1/Items").arg(userB);
+    m_mock->addRoute("GET", "/MusicGenres", 200,
+                     page({QJsonObject{{"Id", "g-a"}, {"Name", "A Genre"}, {"AlbumCount", 3}}}));
+    m_mock->setRouteDelay("GET", itemsPath(), 350);
+    m_mock->setRouteDelay("GET", kAlbumArtistsPath, 350);
+    m_mock->setRouteDelay("GET", "/MusicGenres", 350);
+
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    m_ctl->setSortKey(QStringLiteral("year"));
+    m_ctl->setSection(QStringLiteral("songs"));
+    m_ctl->setLetter(QStringLiteral("A"));
+    m_ctl->setGenres({QStringLiteral("g-a")});
+    m_ctl->setDecade(1990);
+    m_ctl->setFavouritesOnly(true);
+    m_ctl->setUnplayedOnly(true);
+    m_ctl->setArtistMode(QStringLiteral("everyone"));
+    QVERIFY(m_ctl->songsLane()->loading());
+    QCOMPARE(m_ctl->libraryId(), kLibrary);
+    QVERIFY(m_ctl->genreOptionsLoading());
+
+    m_ctl->resetSessionState();
+    QVERIFY(m_ctl->libraryId().isEmpty());
+    QCOMPARE(m_ctl->section(), QStringLiteral("albums"));
+    QVERIFY(!m_ctl->songsLane()->loading());
+    QVERIFY(!m_ctl->albumsLane()->loading());
+    QVERIFY(!m_ctl->filtered());
+    QCOMPARE(m_ctl->activeFilterCount(), 0);
+    QVERIFY(m_ctl->genreIds().isEmpty());
+    QCOMPARE(m_ctl->decade(), 0);
+    QVERIFY(!m_ctl->favouritesOnly());
+    QVERIFY(!m_ctl->unplayedOnly());
+    QCOMPARE(m_ctl->artistMode(), QStringLiteral("albumArtists"));
+    QCOMPARE(m_ctl->letter(), QString());
+    QCOMPARE(m_ctl->sortKey(), QStringLiteral("name"));
+    QVERIFY(!m_ctl->sortDescending());
+    QVERIFY(m_ctl->genreOptions().isEmpty());
+    QVERIFY(!m_ctl->genreOptionsLoading());
+    for (MusicModelBase *model : m_ctl->models())
+        QCOMPARE(model->count(), 0);
+
+    // The old account's replies land now. They carry a dead epoch, so no row and
+    // no genre option from the previous user may appear.
+    QTest::qWait(500);
+    for (MusicModelBase *model : m_ctl->models())
+        QCOMPARE(model->count(), 0);
+    QVERIFY(m_ctl->genreOptions().isEmpty());
+
+    // A section preference alone starts no request: reset restored the state the
+    // controller had before anything was opened.
+    const int quiet = m_mock->requestCount();
+    m_ctl->setSection(QStringLiteral("artists"));
+    QTest::qWait(120);
+    QCOMPARE(m_mock->requestCount(), quiet);
+
+    // The same library id for the next user must not hit the old early return.
+    m_client->setSession(kToken, userB);
+    m_mock->setRouteDelay("GET", "/MusicGenres", 0);
+    m_mock->addRoute("GET", itemsB, 200, page({albumJson("b1")}, 1));
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    QTRY_COMPARE(modelIds(m_ctl->albums()), QStringList{QStringLiteral("b1")});
+    // Limit picks the page request out of the count probe on the same path.
+    QCOMPARE(requestsTo(itemsB, Q{{"ParentId", kLibrary}, {"IncludeItemTypes", "MusicAlbum"},
+                                 {"Limit", "100"}}),
+             1);
 }
 
 QTEST_GUILESS_MAIN(MusicBrowseControllerTest)

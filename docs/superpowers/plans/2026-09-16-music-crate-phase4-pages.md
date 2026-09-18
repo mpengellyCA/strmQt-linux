@@ -4758,7 +4758,7 @@ MSG
 
 Every edit below is anchored on content, not line numbers (Contract note 11). Line numbers in parentheses are from the pre-Crate tree and only help you find the spot.
 
-- [ ] **Step 1: Port the album-play tests in `tst_item_actions_queue.cpp` to `MusicPlayback`**
+- [x] **Step 1: Port the album-play tests in `tst_item_actions_queue.cpp` to `MusicPlayback`**
 
 These tests still guard real behaviour (an album queues in order without touching page state; a newer leaf play retires the album fetch), so they move to the new owner instead of being deleted.
 
@@ -4883,7 +4883,7 @@ with:
 
 The lines after it (`QTRY_VERIFY(m_mock->requestCount() > beforeAlbum);` and the `directPlay` check) stay as they are. The `/Items` delay of 180 ms set earlier in that test is still active at this point, so the album reply still lands after the newer play.
 
-- [ ] **Step 2: Run the ported tests**
+- [x] **Step 2: Run the ported tests**
 
 ```bash
 cmake --build --preset dev --target tst_item_actions_queue && ctest --preset dev -R tst_item_actions_queue --output-on-failure
@@ -4891,7 +4891,7 @@ cmake --build --preset dev --target tst_item_actions_queue && ctest --preset dev
 
 Expected: PASS. This is a port of an existing behaviour onto code that already exists (Phase 1), so there is no red step. If `playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum` fails on the query assertions, compare with `MusicRepository::albumTracks` in Phase 1 and fix the test only if the repository matches the Phase 1 contract (`Recursive=true`, `SortBy=ParentIndexNumber,IndexNumber,SortName`); otherwise the repository is wrong.
 
-- [ ] **Step 3: Rewire `Application`**
+- [x] **Step 3: Rewire `Application`**
 
 In `src/app/Application.cpp`:
 
@@ -4937,7 +4937,7 @@ In `src/app/Application.h`, delete `class MusicController;`, `MusicController *m
 
 In `src/app/main.cpp`, delete `#include "controllers/MusicController.h"` and the `setContextProperty(QStringLiteral("MusicCtl"), app.music());` line.
 
-- [ ] **Step 4: Remove the last `MusicCtl` readers in `Main.qml`**
+- [x] **Step 4: Remove the last `MusicCtl` readers in `Main.qml`**
 
 1. Delete this whole block, including the three comment lines above it:
 
@@ -4961,7 +4961,7 @@ In `src/app/main.cpp`, delete `#include "controllers/MusicController.h"` and the
 
 If `BoundedNavigationStack.qml` still has the comment `// MusicController is process-wide while each retained music route owns the` above `currentMusicTab`, delete the comment together with the property only when nothing sets `currentMusicTab` (`grep -rn currentMusicTab src tests` returns only that line). Otherwise leave it for Phase 3's owner and report it.
 
-- [ ] **Step 5: Delete the files and their build entries**
+- [x] **Step 5: Delete the files and their build entries**
 
 ```bash
 git rm src/ui/pages/AlbumPage.qml src/ui/pages/ArtistPage.qml \
@@ -4983,7 +4983,7 @@ target_include_directories(tst_music_query PRIVATE mocks)
 
 In `tests/integration/tst_content_controllers.cpp`, delete `#include "app/controllers/MusicController.h"`. If `musicRetargetDropsTheInFlightPage` is still present, delete its slot declaration, its body and the comment block above the body. Phase 3's `tst_music_browse_controller` covers the retarget case for the browse lanes, and `tst_album_artist_controllers` (Task 2) covers it for album and artist loads.
 
-- [ ] **Step 6: Reword the comments that name `MusicController`**
+- [x] **Step 6: Reword the comments that name `MusicController`**
 
 Comments only; no code changes. Replace each old text with the new text.
 
@@ -5136,7 +5136,7 @@ If Phase 3 already rewrote a comment (`StrmGrid.qml`, `TrackTable.qml`, `FilterB
 
 `FilterBar.qml` (`MusicCtl` at the `controller` comment, `MusicController` at the `tabChanged` and letter comments): if Phase 3 left these comments, apply the same rule — name "music browse" instead of `MusicCtl`/`MusicController`.
 
-- [ ] **Step 7: Prove nothing names the old controller**
+- [x] **Step 7: Prove nothing names the old controller**
 
 ```bash
 grep -rn "MusicController\|MusicCtl\|AlbumPage\.qml\|ArtistPage\.qml\|tst_music_query\b" src tests CMakeLists.txt \
@@ -5146,7 +5146,7 @@ grep -rn "MusicController\|MusicCtl\|AlbumPage\.qml\|ArtistPage\.qml\|tst_music_
 
 Expected: no output. The first `grep -v` keeps Task 9's negative assertions; the second keeps names that only contain the old ones as substrings. Any other line is a leftover reader: remove it, or report it if it belongs to a phase that has not landed.
 
-- [ ] **Step 8: Build, test, self-test**
+- [x] **Step 8: Build, test, self-test**
 
 ```bash
 cmake --preset dev && cmake --build --preset dev
@@ -5160,7 +5160,7 @@ Expected:
 - The self-test prints `selftest ok   album`, `selftest ok   artist` and `selftest ok   musicPlaylist`, no `selftest FAIL` line, and `exit=0`.
 - No `ReferenceError: MusicCtl is not defined` appears anywhere in the self-test output (`STRMQT_SELFTEST=1 … ./build/dev/strmqt 2>&1 | grep -c MusicCtl` prints `0`).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A src/ui/pages/AlbumPage.qml src/ui/pages/ArtistPage.qml \

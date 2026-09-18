@@ -72,7 +72,6 @@ qt_add_library(strmqt_app STATIC
     app/controllers/LiveUpdateService.h app/controllers/LiveUpdateService.cpp
     app/controllers/RemoteControlService.cpp
     app/controllers/PlaylistController.cpp
-    app/controllers/MusicController.cpp
     input/InputMap.h input/InputMap.cpp
 )
 target_link_libraries(strmqt_app PUBLIC strmqt_core)
@@ -170,9 +169,7 @@ qt_add_qml_module(strmqt
         ui/pages/SearchPage.qml
         ui/pages/SeriesPage.qml
         ui/pages/SettingsPage.qml
-        ui/pages/ArtistPage.qml
         ui/pages/MusicArtistPage.qml
-        ui/pages/AlbumPage.qml
         ui/pages/MusicAlbumPage.qml
         ui/pages/PlaylistPage.qml
         ui/pages/MusicPlaylistPage.qml

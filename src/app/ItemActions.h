@@ -73,8 +73,8 @@ public:
                              const QString &collectionType = QString());
     Q_INVOKABLE void shuffle(const QString &parentId, const QString &collectionType = QString());
     // Shuffle a set the CALLER narrowed. The query arrives with its
-    // constraints already applied (MusicController's letter, genres and
-    // favourites, for the music library's ▸ Shuffle); what stays owned here is
+    // constraints already applied (a controller's letter, genres and
+    // favourites); what stays owned here is
     // the shuffle itself — the sort is forced to Random so the capped fetch is
     // a fair sample of the whole filtered set, not its first page. C++ only:
     // the caller is a controller holding an ItemsQuery, not a page.
@@ -205,7 +205,7 @@ signals:
     // Playlist routes retain the complete source payload; synthetic series,
     // audio-album and explicit album/artist targets are minimal coherent maps.
     void routeRequested(const QString &kind, const QVariantMap &target);
-    // MusicController owns the server-ordered, non-recursive album expansion.
+    // MusicPlayback owns the disc-and-track-ordered album expansion.
     // ItemActions still owns whether and when this semantic verb is available.
     void orderedAlbumPlayRequested(const QString &albumId);
     // `kind` is "genre" | "person" | "studio" | "collection"; one signal rather

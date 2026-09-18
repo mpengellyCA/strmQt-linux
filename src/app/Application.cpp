@@ -11,7 +11,6 @@
 #include "controllers/LibraryController.h"
 #include "controllers/LiveUpdateService.h"
 #include "controllers/PlayerController.h"
-#include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/RemoteControlService.h"
 #include "remote/WebRemoteServer.h"
@@ -82,7 +81,6 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_series = new SeriesController(m_client, this);
     m_details = new DetailsController(m_client, this);
     m_playlists = new PlaylistController(m_client, this);
-    m_music = new MusicController(m_client, this);
     // Engine choice (Settings playback/engine): mpv primary, vlc escape hatch.
     // Without the VLC build a stale "vlc" setting silently falls back to mpv; the
     // engineName() logged below always reports what was actually constructed.
@@ -114,29 +112,8 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     for (MediaItemModel *model : { m_home->resume(), m_home->nextUp(), m_home->favorites(),
                                    m_library->model(), m_search->model(), m_series->episodes(),
                                    m_details->similar(), m_details->upcomingEpisodes(),
-                                   m_music->albums(), m_music->artists(),
-                                   m_music->tracks(), m_music->songs(),
-                                   m_music->artistAlbums(),
-                                   m_music->artistTracks(), m_music->playlists(),
                                    m_playlists->items() })
         m_actions->registerModel(model);
-    // Two lists of playlists exist on purpose (see MusicController::playlists):
-    // PlaylistController's is every playlist the user has, for the "add to…"
-    // picker, and MusicController's is the music library's alone, for the tab.
-    // Only the first is refreshed by the verbs that change the set, so the
-    // second is told here — otherwise a playlist made from a track never
-    // appears in the tab whose whole job is to list it. Wired in C++ rather
-    // than relayed through QML because it is a real dependency between two
-    // controllers and no page should have to remember to carry it.
-    connect(m_playlists, &PlaylistController::playlistsMutated, m_music,
-            &MusicController::invalidatePlaylists);
-    // The queue verbs live in ItemActions (ARCHITECTURE.md rule 3), and
-    // MusicController::playAlbum() needs them: it fetches an album's tracks
-    // into a scratch list of its own and hands the ordered items over, so that
-    // playing an album never has to navigate the open-album state to do it.
-    m_music->setActions(m_actions);
-    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, m_music,
-            &MusicController::playAlbum);
     // The series page's bounded, server-filtered next-unwatched query must run
     // only after the played mutation commits; the optimistic signal fires
     // before the REST request and would race the query against stale state.
@@ -174,6 +151,12 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_musicRelay = new music::MusicUserDataRelay(m_musicRepository, this);
     m_musicRelay->bind(m_actions, m_live);
     m_musicPlayback = new music::MusicPlayback(m_musicRepository, m_actions, this);
+    // A canonical album play (▸ on an album card anywhere) is a semantic verb
+    // ItemActions owns, but the ordered expansion is the music repository's
+    // album query. The signal carries only an id, so the queue falls back to
+    // its own context label.
+    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, m_musicPlayback,
+            [this](const QString &albumId) { m_musicPlayback->playAlbum(albumId, QString(), 0); });
     // What is playing changes the listening shelves (continue listening,
     // recently played, artists you play). Marking them stale costs nothing
     // until Music Home next asks.
@@ -195,6 +178,12 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_musicBrowse = new music::MusicBrowseController(m_musicRepository, m_musicPlayback, this);
     for (music::MusicModelBase *model : m_musicBrowse->models())
         m_musicRelay->addModel(model);
+    // A playlist made, renamed or deleted from any surface changes the set the
+    // browse Playlists section lists; PlaylistController refreshes only its own.
+    // Wired in C++ rather than relayed through QML because it is a real
+    // dependency between two controllers and no page should have to carry it.
+    connect(m_playlists, &PlaylistController::playlistsMutated, m_musicBrowse,
+            &music::MusicBrowseController::notePlaylistsMutated);
 
     // The album and artist pages (Crate spec §6.1–6.2). Their track and album
     // models are patched in place by the relay; the page's own heart follows
@@ -350,7 +339,6 @@ void Application::teardownAuthenticatedSession()
     m_series->resetSessionState();
     m_details->resetSessionState();
     m_playlists->resetSessionState();
-    m_music->resetSessionState();
     m_musicHome->resetSessionState();
     m_musicBrowse->resetSessionState();
     m_albumCtl->resetSessionState();

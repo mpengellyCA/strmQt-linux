@@ -19,7 +19,6 @@ class ItemActions;
 class LiveUpdateService;
 class GamepadManager;
 class InputMap;
-class MusicController;
 class PlaylistController;
 class RemoteControlService;
 class WebRemoteServer;
@@ -72,7 +71,6 @@ public:
     InputMap *input() const { return m_input; }
     RemoteControlService *remote() const { return m_remote; }
     PlaylistController *playlists() const { return m_playlists; }
-    MusicController *music() const { return m_music; }
     music::MusicRepository *musicRepository() const { return m_musicRepository; }
     music::MusicUserDataRelay *musicRelay() const { return m_musicRelay; }
     music::MusicPlayback *musicPlayback() const { return m_musicPlayback; }
@@ -125,7 +123,6 @@ private:
     WebRemoteServer *m_webRemoteServer = nullptr;
     WebRemoteController *m_webRemote = nullptr;
     PlaylistController *m_playlists = nullptr;
-    MusicController *m_music = nullptr;
     music::MusicRepository *m_musicRepository = nullptr;
     music::MusicUserDataRelay *m_musicRelay = nullptr;
     music::MusicPlayback *m_musicPlayback = nullptr;

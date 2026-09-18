@@ -9,7 +9,8 @@
 #include "MockEmbyServer.h"
 #include "app/ItemActions.h"
 #include "app/PlayQueue.h"
-#include "app/controllers/MusicController.h"
+#include "app/music/MusicPlayback.h"
+#include "app/music/MusicRepository.h"
 #include "app/controllers/PlayerController.h"
 #include "app/models/MediaItemModel.h"
 #include "core/Settings.h"
@@ -61,7 +62,6 @@ private slots:
 
     void playAllFetchesPlayableTypesInOrder();
     void shuffleAsksTheServerForARandomOrder();
-    void musicShuffleCarriesTheCurrentFilters();
     void shuffleNarrowsATvLibraryToEpisodes();
     void shuffleSeriesQueuesEveryEpisodeFromARandomStart();
     void seasonDispatchExpandsEpisodeChildren();
@@ -83,7 +83,6 @@ private slots:
     void instantMixQueuesTheServersStationAndDropsRepeats();
     void instantMixSaysSoWhenTheServerHasNoStation();
     void addAllToQueueIsOneGestureAndOneToast();
-    void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
     void newerLeafPlayRetiresEveryAsynchronousQueueBuilder();
     void sessionResetRetiresQueueBuildersAndClearsRegisteredModels();
     void playAllFromIfCurrentStampsTheSourceLabel();
@@ -183,46 +182,6 @@ void ItemActionsQueueTest::shuffleAsksTheServerForARandomOrder()
     const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
     QVERIFY2(query.contains(QStringLiteral("SortBy=Random")), qPrintable(query));
     QVERIFY2(query.contains(QStringLiteral("Limit=500")), qPrintable(query));
-}
-
-// ▸ Shuffle on the music page samples the library AS FILTERED: the letter,
-// genre and favourites narrowing the browse view are the constraints on the
-// random draw, and Random replaces whatever the browse sort was.
-void ItemActionsQueueTest::musicShuffleCarriesTheCurrentFilters()
-{
-    MusicController music(m_client, this);
-    music.setActions(m_actions);
-    music.setLibrary(QStringLiteral("lib-music"));
-    // Set before any list load: preferences, not queries — they fire no browse
-    // request of their own, so the only /Items fetch below is the shuffle's.
-    music.setGenreIds({QStringLiteral("g-1"), QStringLiteral("g-2")});
-    music.setNameStartsWith(QStringLiteral("B"));
-    music.setFavoritesOnly(true);
-
-    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
-    music.shuffleFiltered();
-
-    QTRY_COMPARE(queueSpy.count(), 1);
-    QVERIFY(m_player->queue()->rowCount() > 0);
-    QVERIFY(m_player->queue()->shuffled());
-
-    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
-    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("lib-music"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")),
-             QStringLiteral("Audio"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")), QStringLiteral("Random"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("GenreIds")),
-             QStringLiteral("g-1,g-2"));
-    // The letter goes out as the indexable range, exactly as the browse lane
-    // sends it (MusicController::applyFilters).
-    QCOMPARE(query.queryItemValue(QStringLiteral("NameStartsWithOrGreater")),
-             QStringLiteral("B"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("NameLessThan")), QStringLiteral("C"));
-    QCOMPARE(query.queryItemValue(QStringLiteral("Filters")),
-             QStringLiteral("IsFavorite"));
-    QVERIFY(!query.hasQueryItem(QStringLiteral("StartIndex"))
-            || query.queryItemValue(QStringLiteral("StartIndex")) == QStringLiteral("0"));
 }
 
 // A shuffle of a TV library must yield episodes; queueing series folders would
@@ -389,51 +348,52 @@ void ItemActionsQueueTest::playAlbumQueuesTheServersOrderWithoutOpeningTheAlbum(
         QStringLiteral("GET"), itemsPath(), 200,
         QByteArrayLiteral("{\"Items\":["
                           "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\","
-                          "\"IndexNumber\":1},"
+                          "\"AlbumId\":\"al-kob\",\"ParentIndexNumber\":1,\"IndexNumber\":1},"
                           "{\"Id\":\"301002\",\"Name\":\"Freddie Freeloader\",\"Type\":\"Audio\","
-                          "\"IndexNumber\":2},"
+                          "\"AlbumId\":\"al-kob\",\"ParentIndexNumber\":1,\"IndexNumber\":2},"
                           "{\"Id\":\"301003\",\"Name\":\"Blue In Green\",\"Type\":\"Audio\","
-                          "\"IndexNumber\":3}],\"TotalRecordCount\":3}"));
+                          "\"AlbumId\":\"al-kob\",\"ParentIndexNumber\":1,\"IndexNumber\":3}],"
+                          "\"TotalRecordCount\":3}"));
 
-    MusicController music(m_client, this);
-    music.setActions(m_actions);
+    music::MusicRepository repository(m_client);
+    music::MusicPlayback playback(&repository, m_actions);
 
     QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
-    music.playAlbum(QStringLiteral("al-kob"));
+    playback.playAlbum(QStringLiteral("al-kob"), QStringLiteral("Kind of Blue"), 0);
 
     QTRY_COMPARE(queueSpy.count(), 1);
     QCOMPARE(m_player->queue()->rowCount(), 3);
     QCOMPARE(m_player->queue()->currentIndex(), 0);
-    // Disc/track order, which is the order the server returned. An album queued
-    // alphabetically is the bug this verb exists to avoid.
+    // Disc/track order, which is the order the query asked for. An album
+    // queued alphabetically is the bug this verb exists to avoid.
     QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
              QStringLiteral("301001"));
     QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
              QStringLiteral("301003"));
 
-    // The whole point of the scratch list: nothing the album page reads moved.
-    QCOMPARE(music.tracks()->rowCount(), 0);
-    QVERIFY(music.albumId().isEmpty());
-
-    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
-    QVERIFY2(query.contains(QStringLiteral("ParentId=al-kob")), qPrintable(query));
-    // Neither sorted nor recursive: an album's children already come back in
-    // disc then track order, and recursing an album folder means nothing.
-    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
-    QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
+    // The repository's album query: disc then track, stated rather than
+    // assumed (spec §3.3).
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("al-kob"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("ParentIndexNumber,IndexNumber,SortName"));
 }
 
 void ItemActionsQueueTest::canonicalAlbumPlayUsesTheOrderedControllerExpansion()
 {
     m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
                      QByteArrayLiteral("{\"Items\":["
-                                       "{\"Id\":\"301002\",\"Name\":\"Second\",\"Type\":\"Audio\"},"
-                                       "{\"Id\":\"301001\",\"Name\":\"First\",\"Type\":\"Audio\"}],"
+                                       "{\"Id\":\"301002\",\"Name\":\"Second\",\"Type\":\"Audio\","
+                                       "\"ParentIndexNumber\":1,\"IndexNumber\":1},"
+                                       "{\"Id\":\"301001\",\"Name\":\"First\",\"Type\":\"Audio\","
+                                       "\"ParentIndexNumber\":1,\"IndexNumber\":2}],"
                                        "\"TotalRecordCount\":2}"));
-    MusicController music(m_client, this);
-    music.setActions(m_actions);
-    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, &music,
-            &MusicController::playAlbum);
+    music::MusicRepository repository(m_client);
+    music::MusicPlayback playback(&repository, m_actions);
+    // The same wiring Application makes (Task 10 Step 3).
+    connect(m_actions, &ItemActions::orderedAlbumPlayRequested, &playback,
+            [&playback](const QString &albumId) { playback.playAlbum(albumId, QString(), 0); });
 
     QVariantMap album{{QStringLiteral("itemId"), QStringLiteral("album-ordered")},
                       {QStringLiteral("name"), QStringLiteral("Server order")},
@@ -447,10 +407,11 @@ void ItemActionsQueueTest::canonicalAlbumPlayUsesTheOrderedControllerExpansion()
     QCOMPARE(m_player->queue()->rowCount(), 2);
     QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
              QStringLiteral("301002"));
-    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
-    QVERIFY2(query.contains(QStringLiteral("ParentId=album-ordered")), qPrintable(query));
-    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
-    QVERIFY2(!query.contains(QStringLiteral("Recursive")), qPrintable(query));
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("album-ordered"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("ParentIndexNumber,IndexNumber,SortName"));
 }
 
 void ItemActionsQueueTest::forbiddenContainerDispatchCannotReachPlaybackOrQueue()
@@ -851,51 +812,6 @@ void ItemActionsQueueTest::addAllToQueueIsOneGestureAndOneToast()
     QCOMPARE(queueSpy.count(), 1);
 }
 
-// The album grid's "Add to playlist" (MUSIC.md §3's carried-over gap): a
-// playlist holds an album's TRACKS, and only the server can expand the id.
-void ItemActionsQueueTest::collectAlbumTracksReportsIdsWithoutTouchingThePlayer()
-{
-    m_mock->addRoute(
-        QStringLiteral("GET"), itemsPath(), 200,
-        QByteArrayLiteral("{\"Items\":["
-                          "{\"Id\":\"301001\",\"Name\":\"So What\",\"Type\":\"Audio\"},"
-                          "{\"Id\":\"301002\",\"Name\":\"Freddie\",\"Type\":\"Audio\"}],"
-                          "\"TotalRecordCount\":2}"));
-
-    MusicController music(m_client, this);
-    music.setActions(m_actions);
-
-    QSignalSpy collected(&music, &MusicController::albumTracksCollected);
-    QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
-    music.collectAlbumTracks(QStringLiteral("al-kob"), QStringLiteral("Kind of Blue"));
-
-    QTRY_COMPARE(collected.count(), 1);
-    QCOMPARE(collected.first().at(0).toString(), QStringLiteral("Kind of Blue"));
-    QCOMPARE(collected.first().at(1).toStringList(),
-             QStringList({QStringLiteral("301001"), QStringLiteral("301002")}));
-    // It is not a play verb: nothing was queued and the album page's own model
-    // did not move.
-    QCOMPARE(queueSpy.count(), 0);
-    QCOMPARE(m_player->queue()->rowCount(), 0);
-    QCOMPARE(music.tracks()->rowCount(), 0);
-
-    // The same query playAlbum() issues, because it is literally the same
-    // expansion: unsorted and non-recursive, so the server's disc-then-track
-    // order survives.
-    const QString query = m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query;
-    QVERIFY2(query.contains(QStringLiteral("ParentId=al-kob")), qPrintable(query));
-    QVERIFY2(!query.contains(QStringLiteral("SortBy")), qPrintable(query));
-
-    // An album the server has nothing for reports, rather than raising a picker
-    // over an empty list.
-    m_mock->addRoute(QStringLiteral("GET"), itemsPath(), 200,
-                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
-    QSignalSpy failed(&music, &MusicController::actionFailed);
-    music.collectAlbumTracks(QStringLiteral("al-empty"), QStringLiteral("Nothing"));
-    QTRY_COMPARE(failed.count(), 1);
-    QCOMPARE(collected.count(), 1);
-}
-
 void ItemActionsQueueTest::newerLeafPlayRetiresEveryAsynchronousQueueBuilder()
 {
     const auto directPlay = [this](const QString &id) {
@@ -945,12 +861,12 @@ void ItemActionsQueueTest::newerLeafPlayRetiresEveryAsynchronousQueueBuilder()
     QTest::qWait(240);
     QCOMPARE(m_player->queue()->current().id, QStringLiteral("301001"));
 
-    // MusicController expands an album before handing it to ItemActions, so it
+    // MusicPlayback expands an album before handing it to ItemActions, so it
     // reserves the same global playback intent before starting that fetch.
-    MusicController music(m_client, this);
-    music.setActions(m_actions);
+    music::MusicRepository repository(m_client);
+    music::MusicPlayback playback(&repository, m_actions);
     const int beforeAlbum = m_mock->requestCount();
-    music.playAlbum(QStringLiteral("album-slow"));
+    playback.playAlbum(QStringLiteral("album-slow"), QStringLiteral("Slow"), 0);
     QTRY_VERIFY(m_mock->requestCount() > beforeAlbum);
     directPlay(QStringLiteral("301003"));
     QTest::qWait(240);

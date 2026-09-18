@@ -779,6 +779,13 @@ void MusicBrowseController::shuffleFiltered()
         m_playback->shuffleQuery(playScope(), scopeLabel());
 }
 
+void MusicBrowseController::notePlaylistsMutated()
+{
+    invalidate(Section::Playlists);
+    ensureVisible();
+    emit countsChanged(); // invalidate() dropped the record count with the rows
+}
+
 void MusicBrowseController::resetSessionState()
 {
     resetForLibrary(QString());

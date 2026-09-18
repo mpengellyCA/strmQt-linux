@@ -7,7 +7,6 @@
 #include "MockEmbyServer.h"
 #include "app/controllers/DetailsController.h"
 #include "app/controllers/LiveUpdateService.h"
-#include "app/controllers/MusicController.h"
 #include "app/controllers/PlaylistController.h"
 #include "app/controllers/SearchController.h"
 #include "app/controllers/SeriesController.h"
@@ -71,7 +70,6 @@ private slots:
     void playlistMemberProgressUsesEntryIds();
     void playlistMemberWalkStopsAtTheSafetyLimit();
     void deletingOpenPlaylistEndsAnInFlightMemberLoad();
-    void musicRetargetDropsTheInFlightPage();
     void thePlaylistListPagesToTheEnd();
     void aPlaylistWalkThatStoppedHalfwayIsRetried();
 
@@ -1654,62 +1652,6 @@ void ContentControllersTest::playlistMemberWalkStopsAtTheSafetyLimit()
     QVERIFY(playlists.errorMessage().contains(QStringLiteral("safety limit")));
     QVERIFY(playlists.errorMessage().contains(QStringLiteral("incomplete")));
     QCOMPARE(surfaced.count(), 1);
-}
-
-// Re-targeting the music scope is a supersede like any other (ARCHITECTURE.md):
-// a page requested for one library must not land under another. Clearing the
-// models was not enough — the reply in flight put the old library's albums
-// straight back, under the new library's name.
-void ContentControllersTest::musicRetargetDropsTheInFlightPage()
-{
-    const QString itemsPath = QStringLiteral("/Users/%1/Items").arg(kUserId);
-    m_mock->addRoute(QStringLiteral("GET"), itemsPath, 200,
-                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"al1\",\"Name\":\"Kind Of "
-                                       "Blue\",\"Type\":\"MusicAlbum\"}],"
-                                       "\"TotalRecordCount\":1}"));
-    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 200,
-                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"ar1\",\"Name\":\"Miles "
-                                       "Davis\",\"Type\":\"MusicArtist\"}],"
-                                       "\"TotalRecordCount\":1}"));
-
-    MusicController music(m_client);
-    QSignalSpy albums(&music, &MusicController::albumsChanged);
-    QSignalSpy artists(&music, &MusicController::artistsChanged);
-
-    music.setLibrary(QStringLiteral("lib-a"));
-    music.loadAlbums();
-    music.loadArtists();
-    QVERIFY(music.loading());
-
-    music.setLibrary(QStringLiteral("lib-b"));
-    // Nothing has been asked for in the new scope, and the replies that would
-    // have cleared the flag are now going to be dropped, so the spinner has to
-    // come down here or it never does.
-    QVERIFY(!music.loading());
-
-    // setLibrary() announces each of the four lists it just emptied, because
-    // canLoadMoreAlbums, canLoadMoreArtists and artistMode all notify on those
-    // signals and would otherwise keep answering for the library just left. So
-    // the count of interest starts here: what is being watched for below is a
-    // SECOND emission per list, meaning a dropped reply landed anyway.
-    albums.clear();
-    artists.clear();
-
-    music.loadAlbums();
-    music.loadArtists();
-    QTRY_COMPARE_WITH_TIMEOUT(albums.count(), 1, 5000);
-    QTRY_COMPARE_WITH_TIMEOUT(artists.count(), 1, 5000);
-
-    // Library A's pages have long since been served; if either landed, its
-    // model signal fired a second time.
-    QTest::qWait(250);
-    QCOMPARE(albums.count(), 1);
-    QCOMPARE(artists.count(), 1);
-    QCOMPARE(music.albums()->rowCount(), 1);
-    QCOMPARE(music.artists()->rowCount(), 1);
-    QCOMPARE(QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath).query)
-                 .queryItemValue(QStringLiteral("ParentId")),
-             QStringLiteral("lib-b"));
 }
 
 // ── The playlist list is the WHOLE list, or it is a wrong answer ────────────

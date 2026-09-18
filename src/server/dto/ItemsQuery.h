@@ -47,8 +47,8 @@ struct ItemsQuery
     // the 15 s transfer timeout while the unfiltered page took milliseconds.
     // The range pair (documented on /Users/{uid}/Items and both /Artists
     // endpoints, and what Emby's own alpha picker sends) stays on the SortName
-    // index. MusicController translates its letter into these; LibraryController
-    // still sends nameStartsWith above.
+    // index. The music query translator sends its letter as these;
+    // LibraryController still sends nameStartsWith above.
     QString nameStartsWithOrGreater;
     QString nameLessThan;
     // Music Crate axes (docs/superpowers/plans/2026-09-16-music-crate-verifications.md

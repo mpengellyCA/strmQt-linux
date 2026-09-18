@@ -618,7 +618,7 @@ ListView {
         table.rebuildMeta()
     }
 
-    // …and a different list is very often the SAME model object. MusicCtl.songs
+    // …and a different list is very often the SAME model object. A songs lane
     // is a CONSTANT Q_PROPERTY, so `onModelChanged` above fires once in the life
     // of the page and never again, while a filter or a sort change refills that
     // one model in place. The refilled list is frequently exactly a page long —

@@ -166,6 +166,18 @@ public:
     Q_INVOKABLE void ensureGenreOptions();
     Q_INVOKABLE void collectAlbumTracks(const QString &albumId, const QString &name);
 
+    // A playlist made, renamed or deleted from any surface changes the set the
+    // Playlists section lists, and PlaylistController — which refreshes only its
+    // own list — cannot know about this one. Invalidate rather than refetch: on
+    // screen the section reloads now, and from any other section the rows are
+    // dropped so the next visit pays for one request instead of one per playlist
+    // created while browsing albums.
+    //
+    // Not the lane's retry(): a fully loaded section has nothing left to page,
+    // so retry() returns without asking for anything and the playlist the user
+    // just made never appears (measured, Task 10).
+    void notePlaylistsMutated();
+
     void resetSessionState();
 
 signals:

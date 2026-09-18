@@ -1,6 +1,5 @@
 #include "Application.h"
 #include "WindowFocusKeeper.h"
-#include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/music/AlbumController.h"
 #include "controllers/music/ArtistController.h"
@@ -59,7 +58,6 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("RemoteCtl"), app.remote());
     engine.rootContext()->setContextProperty(QStringLiteral("WebRemoteCtl"), app.webRemote());
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistCtl"), app.playlists());
-    engine.rootContext()->setContextProperty(QStringLiteral("MusicCtl"), app.music());
     // Every music play verb (Crate spec §3.6): album, shuffle, radio, stations.
     engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicHomeCtl"), app.musicHome());

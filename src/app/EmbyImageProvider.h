@@ -67,7 +67,7 @@ public:
     Q_INVOKABLE void fetch(strmqt::EmbyImageResponse *response, const QString &id,
                            const QSize &requestedSize);
     // Unlike MediaItemModel's tagged-image helper, this intentionally permits
-    // an empty tag: ArtistPage uses Emby's current Primary image as a fallback.
+    // an empty tag, which asks for whatever Primary image the item currently has.
     Q_INVOKABLE QString sourceFor(const QString &itemId, const QString &imageType,
                                   const QString &tag = {}) const;
     QString sourceNamespace() const;

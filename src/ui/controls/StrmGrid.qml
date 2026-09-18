@@ -244,7 +244,7 @@ FocusScope {
     property int _lastNearEndCount: -1
 
     // The throttle is keyed on the loaded count, so it has to be told when the
-    // rows are replaced rather than added to. MusicCtl.albums and .artists are
+    // rows are replaced rather than added to. A controller's grid models are
     // CONSTANT Q_PROPERTIES — the model object never changes — and a filter
     // change clears and refills them in place. A refilled list that happens to
     // be the same length as the old one would otherwise sit at

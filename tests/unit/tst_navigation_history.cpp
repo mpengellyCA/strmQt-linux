@@ -1585,6 +1585,8 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QCOMPARE(music.count("musicMenu.popupForItem("), 3);
     QVERIFY(!music.contains("musicMenu.popupFor("));
     QVERIFY(!music.contains("property string mode: \"album\""));
+    QVERIFY(music.contains("MusicPlay.playAlbum("));
+    QVERIFY(!music.contains("MusicCtl."));
 
     const QByteArray search = sourceFor(QStringLiteral("src/ui/pages/SearchPage.qml"));
     QVERIFY(!search.contains("function playAlbumResult("));
@@ -1599,9 +1601,6 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(!musicPlaylist.isEmpty());
     QVERIFY(musicPlaylist.contains(
         "onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)"));
-
-    QVERIFY(music.contains("MusicPlay.playAlbum("));
-    QVERIFY(!music.contains("MusicCtl."));
 
     const QByteArray playlist = sourceFor(QStringLiteral("src/ui/pages/PlaylistPage.qml"));
     QVERIFY(

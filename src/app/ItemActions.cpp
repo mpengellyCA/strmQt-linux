@@ -610,8 +610,8 @@ void ItemActions::instantMix(const QVariant &item)
 {
     // An id is the whole of what this verb needs, so a bare id is taken at face
     // value rather than looked up. resolve() answers a QString by searching the
-    // registered models, and **MusicController's four models are not registered
-    // here** — so every album, artist and track a music page could name would
+    // registered models, and **the music models are not registered here** —
+    // so every album, artist and track a music page could name would
     // resolve to an empty map and the mix would silently never happen. Found by
     // the test below, which is what it is for.
     const QString itemId = item.typeId() == QMetaType::QString

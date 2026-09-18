@@ -25,7 +25,7 @@ constexpr int kMemberRowLimit = kMemberPageSize * kMemberPageLimit;
 // One page of the playlist LIST. The walk in fetchPlaylistPage() covers the
 // measured 1,564 in four round trips.
 constexpr int kListPageSize = 500;
-// A hard stop on that walk, the same guard MusicController's genre walk carries:
+// A hard stop on that walk, the same guard every paged walk here carries:
 // a server that answers a full page forever must not spin this loop. 20 pages is
 // 10,000 playlists — an order of magnitude past the measured library.
 constexpr int kListPageLimit = 20;

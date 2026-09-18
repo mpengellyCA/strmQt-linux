@@ -207,11 +207,10 @@ FocusScope {
     // ── Favourite ───────────────────────────────────────────────────────────
     // The queue's rows are not registered with ItemActions — PlayQueue keeps a
     // MediaItemModel of its own for role parity and nothing hands it over — so
-    // the optimistic patch a toggle applies never reaches this map. Same shape
-    // AlbumPage uses for the same reason: the role is the baseline (what the
-    // server said when the entry was queued), the overlay is what has changed
-    // since, and it is REPLACED rather than mutated because a mutated object
-    // notifies nothing and the heart would keep its old state.
+    // the optimistic patch a toggle applies never reaches this map. The role is
+    // the baseline (what the server said when the entry was queued), the overlay
+    // is what has changed since, and it is REPLACED rather than mutated because
+    // a mutated object notifies nothing and the heart would keep its old state.
     property var favoriteOverrides: ({})
 
     readonly property bool nowFavorite: {
