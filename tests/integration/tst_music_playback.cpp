@@ -2,6 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
+#include <QUrlQuery>
 #include <QtTest>
 
 #include "FakePlayerBackend.h"
@@ -13,6 +14,7 @@
 #include "app/music/MusicRepository.h"
 #include "core/Settings.h"
 #include "server/emby/EmbyClient.h"
+#include "server/dto/music/MusicQuery.h"
 
 using namespace strmqt;
 using namespace strmqt::music;
@@ -69,6 +71,7 @@ private slots:
     void stationTileResolvesByKey();
     void failureLeavesTheQueueAndReports();
     void lastVerbWins();
+    void playQueryQueuesTheFilteredScopeInOrder();
 
 private:
     PlayQueue *queue() const { return m_player->queue(); }
@@ -200,6 +203,29 @@ void MusicPlaybackTest::lastVerbWins()
     QTest::qWait(100); // A's reply, if it were not dropped, would land now
     QCOMPARE(queueIds(queue()), (QStringList{"b1", "b2"}));
     QCOMPARE(queue()->sourceLabel(), QStringLiteral("B"));
+}
+
+void MusicPlaybackTest::playQueryQueuesTheFilteredScopeInOrder()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "Audio"}, {"Filters", "IsFavorite"}}, 200,
+                          page({trackJson("a1", "alA", 1), trackJson("a2", "alA", 2), trackJson("a3", "alA", 3)}));
+
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    query.section = Section::Albums; // playQuery scopes to Songs itself
+    query.sortKey = QStringLiteral("album");
+    query.letter = QStringLiteral("Q");
+    query.favouritesOnly = true;
+    m_playback->playQuery(query, QStringLiteral("Favourites"));
+
+    QTRY_COMPARE(queueIds(queue()), (QStringList{"a1", "a2", "a3"}));
+    QCOMPARE(queue()->currentIndex(), 0);
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("Favourites"));
+
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    QCOMPARE(sent.queryItemValue("Limit"), QStringLiteral("500"));
+    QCOMPARE(sent.queryItemValue("SortBy"), QStringLiteral("Album,ParentIndexNumber,IndexNumber,SortName"));
+    QVERIFY(!sent.hasQueryItem("NameStartsWithOrGreater"));
 }
 
 QTEST_GUILESS_MAIN(MusicPlaybackTest)

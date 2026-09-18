@@ -144,7 +144,7 @@ QML-only tasks have no unit test. Their verification is:
     - Queues the first `limit` tracks of `query` scoped to Songs, with the letter dropped, in the query's order, labelled `label`.
     - Reserves the playback intent before the request.
 
-- [ ] **Step 1: Write the failing repository test**
+- [x] **Step 1: Write the failing repository test**
 
 In `tests/integration/tst_music_repository.cpp`, declare under `private slots:`:
 
@@ -186,7 +186,7 @@ void MusicRepositoryTest::coverGenresSamplesOnlyBinsWithoutCovers()
 }
 ```
 
-- [ ] **Step 2: Write the failing playback test**
+- [x] **Step 2: Write the failing playback test**
 
 In `tests/integration/tst_music_playback.cpp`, declare under `private slots:`:
 
@@ -223,12 +223,12 @@ void MusicPlaybackTest::playQueryQueuesTheFilteredScopeInOrder()
 
 Add `#include <QUrlQuery>` to the includes if the file lacks it.
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_music_repository tst_music_playback`
 Expected: a compile error (`coverGenres` and `playQuery` are not members).
 
-- [ ] **Step 4: Implement `coverGenres` and refactor `genreBins` onto it**
+- [x] **Step 4: Implement `coverGenres` and refactor `genreBins` onto it**
 
 In `MusicRepository.h`, after `genreBins`:
 
@@ -282,7 +282,7 @@ QFuture<Result<QList<GenreBin>>> MusicRepository::coverGenres(const QString &lib
 }
 ```
 
-- [ ] **Step 5: Implement `playQuery`**
+- [x] **Step 5: Implement `playQuery`**
 
 In `MusicPlayback.h`, after `shuffleQuery`:
 
@@ -310,12 +310,12 @@ void MusicPlayback::playQuery(const MusicQuery &query, const QString &label, int
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cmake --build --preset dev --target tst_music_repository tst_music_playback && ctest --preset dev -R "tst_music_repository|tst_music_playback" --output-on-failure`
 Expected: PASS. `genreBinsSampleCoversOnce` still passes on the refactored `genreBins`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/music/MusicRepository.* src/app/music/MusicPlayback.* tests/integration/tst_music_repository.cpp tests/integration/tst_music_playback.cpp

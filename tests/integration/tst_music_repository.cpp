@@ -97,6 +97,8 @@ private slots:
     void recentAlbumsDedupeInPlayOrder();
     void newAlbumsCountThisWeek();
     void genreBinsSampleCoversOnce();
+    void coverGenresSamplesOnlyBinsWithoutCovers();
+    void coverGenresRefusesStaleCoversAfterIdentityChanges();
     void topArtistsRankByPlays();
     void stationsDescribeFiveTilesWithCovers();
     void heavyRotationIsShuffledPlayedTracks();
@@ -423,6 +425,59 @@ void MusicRepositoryTest::genreBinsSampleCoversOnce()
     QVERIFY(waitFor(m_repo->genreBins(kLibrary, 2)).ok());
     for (qsizetype i = before; i < m_mock->requests().size(); ++i)
         QVERIFY(!QUrlQuery(m_mock->requests().at(i).query).hasQueryItem("GenreIds")); // covers cached
+}
+
+void MusicRepositoryTest::coverGenresSamplesOnlyBinsWithoutCovers()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"GenreIds", "g1"}, {"SortBy", "Random"}}, 200,
+                          page({albumJson("c-g1a"), albumJson("c-g1b")}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"GenreIds", "g3"}, {"SortBy", "Random"}}, 500, "{}");
+
+    GenreBin jazz;
+    jazz.id = QStringLiteral("g1");
+    jazz.name = QStringLiteral("Jazz");
+    GenreBin rock;
+    rock.id = QStringLiteral("g2");
+    rock.name = QStringLiteral("Rock");
+    rock.covers = {ImageRef{QStringLiteral("kept"), QStringLiteral("Primary"), QStringLiteral("tag-kept")}};
+    GenreBin folk;
+    folk.id = QStringLiteral("g3");
+    folk.name = QStringLiteral("Folk");
+
+    const auto result = waitFor(m_repo->coverGenres(kLibrary, {jazz, rock, folk}));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 3);
+    QCOMPARE(result.value.at(0).id, QStringLiteral("g1"));
+    QCOMPARE(result.value.at(0).covers.size(), 2);
+    QCOMPARE(result.value.at(1).covers.size(), 1);
+    QCOMPARE(result.value.at(1).covers.first().itemId, QStringLiteral("kept"));
+    QVERIFY(result.value.at(2).covers.isEmpty()); // a failed sample degrades, never fails
+
+    for (const auto &request : m_mock->requests())
+        QVERIFY(QUrlQuery(request.query).queryItemValue("GenreIds") != QStringLiteral("g2"));
+}
+
+void MusicRepositoryTest::coverGenresRefusesStaleCoversAfterIdentityChanges()
+{
+    // Binding ruling P3-R1 (T10 epoch ruling extended to coverGenres): a
+    // cover sample still in flight when the identity changes must not let
+    // the fan-out resolve success (even with an emptied-out bin) under a
+    // session different from the one that started the call.
+    m_mock->addRoute("GET", itemsPath(), 200, page({albumJson("late-cover")}));
+    m_mock->setRouteDelay("GET", itemsPath(), 400);
+
+    GenreBin jazz;
+    jazz.id = QStringLiteral("g1");
+    jazz.name = QStringLiteral("Jazz");
+
+    auto future = m_repo->coverGenres(kLibrary, {jazz});
+    // The genre-cover fetch is still held back by the mock; change identity
+    // before it lands. setSession() aborts the outstanding request.
+    m_client->setSession(kToken, QStringLiteral("ffffffffffffffffffffffffffffffff"));
+
+    const auto result = waitFor(std::move(future));
+    QVERIFY(!result.ok());
+    QCOMPARE(result.error, QStringLiteral("request canceled"));
 }
 
 void MusicRepositoryTest::topArtistsRankByPlays()

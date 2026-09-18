@@ -49,6 +49,11 @@ public:
     QFuture<Result<NewAlbums>> newAlbums(const QString &libraryId, int limit = 20);
     QFuture<Result<QList<GenreBin>>> allGenres(const QString &libraryId);
     QFuture<Result<Page<GenreBin>>> genreBins(const QString &libraryId, int limit);
+    // Samples up to three album covers for every bin that has none (session
+    // cache per genre). Order is kept; a failed sample leaves that bin bare.
+    // T10/P3-R1 epoch ruling: refuses to resolve covers into a session
+    // different from the one that started this call.
+    QFuture<Result<QList<GenreBin>>> coverGenres(const QString &libraryId, QList<GenreBin> genres);
     QFuture<Result<QList<Artist>>> topArtists(const QString &libraryId, int limit = 20);
     QFuture<Result<QList<Album>>> forgottenFavourites(const QString &libraryId, int limit = 20);
     QFuture<Result<QList<Album>>> randomAlbums(const QString &libraryId, int limit = 20);

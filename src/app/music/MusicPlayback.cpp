@@ -129,4 +129,19 @@ void MusicPlayback::shuffleQuery(const MusicQuery &query, const QString &label)
                  tr("Shuffle · %1").arg(label));
 }
 
+void MusicPlayback::playQuery(const MusicQuery &query, const QString &label, int limit)
+{
+    const quint64 generation = m_actions->reservePlaybackIntent();
+    MusicQuery scoped = query;
+    scoped.section = Section::Songs;
+    // The letter is a place to land, not part of what the view means.
+    scoped.letter.clear();
+    auto tracks = m_repository->browseTracks(scoped, 0, limit).then(this, [](Result<Page<Track>> r) {
+        if (!r.ok())
+            return Result<QList<Track>>::failure(r.error);
+        return Result<QList<Track>>::success(r.value.items);
+    });
+    playResolved(tracks, generation, 0, Order::AsGiven, label);
+}
+
 } // namespace strmqt::music

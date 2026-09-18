@@ -697,23 +697,46 @@ QFuture<Result<Page<GenreBin>>> MusicRepository::genreBins(const QString &librar
         // identity than the one that started this request.
         if (!epochIs(epoch))
             return pending.resolve(Result<Page<GenreBin>>::failure(QStringLiteral("request canceled")));
-        auto page = std::make_shared<Page<GenreBin>>();
-        page->items = all.value.mid(0, limit);
-        page->totalRecordCount = static_cast<int>(all.value.size());
-        auto fan = Fanout::create(this, [pending, page] {
-            pending.resolve(Result<Page<GenreBin>>::success(*page));
-        });
-        for (int i = 0; i < page->items.size(); ++i) {
-            fan->add<QList<ImageRef>>(genreCovers(libraryId, page->items.at(i).id),
-                                      [page, i](Result<QList<ImageRef>> r) {
-                                          if (r.ok())
-                                              page->items[i].covers = r.value;
-                                          else
-                                              qCWarning(logApp) << "music: genre covers failed" << r.error;
-                                      });
-        }
-        fan->seal();
+        const int total = static_cast<int>(all.value.size());
+        coverGenres(libraryId, all.value.mid(0, limit))
+            .then(this, [pending, total](Result<QList<GenreBin>> covered) {
+                if (!covered.ok())
+                    return pending.resolve(Result<Page<GenreBin>>::failure(covered.error));
+                Page<GenreBin> page;
+                page.items = covered.value;
+                page.totalRecordCount = total;
+                pending.resolve(Result<Page<GenreBin>>::success(page));
+            });
     });
+    return pending.future();
+}
+
+QFuture<Result<QList<GenreBin>>> MusicRepository::coverGenres(const QString &libraryId, QList<GenreBin> genres)
+{
+    Pending<QList<GenreBin>> pending;
+    const quint64 epoch = m_epoch;
+    auto shared = std::make_shared<QList<GenreBin>>(std::move(genres));
+    auto fan = Fanout::create(this, [this, pending, shared, epoch] {
+        // T10/P3-R1 epoch ruling: don't resolve genre covers into a session
+        // different from the one that started this request — a bin sampled
+        // under the old identity must not surface after a switch, even if its
+        // fetch itself happened to succeed.
+        if (!epochIs(epoch))
+            return pending.resolve(Result<QList<GenreBin>>::failure(QStringLiteral("request canceled")));
+        pending.resolve(Result<QList<GenreBin>>::success(*shared));
+    });
+    for (int i = 0; i < shared->size(); ++i) {
+        if (!shared->at(i).covers.isEmpty())
+            continue;
+        fan->add<QList<ImageRef>>(genreCovers(libraryId, shared->at(i).id),
+                                  [shared, i](Result<QList<ImageRef>> r) {
+                                      if (r.ok())
+                                          (*shared)[i].covers = r.value;
+                                      else
+                                          qCWarning(logApp) << "music: genre covers failed" << r.error;
+                                  });
+    }
+    fan->seal();
     return pending.future();
 }
 

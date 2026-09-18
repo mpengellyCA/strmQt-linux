@@ -38,6 +38,8 @@ public:
     void queueStation(const QString &libraryId, const Station &station);
     Q_INVOKABLE void playStationTile(const QString &libraryId, const QVariantMap &tile);
     void shuffleQuery(const MusicQuery &query, const QString &label);
+    // ▶ Play on a filtered view: the Songs scope in its own order (spec §5.1).
+    void playQuery(const MusicQuery &query, const QString &label, int limit = 500);
 
     static QVariantList toMaps(const QList<Track> &tracks);
 
