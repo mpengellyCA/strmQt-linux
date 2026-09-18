@@ -48,9 +48,12 @@ QJsonObject albumJson(const QString &id)
             {"ChildCount", 10}, {"ImageTags", QJsonObject{{"Primary", "tag-" + id}}}};
 }
 
-QJsonObject artistJson(const QString &id)
+QJsonObject artistJson(const QString &id, int albumCount = -1)
 {
-    return {{"Id", id}, {"Name", "Artist " + id}, {"Type", "MusicArtist"}};
+    QJsonObject json{{"Id", id}, {"Name", "Artist " + id}, {"Type", "MusicArtist"}};
+    if (albumCount >= 0)
+        json.insert("AlbumCount", albumCount);
+    return json;
 }
 
 QJsonObject playlistJson(const QString &id, const QString &name)
@@ -95,6 +98,12 @@ QStringList queueIds(PlayQueue *queue)
     return ids;
 }
 
+QVariant role(const QAbstractItemModel &model, int row, const QByteArray &name)
+{
+    const auto names = model.roleNames();
+    return model.data(model.index(row, 0), names.key(name));
+}
+
 using Q = QList<QPair<QString, QString>>;
 
 } // namespace
@@ -124,6 +133,7 @@ private slots:
     void anInvalidatedSectionDoesNotStrandItsLoadingFlag();
     void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
     void createdPlaylistsReappearInThePlaylistsSection();
+    void artistAlbumCountSurfacesInTheSubtitle();
     void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
 private:
@@ -291,6 +301,19 @@ void MusicBrowseControllerTest::filterChangeRefetchesVisibleAndInvalidatesHidden
     m_ctl->setSection(QStringLiteral("artists"));
     QTRY_COMPARE(requestsTo(kAlbumArtistsPath), artists + 1);
     QTRY_COMPARE(m_ctl->artists()->count(), 2);
+}
+
+void MusicBrowseControllerTest::artistAlbumCountSurfacesInTheSubtitle()
+{
+    // End-to-end regression for visual-fix-1's defect 1: a payload carrying
+    // AlbumCount must reach the grid's subtitle as a non-zero record count, all
+    // the way through MusicRepository::browseArtists() and ArtistGridModel.
+    m_mock->addRoute("GET", kAlbumArtistsPath, 200, page({artistJson("ar1", 7)}));
+
+    m_ctl->open(kLibrary, QStringLiteral("artists"));
+    QTRY_COMPARE(m_ctl->artists()->count(), 1);
+    QCOMPARE(role(*m_ctl->artists(), 0, "recordCount").toInt(), 7);
+    QCOMPARE(role(*m_ctl->artists(), 0, "subtitle").toString(), QStringLiteral("7 records"));
 }
 
 void MusicBrowseControllerTest::dropsRepliesForASupersededQuery()
@@ -641,7 +664,10 @@ void MusicBrowseControllerTest::aSectionFailureStaysOnItsOwnLaneAndRetryRecovers
 // paging for that section for the rest of the session.
 void MusicBrowseControllerTest::anInvalidatedSectionDoesNotStrandItsLoadingFlag()
 {
-    const Q browseQuery{{"ParentId", kLibrary}, {"IncludeItemTypes", "Playlist"}};
+    // Playlists carry no ParentId (visual-fix-1: they are not library children),
+    // so MediaTypes=Audio — sent only by this audio-only browse section, never by
+    // PlaylistController's own walk — is what tells its requests apart here.
+    const Q browseQuery{{"MediaTypes", "Audio"}, {"IncludeItemTypes", "Playlist"}};
     // Albums answer instantly from a query route; the playlists page falls
     // through to the plain route, which is the delayed one. It has to be that
     // way round: MockEmbyServer builds a matched query route with delayMs 0, so
@@ -757,9 +783,11 @@ void MusicBrowseControllerTest::collectAlbumTracksReportsIdsWithoutTouchingThePl
 // — and the connection made below is the one Application makes.
 void MusicBrowseControllerTest::createdPlaylistsReappearInThePlaylistsSection()
 {
-    // ParentId is what tells the browse section's audio-scoped query apart from
-    // PlaylistController's own unscoped walk over the same REST path.
-    const Q browseQuery{{"ParentId", kLibrary}, {"IncludeItemTypes", "Playlist"}};
+    // Playlists are not children of a music library (visual-fix-1), so the browse
+    // section's query no longer carries ParentId — it is now identical in shape to
+    // PlaylistController's own unscoped walk over the same REST path except for
+    // MediaTypes=Audio, which only the browse section's audio-only query sends.
+    const Q browseQuery{{"MediaTypes", "Audio"}, {"IncludeItemTypes", "Playlist"}};
     m_mock->addQueryRoute("GET", itemsPath(), browseQuery, 200,
                           page({playlistJson("pl1", "Road Trip")}));
     m_mock->addRoute("POST", "/Playlists", 200,

@@ -42,6 +42,14 @@ QJsonObject albumJson(const QString &id, const QString &artistId = QStringLitera
             {"ImageTags", QJsonObject{{"Primary", "tag-" + id}}}};
 }
 
+QJsonObject playlistJson(const QString &id, const QString &mediaType = QString())
+{
+    QJsonObject json{{"Id", id}, {"Name", "Playlist " + id}, {"Type", "Playlist"}, {"ChildCount", 5}};
+    if (!mediaType.isEmpty())
+        json.insert("MediaType", mediaType);
+    return json;
+}
+
 QJsonObject trackJson(const QString &id, const QString &albumId, int disc, int number,
                       const QString &artistId = QStringLiteral("ar1"))
 {
@@ -107,6 +115,7 @@ private slots:
 
     void browseAlbumsPagesWithTheTranslatedQuery();
     void browseArtistsPicksTheEndpointByMode();
+    void browsePlaylistsKeepsAudioAndDropsVideo();
     void browseTracksAddsHiResOnlyWhenMeasured();
     void sampleTracksIsRandomAcrossTheFilteredScope();
     void userDataChangeDropsCachesHoldingTheItem();
@@ -632,6 +641,31 @@ void MusicRepositoryTest::browseArtistsPicksTheEndpointByMode()
     query.artistMode = ArtistMode::Everyone;
     QVERIFY(waitFor(m_repo->browseArtists(query, 0, 100)).ok());
     QCOMPARE(m_mock->lastRequestFor("GET", "/Artists").path, QStringLiteral("/Artists"));
+}
+
+void MusicRepositoryTest::browsePlaylistsKeepsAudioAndDropsVideo()
+{
+    // Defect 2, half 2 (visual-fix-1): dropping the ParentId scope means a bare
+    // IncludeItemTypes=Playlist query also returns video playlists. MediaTypes=Audio
+    // is asked for, but this server cannot be measured from here for whether it
+    // honours MediaTypes on a Playlist query, so browsePlaylists() must also filter
+    // client-side: keep "Audio" and rows with no MediaType at all, drop "Video".
+    m_mock->addRoute("GET", itemsPath(), 200,
+                     page({playlistJson("p-audio", QStringLiteral("Audio")),
+                           playlistJson("p-video", QStringLiteral("Video")), playlistJson("p-unknown")}));
+    MusicQuery query;
+    query.libraryId = kLibrary;
+    const auto result = waitFor(m_repo->browsePlaylists(query, 0, 100));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QStringList ids;
+    for (const Playlist &playlist : result.value.items)
+        ids.append(playlist.id);
+    QCOMPARE(ids, (QStringList{QStringLiteral("p-audio"), QStringLiteral("p-unknown")}));
+
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    QVERIFY(!sent.hasQueryItem("ParentId"));
+    QCOMPARE(sent.queryItemValue("Recursive"), QStringLiteral("true"));
+    QCOMPARE(sent.queryItemValue("MediaTypes"), QStringLiteral("Audio"));
 }
 
 void MusicRepositoryTest::browseTracksAddsHiResOnlyWhenMeasured()

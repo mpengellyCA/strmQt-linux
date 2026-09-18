@@ -169,6 +169,11 @@ struct Playlist
     qint64 runtimeMs = 0;
     QDateTime dateAdded;
     ImageRef coverRef; // Emby renders a collage Primary for playlists
+    // Emby's own classification: "Audio", "Video", or absent when Emby has not
+    // classified the playlist. MusicRepository::browsePlaylists() uses this to drop
+    // non-audio rows the server may still return (see MusicQueryTranslator's
+    // Section::Playlists comment).
+    QString mediaType;
 };
 
 template<class T>

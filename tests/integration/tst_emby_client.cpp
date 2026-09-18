@@ -56,6 +56,7 @@ private slots:
     void getJsonFailsWithoutSession();
     void itemsSendsMusicAxes();
     void queryRoutesMatchMostSpecific();
+    void artistEndpointsForwardFields();
 
 private:
     MockEmbyServer *m_mock = nullptr;
@@ -568,6 +569,7 @@ void EmbyClientTest::itemsSendsMusicAxes()
     ItemsQuery query;
     query.years = {1970, 1971};
     query.audioCodecs = {QStringLiteral("flac"), QStringLiteral("alac")};
+    query.mediaTypes = {QStringLiteral("Audio")};
     query.minDateCreated = QStringLiteral("2026-09-09T00:00:00Z");
     query.minPremiereDate = QStringLiteral("1970-01-01");
     query.maxPremiereDate = QStringLiteral("1979-12-31");
@@ -576,6 +578,7 @@ void EmbyClientTest::itemsSendsMusicAxes()
     const QUrlQuery params = EmbyClient::itemsParams(query);
     QCOMPARE(params.queryItemValue(QStringLiteral("Years")), QStringLiteral("1970,1971"));
     QCOMPARE(params.queryItemValue(QStringLiteral("AudioCodecs")), QStringLiteral("flac,alac"));
+    QCOMPARE(params.queryItemValue(QStringLiteral("MediaTypes")), QStringLiteral("Audio"));
     QCOMPARE(params.queryItemValue(QStringLiteral("MinDateCreated")), QStringLiteral("2026-09-09T00:00:00Z"));
     QCOMPARE(params.queryItemValue(QStringLiteral("MinPremiereDate")), QStringLiteral("1970-01-01"));
     QCOMPARE(params.queryItemValue(QStringLiteral("MaxPremiereDate")), QStringLiteral("1979-12-31"));
@@ -585,7 +588,43 @@ void EmbyClientTest::itemsSendsMusicAxes()
     const QUrlQuery empty = EmbyClient::itemsParams(ItemsQuery{});
     QVERIFY(!empty.hasQueryItem(QStringLiteral("Years")));
     QVERIFY(!empty.hasQueryItem(QStringLiteral("Ids")));
+    QVERIFY(!empty.hasQueryItem(QStringLiteral("MediaTypes")));
     QCOMPARE(empty.queryItemValue(QStringLiteral("Limit")), QStringLiteral("100"));
+}
+
+void EmbyClientTest::artistEndpointsForwardFields()
+{
+    // Bug (visual-fix-1): artistParams() built ParentId/StartIndex/Limit/SortBy/
+    // etc. but never forwarded query.fields, so /Artists and
+    // /Artists/AlbumArtists were asked for no fields at all and every artist's
+    // AlbumCount/ChildCount came back missing. Assert on what actually goes over
+    // the wire, not on the source text.
+    m_client->setSession(kToken, kUserId);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    ItemsQuery query;
+    query.fields = {QStringLiteral("ItemCounts"), QStringLiteral("DateCreated")};
+
+    QVERIFY(waitFor(m_client->musicArtists(query)).ok());
+    const QString artistsFields =
+        QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Artists")).query)
+            .queryItemValue(QStringLiteral("Fields"));
+    QCOMPARE(artistsFields, QStringLiteral("ItemCounts,DateCreated"));
+
+    QVERIFY(waitFor(m_client->albumArtists(query)).ok());
+    const QString albumArtistsFields =
+        QUrlQuery(
+            m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Artists/AlbumArtists")).query)
+            .queryItemValue(QStringLiteral("Fields"));
+    QCOMPARE(albumArtistsFields, QStringLiteral("ItemCounts,DateCreated"));
+
+    // Unset fields still send nothing, matching the generic item path.
+    QVERIFY(waitFor(m_client->musicArtists(ItemsQuery{})).ok());
+    QVERIFY(!QUrlQuery(m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Artists")).query)
+                .hasQueryItem(QStringLiteral("Fields")));
 }
 
 void EmbyClientTest::queryRoutesMatchMostSpecific()

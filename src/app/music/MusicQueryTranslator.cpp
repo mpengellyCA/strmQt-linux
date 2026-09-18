@@ -147,7 +147,22 @@ ItemsQuery toItemsQuery(const MusicQuery &query, int startIndex, int limit)
         items.includeItemTypes = {QStringLiteral("Playlist")};
         items.fields = {QStringLiteral("ChildCount"), QStringLiteral("CumulativeRunTimeTicks"),
                         QStringLiteral("DateCreated")};
-        items.recursive = false;
+        // Playlists are not children of a music library, so the ParentId set above
+        // (from query.libraryId) cannot scope this query: sent as ParentId +
+        // non-recursive, it always came back empty on the live server. Match the
+        // shape PlaylistController::fetchPlaylistPage() already uses successfully:
+        // no ParentId at all, Recursive=true.
+        items.parentId.clear();
+        items.recursive = true;
+        // Dropping the ParentId scope means a bare IncludeItemTypes=Playlist query
+        // also returns the human's video playlists (design spec: audio playlists get
+        // the 2x2 collage here; video playlists keep the existing PlaylistPage). Ask
+        // the server to pre-filter with MediaTypes=Audio, but this server cannot be
+        // measured from here for whether it honours MediaTypes on a Playlist query,
+        // so this is the belt: MusicRepository::browsePlaylists() also drops
+        // non-audio rows client-side after parsing (the brace), and treats a missing
+        // MediaType as audio rather than as a reason to show an empty section again.
+        items.mediaTypes = {QStringLiteral("Audio")};
         break;
     case Section::Artists:
         items.fields = {QStringLiteral("ItemCounts"), QStringLiteral("DateCreated")};

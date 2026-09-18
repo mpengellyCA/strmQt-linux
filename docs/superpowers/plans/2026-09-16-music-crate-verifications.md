@@ -103,6 +103,27 @@ Library size at measurement: 5,037 albums, 56,283 tracks, 289 music genres.
   `ChildCount` (the track count); `CumulativeRunTimeTicks` is absent.
 - Verdict: present → `kAlbumRuntimeOnLists = true`
 
+## V11 `/Artists` item counts (open question, not yet measured)
+- Not measured against the live server. No entry above (V1-V10) covers `/Artists` or
+  `/Artists/AlbumArtists`; this is recorded during visual-fix-1
+  (.superpowers/sdd/2026-09-16-music-crate/visual-fix-1-report.md), which fixed
+  `EmbyClient::artistParams()` never forwarding `query.fields` (so `/Artists` and
+  `/Artists/AlbumArtists` asked for no fields at all, regardless of what
+  `MusicQueryTranslator` requested).
+- That fix makes the *request* correct — `Fields=ItemCounts,DateCreated` now reaches
+  the wire for `musicArtists()`/`albumArtists()`. It does **not** establish that Emby
+  answers with `AlbumCount`: V8 measured that the sibling `/MusicGenres` endpoint
+  drops `AlbumCount`/`ChildCount`/`SongCount` entirely even when `Fields=ItemCounts`
+  (and `Fields=ChildCount`) is sent, which is exactly why
+  `MusicRepository::genreCountsFromAlbums()` derives genre counts by walking albums
+  client-side instead of trusting the field.
+- Open question: does `/Artists` with `Fields=ItemCounts` return `AlbumCount` on Emby
+  4.9.5? Unknown from this seat.
+- If the answer turns out to be no, the remedy is a client-side derived artist count
+  modelled on `genreCountsFromAlbums()` — a separate task with its own design, not
+  attempted here.
+- Verdict: unmeasured
+
 ## Other observations that later tasks depend on
 
 These are not V-items, but they were measured in the same session and change what a

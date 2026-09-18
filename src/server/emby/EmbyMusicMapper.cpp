@@ -534,6 +534,7 @@ Playlist parsePlaylist(const QJsonObject &json)
         playlist.runtimeMs = ticksToMs(json.value(QStringLiteral("RunTimeTicks")));
     playlist.dateAdded = parseEmbyDate(text(json.value(QStringLiteral("DateCreated"))));
     playlist.coverRef = ownPrimary(json);
+    playlist.mediaType = text(json.value(QStringLiteral("MediaType")));
     return playlist;
 }
 

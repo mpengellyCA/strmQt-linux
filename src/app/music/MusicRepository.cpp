@@ -924,8 +924,10 @@ QFuture<Result<Page<Artist>>> MusicRepository::browseArtists(const MusicQuery &q
     MusicQuery scoped = query;
     scoped.section = Section::Artists;
     const ItemsQuery items = MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit);
+    // Fields arrives through artistParams() from the translator's Section::Artists
+    // case ({"ItemCounts", "DateCreated"}); adding it here too sent the parameter
+    // twice, which is why this line went when artistParams() learned to forward it.
     QUrlQuery params = emby::EmbyClient::artistParams(QStringLiteral("{uid}"), items);
-    params.addQueryItem(QStringLiteral("Fields"), QStringLiteral("ItemCounts,DateCreated"));
     const QString path = query.artistMode == ArtistMode::AlbumArtists ? QStringLiteral("/Artists/AlbumArtists")
                                                                       : QStringLiteral("/Artists");
     return m_client->getJson(path, params).then(this, [startIndex](Result<QJsonDocument> r) {
@@ -955,7 +957,27 @@ QFuture<Result<Page<Playlist>>> MusicRepository::browsePlaylists(const MusicQuer
     scoped.section = Section::Playlists;
     const ItemsQuery items = MusicQueryTranslator::toItemsQuery(scoped, startIndex, limit);
     return fetchItems(items).then(this, [startIndex](Result<QJsonDocument> r) {
-        return toPage<Playlist>(r, startIndex, &emby::parsePlaylists);
+        Result<Page<Playlist>> page = toPage<Playlist>(r, startIndex, &emby::parsePlaylists);
+        if (!page.ok())
+            return page;
+        // The translator drops ParentId and asks MediaTypes=Audio (see its
+        // Section::Playlists comment) so this section stays audio-only even though
+        // it can no longer scope by library. Whether Emby honours MediaTypes on a
+        // Playlist query is unmeasured from here, so this is the belt to that
+        // request's braces: keep only rows Emby itself calls "Audio", or has not
+        // classified at all — an unclassified playlist is far more likely a music
+        // playlist than a reason to show the human an empty section again. This can
+        // leave a page shorter than TotalRecordCount promised if the server ignored
+        // MediaTypes; that is an accepted cost, not a bug to chase from this seat.
+        QList<Playlist> audioOnly;
+        audioOnly.reserve(page.value.items.size());
+        for (const Playlist &item : page.value.items) {
+            if (item.mediaType.isEmpty()
+                || item.mediaType.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0)
+                audioOnly.append(item);
+        }
+        page.value.items = std::move(audioOnly);
+        return page;
     });
 }
 

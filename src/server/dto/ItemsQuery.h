@@ -55,6 +55,10 @@ struct ItemsQuery
     // records which ones Emby 4.9.5 honours; unset values are never sent).
     QList<int> years;
     QStringList audioCodecs;
+    // Server item MediaType filter (e.g. {"Audio"}). Used to ask a
+    // MediaTypes-agnostic query (like Playlist, which is not itself an audio or
+    // video type) to come back audio-only.
+    QStringList mediaTypes;
     // ISO-8601 bounds, sent verbatim.
     QString minDateCreated;
     QString minPremiereDate;

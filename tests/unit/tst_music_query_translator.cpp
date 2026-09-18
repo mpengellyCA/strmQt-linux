@@ -18,6 +18,7 @@ private slots:
     void letterRanges();
     void albumsQuery();
     void songsQueryWithFilters();
+    void playlistsQueryIsUnscopedAndAudioOnly();
     void decadeTranslation();
     void formatOnlyWhereFilterable();
     void letterOnlyForNameSort();
@@ -91,6 +92,22 @@ void MusicQueryTranslatorTest::songsQueryWithFilters()
     // queries unless Fields includes these explicitly (controller ruling).
     QVERIFY(items.fields.contains(QStringLiteral("UserDataPlayCount")));
     QVERIFY(items.fields.contains(QStringLiteral("UserDataLastPlayedDate")));
+}
+
+void MusicQueryTranslatorTest::playlistsQueryIsUnscopedAndAudioOnly()
+{
+    // Defect 2 (visual-fix-1): playlists are not children of a music library, so
+    // scoping this query by ParentId and forcing it non-recursive always came
+    // back empty on the live server. Match PlaylistController::fetchPlaylistPage's
+    // shape: no ParentId, Recursive=true — and stay audio-only via MediaTypes.
+    MusicQuery query;
+    query.libraryId = QStringLiteral("1868998");
+    query.section = Section::Playlists;
+    const ItemsQuery items = T::toItemsQuery(query, 0, 100);
+    QCOMPARE(items.includeItemTypes, QStringList{QStringLiteral("Playlist")});
+    QVERIFY(items.parentId.isEmpty());
+    QVERIFY(items.recursive);
+    QCOMPARE(items.mediaTypes, QStringList{QStringLiteral("Audio")});
 }
 
 void MusicQueryTranslatorTest::decadeTranslation()

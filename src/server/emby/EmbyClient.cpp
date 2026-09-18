@@ -463,6 +463,8 @@ QUrlQuery EmbyClient::itemsParams(const ItemsQuery &query)
     }
     if (!query.audioCodecs.isEmpty())
         params.addQueryItem(QStringLiteral("AudioCodecs"), query.audioCodecs.join(QLatin1Char(',')));
+    if (!query.mediaTypes.isEmpty())
+        params.addQueryItem(QStringLiteral("MediaTypes"), query.mediaTypes.join(QLatin1Char(',')));
     if (!query.minDateCreated.isEmpty())
         params.addQueryItem(QStringLiteral("MinDateCreated"), query.minDateCreated);
     if (!query.minPremiereDate.isEmpty())
@@ -686,6 +688,15 @@ QUrlQuery EmbyClient::artistParams(const QString &userId, const ItemsQuery &quer
         params.addQueryItem(QStringLiteral("NameLessThan"), query.nameLessThan);
     if (!query.genreIds.isEmpty())
         params.addQueryItem(QStringLiteral("GenreIds"), query.genreIds.join(QLatin1Char(',')));
+    // Forwarded because the generic item path does the same thing (see itemsParams()
+    // above), and because MusicQueryTranslator's Section::Artists case asks for
+    // ItemCounts/DateCreated here. Whether Emby 4.9.5's /Artists actually honours
+    // ItemCounts is itself unmeasured — the sibling /MusicGenres endpoint was
+    // measured to withhold AlbumCount/ChildCount/SongCount even when asked (V8 in
+    // docs/superpowers/plans/2026-09-16-music-crate-verifications.md) — so this fixes
+    // the request, not necessarily the answer; see V11 in that file.
+    if (!query.fields.isEmpty())
+        params.addQueryItem(QStringLiteral("Fields"), query.fields.join(QLatin1Char(',')));
     // Sent, but unmeasured — see the header. Every other parameter in this
     // function changed the answer on the live server; this one could not be
     // told apart from being ignored without writing a favourite into the user's
