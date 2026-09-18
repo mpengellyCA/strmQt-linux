@@ -5330,7 +5330,7 @@ rm -f /tmp/w3e-nav-test.py /tmp/w3e-stack.py /tmp/w3e-main.py /tmp/w3e-filterbar
 
 **Interfaces:** consumes everything above. Produces a green tree, a reviewed lint baseline and a commit.
 
-- [ ] **Step 1: Full build and test**
+- [x] **Step 1: Full build and test**
 
 Run from a clean configure:
 
@@ -5341,7 +5341,7 @@ ctest --preset dev --output-on-failure
 
 Expected: the build succeeds and every test passes, including `tst_music_browse_controller`, `tst_music_query`, `tst_navigation_history` and the Phase 1–2 music tests. Fix any failure in the task that owns the file, never by weakening an assertion.
 
-- [ ] **Step 2: Review the lint delta, then re-baseline**
+- [x] **Step 2: Review the lint delta, then re-baseline**
 
 Run:
 
@@ -5371,7 +5371,7 @@ rm -f /tmp/w3f-lint-now.txt /tmp/w3f-lint-base.txt
 
 Expected: `Updated …/config/qmllint-baseline.txt (N warnings).`, then `qmllint warning baseline matches (N warnings).` with `exit=0`.
 
-- [ ] **Step 3: Self-test**
+- [x] **Step 3: Self-test**
 
 ```bash
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./build/dev/strmqt 2>&1 | grep selftest; echo "exit=${PIPESTATUS[0]}"
@@ -5379,7 +5379,7 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./bui
 
 Expected: `selftest ok   musicHome` and `selftest ok   musicBrowse`, no `music` entry, no `selftest FAIL`, and `exit=0`.
 
-- [ ] **Step 4: Manual visual check against the mockup**
+- [x] **Step 4: Manual visual check against the mockup**
 
 Open `docs/superpowers/specs/2026-09-16-music-crate-mockups/browse-structure.html` (option **A**) beside the app. Run `./build/dev/strmqt` signed in to a test server with a music library; the credentials come from `SecretsStore` and are never typed into a file. Check each item, and fix before committing:
 
@@ -5414,7 +5414,7 @@ Open `docs/superpowers/specs/2026-09-16-music-crate-mockups/browse-structure.htm
    - Filter to nothing: `No records match` with one clearing button per filter.
 8. **Width:** at 400-logical-pixel width the pill row clips and scrolls to the focused pill, the right cluster stays whole, and nothing overlaps the dividers.
 
-- [ ] **Step 5: Commit the baseline**
+- [x] **Step 5: Commit the baseline**
 
 ```bash
 git add config/qmllint-baseline.txt
