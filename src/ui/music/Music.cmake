@@ -16,3 +16,10 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/music/GenrePicker.qml
     ui/music/CrateDividers.qml
 )
+
+# Phase 4: the album, artist and playlist page controls.
+qt_target_qml_sources(strmqt
+    QML_FILES
+        ui/music/LinerNotes.qml
+        ui/music/CrateTrackTable.qml
+)

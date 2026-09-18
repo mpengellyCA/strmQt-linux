@@ -87,6 +87,16 @@ Item {
     // decides which rows begin a disc; the row only draws it.
     property int discNumber: -1
 
+    // A Crate side heading, "Side A", drawn in the display face instead of
+    // the mono "DISC 1" readout. `discDetail` ("Disc 1 · 24 min") sits beside
+    // it. Both empty keeps the readout, so every existing table draws as
+    // before.
+    property string discTitle: ""
+    property string discDetail: ""
+    // Drawn after the title in the tertiary colour, e.g. "feat. Kin". The
+    // title elides first, so the suffix stays readable.
+    property string titleSuffix: ""
+
     // ── Metrics ────────────────────────────────────────────────────────────
     property int rowHeight: Theme.scale(38)
     property int discHeaderHeight: Theme.scale(32)
@@ -130,7 +140,7 @@ Item {
     height: row.implicitHeight
 
     Accessible.role: Accessible.ListItem
-    Accessible.name: row.title
+    Accessible.name: row.titleSuffix.length > 0 ? row.title + ", " + row.titleSuffix : row.title
     Accessible.description: [row.secondary, row.artist, row.durationText]
                             .filter(part => part.length > 0).join(", ")
     Accessible.selectable: true
@@ -154,15 +164,32 @@ Item {
         height: row.startsDisc ? row.discHeaderHeight : 0
         visible: row.startsDisc
 
-        Text {
+        Row {
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Theme.scale(4)
-            text: qsTr("DISC %1").arg(row.discNumber)
-            color: Theme.textTertiary
-            font.family: Theme.fontMono
-            font.pixelSize: Theme.fontCaption
-            font.letterSpacing: Theme.fontCaption * Theme.trackLabel
+            spacing: Theme.spacingValue
+
+            Text {
+                id: discCaption
+
+                text: row.discTitle.length > 0 ? row.discTitle : qsTr("DISC %1").arg(row.discNumber)
+                color: row.discTitle.length > 0 ? Theme.textPrimaryColor : Theme.textTertiary
+                font.family: row.discTitle.length > 0 ? Theme.fontDisplay : Theme.fontMono
+                font.pixelSize: row.discTitle.length > 0 ? Theme.fontBodyLarge : Theme.fontCaption
+                font.weight: row.discTitle.length > 0 ? Font.DemiBold : Font.Normal
+                font.letterSpacing: row.discTitle.length > 0 ? 0 : Theme.fontCaption * Theme.trackLabel
+            }
+
+            Text {
+                anchors.baseline: discCaption.baseline
+                visible: row.discDetail.length > 0
+                text: row.discDetail
+                color: Theme.textTertiary
+                font.family: Theme.fontMono
+                font.pixelSize: Theme.fontCaption
+                font.letterSpacing: Theme.fontCaption * Theme.trackLabel
+            }
         }
     }
 
@@ -448,22 +475,63 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.scale(2)
 
-            Text {
+            Item {
                 width: parent.width
-                text: row.title
-                color: row.playing ? Theme.accentColor
-                     : (row.hovered || row.current) ? Theme.textPrimaryColor
-                     : Theme.textSecondaryColor
-                font.family: Theme.fontBody
-                font.pixelSize: Theme.fontBodySize
-                elide: Text.ElideRight
-                maximumLineCount: 1
+                height: titleText.implicitHeight
 
-                Behavior on color {
-                    ColorAnimation {
-                        duration: Theme.animInstant
-                        easing.type: Theme.easeInstant
+                Text {
+                    id: titleText
+
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    // The box is shrink-wrapped to the text so the suffix can
+                    // anchor to its right edge and the title elides first.
+                    //
+                    // Deliberate for RTL, and reviewed as such: a Text that
+                    // fills the column right-aligns an Arabic or Hebrew title
+                    // against the column's right edge, while this one starts it
+                    // at the column's LEFT edge — the same x an LTR title starts
+                    // at in the same column. The alternative keeps the old RTL
+                    // position but only for rows with no suffix, so RTL rows in
+                    // one table would begin at two different x depending on
+                    // whether a "feat." credit happened to exist. Do not
+                    // "restore" width: parent.width.
+                    width: Math.min(titleText.implicitWidth,
+                                    parent.width - (suffixText.visible
+                                                    ? Math.min(suffixText.implicitWidth, parent.width * 0.4)
+                                                      + Theme.spacingTight
+                                                    : 0))
+                    text: row.title
+                    color: row.playing ? Theme.accentColor
+                         : (row.hovered || row.current) ? Theme.textPrimaryColor
+                         : Theme.textSecondaryColor
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontBodySize
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: Theme.animInstant
+                            easing.type: Theme.easeInstant
+                        }
                     }
+                }
+
+                Text {
+                    id: suffixText
+
+                    anchors.left: titleText.right
+                    anchors.leftMargin: Theme.spacingTight
+                    anchors.right: parent.right
+                    anchors.baseline: titleText.baseline
+                    visible: row.titleSuffix.length > 0
+                    text: row.titleSuffix
+                    color: Theme.textTertiary
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
                 }
             }
 

@@ -2045,7 +2045,7 @@ MSG
 
 No C++ changes, so there is no unit test. Verification is the build, the qmllint baseline check and the self-test. The pages in Tasks 6–8 are the consumers, and each one loads these controls in the self-test.
 
-- [ ] **Step 1: Give `TrackRow` a disc side and a title suffix**
+- [x] **Step 1: Give `TrackRow` a disc side and a title suffix**
 
 In `src/ui/controls/TrackRow.qml`, after `property int discNumber: -1` (and its comment), add:
 
@@ -2161,7 +2161,7 @@ In the `labels` Column, replace the first `Text` (the title, whose `text: row.ti
     Accessible.name: row.titleSuffix.length > 0 ? row.title + ", " + row.titleSuffix : row.title
 ```
 
-- [ ] **Step 2: Write `LinerNotes`**
+- [x] **Step 2: Write `LinerNotes`**
 
 `src/ui/music/LinerNotes.qml`:
 
@@ -2243,7 +2243,7 @@ The chips are pointer targets only (`LinkChip` takes no keyboard focus of its ow
 
 `lib-music` is the existing glyph for a music destination. The icon set has no tag glyph, and adding icons is out of scope.
 
-- [ ] **Step 3: Write `CrateTrackTable`**
+- [x] **Step 3: Write `CrateTrackTable`**
 
 `src/ui/music/CrateTrackTable.qml`:
 
@@ -2369,7 +2369,7 @@ TrackTable {
 
 `crate.rowAt(index)` returns `TrackListModel::get(row)`, which is the media-role map `Actions.toggleFavorite` and `ItemMenu` already accept (Phase 1: every music model answers `get` with `mapForItem` merged with its roles).
 
-- [ ] **Step 4: List the controls**
+- [x] **Step 4: List the controls**
 
 Append to `src/ui/music/Music.cmake`, after Phase 2's block, which stays untouched:
 
@@ -2384,7 +2384,7 @@ qt_target_qml_sources(strmqt
 
 Match the path prefix Phase 2's block uses. If its entries are written `ui/music/CrateSleeve.qml`, use the form above. If they are relative to the `.cmake` file's own directory, drop the `ui/music/` prefix.
 
-- [ ] **Step 5: Build, lint, self-test**
+- [x] **Step 5: Build, lint, self-test**
 
 Run:
 
@@ -2400,7 +2400,7 @@ Expected:
 - The lint check may list new `[unqualified]` lines for `PlayerCtl` and `Actions` in `CrateTrackTable.qml`, and nothing else. Record them for the phase gate (Contract note 10), and don't run `--update` here.
 - Any other new lint category (`is not a type`, `was not found`, `unavailable`, `incompatible-type`, `missing-property`) is a real error. Fix it before you continue.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/controls/TrackRow.qml src/ui/music/LinerNotes.qml src/ui/music/CrateTrackTable.qml \
