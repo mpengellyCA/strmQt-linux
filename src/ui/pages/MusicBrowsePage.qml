@@ -759,7 +759,17 @@ FocusScope {
         anchors.right: parent.right
         anchors.leftMargin: Theme.pageMarginValue
         anchors.rightMargin: Theme.pageMarginValue
-        count: page.songsView() ? page.songsView().selectionCount : 0
+        // Guarded the way `shownCount` above guards `count`, and for the same
+        // reason: `songsShown` turns true with `loadedSection`, while
+        // `activeView` is `viewLoader.item` and is still the outgoing view (or
+        // null) until the Loader swaps. A truthy view is therefore not yet a
+        // view with a `selectionCount`, and the bare read assigned undefined to
+        // an int.
+        count: {
+            const view = page.songsView();
+            const selected = view ? view.selectionCount : 0;
+            return selected === undefined ? 0 : Number(selected);
+        }
 
         onQueueRequested: Actions.addAllToQueue(page.songsView().selectedItems())
         onPlaylistRequested: page.fileSongSelection()
@@ -897,7 +907,10 @@ FocusScope {
                 // Phase 4's CrateTrackTable gives it a column.
                 secondary: songRow.formatText.length === 0 ? songRow.albumText
                          : songRow.albumText.length === 0 ? songRow.formatText
-                         : page.songRowFormat.arg(songRow.albumText, songRow.formatText)
+                         // One argument per call: QML's String.arg() takes a single
+                         // value, so the two-argument form threw "Invalid arguments"
+                         // once per rendered song row (950 warnings in one session).
+                         : page.songRowFormat.arg(songRow.albumText).arg(songRow.formatText)
                 artist: songsTable.shownArtistFor(songRow.model)
                 durationText: songRow.model.durationText !== undefined ? String(songRow.model.durationText) : ""
                 number: songRow.index + 1
