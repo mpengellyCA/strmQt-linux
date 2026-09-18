@@ -150,6 +150,11 @@ FocusScope {
     // separates all three cases. Measured for each: popped page returns early,
     // covered page returns early, standalone page proceeds, and the current
     // page still fires when the controller has moved behind its back.
+    //
+    // Refusing costs nothing, which is what makes `visible` safe rather than
+    // merely narrow: `onVisibleChanged` below queues this again the moment the
+    // page comes back on screen, so a covered page that was refused reopens
+    // when it is uncovered. The guard delays a reopen; it never drops one.
     function ensureOpen(): void {
         if (!page.visible)
             return
