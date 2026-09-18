@@ -75,9 +75,18 @@ TextField {
         anchors.rightMargin: Theme.scale(4)
         visible: field.clearVisible
         // StrmIconButton defaults activeFocusOnTab to `enabled`, which ignores
-        // `visible`: an empty field would otherwise hold a Tab stop for a
-        // button nobody can see.
-        activeFocusOnTab: field.clearVisible
+        // `visible`: an empty field would otherwise DECLARE a Tab stop for a
+        // button nobody can see. Measured at Qt 6.11.2: Tab traversal skips an
+        // invisible item whatever activeFocusOnTab says, so the override
+        // corrects the property value, read directly by NavRail.qml:43/:98.
+        //
+        // `|| activeFocus` because this button hides ITSELF: onClicked below
+        // calls field.clear(), which drops clearVisible while the keyboard is
+        // still on the ×. Qt refuses to clear activeFocusOnTab on the active
+        // focus item, warns, and keeps the old value — measured — and the
+        // forceActiveFocus that follows would leave that stale value standing
+        // for good. The second term settles it on the next tick instead.
+        activeFocusOnTab: field.clearVisible || clearButton.activeFocus
         iconName: "close"
         tooltip: qsTr("Clear search")
         round: true

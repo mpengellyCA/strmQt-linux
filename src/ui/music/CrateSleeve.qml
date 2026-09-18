@@ -120,6 +120,21 @@ Item {
                 anchors.centerIn: parent
                 // Shown for focus as well as hover: an affordance only a mouse can
                 // find is the bug the controls library exists to prevent.
+                //
+                // But it is not a Tab stop of its own. A shelf or grid is ONE tab
+                // stop and its cells are reached by arrow key (ARCHITECTURE.md
+                // §4) — the same ruling that makes StrmRail's hover chevrons
+                // `activeFocusOnTab: false`. StrmIconButton defaults it to
+                // `enabled`, so without this line every sleeve in a release grid
+                // declares a stop: measured, eight of them in a MusicBrowsePage
+                // album grid. Qt's Tab traversal skips the invisible ones, but
+                // the focused cell's ▶ IS visible, so Tab from a cell went to
+                // that cell's own ▶ before leaving the grid — a second stop for
+                // a cell the cursor is already on. Nothing is lost: the keyboard
+                // reaches play through the Menu key, which raises the item menu
+                // on the cell under the ring, exactly as it does for a StrmCard's
+                // hover verbs.
+                activeFocusOnTab: false
                 opacity: (sleeve.hovered || sleeve.current) ? 1 : 0
                 visible: opacity > 0.01
                 iconName: "play"

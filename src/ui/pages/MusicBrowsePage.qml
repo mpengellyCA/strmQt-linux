@@ -106,16 +106,56 @@ FocusScope {
             page.activeView.forceActiveFocus(Qt.TabFocusReason);
     }
 
-    // Focus is stranded: some control held it and then hid out from under the
-    // keyboard. Qt clears active focus when a focused item goes `enabled:
-    // false`, but never when it merely goes `visible: false` (MusicHomePage's
-    // shelves have the same shape; this follows it). Every pill, the letter
-    // dividers, both Retry buttons and the "Show everyone" action are exactly
-    // this: each hides on a condition unrelated to enabled, while still
-    // holding the keyboard.
-    function isStranded(): bool {
+    // Focus is stranded: something held the keyboard and then stopped being a
+    // place the keyboard can be. That happens in four measured shapes at Qt
+    // 6.11.2, all four reproduced on this page in an offscreen probe, and Qt
+    // behaves differently in each — which is why one test cannot find them all:
+    //
+    //  1. The focused item goes `visible: false`. Qt does NOT clear focus, so
+    //     the keyboard stays on something nobody can see. Every pill, every
+    //     clear-chip, the letter dividers and both Retry buttons do this.
+    //  2. The focused item goes `enabled: false`. Qt DOES clear focus — onto
+    //     the nearest enclosing FocusScope, which on this page is `pillBar`,
+    //     NOT `page`. Measured with the sort-direction button, which disables
+    //     when the section being switched to remembers a Random sort; the
+    //     shoulder buttons make that section switch without first moving focus
+    //     off the button. A `focused === page` test is enough for a page with
+    //     no inner scope; here it would miss this entirely.
+    //  3. The focused item goes `focus: false` — the views' `focus: count > 0`.
+    //     Also parks on a scope, but StrmGrid's own NavigationFocusRestorer
+    //     fallback already lands it on `navigationFocusFallbackItem` (`strip`),
+    //     so this one is the control's to handle and is left to it.
+    //  4. The keyboard is inside a view that is perfectly visible and EMPTY:
+    //     not null, not a scope, not invisible, so none of the tests above can
+    //     see it. `focusInEmptyView()` asks the one question they cannot.
+    //
+    // `focused === null` is insurance, not a measured case: every attempt to
+    // strand focus by destroying its owner — switching section, which destroys
+    // the Loader's item — ended with Qt re-parenting focus to an enclosing
+    // scope, never with a null activeFocusItem.
+    readonly property bool focusParked: {
         const focused = page.Window.activeFocusItem;
-        return page.activeFocus && focused !== null && focused.visible === false;
+        return focused === null || focused === page || focused === pillBar
+            || focused.visible === false;
+    }
+
+    // Shape 4. `contentFocusable` is the page's own answer to "is there anything
+    // in the view to stand on", so this is "the keyboard is in the view and the
+    // view says there is nothing there".
+    function focusInEmptyView(): bool {
+        if (page.contentFocusable || page.activeView === null)
+            return false;
+        let cursor = page.Window.activeFocusItem;
+        for (let i = 0; i < 32 && cursor !== null; ++i) {
+            if (cursor === page.activeView)
+                return true;
+            cursor = cursor.parent;
+        }
+        return false;
+    }
+
+    function isStranded(): bool {
+        return page.activeFocus && (page.focusParked || page.focusInEmptyView());
     }
 
     // Recovery has three sensible landings, tried nearest-context first: the
@@ -137,24 +177,42 @@ FocusScope {
     }
 
     function recoverIfStranded(): void {
-        if (page.isStranded())
-            page.recoverStranded();
+        // Mid-refill the answer is not knowable yet — the rows are on their way
+        // and the view takes the keyboard back itself when they land — so every
+        // trigger below fires again on the falling edge of `laneLoading`.
+        if (page.laneLoading || !page.isStranded())
+            return;
+        page.recoverStranded();
     }
 
     // The per-control `onVisibleChanged` hooks below catch the cases we know
-    // about; this catches the rest, including controls added later. The
-    // binding re-reads both the focused item AND that item's own `visible`,
-    // so it re-evaluates exactly when focus can strand — a control hiding
-    // under the keyboard — and never needs a hook of its own. Deferred for
-    // the same reason the hooks are: the handler runs before the sibling
-    // bindings that decide where focus should land have caught up.
-    readonly property bool focusedItemVisible: {
-        const focused = page.Window.activeFocusItem;
-        return focused === null || focused.visible === true;
+    // about; this catches the rest, including controls added later. The binding
+    // re-reads the focused item, that item's own `visible`, and its identity
+    // against the two container scopes, so it re-evaluates exactly when focus
+    // can strand and never needs a hook of its own. Deferred for the same
+    // reason the hooks are: the handler runs before the sibling bindings that
+    // decide where focus should land have caught up.
+    onFocusParkedChanged: {
+        if (page.focusParked)
+            Qt.callLater(page.recoverIfStranded);
     }
 
-    onFocusedItemVisibleChanged: {
-        if (!page.focusedItemVisible)
+    // The page being handed the keyboard is its own case: a FocusScope opened on
+    // an empty section has no `focus: true` child to forward to, so it parks the
+    // keyboard on itself and `focusParked` never CHANGES — it was already true
+    // while nothing in the window was focused at all.
+    onActiveFocusChanged: Qt.callLater(page.recoverIfStranded)
+
+    // Shape 4 moves the COUNT, not the focus, so nothing in `focusParked`
+    // notices it. This is the edge on which a view that had rows stops having
+    // any while the keyboard is still standing in it.
+    onShownCountChanged: Qt.callLater(page.recoverIfStranded)
+
+    // Every trigger above can fire while a lane is still filling, when
+    // `recoverIfStranded` deliberately declines to answer. This is the edge
+    // where the answer finally exists.
+    onLaneLoadingChanged: {
+        if (!page.laneLoading)
             Qt.callLater(page.recoverIfStranded);
     }
 
@@ -444,8 +502,31 @@ FocusScope {
                     visible: MusicBrowseCtl.filtersAvailable
                     // Ruling P3-R2: FilterPill ties its own activeFocusOnTab to
                     // `enabled`, never to `visible` — override it here so a
-                    // pill hidden on Genres/Playlists never keeps a Tab stop.
-                    activeFocusOnTab: genrePill.visible && genrePill.enabled
+                    // pill hidden on Genres/Playlists does not go on DECLARING
+                    // a Tab stop. Qt's Tab traversal skips an invisible item
+                    // whatever activeFocusOnTab says, so the damage is a wrong
+                    // property value, not a stranded keyboard — and it is real
+                    // damage, because NavRail.qml:43 and :98 read the property
+                    // directly to build their navigation sets.
+                    //
+                    // The `|| activeFocus` term on every guard in this file is
+                    // load-bearing, and the `&& enabled` term is not. Measured
+                    // at Qt 6.11.2: nothing on this page ever binds `enabled`
+                    // to the same condition as `visible` (Play and Shuffle bind
+                    // it to libraryId, which does not flip while browsing), so
+                    // `visible && enabled` is a bare `visible` in disguise —
+                    // and a bare `visible` cannot settle. Qt refuses to clear
+                    // activeFocusOnTab on the item that currently holds the
+                    // keyboard: it warns, keeps the old value, and since
+                    // `visible` does not change again the binding never gets a
+                    // second chance — so the value stays stale at `true` for
+                    // the life of the pill. `|| activeFocus` gives it one, on
+                    // the tick after focus leaves. The shoulder buttons (Main.qml
+                    // cycleSection -> page.cycleTab) change the section without
+                    // first moving focus off a pill, which is what makes every
+                    // one of these reachable rather than theoretical.
+                    activeFocusOnTab: (genrePill.visible && genrePill.enabled)
+                                      || genrePill.activeFocus
                     // Ruling P3-R2 (stranding half): visible going false does
                     // not move focus off a pill that held it — recover if it did.
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
@@ -461,7 +542,8 @@ FocusScope {
                 FilterPill {
                     id: decadePill
                     visible: MusicBrowseCtl.filtersAvailable && MusicBrowseCtl.decadeAvailable
-                    activeFocusOnTab: decadePill.visible && decadePill.enabled
+                    activeFocusOnTab: (decadePill.visible && decadePill.enabled)
+                                      || decadePill.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     text: MusicBrowseCtl.decadePillText
                     active: MusicBrowseCtl.decade !== 0
@@ -472,7 +554,8 @@ FocusScope {
                 FilterPill {
                     id: formatPill
                     visible: MusicBrowseCtl.filtersAvailable && MusicBrowseCtl.formatAvailable
-                    activeFocusOnTab: formatPill.visible && formatPill.enabled
+                    activeFocusOnTab: (formatPill.visible && formatPill.enabled)
+                                      || formatPill.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     text: MusicBrowseCtl.formatPillText
                     active: MusicBrowseCtl.format !== "any"
@@ -483,7 +566,8 @@ FocusScope {
                 FilterPill {
                     id: favouritesPill
                     visible: MusicBrowseCtl.filtersAvailable
-                    activeFocusOnTab: favouritesPill.visible && favouritesPill.enabled
+                    activeFocusOnTab: (favouritesPill.visible && favouritesPill.enabled)
+                                      || favouritesPill.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     toggle: true
                     iconName: MusicBrowseCtl.favouritesOnly ? "heart-filled" : "heart"
@@ -495,7 +579,8 @@ FocusScope {
                 FilterPill {
                     id: unplayedPill
                     visible: MusicBrowseCtl.filtersAvailable
-                    activeFocusOnTab: unplayedPill.visible && unplayedPill.enabled
+                    activeFocusOnTab: (unplayedPill.visible && unplayedPill.enabled)
+                                      || unplayedPill.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     toggle: true
                     text: qsTr("Unplayed")
@@ -509,7 +594,8 @@ FocusScope {
                     visible: MusicBrowseCtl.filtersAvailable && MusicBrowseCtl.activeFilterCount >= 2
                     // Ruling P3-R2: StrmButton ties activeFocusOnTab to
                     // `interactive` (enabled && !busy), never to `visible`.
-                    activeFocusOnTab: clearAllButton.visible && clearAllButton.enabled
+                    activeFocusOnTab: (clearAllButton.visible && clearAllButton.enabled)
+                                      || clearAllButton.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     variant: "ghost"
                     iconName: "close"
@@ -522,7 +608,8 @@ FocusScope {
                 FilterPill {
                     id: albumArtistsPill
                     visible: MusicBrowseCtl.section === "artists"
-                    activeFocusOnTab: albumArtistsPill.visible && albumArtistsPill.enabled
+                    activeFocusOnTab: (albumArtistsPill.visible && albumArtistsPill.enabled)
+                                      || albumArtistsPill.activeFocus
                     // Same shape as the filter pills above: leaving Artists
                     // hides this one too, and can hide it while it holds focus.
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
@@ -535,7 +622,8 @@ FocusScope {
                 FilterPill {
                     id: everyonePill
                     visible: MusicBrowseCtl.section === "artists"
-                    activeFocusOnTab: everyonePill.visible && everyonePill.enabled
+                    activeFocusOnTab: (everyonePill.visible && everyonePill.enabled)
+                                      || everyonePill.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
                     toggle: true
                     text: qsTr("Everyone")
@@ -605,7 +693,8 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: MusicBrowseCtl.filtersAvailable
                 enabled: MusicBrowseCtl.libraryId.length > 0
-                activeFocusOnTab: playButton.visible && playButton.enabled
+                activeFocusOnTab: (playButton.visible && playButton.enabled)
+                                  || playButton.activeFocus
                 text: qsTr("Play")
                 iconName: "play"
                 variant: "primary"
@@ -619,7 +708,8 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: MusicBrowseCtl.filtersAvailable
                 enabled: MusicBrowseCtl.libraryId.length > 0
-                activeFocusOnTab: shuffleButton.visible && shuffleButton.enabled
+                activeFocusOnTab: (shuffleButton.visible && shuffleButton.enabled)
+                                  || shuffleButton.activeFocus
                 text: qsTr("Shuffle")
                 iconName: "shuffle"
                 accessibleDescription: MusicBrowseCtl.scopeLabel
@@ -1105,9 +1195,15 @@ FocusScope {
         visible: MusicBrowseCtl.letterStripVisible
         // Ruling P3-R2: CrateDividers ties its own activeFocusOnTab to
         // `letters.length > 0`, and MusicBrowseCtl.letters is a fixed A–Z list
-        // that is never empty — so without this override the dividers would
-        // keep a Tab stop even while hidden (sort not Name, or Genres/Playlists).
-        activeFocusOnTab: dividers.visible
+        // that is never empty — so without this override the dividers would go
+        // on DECLARING a Tab stop while hidden (sort not Name, or
+        // Genres/Playlists). Tab traversal skips the hidden strip either way;
+        // the override is what keeps the property value honest for NavRail.
+        // `|| activeFocus` for the reason spelled out at genrePill above:
+        // measured, a shoulder-button section change hides this strip while it
+        // still holds the keyboard, and the bare form can never settle after
+        // that.
+        activeFocusOnTab: dividers.visible || dividers.activeFocus
         // Same stranding shape: the sort leaving Name, or the section losing
         // its letters, can hide this control while it holds the keyboard.
         onVisibleChanged: Qt.callLater(page.recoverIfStranded)
@@ -1201,9 +1297,18 @@ FocusScope {
                 visible: MusicBrowseCtl.genreIds.length > 0
                 // Ruling P3-R2: each chip here shows or hides on its own
                 // condition inside an always-enabled row, so StrmButton's own
-                // enabled-based activeFocusOnTab would keep a Tab stop for
-                // every filter that is not currently active.
-                activeFocusOnTab: clearGenreChip.visible
+                // enabled-based activeFocusOnTab would go on DECLARING a Tab
+                // stop for every filter that is not currently active. Tab
+                // traversal skips the hidden chips regardless; the override
+                // keeps the value right for NavRail.qml:43 and :98.
+                //
+                // These six are the sharpest case for `|| activeFocus` on the
+                // page: each chip's onClicked clears exactly the filter its own
+                // `visible` reads, so pressing one hides the button that is
+                // holding the keyboard, in one step, every time. Measured: one
+                // Qt refusal per press, and the stop stays DECLARED on an
+                // invisible chip until that filter is set and cleared again.
+                activeFocusOnTab: clearGenreChip.visible || clearGenreChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: MusicBrowseCtl.genrePillText
@@ -1212,7 +1317,7 @@ FocusScope {
             StrmButton {
                 id: clearDecadeChip
                 visible: MusicBrowseCtl.decadeAvailable && MusicBrowseCtl.decade !== 0
-                activeFocusOnTab: clearDecadeChip.visible
+                activeFocusOnTab: clearDecadeChip.visible || clearDecadeChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: MusicBrowseCtl.decadePillText
@@ -1221,7 +1326,7 @@ FocusScope {
             StrmButton {
                 id: clearFormatChip
                 visible: MusicBrowseCtl.formatAvailable && MusicBrowseCtl.format !== "any"
-                activeFocusOnTab: clearFormatChip.visible
+                activeFocusOnTab: clearFormatChip.visible || clearFormatChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: MusicBrowseCtl.formatPillText
@@ -1230,7 +1335,7 @@ FocusScope {
             StrmButton {
                 id: clearFavouritesChip
                 visible: MusicBrowseCtl.favouritesOnly
-                activeFocusOnTab: clearFavouritesChip.visible
+                activeFocusOnTab: clearFavouritesChip.visible || clearFavouritesChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: qsTr("Favourites")
@@ -1239,7 +1344,7 @@ FocusScope {
             StrmButton {
                 id: clearUnplayedChip
                 visible: MusicBrowseCtl.unplayedOnly
-                activeFocusOnTab: clearUnplayedChip.visible
+                activeFocusOnTab: clearUnplayedChip.visible || clearUnplayedChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: qsTr("Unplayed")
@@ -1248,7 +1353,7 @@ FocusScope {
             StrmButton {
                 id: clearLetterChip
                 visible: MusicBrowseCtl.letter.length > 0
-                activeFocusOnTab: clearLetterChip.visible
+                activeFocusOnTab: clearLetterChip.visible || clearLetterChip.activeFocus
                 variant: "secondary"
                 iconName: "close"
                 text: qsTr("Letter: %1").arg(MusicBrowseCtl.letter)
@@ -1308,7 +1413,10 @@ FocusScope {
                 // Ruling P3-R2: this button's own visible/enabled stay true;
                 // it is the enclosing banner's visible that hides it, which
                 // StrmButton's enabled-based activeFocusOnTab never sees.
-                activeFocusOnTab: pagingBanner.visible
+                // `|| pagingRetry.activeFocus` — not the banner's — because it
+                // is this button that holds the keyboard when a successful
+                // Retry clears laneError and takes the banner away with it.
+                activeFocusOnTab: pagingBanner.visible || pagingRetry.activeFocus
                 text: qsTr("Retry")
                 iconName: "refresh"
                 onClicked: page.lane.retry()

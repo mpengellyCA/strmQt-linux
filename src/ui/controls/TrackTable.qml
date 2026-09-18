@@ -85,6 +85,36 @@ ListView {
         if (!table._navigationFocusWriting)
             navigationFocus.cancel()
     }
+    // Give the keyboard to the ROWS, whoever else inside this view has it.
+    //
+    // A bare `table.forceActiveFocus()` is not enough and it is not a belt-and-
+    // braces distinction. A ListView is a FocusScope, so re-entering it hands
+    // the keyboard to whichever descendant is the scope's focus child — and a
+    // page may put a focusable item in `header:` or `footer:`, inside that same
+    // scope. Once the footer has held focus, every way of asking for the rows
+    // back that goes through the view is a no-op: `forceActiveFocus()` re-enters
+    // the scope and lands in the footer again, and `currentIndex = n` only fires
+    // Qt's focus-follows-current-item when the assignment actually CHANGES the
+    // value, so re-activating the row already under the cursor moves nothing.
+    // Measured on the album page, whose "More by" shelf is this table's footer:
+    // Up out of the shelf, a re-assert, and activating the current row all left
+    // the keyboard in the shelf.
+    //
+    // Focusing the current delegate instead is what Qt itself does when the
+    // rows legitimately hold focus (measured: the activeFocusItem is the
+    // TrackRow at currentIndex, never the view), so this is the same landing by
+    // a route that does not depend on the cursor having moved. With no current
+    // item — an empty table, or a cursor scrolled far outside the cache buffer —
+    // the view is still the only answer.
+    function focusRows(reason): void {
+        const why = reason === undefined ? Qt.OtherFocusReason : reason
+        const row = table.currentItem
+        if (row !== null)
+            row.forceActiveFocus(why)
+        else
+            table.forceActiveFocus(why)
+    }
+
     function _applyNavigationFocus(index): void {
         table._navigationFocusWriting = true
         table._navigationFocusPrefetchSuppressed = true
@@ -93,7 +123,7 @@ ListView {
             table.currentIndex = index
             table.positionViewAtIndex(index, ListView.Contain)
         }
-        table.forceActiveFocus(Qt.OtherFocusReason)
+        table.focusRows(Qt.OtherFocusReason)
         table._navigationFocusWriting = false
         Qt.callLater(() => {
             if (generation === table._navigationFocusWriteGeneration)
@@ -470,7 +500,7 @@ ListView {
         if (target === table.currentIndex)
             return false
         table._moveCursor(target, false)
-        table.forceActiveFocus(Qt.OtherFocusReason)
+        table.focusRows(Qt.OtherFocusReason)
         return true
     }
 
@@ -502,6 +532,13 @@ ListView {
         // they have moved on from.
         table.clearSelection()
         table._moveCursor(index)
+        // Activating a row means the cursor is here now, so the keyboard belongs
+        // on the rows. Relying on the currentIndex write above to carry it was
+        // the gap: it only moves focus when the index actually changes, so
+        // activating the row already under the cursor left the keyboard wherever
+        // it was — in this table's own footer, on the album page. The two cases
+        // answered differently for no reason a user could see; now they agree.
+        table.focusRows(Qt.OtherFocusReason)
         table.activated(index)
     }
 

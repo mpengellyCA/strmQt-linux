@@ -83,9 +83,24 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: empty.actionText.length > 0
             // Ruling P3-R2: most EmptyState instances leave actionText empty,
-            // so without this override the action button keeps a Tab stop
-            // even where nothing is drawn for it.
-            activeFocusOnTab: actionButton.visible
+            // so without this override the action button still DECLARES a Tab
+            // stop where nothing is drawn for it. Measured at Qt 6.11.2: Tab
+            // traversal skips an invisible item whatever activeFocusOnTab
+            // says, so the override corrects the property value, which
+            // NavRail.qml:43 and :98 read directly.
+            //
+            // `|| activeFocus` covers the case the bare form cannot. `visible`
+            // is EFFECTIVE visibility, so it goes false the moment the whole
+            // empty state hides — which is exactly what a successful Retry
+            // does, while the keyboard is still standing on the Retry. Qt
+            // refuses to clear activeFocusOnTab on the active focus item,
+            // warns, and keeps the old value; `visible` never changes again, so
+            // the binding would never get a second chance. Measured on a real
+            // window: one warning, and a stop left declared on an invisible
+            // button for the rest of the page's life. The page still has to
+            // move the keyboard off it — Qt does not clear focus on hide — but
+            // this keeps the property honest for whoever reads it.
+            activeFocusOnTab: actionButton.visible || actionButton.activeFocus
             text: empty.actionText
             iconName: empty.actionIcon
             variant: "primary"

@@ -38,8 +38,21 @@ FocusScope {
         }
 
         StrmButton {
+            id: retryButton
+
             anchors.verticalCenter: parent.verticalCenter
             focus: true
+            // Ruling P3-R2, and the quietest instance of it in the crate: a
+            // consumer hides this whole line when the error clears
+            // (CrateShelf's `visible: shelf.showError`), which is exactly what a
+            // successful Retry does while the keyboard is still on the button.
+            // StrmButton ties activeFocusOnTab to `interactive`, which `visible`
+            // never touches, so the binding does not merely get refused — it
+            // never re-evaluates at all, and the stop stays DECLARED on a hidden
+            // button with no Qt warning to show for it. Tab traversal skips the
+            // hidden line either way; what this corrects is the property value,
+            // read directly by NavRail.qml:43 and :98.
+            activeFocusOnTab: retryButton.visible || retryButton.activeFocus
             text: qsTr("Retry")
             iconName: "refresh"
             variant: "ghost"

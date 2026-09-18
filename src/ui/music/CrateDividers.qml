@@ -32,7 +32,17 @@ FocusScope {
                                        : 0
 
     implicitWidth: Theme.scale(30)
-    activeFocusOnTab: dividers.letters.length > 0
+    // `|| activeFocus` because `letters` can empty while this scope still holds
+    // the keyboard (a filter or section change refills it from the controller).
+    // Measured: a guard tied to a plain condition — neither `visible` nor
+    // `enabled` — is the worst shape of all. Qt clears focus BEFORE an
+    // `enabled` binding re-evaluates, so those are safe; it does not for a
+    // plain condition, so QQuickItem refuses the write ("Cannot set
+    // activeFocusOnTab to false once item is the active focus item"), keeps
+    // `true`, and never re-evaluates. Unlike a hidden item — which Qt's Tab
+    // traversal skips anyway — these dividers stay VISIBLE, and NavRail.qml:43
+    // and :98 read `activeFocusOnTab` directly to build their navigation sets.
+    activeFocusOnTab: dividers.letters.length > 0 || dividers.activeFocus
 
     Accessible.role: Accessible.List
     Accessible.name: qsTr("Jump to letter")

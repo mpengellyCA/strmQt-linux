@@ -101,8 +101,21 @@ Item {
                 // Ruling P3-R2: StrmButton ties activeFocusOnTab to
                 // `interactive`, never to `visible` — a caller that sets
                 // allowPlaylist: false (PlaylistPage) would otherwise leave
-                // this holding a Tab stop nobody can see.
+                // this DECLARING a Tab stop nobody can see. Measured at Qt
+                // 6.11.2: Tab traversal skips an invisible item whatever
+                // activeFocusOnTab says, so what the override corrects is the
+                // property value, which NavRail.qml:43 and :98 read directly.
+                //
+                // `|| activeFocus` is not belt-and-braces. `visible` here is
+                // EFFECTIVE visibility, so it also goes false when the bar
+                // itself hides on an emptied selection — and if this button was
+                // the one holding the keyboard, Qt refuses to clear
+                // activeFocusOnTab on the active focus item, warns, and keeps
+                // the old value. Measured: one warning per hide. Staying true
+                // for that instant lets the write land on the next tick, once
+                // activeFocus has gone.
                 activeFocusOnTab: addToPlaylistButton.visible
+                                  || addToPlaylistButton.activeFocus
                 text: qsTr("Add to playlist")
                 iconName: "playlist"
                 variant: "secondary"
@@ -121,9 +134,12 @@ Item {
 
                 anchors.verticalCenter: parent.verticalCenter
                 visible: bar.allowRemove
-                // Same shape: most callers never set allowRemove, so this
-                // button is invisible everywhere except PlaylistPage.
-                activeFocusOnTab: removeButton.visible
+                // Same shape, and the same `|| activeFocus` for the same
+                // measured reason: most callers never set allowRemove, so this
+                // button is invisible everywhere except a playlist — and where
+                // it IS shown it is the verb whose own press empties the
+                // selection that was keeping the bar on screen.
+                activeFocusOnTab: removeButton.visible || removeButton.activeFocus
                 text: qsTr("Remove")
                 iconName: "close"
                 variant: "ghost"

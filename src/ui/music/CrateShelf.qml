@@ -43,7 +43,16 @@ FocusScope {
     readonly property bool focusable: shelf.visible && !shelf.showSkeleton
 
     visible: shelf.lane !== null && shelf.lane.empty !== true
-    activeFocusOnTab: shelf.focusable
+    // `|| activeFocus` because `focusable` has two ways to go false under the
+    // keyboard, and one of them leaves the shelf on screen: the lane emptying
+    // (via `visible`), and a reload starting (`showSkeleton`) while this scope
+    // still holds focus. Measured: the binding re-evaluates BEFORE Qt moves
+    // focus off, so QQuickItem refuses the write ("Cannot set activeFocusOnTab
+    // to false once item is the active focus item"), keeps `true`, and — since
+    // neither input changes again — stays wrong for the life of the shelf.
+    // Tab skips a hidden item regardless, but a skeletonised shelf is VISIBLE,
+    // and NavRail.qml:43 and :98 read `activeFocusOnTab` directly.
+    activeFocusOnTab: shelf.focusable || shelf.activeFocus
     width: parent ? parent.width : implicitWidth
     implicitWidth: Theme.scale(800)
     height: header.height + Theme.spacingTight + body.height

@@ -554,7 +554,18 @@ FocusScope {
                     focus: true
                     // The hero is one tab stop; its buttons and the error
                     // line's Retry opt out of the flat Tab chain below.
+                    //
+                    // `|| activeFocus` because sectionFocusable() goes false
+                    // for the hero as soon as `hasHero` drops with no error —
+                    // a refresh — while `visible` stays true on `heroLoading`,
+                    // so the hero keeps the keyboard and stays on screen.
+                    // Measured: the binding re-evaluates BEFORE Qt moves focus
+                    // off, so QQuickItem refuses the write ("Cannot set
+                    // activeFocusOnTab to false once item is the active focus
+                    // item"), keeps `true`, and never gets a second chance.
+                    // NavRail.qml:43 and :98 read `activeFocusOnTab` directly.
                     activeFocusOnTab: page.sectionFocusable(heroScope)
+                                      || heroScope.activeFocus
 
                     Keys.onLeftPressed: event => { event.accepted = page.moveHero(-1) }
                     Keys.onRightPressed: event => {

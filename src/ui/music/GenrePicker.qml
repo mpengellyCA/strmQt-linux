@@ -329,9 +329,25 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: picker.failed && !picker.loading
                 // StrmButton ties activeFocusOnTab to `interactive`, never to
-                // `visible`, so without this the hidden Retry keeps a Tab stop
-                // of its own — the bug fixed in 6f6b120 for the rail chevrons.
-                activeFocusOnTab: retryButton.visible
+                // `visible`, so without this the hidden Retry still DECLARES a
+                // Tab stop of its own — the bug fixed in 6f6b120 for the rail
+                // chevrons. Measured at Qt 6.11.2: Tab traversal skips an
+                // invisible item whatever activeFocusOnTab says, so what is
+                // corrected is the property value, which NavRail.qml:43 and
+                // :98 read directly.
+                //
+                // `|| activeFocus` because this Retry hides ITSELF: pressing it
+                // emits retryRequested(), the owner sets `loading`, and
+                // `visible` goes false with the keyboard still on the button.
+                // Measured: a `visible` binding re-evaluates BEFORE Qt moves
+                // focus off, so QQuickItem refuses the write ("Cannot set
+                // activeFocusOnTab to false once item is the active focus
+                // item"), keeps the old value, and — since `visible` does not
+                // change again — the property stays stale at `true` for the
+                // life of the item. Tab traversal skips an invisible item
+                // anyway, but NavRail reads activeFocusOnTab directly, so a
+                // permanently wrong value is not merely cosmetic.
+                activeFocusOnTab: retryButton.visible || retryButton.activeFocus
                 text: qsTr("Retry")
                 iconName: "refresh"
                 variant: "ghost"
