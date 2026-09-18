@@ -120,6 +120,9 @@ private slots:
     void lettersAndSectionsCycle();
     void routeStateRoundTrips();
     void libraryRetargetDropsTheInFlightPage();
+    void aSectionFailureStaysOnItsOwnLaneAndRetryRecovers();
+    void anInvalidatedSectionDoesNotStrandItsLoadingFlag();
+    void collectAlbumTracksReportsIdsWithoutTouchingThePlayer();
     void createdPlaylistsReappearInThePlaylistsSection();
     void sessionResetClearsScopeAndAllowsSameLibraryForNextUser();
 
@@ -589,6 +592,163 @@ void MusicBrowseControllerTest::libraryRetargetDropsTheInFlightPage()
     disconnect(connection);
 }
 
+// Restored after Task 10's review: tst_music_query's browseErrorsStayWithTheirLane
+// (two data rows) had no successor, and the browse controller was left with no
+// failure path under test at all — acceptPage's !result.ok() branch rewritten to
+// succeed() passed all 61 tests. The Crate error-and-retry affordance hangs off
+// lane->error(), and an error must belong to the lane that asked for it.
+void MusicBrowseControllerTest::aSectionFailureStaysOnItsOwnLaneAndRetryRecovers()
+{
+    const Q albumQuery{{"IncludeItemTypes", "MusicAlbum"}};
+    m_mock->addQueryRoute("GET", itemsPath(), albumQuery, 500, QByteArrayLiteral("{}"));
+
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    QTRY_VERIFY(!m_ctl->albumsLane()->error().isEmpty());
+    QVERIFY(!m_ctl->albumsLane()->loading());
+    QCOMPARE(m_ctl->albums()->count(), 0);
+
+    // The failure belongs to the lane that asked, and to no other.
+    for (MusicLane *lane : {m_ctl->artistsLane(), m_ctl->songsLane(), m_ctl->genresLane(),
+                            m_ctl->playlistsLane()})
+        QVERIFY(lane->error().isEmpty());
+
+    // A sibling that loads cleanly neither inherits the error nor clears it.
+    m_ctl->setSection(QStringLiteral("artists"));
+    QTRY_COMPARE(m_ctl->artists()->count(), 2);
+    QVERIFY(m_ctl->artistsLane()->error().isEmpty());
+    QVERIFY(!m_ctl->albumsLane()->error().isEmpty());
+
+    // Retry is the affordance the error state offers, and it recovers. The
+    // section is not stale (the failed fetch cleared that), so returning to it
+    // asks for nothing by itself: the request below is retry()'s.
+    m_mock->addQueryRoute("GET", itemsPath(), albumQuery, 200, page(albums("a", 3), 3));
+    m_ctl->setSection(QStringLiteral("albums"));
+    const int before = requestsTo(itemsPath(), albumQuery);
+    m_ctl->albumsLane()->retry();
+    QTRY_COMPARE(m_ctl->albums()->count(), 3);
+    QCOMPARE(requestsTo(itemsPath(), albumQuery), before + 1);
+    QVERIFY(m_ctl->albumsLane()->error().isEmpty());
+    QVERIFY(!m_ctl->albumsLane()->loading());
+}
+
+// Restored after Task 10's review: invalidate()'s m_lanes[...]->reset() had no
+// cover — deleting that line passed all 61 tests — and it is what the deleted
+// invalidatingPlaylistsFromAnotherTabDoesNotStrandLoading and
+// aHiddenOldQueryReplyCannotBypassLazyInvalidation guarded between them.
+//
+// The cost of getting this wrong is not a spinner. loadMore() refuses while the
+// lane says it is loading, so a flag left up by a retired reply kills scroll
+// paging for that section for the rest of the session.
+void MusicBrowseControllerTest::anInvalidatedSectionDoesNotStrandItsLoadingFlag()
+{
+    const Q browseQuery{{"ParentId", kLibrary}, {"IncludeItemTypes", "Playlist"}};
+    // Albums answer instantly from a query route; the playlists page falls
+    // through to the plain route, which is the delayed one. It has to be that
+    // way round: MockEmbyServer builds a matched query route with delayMs 0, so
+    // setRouteDelay can never delay a query route (measured).
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "MusicAlbum"}}, 200,
+                          page(albums("a", 3), 3));
+    m_mock->addRoute("GET", itemsPath(), 200, page({playlistJson("pl1", "Road Trip")}, 2));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "Playlist"}, {"StartIndex", "1"}},
+                          200, page({playlistJson("pl2", "Second")}, 2));
+    m_mock->setRouteDelay("GET", itemsPath(), 400);
+
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    QTRY_COMPARE(m_ctl->albums()->count(), 3);
+
+    // Playlists, on a library big enough that the page is still on the wire.
+    m_ctl->setSection(QStringLiteral("playlists"));
+    QVERIFY(m_ctl->playlistsLane()->loading());
+    const int inFlight = requestsTo(itemsPath(), browseQuery);
+
+    // Back to Albums. Its rows are fresh, so nothing is requested and nothing
+    // new will lower the playlists flag.
+    m_ctl->setSection(QStringLiteral("albums"));
+    QCOMPARE(requestsTo(itemsPath(), browseQuery), inFlight);
+    QVERIFY(m_ctl->playlistsLane()->loading());
+
+    // A playlist made from a track row now. Immediately, not eventually: the
+    // retired request is the only thing that could have lowered this, and it is
+    // not coming back.
+    m_ctl->notePlaylistsMutated();
+    QVERIFY(!m_ctl->playlistsLane()->loading());
+    QCOMPARE(m_ctl->playlists()->count(), 0);
+    QCOMPARE(requestsTo(itemsPath(), browseQuery), inFlight); // hidden: no refetch
+
+    // The stale reply lands a moment later and must not raise it again either.
+    QTest::qWait(700);
+    QVERIFY(!m_ctl->playlistsLane()->loading());
+    QCOMPARE(m_ctl->playlists()->count(), 0);
+
+    // And paging is alive: this is what a stranded flag actually breaks.
+    m_ctl->setSection(QStringLiteral("playlists"));
+    QTRY_COMPARE(modelIds(m_ctl->playlists()), QStringList{QStringLiteral("pl1")});
+    QVERIFY(m_ctl->playlists()->canLoadMore());
+    const int beforeMore = requestsTo(itemsPath(), browseQuery);
+    m_ctl->loadMore();
+    QTRY_COMPARE(requestsTo(itemsPath(), browseQuery), beforeMore + 1);
+    QTRY_COMPARE(modelIds(m_ctl->playlists()),
+                 (QStringList{QStringLiteral("pl1"), QStringLiteral("pl2")}));
+}
+
+// Restored after Task 10's review: the deletion of
+// collectAlbumTracksReportsIdsWithoutTouchingThePlayer took the ONLY cover for
+// this verb — MusicBrowseController::collectAlbumTracks had no test anywhere,
+// while MusicBrowsePage.qml wires onAlbumTracksCollected to the playlist picker.
+// Both refusals matter: an album the server has nothing for must report instead
+// of raising a picker over an empty list, and none of this may touch the player.
+void MusicBrowseControllerTest::collectAlbumTracksReportsIdsWithoutTouchingThePlayer()
+{
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"ParentId", "al-full"}}, 200,
+                          page({trackJson("t1", "al-full", 1), trackJson("t2", "al-full", 2)}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"ParentId", "al-empty"}}, 200, page({}));
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"ParentId", "al-broken"}}, 500,
+                          QByteArrayLiteral("{}"));
+
+    m_ctl->open(kLibrary, QStringLiteral("albums"));
+    QTRY_VERIFY(!m_ctl->albumsLane()->loading());
+
+    QSignalSpy collected(m_ctl, &MusicBrowseController::albumTracksCollected);
+    QSignalSpy failed(m_ctl, &MusicBrowseController::actionFailed);
+    QSignalSpy queued(m_actions, &ItemActions::queueChanged);
+
+    m_ctl->collectAlbumTracks(QStringLiteral("al-full"), QStringLiteral("Kind of Blue"));
+    QTRY_COMPARE(collected.count(), 1);
+    QCOMPARE(collected.first().at(0).toString(), QStringLiteral("Kind of Blue"));
+    QCOMPARE(collected.first().at(1).toStringList(),
+             (QStringList{QStringLiteral("t1"), QStringLiteral("t2")}));
+    QCOMPARE(failed.count(), 0);
+    // Not a play verb: the picker gets ids and the player is untouched.
+    QCOMPARE(queued.count(), 0);
+    QCOMPARE(queue()->rowCount(), 0);
+    // The album's own expansion, in disc then track order — not the browse query.
+    const QUrlQuery sent(m_mock->lastRequestFor("GET", itemsPath()).query);
+    QCOMPARE(sent.queryItemValue("ParentId"), QStringLiteral("al-full"));
+    QCOMPARE(sent.queryItemValue("SortBy"),
+             QStringLiteral("ParentIndexNumber,IndexNumber,SortName"));
+
+    // An album with no tracks reports, rather than raising a picker over an
+    // empty list.
+    m_ctl->collectAlbumTracks(QStringLiteral("al-empty"), QStringLiteral("Nothing"));
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(collected.count(), 1);
+
+    // So does a failed read, and neither ever reaches the queue.
+    m_ctl->collectAlbumTracks(QStringLiteral("al-broken"), QStringLiteral("Broken"));
+    QTRY_COMPARE(failed.count(), 2);
+    QCOMPARE(collected.count(), 1);
+    QCOMPARE(queued.count(), 0);
+    QCOMPARE(queue()->rowCount(), 0);
+
+    // An album id that is not there is refused without a request of any kind.
+    const int before = m_mock->requestCount();
+    m_ctl->collectAlbumTracks(QString(), QStringLiteral("No id"));
+    QTest::qWait(120);
+    QCOMPARE(m_mock->requestCount(), before);
+    QCOMPARE(failed.count(), 2);
+    QCOMPARE(collected.count(), 1);
+}
+
 // Ported here when MusicController went (Task 10): tst_music_query's
 // createdPlaylistsReappearInTheMusicTab was the only cover for this. A playlist
 // made from a track has to turn up in the section whose job is to list it.
@@ -638,10 +798,26 @@ void MusicBrowseControllerTest::createdPlaylistsReappearInThePlaylistsSection()
     QCOMPARE(requestsTo(itemsPath(), browseQuery), hidden);
     QCOMPARE(m_ctl->playlists()->count(), 0);
 
-    // …and paid on return, so the rows that come back are the new set.
+    // …and paid on return, so the rows that come back are the new set, and the
+    // record count came back with them.
     m_ctl->setSection(QStringLiteral("playlists"));
     QTRY_COMPARE(requestsTo(itemsPath(), browseQuery), hidden + 1);
     QTRY_COMPARE(modelIds(m_ctl->playlists()), (QStringList{QStringLiteral("pl1"), QStringLiteral("pl2")}));
+    QCOMPARE(m_ctl->resultCount(), 2);
+
+    // Why notePlaylistsMutated() does not need commit()'s unfilteredCount reset:
+    // this section takes no filters at all. queryFor(Playlists) clears every
+    // axis, so narrowed() is false however the shared filters are set, and
+    // countText() can never take the "N → M" branch here. Resetting
+    // unfilteredCount there would be dead code.
+    m_ctl->setFavouritesOnly(true);
+    m_ctl->setGenres({QStringLiteral("g1")});
+    m_ctl->setUnplayedOnly(true);
+    QVERIFY(!m_ctl->filtered());
+    QCOMPARE(m_ctl->activeFilterCount(), 0);
+    QVERIFY(!m_ctl->countText().contains(QStringLiteral("→")));
+    QCOMPARE(m_ctl->countText(),
+             QStringLiteral("2 PLAYLISTS · SORT: NAME ↑"));
 }
 
 // Ported here when MusicController went (Task 10): tst_music_query's
