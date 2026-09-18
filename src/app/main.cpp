@@ -22,9 +22,13 @@
 #include "core/Settings.h"
 #include "input/InputMap.h"
 
+#include <QDebug>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QStringList>
 #include <QWindow>
+
+#include <utility>
 
 int main(int argc, char *argv[])
 {
@@ -89,6 +93,49 @@ int main(int argc, char *argv[])
     const QList<QObject *> roots = engine.rootObjects();
     if (auto *window = qobject_cast<QWindow *>(roots.value(0)))
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
+
+    // Named wiring guard (P4-R11). No test constructs strmqt::Application, so
+    // deleting the album or artist context property above, or either
+    // ItemActions::favoriteChanged connect in Application.cpp, leaves the whole
+    // suite and the page self-test green while the heart on the Crate album and
+    // artist pages silently stops following a favourite toggle. The self-test
+    // is the only run that builds the real object graph, so it is the only
+    // place that can see this wiring at all.
+    if (qEnvironmentVariableIsSet("STRMQT_SELFTEST")) {
+        QStringList wiring;
+        const auto requireContextObject = [&](const char *name) {
+            const QVariant value = engine.rootContext()->contextProperty(QLatin1String(name));
+            if (!value.isValid() || value.value<QObject *>() == nullptr)
+                wiring << QStringLiteral("context property %1 is not an object")
+                              .arg(QLatin1String(name));
+        };
+        requireContextObject("AlbumCtl");
+        requireContextObject("ArtistCtl");
+
+        // Qt::UniqueConnection answers "is this exact connection already there?"
+        // without disturbing it: connect() returns an invalid handle when it is.
+        // A missing connect is therefore made *and* reported — the run still
+        // exits non-zero, so the repair never hides the deletion.
+        if (QObject::connect(app.actions(), &strmqt::ItemActions::favoriteChanged,
+                             app.albumController(),
+                             &strmqt::music::AlbumController::noteFavourite,
+                             Qt::UniqueConnection))
+            wiring << QStringLiteral("ItemActions::favoriteChanged is not connected to "
+                                     "AlbumController::noteFavourite");
+        if (QObject::connect(app.actions(), &strmqt::ItemActions::favoriteChanged,
+                             app.artistController(),
+                             &strmqt::music::ArtistController::noteFavourite,
+                             Qt::UniqueConnection))
+            wiring << QStringLiteral("ItemActions::favoriteChanged is not connected to "
+                                     "ArtistController::noteFavourite");
+
+        if (!wiring.isEmpty()) {
+            for (const QString &failure : std::as_const(wiring))
+                qWarning().noquote() << "selftest FAIL music wiring:" << failure;
+            return 1;
+        }
+        qInfo().noquote() << "selftest ok   music wiring";
+    }
 
     return app.exec();
 }
