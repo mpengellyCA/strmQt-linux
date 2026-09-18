@@ -101,7 +101,14 @@ FocusScope {
     Accessible.role: Accessible.Pane
     Accessible.name: page.albumName
 
+    // `visible`, not `isActivePage`: pop() detaches the popped item, which makes
+    // `isActivePage`'s `StackView.view === null` clause report a popped page as
+    // active. Both callers below defer, so without this a page just navigated
+    // away from reopens its own album over the one the user went back to.
+    // See MusicArtistPage.ensureOpen for the measurements behind the choice.
     function ensureOpen(): void {
+        if (!page.visible)
+            return
         if (page.albumId.length > 0 && AlbumCtl.albumId !== page.albumId)
             AlbumCtl.open(page.albumId, page.albumName)
     }

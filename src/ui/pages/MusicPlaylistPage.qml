@@ -60,7 +60,14 @@ FocusScope {
                                          || page.StackView.view === null
     readonly property int collageSize: page.narrow ? Theme.scale(160) : Theme.scale(340)
 
+    // `visible`, not `isActivePage`: pop() detaches the popped item, which makes
+    // `isActivePage`'s `StackView.view === null` clause report a popped page as
+    // active. PlaylistCtl is shared with PlaylistPage too, so a stale reopen
+    // here can retarget the generic page's pane as well as this one.
+    // See MusicArtistPage.ensureOpen for the measurements behind the choice.
     function ensureOpen(): void {
+        if (!page.visible)
+            return
         if (page.playlistId.length > 0 && PlaylistCtl.currentId !== page.playlistId)
             PlaylistCtl.open(page.playlistId, page.playlistName)
     }

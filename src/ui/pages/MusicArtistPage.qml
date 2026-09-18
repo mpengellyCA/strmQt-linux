@@ -132,16 +132,26 @@ FocusScope {
     readonly property int releaseGridHeight: page.releaseRows
                                              * (releases.cardHeight + Theme.spacingValue)
 
-    // Deferred by every caller below, so by the time it runs the page may no
-    // longer be the one on screen: StackView.pop() does NOT destroy the popped
-    // item synchronously, so a page that was just navigated away from is still
-    // alive with a pending call queued from its own visibleChanged. Without the
-    // isActivePage guard that stale call lands AFTER the shell has prepared the
-    // route it went back to, and retargets the shared controller to the page
-    // the user just left. Measured: with the event loop not draining between
-    // two artists, the popped page's queued ensureOpen fired last and won.
+    // ── Only the page on screen may retarget the shared controller ──────────
+    // Deferred by both callers below, so by the time it runs this page may not
+    // be the one the user is looking at: pop() does NOT destroy the popped item
+    // synchronously, so a page just navigated away from is still alive with a
+    // call queued from its own visibleChanged, and that stale call lands AFTER
+    // the shell has prepared the route it went back to.
+    //
+    // The test is `visible`, and that is measured, not assumed. `isActivePage`
+    // does NOT work here: it is `status === Active || StackView.view === null`,
+    // and pop() DETACHES the item, so a popped page has `view === null` and
+    // reports itself active. Gating on attachment instead (`view !== null &&
+    // status !== Active`) fails the same way and for the same reason — the
+    // popped page is the detached one. StackView sets `visible: false` on both
+    // the popped page and a covered one, while a page built outside any
+    // StackView (the self-test) keeps `visible: true`, so this one property
+    // separates all three cases. Measured for each: popped page returns early,
+    // covered page returns early, standalone page proceeds, and the current
+    // page still fires when the controller has moved behind its back.
     function ensureOpen(): void {
-        if (!page.isActivePage)
+        if (!page.visible)
             return
         if (page.artistId.length > 0 && ArtistCtl.artistId !== page.artistId)
             ArtistCtl.open(page.artistId, page.artistName, page.libraryId)

@@ -1544,6 +1544,14 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     // An artist reopened from history takes the library the ENTRY was pushed
     // under, falling back to today's only when the entry carries none. Reading
     // musicLibraryId() unconditionally here is the bug this replaced.
+    //
+    // The direction pin below cannot see WHICH fields are passed, and a
+    // `contains` on an expression is satisfied by that expression sitting in a
+    // comment — measured: prepareRoute passing route.key/route.title, and
+    // prepareRoute's artist case deleted with the ternary left in a comment,
+    // both passed the whole suite. The call-shape pin is what closes that, so
+    // the two assertions are kept together and neither supersedes the other.
+    QVERIFY(main.contains("ArtistCtl.open(route.id, route.name,"));
     QVERIFY(main.contains("route.libraryId.length > 0 ? route.libraryId"));
     QVERIFY(main.contains("ArtistCtl.open(id, name, libraryId)"));
     QVERIFY(!main.contains("function openMusic("));
@@ -2262,6 +2270,12 @@ void NavigationHistoryTest::audioPlaylistRouteSelectsTheMusicPlaylistPage()
 // the page, because a generic playlist map carries no reliable media type.
 // This evaluates Main.qml's own openRoute body rather than grepping for it —
 // a substring assertion is satisfied just as well by the inverted condition.
+//
+// Scope, so the neighbouring greps are not later deleted as superseded: this
+// pins WHICH helper the dispatch chooses, not the arguments it passes. Adding
+// or dropping an argument in openRoute leaves this test green and is caught
+// only by `main.contains("root.openMusicPlaylist(id, name)")` in
+// itemPolicyIsCentralizedAcrossQmlSurfaces. The two are complementary.
 void NavigationHistoryTest::playlistRouteFollowsTheSurfaceItWasOpenedFrom()
 {
     QTemporaryDir dir;
