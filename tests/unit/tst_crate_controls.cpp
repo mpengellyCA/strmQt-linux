@@ -23,7 +23,7 @@ import StrmQt
 Item {
     id: root
     width: 1000
-    height: 900
+    height: 1100
     focus: true
 
     property int sleeveActivated: 0
@@ -38,9 +38,15 @@ Item {
     property int shelfActivated: -1
     property int shelfActions: 0
     property bool upEscaped: false
+    property int pillActivated: 0
+    property int pillCleared: 0
+    property string letterChosenValue: ""
+    property var genresChosenIds: []
+    property int genreDismissed: 0
 
     Keys.onUpPressed: root.upEscaped = true
     readonly property color hiResTone: Theme.crateBadgeHiRes
+    readonly property color accentTone: Theme.accentColor
     readonly property string displayFamily: Theme.fontDisplay
     readonly property string monoFamily: Theme.fontMono
 
@@ -118,6 +124,39 @@ Item {
         onRetry: root.retried++
     }
 
+    // Placed below CrateShelf's footprint (y: 660, up to ~848 once populated)
+    // so mouse events aimed at these two never land on the shelf instead.
+    FilterPill {
+        id: pill
+        objectName: "pill"
+        x: 20; y: 900
+        text: "Decade: 70s"
+        active: true
+        onActivated: root.pillActivated++
+        onCleared: root.pillCleared++
+    }
+
+    CrateDividers {
+        id: dividers
+        objectName: "dividers"
+        x: 960; y: 900
+        height: 180
+        letters: ["#", "A", "B", "C"]
+        currentLetter: "A"
+        onLetterChosen: letter => root.letterChosenValue = letter
+    }
+
+    GenrePicker {
+        id: genrePicker
+        objectName: "genrePicker"
+        options: [
+            { id: "1", name: "Alpha", subtitle: "10 records", selected: false },
+            { id: "2", name: "Beta", subtitle: "5 records", selected: true }
+        ]
+        onGenresChosen: ids => root.genresChosenIds = ids
+        onDismissed: root.genreDismissed++
+    }
+
     ListModel { id: shelfRows }
 
     QtObject {
@@ -178,7 +217,7 @@ const QStringList kControls = {
     QStringLiteral("StrmIconButton"), QStringLiteral("StrmButton"),  QStringLiteral("StrmImage"),
     QStringLiteral("StrmAvatar"),     QStringLiteral("StrmCard"),    QStringLiteral("StrmScrollBar"),
     QStringLiteral("NavigationFocusRestorer"), QStringLiteral("NavigationColumn"),
-    QStringLiteral("StrmRail"),       QStringLiteral("StrmSkeleton"),
+    QStringLiteral("StrmRail"),       QStringLiteral("StrmSkeleton"), QStringLiteral("StrmSearchField"),
 };
 
 const QStringList kMusic = {
@@ -186,6 +225,7 @@ const QStringList kMusic = {
     QStringLiteral("CoverCollage"), QStringLiteral("CrateSleeve"),  QStringLiteral("CratePortrait"),
     QStringLiteral("StationTile"),  QStringLiteral("GenreBinTile"), QStringLiteral("SectionStrip"),
     QStringLiteral("ShelfError"),   QStringLiteral("CrateShelf"),
+    QStringLiteral("FilterPill"),   QStringLiteral("GenrePicker"),  QStringLiteral("CrateDividers"),
 };
 
 QQuickItem *findItem(QQuickItem *from, const QString &name)
@@ -246,7 +286,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         qWarning() << view.errors();
         return nullptr;
     }
-    view.resize(1000, 900);
+    view.resize(1000, 1100);
     view.show();
     if (!QTest::qWaitForWindowExposed(&view))
         return nullptr;
@@ -282,6 +322,18 @@ private slots:
     void shelfDrawsTheDelegateAndForwardsActivation();
     void shelfErrorAndRailSwapFocusReactively();
     void shelfUpReachesTheActionThenDeclines();
+    // Ruling P3-R2: two focus bugs reached the user in Phase 2 (StrmRail's
+    // hover chevrons stealing a Tab stop; hover being mistaken for focus).
+    // Every control added in Task 4 is checked against both.
+    void filterPillActivatesAndClears();
+    void filterPillClearAffordanceIsNotATabStop();
+    void filterPillShowsItsFocusRing();
+    void crateDividersLettersAreNotTabStops();
+    void crateDividersShowsItsFocusRing();
+    void crateDividersChoosesWithTheKeyboard();
+    void genrePickerRowHoverPreviewsWithoutStealingFocus();
+    void genrePickerOpenShowsFocusOnTheSearchField();
+    void genrePickerHiddenButtonsAreNotTabStops();
 
 private:
     QTemporaryDir m_dir;
@@ -542,6 +594,199 @@ void CrateControlsTest::shelfUpReachesTheActionThenDeclines()
     QVERIFY(!action->hasActiveFocus());
     shelf->forceActiveFocus();
     QTRY_VERIFY(rail->hasActiveFocus());
+}
+
+// ── Task 4 (P3-R2): FilterPill, CrateDividers, GenrePicker ─────────────────
+
+void CrateControlsTest::filterPillActivatesAndClears()
+{
+    QQuickItem *pill = item("pill");
+    QVERIFY(pill);
+    const QPoint centre = pill->mapToScene(QPointF(pill->width() / 2, pill->height() / 2)).toPoint();
+    QTest::mouseClick(&m_view, Qt::LeftButton, {}, centre);
+    QTRY_COMPARE(m_root->property("pillActivated").toInt(), 1);
+    QTRY_VERIFY(pill->hasActiveFocus());
+
+    QTest::keyClick(&m_view, Qt::Key_Delete);
+    QTRY_COMPARE(m_root->property("pillCleared").toInt(), 1);
+}
+
+// Ruling P3-R2, point 1: the x that clears a pill is only ever shown while
+// the pill is clearable — like StrmRail's hover chevrons, it must never pick
+// up a Tab stop of its own. The pill itself stays the one stop.
+void CrateControlsTest::filterPillClearAffordanceIsNotATabStop()
+{
+    QQuickItem *pill = item("pill");
+    QQuickItem *clear = item("filterPillClear");
+    QVERIFY(pill);
+    QVERIFY(clear);
+    QVERIFY(clear->isVisible());
+    QVERIFY(!clear->activeFocusOnTab());
+    QVERIFY(pill->activeFocusOnTab());
+}
+
+// Ruling P3-R2, point 2: a focusable control must show that it holds focus.
+void CrateControlsTest::filterPillShowsItsFocusRing()
+{
+    QQuickItem *pill = item("pill");
+    QQuickItem *ring = item("filterPillFocusRing");
+    QVERIFY(pill);
+    QVERIFY(ring);
+
+    m_root->forceActiveFocus();
+    QTRY_VERIFY(!pill->hasActiveFocus());
+    QTRY_VERIFY(!ring->property("active").toBool());
+
+    pill->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(pill->hasActiveFocus());
+    QTRY_VERIFY(ring->property("active").toBool());
+}
+
+// Ruling P3-R2, point 1: 27 focusable letters would flood the focus chain
+// (like the plan's SectionStrip/FilterBar strips), so every divider letter is
+// explicitly not a Tab stop; `dividers` alone is.
+void CrateControlsTest::crateDividersLettersAreNotTabStops()
+{
+    QQuickItem *dividers = item("dividers");
+    QVERIFY(dividers);
+    QVERIFY(dividers->activeFocusOnTab());
+
+    static const char *kLetters[] = {"crateDividersLetter-#", "crateDividersLetter-A",
+                                      "crateDividersLetter-B", "crateDividersLetter-C"};
+    for (const char *name : kLetters) {
+        QQuickItem *tab = item(name);
+        QVERIFY(tab);
+        QVERIFY(!tab->activeFocusOnTab());
+    }
+}
+
+void CrateControlsTest::crateDividersShowsItsFocusRing()
+{
+    QQuickItem *dividers = item("dividers");
+    QQuickItem *ring = item("crateDividersFocusRing");
+    QVERIFY(dividers);
+    QVERIFY(ring);
+
+    m_root->forceActiveFocus();
+    QTRY_VERIFY(!dividers->hasActiveFocus());
+    QTRY_VERIFY(!ring->property("active").toBool());
+
+    dividers->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(dividers->hasActiveFocus());
+    QTRY_VERIFY(ring->property("active").toBool());
+}
+
+void CrateControlsTest::crateDividersChoosesWithTheKeyboard()
+{
+    QQuickItem *dividers = item("dividers");
+    QVERIFY(dividers);
+    m_root->setProperty("letterChosenValue", QString());
+    dividers->forceActiveFocus();
+    QTRY_VERIFY(dividers->hasActiveFocus());
+    // letters: ["#", "A", "B", "C"], currentLetter "A" -> cursor starts at 1.
+    QCOMPARE(dividers->property("cursor").toInt(), 1);
+
+    QTest::keyClick(&m_view, Qt::Key_Down);
+    QCOMPARE(dividers->property("cursor").toInt(), 2);
+    QTest::keyClick(&m_view, Qt::Key_Return);
+    QCOMPARE(m_root->property("letterChosenValue").toString(), QStringLiteral("B"));
+}
+
+// Ruling P3-R2, point 1: a row previews on hover only (a hovered row must not
+// steal the caret from the search field, the same "hover is not focus" bug
+// class as hoverIsNotFocus() above), and never becomes a Tab stop itself.
+void CrateControlsTest::genrePickerRowHoverPreviewsWithoutStealingFocus()
+{
+    QQuickItem *picker = item("genrePicker");
+    QVERIFY(picker);
+    QVERIFY(QMetaObject::invokeMethod(picker, "open"));
+    QTRY_VERIFY(picker->property("opened").toBool());
+
+    QQuickItem *field = item("genrePickerField");
+    QVERIFY(field);
+    QTRY_VERIFY(field->hasActiveFocus());
+
+    // The ListView's own height is bound to its contentHeight (Math.min(...)),
+    // so the second row's delegate is not necessarily live on the same tick
+    // as the first: give the layout a few event-loop turns, as
+    // shelfDrawsTheDelegateAndForwardsActivation() does above.
+    QQuickItem *row = nullptr;
+    QTRY_VERIFY((row = item("genrePickerRow-2")) != nullptr);
+    QVERIFY(!row->activeFocusOnTab());
+
+    QTest::mouseMove(&m_view, row->mapToScene(QPointF(row->width() / 2, row->height() / 2)).toPoint());
+    QTest::qWait(20);
+    QVERIFY(field->hasActiveFocus());
+    QVERIFY(!row->hasActiveFocus());
+
+    QVERIFY(QMetaObject::invokeMethod(picker, "close"));
+    QTRY_VERIFY(!picker->property("opened").toBool());
+}
+
+// Ruling P3-R2, point 2: open() hands real, visible keyboard focus to the
+// search field, whose own border is the focus indicator (StrmSearchField).
+// Ruling P3-R2 again, for the two buttons that are hidden most of the time:
+// Retry (only while the load failed) and the search field's clear "x" (only
+// while there is text). Both are built on controls whose activeFocusOnTab
+// follows `enabled`, never `visible`, so without an explicit binding they hold
+// a Tab stop nobody can see — the rail-chevron bug of 6f6b120.
+void CrateControlsTest::genrePickerHiddenButtonsAreNotTabStops()
+{
+    QQuickItem *picker = item("genrePicker");
+    QVERIFY(picker);
+    QVERIFY(QMetaObject::invokeMethod(picker, "open"));
+    QTRY_VERIFY(picker->property("opened").toBool());
+
+    QQuickItem *retry = item("genrePickerRetry");
+    QVERIFY(retry);
+    QVERIFY(!retry->isVisible());
+    QVERIFY(!retry->activeFocusOnTab());
+
+    // Visible again when the picker reports a failure with nothing to list
+    // (the hint row only shows with no rows): the guard tracks the button
+    // rather than switching it off for good.
+    const QVariant options = picker->property("options");
+    picker->setProperty("options", QVariantList{});
+    picker->setProperty("failed", true);
+    QTRY_VERIFY(retry->isVisible());
+    QVERIFY(retry->activeFocusOnTab());
+    picker->setProperty("failed", false);
+    picker->setProperty("options", options);
+    QTRY_VERIFY(!retry->isVisible());
+
+    QQuickItem *field = item("genrePickerField");
+    QVERIFY(field);
+    QQuickItem *clear = findItem(field, QStringLiteral("searchFieldClear"));
+    QVERIFY(clear);
+    QCOMPARE(field->property("text").toString(), QString());
+    QVERIFY(!clear->isVisible());
+    QVERIFY(!clear->activeFocusOnTab());
+
+    field->setProperty("text", QStringLiteral("jazz"));
+    QTRY_VERIFY(clear->isVisible());
+    QVERIFY(clear->activeFocusOnTab());
+    field->setProperty("text", QString());
+    QTRY_VERIFY(!clear->isVisible());
+}
+
+void CrateControlsTest::genrePickerOpenShowsFocusOnTheSearchField()
+{
+    QQuickItem *picker = item("genrePicker");
+    QVERIFY(picker);
+    QVERIFY(QMetaObject::invokeMethod(picker, "open"));
+
+    QQuickItem *field = item("genrePickerField");
+    QVERIFY(field);
+    QTRY_VERIFY(field->hasActiveFocus());
+
+    QQuickItem *background = field->property("background").value<QQuickItem *>();
+    QVERIFY(background);
+    QObject *border = background->property("border").value<QObject *>();
+    QVERIFY(border);
+    const QColor accent = m_root->property("accentTone").value<QColor>();
+    QTRY_COMPARE(border->property("color").value<QColor>(), accent);
+
+    QVERIFY(QMetaObject::invokeMethod(picker, "close"));
 }
 
 QTEST_MAIN(CrateControlsTest)

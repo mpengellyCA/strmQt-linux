@@ -12,4 +12,7 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/music/SectionStrip.qml
     ui/music/ShelfError.qml
     ui/music/CrateShelf.qml
+    ui/music/FilterPill.qml
+    ui/music/GenrePicker.qml
+    ui/music/CrateDividers.qml
 )

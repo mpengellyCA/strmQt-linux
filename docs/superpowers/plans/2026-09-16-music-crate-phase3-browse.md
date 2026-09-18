@@ -2395,7 +2395,7 @@ MSG
 
 These are QML-only, so there is no C++ unit test. Lint, build and the Task 5 self-test check them; Task 7 checks them visually.
 
-- [ ] **Step 1: Write `FilterPill.qml`**
+- [x] **Step 1: Write `FilterPill.qml`**
 
 ```qml
 import QtQuick
@@ -2590,7 +2590,7 @@ Item {
 
 Backspace is deliberately not bound: it is Back in the shell, and a pill must not swallow it.
 
-- [ ] **Step 2: Write `GenrePicker.qml`**
+- [x] **Step 2: Write `GenrePicker.qml`**
 
 ```qml
 pragma ComponentBehavior: Bound
@@ -2952,7 +2952,7 @@ FocusScope {
 }
 ```
 
-- [ ] **Step 3: Write `CrateDividers.qml`**
+- [x] **Step 3: Write `CrateDividers.qml`**
 
 ```qml
 pragma ComponentBehavior: Bound
@@ -3108,7 +3108,7 @@ FocusScope {
 
 `#` is first in `MusicBrowseCtl.letters`, so a typed digit chooses index 0.
 
-- [ ] **Step 4: Register the files**
+- [x] **Step 4: Register the files**
 
 In `src/ui/music/Music.cmake`, append to the `qt_target_qml_sources(strmqt QML_FILES` list, after the Phase 2 files:
 
@@ -3118,7 +3118,7 @@ In `src/ui/music/Music.cmake`, append to the `qt_target_qml_sources(strmqt QML_F
     ui/music/CrateDividers.qml
 ```
 
-- [ ] **Step 5: Build and lint**
+- [x] **Step 5: Build and lint**
 
 Run:
 
@@ -3129,7 +3129,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: the build succeeds. The lint script reports no line in a fatal category (`is not a type`, `was not found`, `unavailable`, `incompatible-type`) for the three new files. These controls read no context property, so they should add no lint lines at all. If one does appear, fix it here rather than baselining it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/music/FilterPill.qml src/ui/music/GenrePicker.qml src/ui/music/CrateDividers.qml src/ui/music/Music.cmake
