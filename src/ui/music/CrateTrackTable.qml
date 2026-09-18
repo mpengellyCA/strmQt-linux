@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Window
 import StrmQt
 
 // CrateTrackTable — TrackTable with the Crate row built in (spec §6.1–6.3).
@@ -33,6 +34,15 @@ TrackTable {
     property int verbsColumn: Theme.scale(72)
     property int artistColumnWidth: Theme.scale(200)
     property int discHeaderHeight: Theme.scale(46)
+
+    // True only while the rows own the cursor. ListView is a focus scope, so
+    // `activeFocus` is also true when something in the header or footer holds focus.
+    // Qt 6.11 hands active focus to the current delegate, not to the view, so accept
+    // either: the second arm is what this Qt does, the first keeps the guard correct
+    // if a version or a consumer keeps focus on the view itself. Assumes no TrackRow
+    // sub-item ever takes focus, which TrackRow's own header already forbids.
+    readonly property bool rowsFocused: crate.Window.activeFocusItem === crate
+                                        || crate.Window.activeFocusItem === crate.currentItem
 
     readonly property var discStarts: {
         const starts = {}
@@ -100,7 +110,7 @@ TrackTable {
         showCover: crate.showCovers
         coverUrl: trackRow.model.coverUrl !== undefined ? String(trackRow.model.coverUrl) : ""
 
-        current: crate.currentIndex === trackRow.index && crate.activeFocus
+        current: crate.currentIndex === trackRow.index && crate.rowsFocused
         selected: crate.isSelected(trackRow.index)
         playing: trackRow.trackId.length > 0 && trackRow.trackId === crate.nowPlayingId
         favorite: trackRow.model.favourite === true
