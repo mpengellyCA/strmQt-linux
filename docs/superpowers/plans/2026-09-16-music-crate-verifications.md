@@ -129,3 +129,96 @@ correct request or parser looks like.
 ### Genre ids are numbers
 - `GenreItems[].Id` is a JSON **number** on album items (`{"Id": <number>,
   "Name": …}`), while `AlbumArtists[].Id` and `ArtistItems[].Id` are strings.
+
+# Phase 4 gate: what the Crate pages leave uncovered
+
+Phase 4 Task 11, measured 2026-09-18 against `/tmp/w4gate` (a clean Debug build with
+`STRMQT_WERROR=ON`) at the gate commit. Every entry below was produced by mutating the
+named line and running the whole suite — 61 tests — not by reading the code and
+guessing. A gap with a passing suite behind it is a measurement; the mutation and its
+result are recorded so the next reader does not have to repeat it.
+
+## P4-U1 `MusicBrowseController::m_epoch` has no cover anywhere
+- Deleting `++m_epoch` from `resetForLibrary()` (`MusicBrowseController.cpp:493`) passes
+  all 61 tests.
+- Not because the epoch is idle, but because four independent guards each drop the same
+  stale reply: the lane generation, the epoch, `query != queryFor(section)`, and
+  `startIndex != model->count()` (`MusicBrowseController.cpp:895`). Any one of them
+  suffices for every case a fixture can build, so no fixture can isolate the epoch.
+- Covering it needs a reply that survives the other three: the same query and the same
+  `startIndex` under a *different* library. That is the fixture to write, not another
+  assertion on the existing ones.
+
+## P4-U2 "Random is one page" is unpinned
+- `MusicBrowseController.cpp:908`, `const int total = query.sortKey == kRandom ? shown
+  : page.totalRecordCount;`. Mutating it to always use `page.totalRecordCount` passes
+  all 61.
+- The visible failure would be a random section that advertises 5,037 rows and refills
+  forever against a sample of 100.
+
+## P4-U3 The genre walk's paging and its hard stop are untested
+- `MusicRepository.cpp:600–614`: the walk pages on the returned array's own size
+  (`items.size() == pageSize`) and stops after 20 pages (`startIndex / pageSize < 19`).
+- No fixture returns a full genre page, so neither the paging nor the stop is ever
+  entered. The failure mode of a missing stop is a hung app rather than a wrong list,
+  which is why this is written down instead of shrugged off.
+
+## P4-U4 `acceptPage`'s commit-before-settle ordering is unpinned
+- No test observes a lane's `stateChanged` while reading the model, so nothing notices
+  if the lane settles before the model is committed — the window in which a page would
+  read `loading == false` against an empty model.
+
+## P4-U5 The `ensureOpen` visibility guard has no regression test
+- Reverting `if (!page.visible)` to `if (!page.isActivePage)` on the three Crate pages
+  passes 61/61.
+- Covering it needs a fixture that drives a real `StackView` pop with undrained
+  `Qt.callLater` queues. The probe recipe that measured it: copy
+  `BoundedNavigationStack`, mirror the page's `isActivePage` and `ensureOpen`, push A,
+  push B, `goBack()` all in one JS turn, and read which `ensureOpen` fired last.
+
+## P4-U6 `navigationFocusKey "album-tracks"` restore is uncovered
+- The key is set and the album page is pushed and popped in tests, but no test asserts
+  the focused row comes back on a Back into the album.
+
+## P4-U7 The library-less genre link — now pinned by shape, not by behaviour
+- `root.musicLibraryId()` (`Main.qml:529`) is empty until Music Home or Browse has been
+  visited, so an album or artist opened from Search or a deep link early has no music
+  library and `openMusicGenreFromPage` falls back to `Actions.browseGenre`. That
+  fallback is the design, not a bug.
+- Closed this far at the gate: `tst_navigation_history`'s
+  `productionRetargetOrderingRetainsDepartingScopes` now pins both branches of
+  `openMusicGenreFromPage` and their order. Proved to bite — deleting the `else` fails
+  the test on `fromPageFallback > fromPageFilter`.
+- Still uncovered: that the fallback *fires*. Like every source pin in that test it
+  cannot tell production code from a comment, and no test builds the shell with both
+  music controllers unscoped.
+
+## P4-U8 `EmbyImageFetcher::sourceFor`'s empty-tag permission is dead capability
+- `sourceFor` rejects only an empty `itemId` or `imageType` (`EmbyImageProvider.cpp:287`),
+  so an empty `tag` is allowed. The deleted `ArtistPage.qml:94` was its only caller with
+  an empty tag; the one remaining caller, `PersonCard.qml:49`, guards on
+  `card.imageTag.length > 0`.
+- Removing the permission would be a behaviour change with no caller asking for it, so
+  it was correctly left alone. It is unexercised capability, not a bug.
+
+## P4-U9 The Application wiring no test can see — partly closed by P4-R11
+- No test constructs `strmqt::Application` (verified: nothing under `tests/` includes
+  `Application.h`; the tests that need the album/artist favourite relay make the same
+  connection themselves). Deleting either `ItemActions::favoriteChanged` connect
+  (`Application.cpp:195,204`) or either `resetSessionState()` call
+  (`Application.cpp:344,345`) therefore leaves the suite and the page self-test green.
+- Closed at the gate (ruling P4-R11): the `STRMQT_SELFTEST` run, which already builds
+  the real object graph, now asserts that the `AlbumCtl` and `ArtistCtl` context
+  properties are objects and that both `favoriteChanged` connects exist, and exits 1
+  naming the missing one. Proved to bite twice: deleting the album connect gives
+  `selftest FAIL music wiring: ItemActions::favoriteChanged is not connected to
+  AlbumController::noteFavourite` and exit 1; deleting the `ArtistCtl` context property
+  gives `context property ArtistCtl is not an object` and exit 1.
+- Still uncovered: the two `resetSessionState()` calls. Nothing observes a session
+  boundary on the album or artist controller, and the self-test has no session to end.
+
+## P4-U10 The baseline and the prose disagreed about the deleted pages
+- `config/qmllint-baseline.txt` still held 89 records for `AlbumPage.qml` and
+  `ArtistPage.qml`; the gate's re-baseline removed them (1,125 → 1,253 records:
+  −100 / +228, every addition an unqualified read of a context property).
+- `MUSIC.md` prose still names the deleted pages. Phase 6 owns the docs.

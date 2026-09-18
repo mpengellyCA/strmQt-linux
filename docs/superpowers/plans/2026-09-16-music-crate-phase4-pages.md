@@ -5199,7 +5199,7 @@ MSG
 - Consumes: everything Tasks 1–10 produced.
 - Produces: a green tree, a reviewed qmllint baseline, and the user's sign-off on the three pages.
 
-- [ ] **Step 1: Clean configure, build and full test run**
+- [x] **Step 1: Clean configure, build and full test run**
 
 ```bash
 cmake --preset dev && cmake --build --preset dev 2>&1 | tail -n 5
@@ -5212,7 +5212,7 @@ Expected:
 
 If a test fails, fix the cause in the task that owns the file and rerun the whole suite. Do not continue to Step 2 with a red suite.
 
-- [ ] **Step 2: Run the qmllint baseline check**
+- [x] **Step 2: Run the qmllint baseline check**
 
 ```bash
 bash scripts/check-qmllint-baseline.sh build/dev; echo "exit=$?"
@@ -5220,7 +5220,7 @@ bash scripts/check-qmllint-baseline.sh build/dev; echo "exit=$?"
 
 Expected: `exit=1` with a diff, because the new pages add `[unqualified]` context-property warnings and the old pages' warnings are gone. If the script instead prints `qmllint found unresolvable QML types (never baselineable).`, one of the four fatal categories fired: fix the named file and rerun. Never re-baseline past that message.
 
-- [ ] **Step 3: Review the diff before re-baselining**
+- [x] **Step 3: Review the diff before re-baselining**
 
 Save the added and removed warning records:
 
@@ -5262,7 +5262,7 @@ rm -f /tmp/p4-qmllint.log /tmp/p4-qmllint.diff /tmp/p4-added.txt /tmp/p4-removed
 
 Expected: the update prints `Updated … (N warnings).`, the count is `0`, and the stat shows only `config/qmllint-baseline.txt`. Rerun `bash scripts/check-qmllint-baseline.sh build/dev` and expect `qmllint warning baseline matches`.
 
-- [ ] **Step 4: Self-test**
+- [x] **Step 4: Self-test**
 
 ```bash
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./build/dev/strmqt 2>&1 | tee /tmp/p4-selftest.log | grep -E "selftest (ok|FAIL)|selftest:"; echo "exit=${PIPESTATUS[0]}"
@@ -5272,7 +5272,7 @@ rm -f /tmp/p4-selftest.log
 
 Expected: `selftest ok` for `album`, `artist` and `musicPlaylist` (and every page from earlier phases), no `selftest FAIL`, `exit=0`, and a count of `0`.
 
-- [ ] **Step 5: Security sweep of the phase's diff**
+- [x] **Step 5: Security sweep of the phase's diff**
 
 ```bash
 git diff --cached --stat; git log --oneline -12
@@ -5306,7 +5306,7 @@ Run the app against the user's own server (`./build/dev/strmqt`) and ask the use
 
 Record the user's answers. If something fails, fix it in the owning task's files, rerun Steps 1–4, and repeat the failed item.
 
-- [ ] **Step 7: Commit the gate**
+- [x] **Step 7: Commit the gate**
 
 ```bash
 git add config/qmllint-baseline.txt
