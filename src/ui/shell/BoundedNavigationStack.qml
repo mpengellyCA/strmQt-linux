@@ -32,6 +32,7 @@ StackView {
     property Component artistPageComponent: null
     property Component albumPageComponent: null
     property Component musicPageComponent: null
+    property Component musicHomePageComponent: null
     property Component detailsPageComponent: null
     property Component seriesPageComponent: null
     property Component searchPageComponent: null
@@ -248,6 +249,7 @@ StackView {
         case "artist": return navigation.artistPageComponent;
         case "album": return navigation.albumPageComponent;
         case "music": return navigation.musicPageComponent;
+        case "musicHome": return navigation.musicHomePageComponent;
         case "details": return navigation.detailsPageComponent;
         case "series": return navigation.seriesPageComponent;
         case "search": return navigation.searchPageComponent;
@@ -288,6 +290,7 @@ StackView {
         case "person": return { "personId": route.id, "personName": route.name };
         case "music": return { "libraryId": route.id, "libraryName": route.name,
                                "initialTab": route.tab };
+        case "musicHome": return { "libraryId": route.id, "libraryName": route.name };
         default: return ({});
         }
     }

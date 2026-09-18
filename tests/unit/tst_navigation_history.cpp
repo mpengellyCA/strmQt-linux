@@ -18,6 +18,7 @@ private slots:
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void searchEscapeClearsQueryThenGoesBackThroughTransaction();
     void restoresPerEntryMusicTab();
+    void reconstructsMusicHomeAfterEviction();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void productionRetargetOrderingRetainsDepartingScopes();
     void itemPolicyIsCentralizedAcrossQmlSurfaces();
@@ -307,6 +308,10 @@ Item {
         history.pushRoute({ "kind": "music", "id": String(libraryId), "name": "Music B",
                             "key": String(libraryId), "title": "Music B", "tab": "albums" },
                           undefined, true);
+    }
+    function pushMusicHome(libraryId): void {
+        history.pushRoute({ "kind": "musicHome", "id": String(libraryId), "name": "Music Home",
+                            "key": "musicHome:" + libraryId, "title": "Music Home" });
     }
     function pushSeries(seasonId): void {
         root.seriesSeasonId = String(seasonId);
@@ -687,6 +692,13 @@ Item {
         Component.onCompleted: controllerTabAtCreation = root.musicTab
     }
 
+    component MusicHomeProbe: FocusScope {
+        property string libraryId: ""
+        property string libraryName: ""
+        objectName: "musicHome-" + libraryId
+        focus: true
+    }
+
     component SeriesProbe: FocusScope {
         readonly property string selectedSeasonId: root.seriesSeasonId
         property string controllerSeasonAtCreation: ""
@@ -704,6 +716,7 @@ Item {
     Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
     Component { id: musicComponent; MusicProbe {} }
+    Component { id: musicHomeComponent; MusicHomeProbe {} }
     Component { id: seriesComponent; SeriesProbe {} }
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
     Component { id: homeComponent; FocusScope { objectName: "home-base"; focus: true } }
@@ -767,6 +780,7 @@ Item {
         libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
         musicPageComponent: musicComponent
+        musicHomePageComponent: musicHomeComponent
         seriesPageComponent: seriesComponent
         loginPageComponent: loginComponent
         homePageComponent: homeComponent
@@ -1174,6 +1188,38 @@ void NavigationHistoryTest::restoresPerEntryMusicTab()
                  QStringLiteral("songs"));
 }
 
+void NavigationHistoryTest::reconstructsMusicHomeAfterEviction()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    // One extra route push so the sequence below actually exceeds historyLimit
+    // 4 and exercises eviction (P2-R2); without it navTrail only ever reaches
+    // exactly 4 entries and nothing is evicted.
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QVERIFY(invoke(root, "pushMusicHome", QStringLiteral("lib-1")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicHome-lib-1"));
+    QCOMPARE(currentItem(history)->property("libraryId").toString(), QStringLiteral("lib-1"));
+    const QVariantMap entry = history->property("currentEntry").toMap();
+    QCOMPARE(entry.value(QStringLiteral("key")).toString(), QStringLiteral("musicHome:lib-1"));
+
+    // Evict Home's page graph, then walk back to it.
+    QVERIFY(invoke(root, "pushRoute", 3));
+    QVERIFY(invoke(root, "pushRoute", 4));
+    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicHome-lib-1"));
+    QCOMPARE(currentItem(history)->property("libraryId").toString(), QStringLiteral("lib-1"));
+    QCOMPARE(currentItem(history)->property("libraryName").toString(), QStringLiteral("Music Home"));
+    QVERIFY(root->property("preparedRoutes").toStringList().contains(QStringLiteral("musicHome:lib-1")));
+}
+
 void NavigationHistoryTest::restoresPerEntrySeriesSeasonAndAcceptsLaterSelection()
 {
     QTemporaryDir dir;
@@ -1238,18 +1284,37 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QVERIFY(seriesPush >= 0);
     QVERIFY(seriesCapture < seriesPrepare);
     QVERIFY(seriesPrepare < seriesPush);
-    const QByteArray libraryBody = functionBody("openLibrary", "openPlaylists");
+    // A music library lands on its Home. Home's section strip opens the music
+    // route, which still retargets the shared MusicController before the push.
+    const QByteArray libraryBody = functionBody("openLibrary", "openMusicHome");
     QVERIFY(!libraryBody.isEmpty());
-    const qsizetype musicCapture = libraryBody.indexOf("root.capturePageDeparture");
-    const qsizetype musicPrepare = libraryBody.indexOf("MusicCtl.setLibrary");
-    const qsizetype musicLoad = libraryBody.indexOf("MusicCtl.loadAlbums");
-    const qsizetype musicPush = libraryBody.indexOf("root.pushCapturedPage");
+    QVERIFY(libraryBody.contains("root.openMusicHome(libraryId, name)"));
+    QVERIFY(!libraryBody.contains("MusicCtl.loadAlbums"));
+
+    const QByteArray homeBody = functionBody("openMusicHome", "openMusicSection");
+    QVERIFY(!homeBody.isEmpty());
+    const qsizetype homeCapture = homeBody.indexOf("root.capturePageDeparture");
+    const qsizetype homeOpen = homeBody.indexOf("MusicHomeCtl.open");
+    const qsizetype homePush = homeBody.indexOf("root.pushCapturedPage");
+    QVERIFY(homeCapture >= 0);
+    QVERIFY(homeOpen >= 0);
+    QVERIFY(homePush >= 0);
+    QVERIFY(homeCapture < homeOpen);
+    QVERIFY(homeOpen < homePush);
+
+    const QByteArray sectionBody = functionBody("openMusicSection", "openPlaylists");
+    QVERIFY(!sectionBody.isEmpty());
+    const qsizetype musicCapture = sectionBody.indexOf("root.capturePageDeparture");
+    const qsizetype musicPrepare = sectionBody.indexOf("MusicCtl.setLibrary");
+    const qsizetype musicRoute = sectionBody.indexOf("root.prepareRoute");
+    const qsizetype musicPush = sectionBody.indexOf("root.pushCapturedPage");
     QVERIFY(musicCapture >= 0);
     QVERIFY(musicPrepare >= 0);
-    QVERIFY(musicLoad >= 0);
+    QVERIFY(musicRoute >= 0);
     QVERIFY(musicPush >= 0);
     QVERIFY(musicCapture < musicPrepare);
-    QVERIFY(musicLoad < musicPush);
+    QVERIFY(musicPrepare < musicRoute);
+    QVERIFY(musicRoute < musicPush);
 
     QFile musicPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicPage.qml"));
     QVERIFY(musicPage.open(QIODevice::ReadOnly));

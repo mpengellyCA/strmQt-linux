@@ -5190,7 +5190,7 @@ The page is not reachable until Task 8 adds the route, and it is not constructed
   - `BoundedNavigationStack.musicHomePageComponent`, `componentFor("musicHome")`, and reconstructed properties `{libraryId, libraryName}`
   - Self-test entry `["musicHome", musicHomeComponent]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/unit/tst_navigation_history.cpp`:
 
@@ -5294,14 +5294,14 @@ void NavigationHistoryTest::reconstructsMusicHomeAfterEviction()
     QVERIFY(musicRoute < musicPush);
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cmake --build --preset dev --target tst_navigation_history && ctest --preset dev -R tst_navigation_history --output-on-failure`
 Expected: FAIL.
 - The probe does not load: `Cannot assign to non-existent property "musicHomePageComponent"`. Every slot fails at `createHistoryProbe`.
 - After Step 3's stack change alone, `productionRetargetOrderingRetainsDepartingScopes` still fails on `QVERIFY(!libraryBody.isEmpty())`, because `Main.qml` has no `openMusicHome`.
 
-- [ ] **Step 3: Extend `BoundedNavigationStack.qml`**
+- [x] **Step 3: Extend `BoundedNavigationStack.qml`**
 
 1. After `property Component musicPageComponent: null`, add:
 
@@ -5321,7 +5321,7 @@ Expected: FAIL.
         case "musicHome": return { "libraryId": route.id, "libraryName": route.name };
 ```
 
-- [ ] **Step 4: Wire `Main.qml`**
+- [x] **Step 4: Wire `Main.qml`**
 
 1. `interactionContext`: add Home to the music pages, so the whole condition reads:
 
@@ -5426,7 +5426,7 @@ Expected: FAIL.
 
 `genreName` is unused by the interim body. Phase 3's `openMusicGenre(libraryId, name, genreId, genreName)` takes it, which is why the signal carries it now.
 
-- [ ] **Step 5: Run the tests, lint and self-test**
+- [x] **Step 5: Run the tests, lint and self-test**
 
 Run:
 
@@ -5443,7 +5443,7 @@ Expected:
 
 If the self-test fails with `MusicHomeCtl is not defined`, Task 3's `main.cpp` context property is missing or registered after the QML engine loads `Main.qml`. Fix the order in `main.cpp`; do not guard the page with `typeof`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/Main.qml src/ui/shell/BoundedNavigationStack.qml tests/unit/tst_navigation_history.cpp

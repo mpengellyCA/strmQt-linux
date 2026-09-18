@@ -66,7 +66,8 @@ ApplicationWindow {
                                                : !Session.authenticated ? "login"
                                                : root.playerOnTop ? "player"
                                                : stack.currentItem !== null
-                                                 && (stack.currentItem.objectName === "musicPage"
+                                                 && (stack.currentItem.objectName === "musicHomePage"
+                                                     || stack.currentItem.objectName === "musicPage"
                                                      || stack.currentItem.objectName === "albumPage"
                                                      || stack.currentItem.objectName === "artistPage")
                                                  ? "music" : "browse"
@@ -82,6 +83,11 @@ ApplicationWindow {
     // "settings", "details", "series", or a library id.
     readonly property string currentKey: root.currentEntry !== null
                                          ? root.currentEntry.key : "home"
+    // The nav rail's view of currentKey. A library's Music Home is that library
+    // as far as the rail and the library cycle are concerned.
+    readonly property string railKey: root.currentKey.startsWith("musicHome:")
+                                      ? root.currentKey.substring("musicHome:".length)
+                                      : root.currentKey
     readonly property string pageTitle: root.currentEntry !== null
                                         ? root.currentEntry.title : qsTr("Home")
 
@@ -315,6 +321,10 @@ ApplicationWindow {
             if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
                 PlaylistCtl.open(route.id, route.name);
             break;
+        case "musicHome":
+            // The same library again is refreshStale(): free within the TTL.
+            MusicHomeCtl.open(route.id);
+            break;
         case "music":
             MusicCtl.setLibrary(route.id);
             MusicCtl.tab = route.tab;
@@ -431,20 +441,9 @@ ApplicationWindow {
     }
 
     function openLibrary(libraryId, name, collectionType): void {
-        // A music library is albums AND artists, which is a different page from
-        // the one-grid library view.
+        // A music library lands on its Home (Crate spec §4).
         if (collectionType === "music") {
-            if (root.currentKey === libraryId) {
-                root.focusCurrentPage();
-                return;
-            }
-            root.capturePageDeparture();
-            MusicCtl.setLibrary(libraryId);
-            MusicCtl.tab = "albums";
-            MusicCtl.loadAlbums();
-            root.pushCapturedPage({ "kind": "music", "id": libraryId, "name": name,
-                                    "collectionType": collectionType,
-                                    "key": libraryId, "title": name, "tab": "albums" });
+            root.openMusicHome(libraryId, name);
             return;
         }
         // Guarded like the others, and for a second reason: without it, clicking
@@ -458,6 +457,37 @@ ApplicationWindow {
                         "id": libraryId, "name": name,
                         "collectionType": collectionType,
                         "key": libraryId, "title": name });
+    }
+
+    // Home's key is not the library id: MusicPage keeps that key, so Home and a
+    // section are two history entries rather than one replacing the other.
+    function openMusicHome(libraryId, name): void {
+        const key = "musicHome:" + libraryId;
+        if (root.currentKey === key) {
+            root.focusCurrentPage();
+            return;
+        }
+        root.capturePageDeparture();
+        MusicHomeCtl.open(libraryId);
+        root.pushCapturedPage({ "kind": "musicHome", "id": libraryId, "name": name,
+                                "key": key, "title": name });
+    }
+
+    // Interim (Phase 2). Home's section strip and genre bins open the existing
+    // MusicPage; Phase 3 replaces this body with openMusicBrowse/openMusicGenre
+    // and keeps the page signals. MusicPage has no Genres tab, so "genres" is
+    // Albums, and a genre bin is Albums filtered to that genre.
+    function openMusicSection(libraryId, name, section, genreId): void {
+        const tab = section === "artists" || section === "songs" || section === "playlists"
+                  ? section : "albums";
+        root.capturePageDeparture();
+        MusicCtl.setLibrary(libraryId);
+        MusicCtl.setGenreIds(genreId ? [genreId] : []);
+        const route = { "kind": "music", "id": libraryId, "name": name,
+                        "collectionType": "music",
+                        "key": libraryId, "title": name, "tab": tab };
+        root.prepareRoute(route);
+        root.pushCapturedPage(route);
     }
 
     function openPlaylists(): void {
@@ -596,6 +626,7 @@ ApplicationWindow {
         artistPageComponent: artistComponent
         albumPageComponent: albumComponent
         musicPageComponent: musicComponent
+        musicHomePageComponent: musicHomeComponent
         detailsPageComponent: detailsComponent
         seriesPageComponent: seriesComponent
         searchPageComponent: searchComponent
@@ -622,7 +653,7 @@ ApplicationWindow {
                     ["search", searchComponent], ["settings", settingsComponent],
                     ["person", personComponent], ["playlist", playlistComponent],
                     ["artist", artistComponent], ["album", albumComponent],
-                    ["music", musicComponent]
+                    ["music", musicComponent], ["musicHome", musicHomeComponent]
                 ];
                 let failures = 0;
                 for (let i = 0; i < pages.length; ++i) {
@@ -975,7 +1006,7 @@ ApplicationWindow {
         z: 20
         visible: root.chromeVisible
         enabled: root.chromeVisible
-        current: root.currentKey
+        current: root.railKey
 
         onHomeRequested: root.goHome()
         onLibrarySelected: (libraryId, name, collectionType) =>
@@ -1092,6 +1123,20 @@ ApplicationWindow {
     Component {
         id: musicComponent
         MusicPage { objectName: "musicPage" }
+    }
+
+    Component {
+        id: musicHomeComponent
+
+        MusicHomePage {
+            id: musicHomePage
+
+            objectName: "musicHomePage"
+            onSectionRequested: key =>
+                root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, key, "")
+            onGenreRequested: (genreId, genreName) =>
+                root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, "albums", genreId)
+        }
     }
 
     Component {
@@ -1233,7 +1278,7 @@ ApplicationWindow {
 
         // Somewhere off the cycle (a details page, settings): the first step
         // returns to Home rather than jumping to an arbitrary library.
-        let index = keys.indexOf(root.currentKey);
+        let index = keys.indexOf(root.railKey);
         if (index < 0) {
             root.goHome();
             return;
