@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QFile>
+#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
@@ -8,6 +9,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <memory>
 
 class NavigationHistoryTest : public QObject
 {
@@ -35,6 +37,9 @@ private slots:
     void preservesFavoriteStateAcrossReconstruction();
     void preservesBaseAndKeepsTransientPagesOutOfHistory();
     void audioPlaylistRouteSelectsTheMusicPlaylistPage();
+    void playlistRouteFollowsTheSurfaceItWasOpenedFrom();
+    void evictedAudioPlaylistIsRebuiltFromItsRoute();
+    void artistEntryRetainsTheLibraryItWasOpenedUnder();
 };
 
 namespace {
@@ -142,6 +147,14 @@ Item {
         const text = String(id);
         history.pushRoute({ "kind": "playlist", "id": text, "name": "Playlist " + text,
                             "key": "playlists", "title": "Playlists" });
+    }
+
+    function pushArtistInLibrary(id, libraryId): void {
+        const item = root.itemFor(id);
+        item.type = "MusicArtist";
+        const route = root.routeFor("artist", item);
+        route.libraryId = String(libraryId);
+        history.pushRoute(route, { "artistItem": item, "libraryId": String(libraryId) });
     }
 
     function pushAlbumUnfavorite(id): void {
@@ -464,6 +477,9 @@ Item {
 
     component ArtistProbe: FocusScope {
         property var artistItem: ({})
+        // Mirrors MusicArtistPage's contract: the library the entry was opened
+        // under, handed in by the route rather than read off the shell.
+        property string libraryId: ""
         readonly property string routeId: String(artistItem.itemId)
         objectName: "artist-" + routeId
         focus: true
@@ -924,6 +940,12 @@ bool invoke(QObject *object, const char *method, const QVariant &argument = {})
     return QMetaObject::invokeMethod(object, method, Q_ARG(QVariant, argument));
 }
 
+bool invoke2(QObject *object, const char *method, const QVariant &first, const QVariant &second)
+{
+    return QMetaObject::invokeMethod(object, method, Q_ARG(QVariant, first),
+                                     Q_ARG(QVariant, second));
+}
+
 QVariantList listProperty(QObject *object, const char *name)
 {
     return object->property(name).toList();
@@ -940,6 +962,68 @@ QPair<QObject *, QObject *> createHistoryProbe(QTemporaryDir &dir, QQuickView &v
     if (!root)
         return {};
     return {root, root->findChild<QObject *>(QStringLiteral("history"))};
+}
+
+// Lifts a named function's source out of a QML file, matched up to its "(" so
+// the name is exact (see functionBody's note for what a prefix match costs).
+QByteArray functionSource(const QByteArray &qml, const QByteArray &name, const QByteArray &next)
+{
+    const qsizetype begin = qml.indexOf("function " + name + "(");
+    const qsizetype end = qml.indexOf("function " + next + "(", begin + 1);
+    if (begin < 0 || end <= begin)
+        return {};
+    const QByteArray slice = qml.mid(begin, end - begin);
+    // Trim back to the function's own closing brace so the slice cannot carry
+    // a trailing comment that belongs to the next declaration.
+    const qsizetype close = slice.lastIndexOf('}');
+    return close >= 0 ? slice.left(close + 1) : slice;
+}
+
+// Builds Main.qml's REAL openRoute body into a component that records which
+// helper it calls, so the routing decision is evaluated rather than grepped.
+// A substring assertion cannot tell `=== "music"` from `!== "music"`; this can.
+QObject *createRoutingProbe(QTemporaryDir &dir, QQmlEngine &engine,
+                            std::unique_ptr<QObject> &owner)
+{
+    QFile main(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
+    if (!main.open(QIODevice::ReadOnly))
+        return nullptr;
+    const QByteArray openRoute = functionSource(main.readAll(), "openRoute", "openSeries");
+    if (openRoute.isEmpty())
+        return nullptr;
+
+    QByteArray source =
+        "import QtQuick\n"
+        "Item {\n"
+        "    id: root\n"
+        "    property string interactionContext: \"\"\n"
+        "    property var calls: []\n"
+        "    function record(what) { root.calls = root.calls.concat([what]); }\n"
+        "    function openMusicPlaylist(id, name) { root.record(\"musicPlaylist:\" + id); }\n"
+        "    function openPlaylist(id, name) { root.record(\"playlist:\" + id); }\n"
+        "    function openAlbum(target) { root.record(\"album\"); }\n"
+        "    function openArtist(target) { root.record(\"artist\"); }\n"
+        "    function openDetails(target) { root.record(\"details\"); }\n"
+        "    function openSeries(a, b, c) { root.record(\"series\"); }\n"
+        "    function route(kind, id, name) {\n"
+        "        root.openRoute(kind, { \"itemId\": id, \"name\": name });\n"
+        "    }\n";
+    source += "    " + openRoute + "\n}\n";
+
+    const QString path = dir.filePath(QStringLiteral("RoutingProbe.qml"));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return nullptr;
+    file.write(source);
+    file.close();
+
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    if (component.isError()) {
+        qWarning("%s", qPrintable(component.errorString()));
+        return nullptr;
+    }
+    owner.reset(component.create());
+    return owner.get();
 }
 
 } // namespace
@@ -1322,9 +1406,15 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QFile main(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
     QVERIFY(main.open(QIODevice::ReadOnly));
     const QByteArray source = main.readAll();
+    // The trailing "(" matters: without it these are plain substring searches,
+    // so a helper named openMusicGenreFromPage declared before openMusicGenre
+    // would start the openMusicGenre slice at the WRONG function and swallow
+    // whatever lies between, inverting the orderings asserted below. Matching
+    // up to the parameter list makes the name exact and kills that whole class
+    // of silent mis-slicing for every future openXSomething.
     const auto functionBody = [&source](const QByteArray &name, const QByteArray &next) {
-        const qsizetype begin = source.indexOf("function " + name);
-        const qsizetype end = source.indexOf("function " + next, begin + 1);
+        const qsizetype begin = source.indexOf("function " + name + "(");
+        const qsizetype end = source.indexOf("function " + next + "(", begin + 1);
         return begin >= 0 && end > begin ? source.mid(begin, end - begin) : QByteArray{};
     };
     const QByteArray seriesBody = functionBody("openSeries", "openFavorites");
@@ -1451,7 +1541,11 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(main.contains("root.openMusicPlaylist(id, name)"));
     QVERIFY(main.contains("root.openPlaylist(id, name)"));
     QVERIFY(main.contains("AlbumCtl.open(route.id, route.name)"));
-    QVERIFY(main.contains("ArtistCtl.open(route.id, route.name, root.musicLibraryId())"));
+    // An artist reopened from history takes the library the ENTRY was pushed
+    // under, falling back to today's only when the entry carries none. Reading
+    // musicLibraryId() unconditionally here is the bug this replaced.
+    QVERIFY(main.contains("route.libraryId.length > 0 ? route.libraryId"));
+    QVERIFY(main.contains("ArtistCtl.open(id, name, libraryId)"));
     QVERIFY(!main.contains("function openMusic("));
     QVERIFY(!main.contains("item.type"));
     QVERIFY(!main.contains("onDetailsRequested"));
@@ -2148,12 +2242,10 @@ void NavigationHistoryTest::audioPlaylistRouteSelectsTheMusicPlaylistPage()
     QVERIFY(root->property("preparedRoutes").toStringList().contains(QStringLiteral("playlist:pl-a")));
 
     // The history key is built by concatenation, so an empty id degenerates to
-    // the bare prefix and every audio playlist then shares one entry. The key
-    // that reaches history must carry the id, and Main must refuse to build one
-    // without it.
-    const QString key = entry.value(QStringLiteral("key")).toString();
-    QCOMPARE(key, QStringLiteral("musicPlaylist:pl-a"));
-    QVERIFY2(key != QStringLiteral("musicPlaylist:"), "the audio playlist key lost its id");
+    // the bare prefix and every audio playlist then shares one entry. Only the
+    // source check below has force here: the key this probe pushed is the
+    // probe's own literal, so comparing it against itself would assert the
+    // fixture, not the production concatenation.
     QFile mainFile(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
     QVERIFY(mainFile.open(QIODevice::ReadOnly));
     const QByteArray mainSource = mainFile.readAll();
@@ -2164,6 +2256,140 @@ void NavigationHistoryTest::audioPlaylistRouteSelectsTheMusicPlaylistPage()
     QVERIFY(keyAt > openAt);
     QVERIFY2(guardAt > openAt && guardAt < keyAt,
              "openMusicPlaylist builds its key before rejecting an empty id");
+}
+
+// Task 9's headline decision: the SURFACE a playlist was opened from chooses
+// the page, because a generic playlist map carries no reliable media type.
+// This evaluates Main.qml's own openRoute body rather than grepping for it —
+// a substring assertion is satisfied just as well by the inverted condition.
+void NavigationHistoryTest::playlistRouteFollowsTheSurfaceItWasOpenedFrom()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQmlEngine engine;
+    std::unique_ptr<QObject> owner;
+    QObject *probe = createRoutingProbe(dir, engine, owner);
+    QVERIFY(probe);
+
+    const auto routed = [&](const QString &context, const QString &kind, const QString &id) {
+        probe->setProperty("calls", QVariantList{});
+        probe->setProperty("interactionContext", context);
+        const bool ok = QMetaObject::invokeMethod(probe, "route", Q_ARG(QVariant, QVariant(kind)),
+                                                  Q_ARG(QVariant, QVariant(id)),
+                                                  Q_ARG(QVariant, QVariant(QStringLiteral("N"))));
+        return ok ? probe->property("calls").toStringList() : QStringList{};
+    };
+
+    // From music, an audio playlist becomes the Crate record page.
+    QCOMPARE(routed(QStringLiteral("music"), QStringLiteral("playlist"), QStringLiteral("pl-a")),
+             QStringList{QStringLiteral("musicPlaylist:pl-a")});
+    // From anywhere else it stays the generic two-pane Playlists destination.
+    QCOMPARE(routed(QStringLiteral("browse"), QStringLiteral("playlist"), QStringLiteral("pl-a")),
+             QStringList{QStringLiteral("playlist:pl-a")});
+    // The contexts that are neither, spelled out: an overlay or the player on
+    // top must not silently reroute a music surface's playlist.
+    QCOMPARE(routed(QStringLiteral("overlay"), QStringLiteral("playlist"), QStringLiteral("pl-a")),
+             QStringList{QStringLiteral("playlist:pl-a")});
+    QCOMPARE(routed(QStringLiteral("player"), QStringLiteral("playlist"), QStringLiteral("pl-a")),
+             QStringList{QStringLiteral("playlist:pl-a")});
+
+    // The surface must not leak into the other kinds: album and artist route
+    // the same way from music as from anywhere else.
+    QCOMPARE(routed(QStringLiteral("music"), QStringLiteral("album"), QStringLiteral("al-1")),
+             QStringList{QStringLiteral("album")});
+    QCOMPARE(routed(QStringLiteral("browse"), QStringLiteral("album"), QStringLiteral("al-1")),
+             QStringList{QStringLiteral("album")});
+    QCOMPARE(routed(QStringLiteral("music"), QStringLiteral("artist"), QStringLiteral("ar-1")),
+             QStringList{QStringLiteral("artist")});
+    QCOMPARE(routed(QStringLiteral("browse"), QStringLiteral("artist"), QStringLiteral("ar-1")),
+             QStringList{QStringLiteral("artist")});
+}
+
+// The other route back to an audio playlist: its page graph evicted, so the
+// page is rebuilt from the compact route through reconstructedProperties.
+// The retained-page path (audioPlaylistRouteSelectsTheMusicPlaylistPage) can
+// never reach this — it keeps the instance and its original push properties.
+void NavigationHistoryTest::evictedAudioPlaylistIsRebuiltFromItsRoute()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QVERIFY(invoke(root, "pushAudioPlaylist", QStringLiteral("pl-a")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicPlaylistPage"));
+    QCOMPARE(currentItem(history)->property("playlistId").toString(), QStringLiteral("pl-a"));
+
+    // Push past historyLimit 4 so the playlist's page graph is evicted. depth
+    // collapsing to 1 is the evidence the graph is gone, not merely covered.
+    QVERIFY(invoke(root, "pushRoute", 3));
+    QVERIFY(invoke(root, "pushRoute", 4));
+    QTRY_COMPARE(history->property("depth").toInt(), 1);
+
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicPlaylistPage"));
+
+    // Nothing survived of the original instance, so these can only have come
+    // from reconstructedProperties rebuilding them off the compact route.
+    QCOMPARE(currentItem(history)->property("playlistId").toString(), QStringLiteral("pl-a"));
+    QCOMPARE(currentItem(history)->property("playlistName").toString(),
+             QStringLiteral("Playlist pl-a"));
+    const QVariantMap entry = history->property("currentEntry").toMap();
+    QCOMPARE(entry.value(QStringLiteral("mode")).toString(), QStringLiteral("audio"));
+    QCOMPARE(entry.value(QStringLiteral("key")).toString(), QStringLiteral("musicPlaylist:pl-a"));
+
+    // A video playlist reconstructed the same way must NOT pick up playlist
+    // properties, or the generic page would be handed a record's contract.
+    QVERIFY(invoke(root, "pushVideoPlaylist", QStringLiteral("pl-v")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("playlistPage"));
+    QVERIFY(invoke(root, "pushRoute", 6));
+    QVERIFY(invoke(root, "pushRoute", 7));
+    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("playlistPage"));
+}
+
+// An artist is scoped to the music library they were opened in. That library
+// has to ride the entry: reading the shell's current one on the way back
+// reopened the artist against whichever library had been visited since, and
+// after eviction the page came back with no library at all.
+void NavigationHistoryTest::artistEntryRetainsTheLibraryItWasOpenedUnder()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QVERIFY(invoke2(root, "pushArtistInLibrary", QStringLiteral("ar-1"),
+                    QStringLiteral("lib-x")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("artist-ar-1"));
+    QCOMPARE(currentItem(history)->property("libraryId").toString(), QStringLiteral("lib-x"));
+
+    // The library must be part of the retained DESCRIPTOR, not merely the live
+    // page's properties, or it dies with the page graph.
+    QVERIFY(invoke(root, "pushRoute", 3));
+    const QVariantMap retained = listProperty(history, "navTrail").at(2).toMap();
+    QCOMPARE(retained.value(QStringLiteral("id")).toString(), QStringLiteral("ar-1"));
+    QCOMPARE(retained.value(QStringLiteral("libraryId")).toString(), QStringLiteral("lib-x"));
+
+    // Evict the page graph, then walk back: the library can only have come
+    // from the route through reconstructedProperties.
+    QVERIFY(invoke(root, "pushRoute", 4));
+    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("artist-ar-1"));
+    QCOMPARE(currentItem(history)->property("libraryId").toString(), QStringLiteral("lib-x"));
 }
 
 QTEST_MAIN(NavigationHistoryTest)

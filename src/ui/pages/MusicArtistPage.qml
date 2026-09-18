@@ -27,6 +27,12 @@ FocusScope {
     // The route's artist map. Only itemId and name are read; everything shown
     // is ArtistCtl's.
     property var artistItem: ({})
+    // The music library this artist was opened under, carried by the route so
+    // it survives Back and eviction. Reopening with "" CLEARS the controller's
+    // stored library (ArtistController::open assigns unconditionally, and that
+    // clearing is its tested contract), and the page has no way to recover it,
+    // so ensureOpen must never invent one.
+    property string libraryId: ""
 
     readonly property string artistId: page.artistItem && page.artistItem.itemId !== undefined
                                        ? String(page.artistItem.itemId) : ArtistCtl.artistId
@@ -126,9 +132,19 @@ FocusScope {
     readonly property int releaseGridHeight: page.releaseRows
                                              * (releases.cardHeight + Theme.spacingValue)
 
+    // Deferred by every caller below, so by the time it runs the page may no
+    // longer be the one on screen: StackView.pop() does NOT destroy the popped
+    // item synchronously, so a page that was just navigated away from is still
+    // alive with a pending call queued from its own visibleChanged. Without the
+    // isActivePage guard that stale call lands AFTER the shell has prepared the
+    // route it went back to, and retargets the shared controller to the page
+    // the user just left. Measured: with the event loop not draining between
+    // two artists, the popped page's queued ensureOpen fired last and won.
     function ensureOpen(): void {
+        if (!page.isActivePage)
+            return
         if (page.artistId.length > 0 && ArtistCtl.artistId !== page.artistId)
-            ArtistCtl.open(page.artistId, page.artistName, "")
+            ArtistCtl.open(page.artistId, page.artistName, page.libraryId)
     }
 
     Component.onCompleted: Qt.callLater(page.ensureOpen)

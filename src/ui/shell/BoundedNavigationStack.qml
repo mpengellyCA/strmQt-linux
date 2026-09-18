@@ -206,6 +206,12 @@ StackView {
             "query": navigation.boundedText(route.query, 1024),
             "tab": navigation.boundedText(route.tab, 16),
             "seasonId": navigation.boundedText(route.seasonId, 1024),
+            // The music library an entry was opened UNDER, not the one the
+            // shell happens to be in now. Without it, Back to an artist
+            // reopened them scoped to whichever library had been visited most
+            // recently, so walking A(library X) -> Browse(Y) -> Back refetched
+            // A against Y.
+            "libraryId": navigation.boundedText(route.libraryId, 1024),
 
             // Strict, bounded page-header DTO. These are the complete scalar
             // fields Details/Album/Artist consume from their original model
@@ -293,7 +299,7 @@ StackView {
         };
         switch (route.kind) {
         case "details": return { "item": item };
-        case "artist": return { "artistItem": item };
+        case "artist": return { "artistItem": item, "libraryId": route.libraryId };
         case "album": return { "albumItem": item };
         case "person": return { "personId": route.id, "personName": route.name };
         case "musicBrowse": return { "libraryId": route.id, "libraryName": route.name,

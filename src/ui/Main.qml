@@ -328,8 +328,13 @@ ApplicationWindow {
             MusicBrowseCtl.restore(route.id, route.tab, route.query);
             break;
         case "artist":
+            // The entry's own library, not today's. Entries pushed before the
+            // field existed, and artists opened from a non-music surface, carry
+            // none — those fall back to wherever music is now.
             if (ArtistCtl.artistId !== route.id)
-                ArtistCtl.open(route.id, route.name, root.musicLibraryId());
+                ArtistCtl.open(route.id, route.name,
+                               route.libraryId.length > 0 ? route.libraryId
+                                                          : root.musicLibraryId());
             break;
         case "album":
             if (AlbumCtl.albumId !== route.id)
@@ -380,10 +385,14 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        ArtistCtl.open(id, name, root.musicLibraryId());
+        // The library is resolved ONCE, here, and then travels with the entry.
+        // Reading it again on the way back would scope the artist to whatever
+        // library the user had wandered into since.
+        const libraryId = root.musicLibraryId();
+        ArtistCtl.open(id, name, libraryId);
         root.pushPage({ "kind": "artist", "id": id, "name": name,
-                        "key": key, "title": name },
-                      { "artistItem": item });
+                        "key": key, "title": name, "libraryId": libraryId },
+                      { "artistItem": item, "libraryId": libraryId });
     }
 
     function openRoute(kind, target): void {
@@ -565,11 +574,11 @@ ApplicationWindow {
     // by that genre; with no music library known it falls back to the
     // generic genre destination rather than doing nothing.
     //
-    // It sits AFTER openMusicGenre, not beside the other music helpers above:
-    // `tst_navigation_history` slices Main.qml into function bodies with
-    // `indexOf("function openMusicGenre")`, which this name is a prefix match
-    // for. Declared earlier it captured openMusicBrowse's push into the genre
-    // body and inverted the prepare/push ordering the test pins.
+    // It sits next to openMusicGenre, which it wraps, purely so the two read
+    // together; nothing depends on the position. (It briefly did: the source
+    // slicing in tst_navigation_history matched function names by prefix, so
+    // this name declared ahead of openMusicGenre mis-sliced that function's
+    // body. That was fixed in the test, which now matches up to the "(".)
     function openMusicGenreFromPage(genreId, genreName): void {
         const libraryId = root.musicLibraryId();
         if (libraryId.length > 0)
