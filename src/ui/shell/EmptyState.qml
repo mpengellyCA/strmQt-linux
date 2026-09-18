@@ -78,8 +78,14 @@ Item {
         }
 
         StrmButton {
+            id: actionButton
+
             anchors.horizontalCenter: parent.horizontalCenter
             visible: empty.actionText.length > 0
+            // Ruling P3-R2: most EmptyState instances leave actionText empty,
+            // so without this override the action button keeps a Tab stop
+            // even where nothing is drawn for it.
+            activeFocusOnTab: actionButton.visible
             text: empty.actionText
             iconName: empty.actionIcon
             variant: "primary"

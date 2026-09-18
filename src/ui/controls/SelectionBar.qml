@@ -94,8 +94,15 @@ Item {
             }
 
             StrmButton {
+                id: addToPlaylistButton
+
                 anchors.verticalCenter: parent.verticalCenter
                 visible: bar.allowPlaylist
+                // Ruling P3-R2: StrmButton ties activeFocusOnTab to
+                // `interactive`, never to `visible` — a caller that sets
+                // allowPlaylist: false (PlaylistPage) would otherwise leave
+                // this holding a Tab stop nobody can see.
+                activeFocusOnTab: addToPlaylistButton.visible
                 text: qsTr("Add to playlist")
                 iconName: "playlist"
                 variant: "secondary"
@@ -110,8 +117,13 @@ Item {
             }
 
             StrmButton {
+                id: removeButton
+
                 anchors.verticalCenter: parent.verticalCenter
                 visible: bar.allowRemove
+                // Same shape: most callers never set allowRemove, so this
+                // button is invisible everywhere except PlaylistPage.
+                activeFocusOnTab: removeButton.visible
                 text: qsTr("Remove")
                 iconName: "close"
                 variant: "ghost"
