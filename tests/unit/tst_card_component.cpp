@@ -61,6 +61,24 @@ Item {
         onMenuRequested: (index, x, y) => root.railMenu = index
     }
 
+    // Narrow enough that the row overflows, so the right chevron is enabled:
+    // a disabled chevron is never a Tab stop anyway and would prove nothing.
+    StrmRail {
+        id: scrolling
+        objectName: "scrolling"
+        y: 380
+        width: 260
+        title: "Scrolling"
+        showHeading: false
+        railModel: rows
+        customCardWidth: 120
+        customCardHeight: 90
+        navigationFocusKey: "probe-scrolling"
+        cardComponent: Component {
+            Tile { objectName: "scroll-tile-" + (model ? model.itemId : "") }
+        }
+    }
+
     StrmRail {
         id: stock
         objectName: "stock"
@@ -171,6 +189,7 @@ private slots:
     void hoverIsNotFocus();
     void gridLoadsTheCustomCard();
     void stockRailIsUnchanged();
+    void railChevronsAreNotTabStops();
 
 private:
     QTemporaryDir m_dir;
@@ -186,6 +205,23 @@ void CardComponentTest::ensureProbe()
         m_root = createProbe(m_dir, m_view);
     }
     QVERIFY(m_root);
+}
+
+// The chevrons are a mouse affordance. They appear on hover, and a hovered
+// rail used to hand them a Tab stop of their own, so tabbing into a shelf
+// landed on "Scroll right" instead of a card.
+void CardComponentTest::railChevronsAreNotTabStops()
+{
+    ensureProbe();
+    QQuickItem *rail = findItem(m_root, QStringLiteral("scrolling"));
+    QVERIFY(rail);
+    QQuickItem *right = findItem(rail, QStringLiteral("railChevronRight"));
+    QVERIFY(right);
+    QTRY_VERIFY(right->isEnabled());
+    QVERIFY(!right->activeFocusOnTab());
+    QQuickItem *left = findItem(rail, QStringLiteral("railChevronLeft"));
+    QVERIFY(left);
+    QVERIFY(!left->activeFocusOnTab());
 }
 
 void CardComponentTest::railLoadsTheCustomCardWithItsRow()

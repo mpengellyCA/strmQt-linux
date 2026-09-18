@@ -545,6 +545,10 @@ FocusScope {
     // ── Hover chevrons (ARCHITECTURE.md) ──────────────────────────────────────
     StrmIconButton {
         id: leftChevron
+        objectName: "railChevronLeft"
+        // Mouse affordance only: the spec gives a shelf exactly one Tab stop,
+        // and a hovered rail must not slip its chevrons into the Tab chain.
+        activeFocusOnTab: false
         anchors.left: list.left
         anchors.leftMargin: Theme.spacingTight
         anchors.verticalCenter: list.verticalCenter
@@ -564,6 +568,8 @@ FocusScope {
 
     StrmIconButton {
         id: rightChevron
+        objectName: "railChevronRight"
+        activeFocusOnTab: false
         anchors.right: list.right
         anchors.rightMargin: Theme.spacingTight
         anchors.verticalCenter: list.verticalCenter
