@@ -3068,7 +3068,7 @@ The design is spec §6.2: a poster and the filed releases.
 
 `tst_navigation_history` (Task 9) pins the Most played owner. Between `navigationFocusKey: "artist-top-tracks"` and `model: ArtistCtl.topTracks`, the text must contain `navigationFocusRefillActive: ArtistCtl.loading` and `visible: page.hasTopTracks`, and no `enabled:`. The file must contain `MusicPlay.playAlbum(` and must not contain `MusicCtl`. Keep those properties in that order.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 `src/ui/pages/MusicArtistPage.qml`:
 
@@ -3566,7 +3566,7 @@ Notes for the implementer:
 - `releases.navigationFocusKey` changes with the tab, so each tab keeps its own focus memory across Back.
 - `QtQuick.Effects` is imported for parity with the page this replaces. If qmllint reports it unused, remove the import.
 
-- [ ] **Step 2: List the page**
+- [x] **Step 2: List the page**
 
 In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/ArtistPage.qml`:
 
@@ -3574,7 +3574,7 @@ In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/ArtistPage.qml`:
         ui/pages/MusicArtistPage.qml
 ```
 
-- [ ] **Step 3: Build and lint**
+- [x] **Step 3: Build and lint**
 
 Run:
 
@@ -3588,7 +3588,7 @@ Expected:
 - The only new lint lines are `[unqualified]` reads of `ArtistCtl`, `Actions`, `MusicPlay`, `PlayerCtl`, `PlaylistCtl`, `Prefs` and `App`. Record them for the phase gate.
 - A `missing-property` line on a Crate control means its property is named differently from the index's contract table. Fix the page to match the control.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ui/pages/MusicArtistPage.qml src/CMakeLists.txt
