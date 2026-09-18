@@ -2,6 +2,8 @@
 #include "WindowFocusKeeper.h"
 #include "controllers/MusicController.h"
 #include "controllers/PlaylistController.h"
+#include "controllers/music/AlbumController.h"
+#include "controllers/music/ArtistController.h"
 #include "controllers/music/MusicBrowseController.h"
 #include "controllers/music/MusicHomeController.h"
 #include "controllers/RemoteControlService.h"
@@ -62,6 +64,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicHomeCtl"), app.musicHome());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicBrowseCtl"), app.musicBrowse());
+    engine.rootContext()->setContextProperty(QStringLiteral("AlbumCtl"), app.albumController());
+    engine.rootContext()->setContextProperty(QStringLiteral("ArtistCtl"), app.artistController());
     // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
     // CoverWash.qml reads the tints themselves.
     engine.rootContext()->setContextProperty(QStringLiteral("CoverTint"), app.coverTint());

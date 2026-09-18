@@ -35,6 +35,8 @@ class EmbyClient;
 namespace music {
 class MusicHomeController;
 class MusicBrowseController;
+class AlbumController;
+class ArtistController;
 class MusicPlayback;
 class MusicRepository;
 class MusicUserDataRelay;
@@ -76,6 +78,8 @@ public:
     music::MusicPlayback *musicPlayback() const { return m_musicPlayback; }
     music::MusicHomeController *musicHome() const { return m_musicHome; }
     music::MusicBrowseController *musicBrowse() const { return m_musicBrowse; }
+    music::AlbumController *albumController() const { return m_albumCtl; }
+    music::ArtistController *artistController() const { return m_artistCtl; }
     LiveUpdateService *live() const { return m_live; }
     WebRemoteServer *webRemoteServer() const { return m_webRemoteServer; }
     WebRemoteController *webRemote() const { return m_webRemote; }
@@ -127,6 +131,8 @@ private:
     music::MusicPlayback *m_musicPlayback = nullptr;
     music::MusicHomeController *m_musicHome = nullptr;
     music::MusicBrowseController *m_musicBrowse = nullptr;
+    music::AlbumController *m_albumCtl = nullptr;
+    music::ArtistController *m_artistCtl = nullptr;
     PowerInhibit *m_powerInhibit = nullptr;
     MprisPlayer *m_mpris = nullptr;
     // Image id ("{itemId}/{imageType}/{tag}") of the sleeve MPRIS is showing or

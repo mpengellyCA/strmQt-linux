@@ -39,6 +39,8 @@
 #include "app/models/MediaItemModel.h"
 #include "server/emby/EmbyClient.h"
 #include "PlayQueue.h"
+#include "controllers/music/AlbumController.h"
+#include "controllers/music/ArtistController.h"
 #include "controllers/music/MusicBrowseController.h"
 #include "controllers/music/MusicHomeController.h"
 #include "music/MusicPlayback.h"
@@ -194,6 +196,25 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     for (music::MusicModelBase *model : m_musicBrowse->models())
         m_musicRelay->addModel(model);
 
+    // The album and artist pages (Crate spec §6.1–6.2). Their track and album
+    // models are patched in place by the relay; the page's own heart follows
+    // ItemActions directly, because the album or artist item is not a row in
+    // any of those models.
+    m_albumCtl = new music::AlbumController(m_musicRepository, m_musicPlayback, this);
+    m_musicRelay->addModel(m_albumCtl->tracks());
+    m_musicRelay->addModel(m_albumCtl->moreBy());
+    connect(m_actions, &ItemActions::favoriteChanged, m_albumCtl,
+            &music::AlbumController::noteFavourite);
+
+    m_artistCtl = new music::ArtistController(m_musicRepository, m_musicPlayback, this);
+    m_musicRelay->addModel(m_artistCtl->albums());
+    m_musicRelay->addModel(m_artistCtl->epsAndSingles());
+    m_musicRelay->addModel(m_artistCtl->appearsOn());
+    m_musicRelay->addModel(m_artistCtl->topTracks());
+    m_musicRelay->addModel(m_artistCtl->similar());
+    connect(m_actions, &ItemActions::favoriteChanged, m_artistCtl,
+            &music::ArtistController::noteFavourite);
+
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
             m_live->start();
@@ -332,6 +353,8 @@ void Application::teardownAuthenticatedSession()
     m_music->resetSessionState();
     m_musicHome->resetSessionState();
     m_musicBrowse->resetSessionState();
+    m_albumCtl->resetSessionState();
+    m_artistCtl->resetSessionState();
 
     // ItemActions retires optimistic mutations and asynchronous queue builders,
     // and clears any dynamically registered rail model not owned above.

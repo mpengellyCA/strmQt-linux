@@ -1730,7 +1730,7 @@ MSG
 
 `MusicController` and `MusicCtl` stay in place. Task 10 removes them, once nothing reads them.
 
-- [ ] **Step 1: Declare the controllers**
+- [x] **Step 1: Declare the controllers**
 
 In `src/app/Application.h`, extend the `namespace music { … }` forward declarations Phase 1 added (Phases 2 and 3 extended the same block) with:
 
@@ -1753,7 +1753,7 @@ Next to `m_musicPlayback`, after any Phase 2/3 music members:
     music::ArtistController *m_artistCtl = nullptr;
 ```
 
-- [ ] **Step 2: Construct and connect them**
+- [x] **Step 2: Construct and connect them**
 
 In `src/app/Application.cpp`, next to the other `controllers/music/…` includes:
 
@@ -1794,7 +1794,7 @@ In `teardownAuthenticatedSession()`, directly after `m_playlists->resetSessionSt
 
 Before adding the connects, check how `ItemActions::favoriteChanged` is declared (`grep -n "favoriteChanged" src/app/ItemActions.h`). If it is overloaded, use `qOverload<const QString &, bool>(&ItemActions::favoriteChanged)`.
 
-- [ ] **Step 3: Expose `AlbumCtl` and `ArtistCtl`**
+- [x] **Step 3: Expose `AlbumCtl` and `ArtistCtl`**
 
 In `src/app/main.cpp`, next to the other `controllers/music/…` includes:
 
@@ -1812,7 +1812,7 @@ After the `MusicPlay` context-property line Phase 1 added, and after any Phase 2
 
 The model types are already registered for QML: Phase 1 declared `strmqt::music::TrackListModel *` and the grid models as metatypes, and Phase 2 relies on that. If the build reports `QMetaProperty::read: Unable to handle unregistered datatype 'strmqt::music::TrackListModel*'`, add `qRegisterMetaType<strmqt::music::TrackListModel *>();` beside Phase 1's existing registrations. Don't register anything a second time.
 
-- [ ] **Step 4: Build, test, self-test**
+- [x] **Step 4: Build, test, self-test**
 
 Run:
 
@@ -1823,7 +1823,7 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./bui
 
 Expected: every test passes, the self-test prints no `selftest FAIL` line, and the run ends with `exit=0`. The old pages still read `MusicCtl`, so nothing visible changes yet.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app/Application.h src/app/Application.cpp src/app/main.cpp
