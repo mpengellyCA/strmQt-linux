@@ -1469,6 +1469,24 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QVERIFY(genreCapture < genrePrepare);
     QVERIFY(genrePrepare < genrePush);
 
+    // A liner-notes genre link keeps BOTH branches. root.musicLibraryId() is
+    // empty until Music Home or Browse has been visited, so an album or artist
+    // opened from Search or a deep link early has no music library to filter,
+    // and the link must still reach the generic genre destination rather than
+    // doing nothing. Nothing exercises the empty case at runtime — no test
+    // builds the shell with both music controllers unscoped — so the branch is
+    // pinned here by shape, in the order it has to run in. Like every pin in
+    // this test, it cannot tell production code from a comment; it exists to
+    // stop the fallback being deleted as dead, not to prove it fires.
+    const QByteArray genreFromPage = functionBody("openMusicGenreFromPage", "openSearch");
+    QVERIFY(!genreFromPage.isEmpty());
+    const qsizetype fromPageScope = genreFromPage.indexOf("root.musicLibraryId()");
+    const qsizetype fromPageFilter = genreFromPage.indexOf("root.openMusicGenre(libraryId,");
+    const qsizetype fromPageFallback = genreFromPage.indexOf("Actions.browseGenre(genreId,");
+    QVERIFY(fromPageScope >= 0);
+    QVERIFY(fromPageFilter > fromPageScope);
+    QVERIFY(fromPageFallback > fromPageFilter);
+
     QFile browsePage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicBrowsePage.qml"));
     QVERIFY(browsePage.open(QIODevice::ReadOnly));
     const QByteArray browseSource = browsePage.readAll();
