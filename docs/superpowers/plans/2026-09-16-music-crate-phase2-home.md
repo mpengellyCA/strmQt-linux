@@ -5468,7 +5468,7 @@ MSG
 
 **No failing test for this task.** It is the gate: the full suite, the lint baseline, the self-test and a visual check by the user.
 
-- [ ] **Step 1: Full build and suite**
+- [x] **Step 1: Full build and suite**
 
 Run:
 
@@ -5478,7 +5478,7 @@ cmake --preset dev && cmake --build --preset dev && ctest --preset dev --output-
 
 Expected: every test passes, including `tst_music_lane`, `tst_music_home_controller`, `tst_card_component`, `tst_crate_controls` and `tst_navigation_history`. A failure is fixed in the task that owns the file, with its own commit; it is never skipped.
 
-- [ ] **Step 2: Check the lint diff, then re-baseline**
+- [x] **Step 2: Check the lint diff, then re-baseline**
 
 Run:
 
@@ -5506,7 +5506,7 @@ rm -f build/dev/phase2-qmllint.txt build/dev/phase2-qmllint-diff.txt
 
 Expected: `Updated config/qmllint-baseline.txt (N warnings).`, then a clean second run.
 
-- [ ] **Step 3: Self-test**
+- [x] **Step 3: Self-test**
 
 Run:
 
@@ -5516,7 +5516,7 @@ STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 ./bui
 
 Expected: `selftest ok   musicHome` among the page lines, no `selftest FAIL`, and `exit=0`.
 
-- [ ] **Step 4: Commit the baseline**
+- [x] **Step 4: Commit the baseline**
 
 ```bash
 git add config/qmllint-baseline.txt
@@ -5528,7 +5528,7 @@ MSG
 )"
 ```
 
-- [ ] **Step 5: Ask the user for the visual check**
+- [x] **Step 5: Ask the user for the visual check**
 
 This step needs the user's own server and eyes; the agent does not run the app against a real server. Stop and ask the user to run `./build/dev/strmqt`, open a music library, and confirm each item below. Record their answers in the phase report. Anything that fails goes back to its task as a fix commit, followed by Steps 1–3 again.
 

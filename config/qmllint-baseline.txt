@@ -29,7 +29,6 @@ src/ui/Main.qml: Unqualified access [unqualified]	LibraryCtl.openPerson(route.id
 src/ui/Main.qml: Unqualified access [unqualified]	LibraryCtl.openStudio(id, name);
 src/ui/Main.qml: Unqualified access [unqualified]	LibraryCtl.openStudio(route.id, route.name);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.loadAlbums();
-src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.loadAlbums();
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.loadArtists();
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.loadPlaylists();
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.loadSongs();
@@ -37,10 +36,12 @@ src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openAlbum(id, name);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openAlbum(route.id, route.name);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openArtist(id, name);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.openArtist(route.id, route.name);
+src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.setGenreIds(genreId ? [genreId] : []);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.setLibrary(libraryId);
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.setLibrary(route.id);
-src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.tab = "albums";
 src/ui/Main.qml: Unqualified access [unqualified]	MusicCtl.tab = route.tab;
+src/ui/Main.qml: Unqualified access [unqualified]	MusicHomeCtl.open(libraryId);
+src/ui/Main.qml: Unqualified access [unqualified]	MusicHomeCtl.open(route.id);
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.backend.engineName === "vlc" ? "components/VlcVideoPlane.qml"
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.clearCrashResume();
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.playItem(info.itemId, info.title, info.positionMs);
@@ -100,6 +101,8 @@ src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool chromeV
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	root.openLibrary(libraryId, name, collectionType)
+src/ui/Main.qml: Unqualified access [unqualified]	root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, "albums", genreId)
+src/ui/Main.qml: Unqualified access [unqualified]	root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, key, "")
 src/ui/Main.qml: Unqualified access [unqualified]	root.pushPage({ "kind": "search", "query": SearchCtl.query,
 src/ui/Main.qml: Unqualified access [unqualified]	running: typeof SelfTest !== "undefined" && SelfTest
 src/ui/Main.qml: Unqualified access [unqualified]	sleeveInFlight: sleeveFlight.active
@@ -461,6 +464,48 @@ src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.pr
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: Session.secretStorage === "vault"
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	visible: page.multipleServers
 src/ui/pages/LoginPage.qml: Unqualified access [unqualified]	width: page.profileTileWidth
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	? String(MusicHomeCtl.heroLane.error) : ""
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Accessible.onPressAction: page.openItem(MusicHomeCtl.heroLane, row.index)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Actions.setFavorite(String(page.hero.albumId), page.hero.favourite !== true)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Keys.onEnterPressed: event => { if (!event.isAutoRepeat) page.openItem(MusicHomeCtl.heroLane, row.index) }
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Keys.onReturnPressed: event => { if (!event.isAutoRepeat) page.openItem(MusicHomeCtl.heroLane, row.index) }
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.playStation(stationMenu.row)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.queueStation(stationMenu.row)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.shuffleStation(stationMenu.row)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicPlay.playAlbum(id, item.title !== undefined ? String(item.title) : "", 0)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	StackView.onActivated: MusicHomeCtl.refreshStale()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	active: page.musicActive && PlayerCtl.active
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	albumMenu.popupForItem(page.itemAt(MusicHomeCtl.heroLane, row.index), p.x, p.y)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	albumMenu.popupForItem(page.itemAt(MusicHomeCtl.heroLane, row.index), p.x, p.y)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	const bin = page.itemAt(MusicHomeCtl.genreLane, index)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	const model = MusicHomeCtl.stationLane.model
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	kicker: MusicHomeCtl.addedThisWeekText
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.artistLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.forgottenLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.genreLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.newLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.pullLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.recentLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.stationLane
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	model: MusicHomeCtl.heroLane.model
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActionTriggered: MusicHomeCtl.reshuffle()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActivated: Actions.openDetails(page.hero.albumItem)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActivated: MusicHomeCtl.playStation(page.stationRow("shuffleAll"))
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActivated: PlayerCtl.togglePause()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onClicked: Actions.setFavorite(String(page.hero.albumId),
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onClicked: MusicHomeCtl.anotherOne()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onClicked: MusicHomeCtl.resumeHero()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onClicked: MusicHomeCtl.shuffleHero()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onItemActivated: index => MusicHomeCtl.playStation(index)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onPlayRequested: MusicHomeCtl.resumeHero()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onRetry: MusicHomeCtl.heroLane.retry()
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onTapped: page.openItem(MusicHomeCtl.heroLane, row.index)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	readonly property bool heroLoading: MusicHomeCtl.heroLane.loading === true && !page.hasHero
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	readonly property bool musicActive: App.interactionContext === "music"
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	readonly property string heroError: !page.hasHero && MusicHomeCtl.heroLane.error
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	readonly property var hero: MusicHomeCtl.hero
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.albumsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.artistsLoading)
 src/ui/pages/MusicPage.qml: Unqualified access [unqualified]	&& !MusicCtl.playlistsLoading)
