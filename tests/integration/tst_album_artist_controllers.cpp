@@ -162,6 +162,7 @@ private slots:
     void albumFavouriteFollowsItemActions();
     void albumReopenIsFreeAndResetClears();
     void hiResFollowsTheBadgeItPaints();
+    void hiResIsUnanimousOnABareBadge();
 
     void artistProfileFillsTabsAndCaptions();
     void artistHidesEmptyTabs();
@@ -559,6 +560,36 @@ void AlbumArtistControllersTest::hiResFollowsTheBadgeItPaints()
     QVERIFY(!m_album->isHiRes()); // a strict majority over the tracks would say yes
 }
 
+// A lossless track missing BitDepth or SampleRate degrades its badge to the
+// bare codec label, which promises nothing about the rate: two tracks can both
+// wear "FLAC" while only one of them is hi-res. isHiRes() must require every
+// track carrying that bare badge to be hi-res, in either track order, so the
+// answer does not turn on which track happens to load first.
+void AlbumArtistControllersTest::hiResIsUnanimousOnABareBadge()
+{
+    // Hi-res track first.
+    routeMixedAlbum(QStringLiteral("degA"),
+                    {trackWithStream("dg1", "degA", 1, audioStream("flac", 0, 96000)),
+                     trackWithStream("dg2", "degA", 2, audioStream("flac", 0, 44100))});
+
+    m_album->open(QStringLiteral("degA"), QStringLiteral("Mixed Bag"));
+    QTRY_VERIFY(!m_album->loading());
+    QVERIFY2(m_album->error().isEmpty(), qPrintable(m_album->error()));
+    QCOMPARE(m_album->formatBadge(), QStringLiteral("FLAC"));
+    QVERIFY(!m_album->isHiRes());
+
+    // Same pair, non-hi-res track first: the answer must not flip.
+    routeMixedAlbum(QStringLiteral("degB"),
+                    {trackWithStream("dg3", "degB", 1, audioStream("flac", 0, 44100)),
+                     trackWithStream("dg4", "degB", 2, audioStream("flac", 0, 96000))});
+
+    m_album->open(QStringLiteral("degB"), QStringLiteral("Mixed Bag"));
+    QTRY_VERIFY(!m_album->loading());
+    QVERIFY2(m_album->error().isEmpty(), qPrintable(m_album->error()));
+    QCOMPARE(m_album->formatBadge(), QStringLiteral("FLAC"));
+    QVERIFY(!m_album->isHiRes());
+}
+
 void AlbumArtistControllersTest::artistProfileFillsTabsAndCaptions()
 {
     routeArtist();
@@ -709,6 +740,18 @@ void AlbumArtistControllersTest::artistReopenIsFreeAndResetClears()
     QCOMPARE(identity.count(), 1);
     QTest::qWait(50);
     QCOMPARE(m_mock->requestCount(), before);
+
+    // The reverse direction: a free reopen that carries no library id must
+    // clear the one already set, not defensively keep it — the library id
+    // belongs to the route, not to whichever page last set it.
+    const int beforeClear = m_mock->requestCount();
+    m_artist->open(QStringLiteral("ar1"), QStringLiteral("Hollow Coves"));
+    QVERIFY(!m_artist->loading());
+    QCOMPARE(state.count(), 0); // still free: no second load()
+    QVERIFY(m_artist->libraryId().isEmpty());
+    QCOMPARE(identity.count(), 2); // one more artistChanged, and only one
+    QTest::qWait(50);
+    QCOMPARE(m_mock->requestCount(), beforeClear);
 
     m_artist->resetSessionState();
     QVERIFY(m_artist->artistId().isEmpty());

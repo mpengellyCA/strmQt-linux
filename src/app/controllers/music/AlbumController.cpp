@@ -56,16 +56,25 @@ QString AlbumController::coverUrl() const
 bool AlbumController::isHiRes() const
 {
     // formatBadge is the album's dominant badge (EmbyMusicMapper::dominantFormat,
-    // a plurality over badge strings), and isHiRes colours that same badge. So
-    // it is that format's own flag, not a second aggregation over the tracks:
-    // the badge's text and its colour are one decision (fix round 1, FIX 3).
+    // a plurality over badge strings), and isHiRes colours that same badge. When
+    // the badge encodes depth and rate (e.g. "FLAC 24/96") that is unambiguous.
+    // But a lossless track missing BitDepth or SampleRate degrades its badge to
+    // the bare codec label (EmbyMusicMapper::deriveAudioFormat), and a bare
+    // label promises nothing about the rate: two tracks can both wear "FLAC"
+    // while only one is hi-res. Picking any-one-or-first would let track order
+    // decide whether the badge paints amber, so the rule is all-or-nothing:
+    // every track carrying the summary badge must be hi-res for the badge to be.
     if (m_album.formatSummary.isEmpty())
         return false;
+    bool sawMatch = false;
     for (const Track &track : m_tracks->items()) {
-        if (track.format.badge == m_album.formatSummary)
-            return track.format.isHiRes;
+        if (track.format.badge != m_album.formatSummary)
+            continue;
+        sawMatch = true;
+        if (!track.format.isHiRes)
+            return false;
     }
-    return false;
+    return sawMatch;
 }
 
 QString AlbumController::discBadge() const
