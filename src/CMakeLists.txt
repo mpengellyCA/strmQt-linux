@@ -175,6 +175,7 @@ qt_add_qml_module(strmqt
         ui/pages/AlbumPage.qml
         ui/pages/MusicAlbumPage.qml
         ui/pages/PlaylistPage.qml
+        ui/pages/MusicPlaylistPage.qml
         ui/pages/PersonPage.qml
         ui/pages/MusicHomePage.qml
         ui/pages/MusicBrowsePage.qml

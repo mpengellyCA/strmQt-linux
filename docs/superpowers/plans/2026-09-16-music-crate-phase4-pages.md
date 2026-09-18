@@ -3628,7 +3628,7 @@ The design is spec §6.3.
 - The member table stays a plain `TrackTable`, not `CrateTrackTable`, because its rows are `MediaItemModel` rows with edit verbs inline.
 - Every playlist behaviour is `PlaylistPage`'s, moved as-is. The behaviour worth keeping is the `StackView.Active` guards on the controller's play and queue intents, the Alt+Up/Down and Delete handling, and focus following a moved entry.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 `src/ui/pages/MusicPlaylistPage.qml`:
 
@@ -4292,7 +4292,7 @@ Notes for the implementer:
 - `MediaItemModel`'s `subtitle` role for an audio member is the artist and album line that `PlaylistPage` already shows. Nothing is composed here.
 - `playing: false` is deliberate: `MediaItemModel` rows carry no queue identity, and a duplicate track in a playlist would light up twice. Don't copy `nowPlayingId` in.
 
-- [ ] **Step 2: List the page**
+- [x] **Step 2: List the page**
 
 In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/PlaylistPage.qml`:
 
@@ -4300,7 +4300,7 @@ In `src/CMakeLists.txt`, in the QML page list, after `ui/pages/PlaylistPage.qml`
         ui/pages/MusicPlaylistPage.qml
 ```
 
-- [ ] **Step 3: Build and lint**
+- [x] **Step 3: Build and lint**
 
 Run:
 
@@ -4311,7 +4311,7 @@ bash scripts/check-qmllint-baseline.sh build/dev
 
 Expected: the build succeeds, and the only new lint lines are `[unqualified]` reads of `PlaylistCtl`, `Actions`, `MusicPlay`, `PlayerCtl` and `App`. `NowPlayingInfo` is a QML singleton and does not lint. Record them for the phase gate.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ui/pages/MusicPlaylistPage.qml src/CMakeLists.txt
