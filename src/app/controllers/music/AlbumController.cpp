@@ -55,16 +55,17 @@ QString AlbumController::coverUrl() const
 
 bool AlbumController::isHiRes() const
 {
-    int valid = 0;
-    int hiRes = 0;
+    // formatBadge is the album's dominant badge (EmbyMusicMapper::dominantFormat,
+    // a plurality over badge strings), and isHiRes colours that same badge. So
+    // it is that format's own flag, not a second aggregation over the tracks:
+    // the badge's text and its colour are one decision (fix round 1, FIX 3).
+    if (m_album.formatSummary.isEmpty())
+        return false;
     for (const Track &track : m_tracks->items()) {
-        if (!track.format.isValid())
-            continue;
-        ++valid;
-        if (track.format.isHiRes)
-            ++hiRes;
+        if (track.format.badge == m_album.formatSummary)
+            return track.format.isHiRes;
     }
-    return valid > 0 && hiRes * 2 > valid;
+    return false;
 }
 
 QString AlbumController::discBadge() const
@@ -250,6 +251,8 @@ void AlbumController::play(int fromIndex)
     if (tracks.isEmpty())
         return;
     const int last = static_cast<int>(tracks.size()) - 1;
+    // ItemActions::playAllFromIfCurrent clamps too; this clamp is deliberate
+    // defence, because the index is into a list this controller owns. Keep it.
     m_playback->playTracks(tracks, std::clamp(fromIndex, 0, last), m_album.title);
 }
 

@@ -91,6 +91,28 @@ QJsonObject topTrackJson(const QString &id, const QString &albumId, const QStrin
             {"AlbumArtists", refs(albumArtistId, albumArtistName)}};
 }
 
+// One audio stream, so a fixture can mix formats within an album.
+QJsonObject audioStream(const QString &codec, int bitDepth, int sampleRate, int bitrate = 0)
+{
+    QJsonObject stream{{"Type", "Audio"}, {"Codec", codec}};
+    if (bitDepth > 0)
+        stream.insert("BitDepth", bitDepth);
+    if (sampleRate > 0)
+        stream.insert("SampleRate", sampleRate);
+    if (bitrate > 0)
+        stream.insert("BitRate", bitrate);
+    return stream;
+}
+
+QJsonObject trackWithStream(const QString &id, const QString &albumId, int number,
+                            const QJsonObject &stream)
+{
+    QJsonObject track = trackJson(id, albumId, 1, number, QStringLiteral("ar1"),
+                                  QStringLiteral("Hollow Coves"), false);
+    track.insert("MediaStreams", QJsonArray{stream});
+    return track;
+}
+
 QJsonObject albumJson(const QString &id, const QString &name, int trackCount,
                       const QString &artistId = QStringLiteral("ar1"),
                       const QString &artistName = QStringLiteral("Hollow Coves"))
@@ -139,16 +161,19 @@ private slots:
     void albumVerbsCarrySourceLabels();
     void albumFavouriteFollowsItemActions();
     void albumReopenIsFreeAndResetClears();
+    void hiResFollowsTheBadgeItPaints();
 
     void artistProfileFillsTabsAndCaptions();
     void artistHidesEmptyTabs();
     void artistDropsStaleRepliesAndRecoversFromFailure();
     void artistVerbsCarrySourceLabels();
+    void artistReopenIsFreeAndResetClears();
 
 private:
     PlayQueue *queue() const { return m_player->queue(); }
     void routeFullAlbum();
     void routeBareAlbum(const QString &albumId);
+    void routeMixedAlbum(const QString &albumId, const QJsonArray &tracks);
     void routeArtist();
 
     MockEmbyServer *m_mock = nullptr;
@@ -275,6 +300,17 @@ void AlbumArtistControllersTest::routeBareAlbum(const QString &albumId)
                                 trackJson(albumId + "-2", albumId, 1, 2, "ar1", "Hollow Coves", false)}));
 }
 
+// An album whose tracks do not share one format.
+void AlbumArtistControllersTest::routeMixedAlbum(const QString &albumId, const QJsonArray &tracks)
+{
+    m_mock->addRoute("GET", itemPath(albumId), 200,
+                     object(albumJson(albumId, QStringLiteral("Mixed Bag"),
+                                      static_cast<int>(tracks.size()))));
+    m_mock->addQueryRoute("GET", itemsPath(),
+                          Q{{"ParentId", albumId}, {"IncludeItemTypes", "Audio"}}, 200,
+                          page(tracks));
+}
+
 void AlbumArtistControllersTest::routeArtist()
 {
     m_mock->addRoute("GET", itemPath(QStringLiteral("ar1")), 200,
@@ -325,8 +361,13 @@ void AlbumArtistControllersTest::albumDisplayComesFromTheSleeve()
     QVERIFY(m_album->showArtistColumn());
 
     QCOMPARE(m_album->tracks()->count(), 8);
-    QCOMPARE(m_album->trackIds().size(), 8);
-    QCOMPARE(m_album->trackIds().first(), QStringLiteral("t1"));
+    // The whole order, not just its head: discs() places the side headings by
+    // row, so a re-sort that kept t1 first (by track number, forgetting the
+    // disc) would interleave the discs under headings that still say 0 and 4.
+    QCOMPARE(m_album->trackIds(),
+             (QStringList{QStringLiteral("t1"), QStringLiteral("t2"), QStringLiteral("t3"),
+                          QStringLiteral("t4"), QStringLiteral("t5"), QStringLiteral("t6"),
+                          QStringLiteral("t7"), QStringLiteral("t8")}));
 
     const QVariantList discs = m_album->discs();
     QCOMPARE(discs.size(), 2);
@@ -483,6 +524,41 @@ void AlbumArtistControllersTest::albumReopenIsFreeAndResetClears()
     QVERIFY(!m_album->loading());
 }
 
+// formatBadge names one format and isHiRes colours that same badge, so the two
+// must be one decision. Both halves of this test are albums where a plurality
+// (which names the badge) and a majority (the rule this controller used to
+// apply) disagree.
+void AlbumArtistControllersTest::hiResFollowsTheBadgeItPaints()
+{
+    // Two 24/96 tracks name the badge; only half the album is hi-res.
+    routeMixedAlbum(QStringLiteral("mixA"),
+                    {trackWithStream("mx1", "mixA", 1, audioStream("flac", 24, 96000)),
+                     trackWithStream("mx2", "mixA", 2, audioStream("flac", 24, 96000)),
+                     trackWithStream("mx3", "mixA", 3, audioStream("flac", 16, 44100)),
+                     trackWithStream("mx4", "mixA", 4, audioStream("alac", 16, 44100))});
+
+    m_album->open(QStringLiteral("mixA"), QStringLiteral("Mixed Bag"));
+    QTRY_VERIFY(!m_album->loading());
+    QVERIFY2(m_album->error().isEmpty(), qPrintable(m_album->error()));
+    QCOMPARE(m_album->formatBadge(), QStringLiteral("FLAC 24/96"));
+    QVERIFY(m_album->isHiRes()); // a strict majority over the tracks would say no
+
+    // And the other way: three different hi-res formats, none of them the
+    // badge, against two identical lossy tracks that are.
+    routeMixedAlbum(QStringLiteral("mixB"),
+                    {trackWithStream("mx5", "mixB", 1, audioStream("flac", 24, 96000)),
+                     trackWithStream("mx6", "mixB", 2, audioStream("flac", 24, 192000)),
+                     trackWithStream("mx7", "mixB", 3, audioStream("flac", 24, 88200)),
+                     trackWithStream("mx8", "mixB", 4, audioStream("mp3", 0, 44100, 320000)),
+                     trackWithStream("mx9", "mixB", 5, audioStream("mp3", 0, 44100, 320000))});
+
+    m_album->open(QStringLiteral("mixB"), QStringLiteral("Mixed Bag"));
+    QTRY_VERIFY(!m_album->loading());
+    QVERIFY2(m_album->error().isEmpty(), qPrintable(m_album->error()));
+    QCOMPARE(m_album->formatBadge(), QStringLiteral("MP3 320"));
+    QVERIFY(!m_album->isHiRes()); // a strict majority over the tracks would say yes
+}
+
 void AlbumArtistControllersTest::artistProfileFillsTabsAndCaptions()
 {
     routeArtist();
@@ -603,6 +679,49 @@ void AlbumArtistControllersTest::artistVerbsCarrySourceLabels()
     m_artist->noteFavourite(QStringLiteral("ar1"), true);
     QCOMPARE(spy.count(), 1);
     QVERIFY(m_artist->favourite());
+}
+
+void AlbumArtistControllersTest::artistReopenIsFreeAndResetClears()
+{
+    routeArtist();
+    m_artist->open(QStringLiteral("ar1"), QStringLiteral("Hollow Coves"));
+    QTRY_VERIFY(!m_artist->loading());
+    QVERIFY2(m_artist->error().isEmpty(), qPrintable(m_artist->error()));
+    QCOMPARE(m_artist->albums()->count(), 1);
+    QVERIFY(m_artist->libraryId().isEmpty());
+
+    // The same artist under the music-library route: free, but the library id
+    // is part of the route and must follow it.
+    QSignalSpy identity(m_artist, &ArtistController::artistChanged);
+    QSignalSpy state(m_artist, &ArtistController::stateChanged);
+    m_artist->open(QStringLiteral("ar1"), QStringLiteral("Hollow Coves"), kLibrary);
+    QVERIFY(!m_artist->loading());
+    QCOMPARE(state.count(), 0); // only a second load() emits this
+    QCOMPARE(m_artist->libraryId(), kLibrary);
+    QCOMPARE(identity.count(), 1);
+    QCOMPARE(m_artist->albums()->count(), 1);
+
+    // Reopening it again, unchanged, costs nothing at all.
+    const int before = m_mock->requestCount();
+    m_artist->open(QStringLiteral("ar1"), QStringLiteral("Hollow Coves"), kLibrary);
+    QVERIFY(!m_artist->loading());
+    QCOMPARE(state.count(), 0);
+    QCOMPARE(identity.count(), 1);
+    QTest::qWait(50);
+    QCOMPARE(m_mock->requestCount(), before);
+
+    m_artist->resetSessionState();
+    QVERIFY(m_artist->artistId().isEmpty());
+    QVERIFY(m_artist->name().isEmpty());
+    QVERIFY(m_artist->libraryId().isEmpty());
+    QCOMPARE(m_artist->albums()->count(), 0);
+    QCOMPARE(m_artist->epsAndSingles()->count(), 0);
+    QCOMPARE(m_artist->appearsOn()->count(), 0);
+    QCOMPARE(m_artist->topTracks()->count(), 0);
+    QCOMPARE(m_artist->similar()->count(), 0);
+    QVERIFY(m_artist->tabs().isEmpty());
+    QVERIFY(m_artist->kicker().isEmpty());
+    QVERIFY(!m_artist->loading());
 }
 
 QTEST_GUILESS_MAIN(AlbumArtistControllersTest)

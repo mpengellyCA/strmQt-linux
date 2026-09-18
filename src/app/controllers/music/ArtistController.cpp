@@ -96,17 +96,27 @@ void ArtistController::open(const QString &artistId, const QString &name, const 
 {
     if (artistId.isEmpty())
         return;
-    if (artistId == m_artist.id && (m_loading || (m_loaded && m_error.isEmpty())))
+    // The library id belongs to the route, not to the artist, so it follows
+    // every open — including a free reopen of the artist already shown, which
+    // would otherwise keep publishing the library the page came from before
+    // and refetch with it on the next retry() (fix round 1, FIX 4).
+    const bool libraryChanged = libraryId != m_libraryId;
+    m_libraryId = libraryId;
+    if (artistId == m_artist.id && (m_loading || (m_loaded && m_error.isEmpty()))) {
+        if (libraryChanged)
+            emit artistChanged();
         return;
+    }
     if (artistId != m_artist.id) {
         m_artist = Artist{};
         m_artist.id = artistId;
         m_artist.name = name;
-        m_libraryId = libraryId;
         clearModels();
         m_loaded = false;
         emit artistChanged();
         emit favouriteChanged();
+    } else if (libraryChanged) {
+        emit artistChanged();
     }
     load();
 }
