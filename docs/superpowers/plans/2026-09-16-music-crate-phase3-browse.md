@@ -366,7 +366,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
     `restore` validates every field and ignores what it cannot read.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/tst_music_browse_controller.cpp`:
 
@@ -921,12 +921,12 @@ strmqt_add_test(tst_music_browse_controller
 target_include_directories(tst_music_browse_controller PRIVATE mocks)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_browse_controller`
 Expected: a compile error (`app/controllers/music/MusicBrowseController.h` not found).
 
-- [ ] **Step 3: Write the header**
+- [x] **Step 3: Write the header**
 
 `src/app/controllers/music/MusicBrowseController.h`:
 
@@ -1185,7 +1185,7 @@ private:
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `src/app/controllers/music/MusicBrowseController.cpp`:
 
@@ -2268,17 +2268,17 @@ Add to `strmqt_app` in `src/CMakeLists.txt`, next to the Phase 2 music controlle
     app/controllers/music/MusicBrowseController.h app/controllers/music/MusicBrowseController.cpp
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_browse_controller && ctest --preset dev -R tst_music_browse_controller --output-on-failure`
 Expected: PASS (12 tests).
 
-- [ ] **Step 6: Run the music suites together**
+- [x] **Step 6: Run the music suites together**
 
 Run: `ctest --preset dev -R "tst_music" --output-on-failure`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/controllers/music/MusicBrowseController.* src/CMakeLists.txt tests/integration/tst_music_browse_controller.cpp tests/CMakeLists.txt
