@@ -653,7 +653,8 @@ ApplicationWindow {
                     ["search", searchComponent], ["settings", settingsComponent],
                     ["person", personComponent], ["playlist", playlistComponent],
                     ["artist", artistComponent], ["album", albumComponent],
-                    ["music", musicComponent], ["musicHome", musicHomeComponent]
+                    ["music", musicComponent], ["musicHome", musicHomeComponent],
+                    ["musicBrowse", musicBrowseComponent]
                 ];
                 let failures = 0;
                 for (let i = 0; i < pages.length; ++i) {
@@ -1136,6 +1137,17 @@ ApplicationWindow {
                 root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, key, "")
             onGenreRequested: (genreId, genreName) =>
                 root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, "albums", genreId)
+        }
+    }
+
+    Component {
+        id: musicBrowseComponent
+
+        MusicBrowsePage {
+            id: browsePage
+
+            objectName: "musicBrowsePage"
+            onHomeRequested: root.openMusicHome(browsePage.libraryId, browsePage.libraryName)
         }
     }
 

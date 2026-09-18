@@ -3175,7 +3175,7 @@ Layout, top to bottom:
 
 This is a QML-only task, so there is no C++ unit test. The self-test constructs the page against the real context properties; lint checks it statically; Task 7 checks it visually.
 
-- [ ] **Step 1: Write the page**
+- [x] **Step 1: Write the page**
 
 `src/ui/pages/MusicBrowsePage.qml`:
 
@@ -4547,7 +4547,7 @@ Notes for the implementer:
 - If `StrmPanel` lays out its children with a Column (it does, per its header), the prompt needs no Column of its own.
 - `CoverCollage` receives one cover because `PlaylistGridModel` carries only `coverUrl` (contract note 16).
 
-- [ ] **Step 2: Register the page and put it in the self-test**
+- [x] **Step 2: Register the page and put it in the self-test**
 
 In `src/CMakeLists.txt`, add after `ui/pages/MusicHomePage.qml`:
 
@@ -4572,7 +4572,7 @@ In `src/ui/Main.qml`, add after the Phase 2 `musicHomeComponent`:
 
 In the self-test `pages` list, add `["musicBrowse", musicBrowseComponent]` after the `musicHome` entry. The `music` entry stays until Task 6.
 
-- [ ] **Step 3: Build, lint, self-test**
+- [x] **Step 3: Build, lint, self-test**
 
 Run:
 
@@ -4589,7 +4589,7 @@ Expected:
 
 If a line names a Phase 2 control property this page sets (for example `showCaption` on `CrateSleeve`), the Phase 2 control is the authority: check the contract table in the index and correct the page, not the control.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/ui/pages/MusicBrowsePage.qml src/CMakeLists.txt src/ui/Main.qml
