@@ -34,6 +34,7 @@ private slots:
     void pendingRestoreIsNotResurrected();
     void preservesFavoriteStateAcrossReconstruction();
     void preservesBaseAndKeepsTransientPagesOutOfHistory();
+    void audioPlaylistRouteSelectsTheMusicPlaylistPage();
 };
 
 namespace {
@@ -127,6 +128,20 @@ Item {
         const item = root.itemFor(id);
         item.type = "MusicAlbum";
         history.pushRoute(root.routeFor("album", item), { "albumItem": item });
+    }
+
+    function pushAudioPlaylist(id): void {
+        const text = String(id);
+        history.pushRoute({ "kind": "playlist", "mode": "audio", "id": text,
+                            "name": "Playlist " + text, "key": "musicPlaylist:" + text,
+                            "title": "Playlist " + text },
+                          { "playlistId": text, "playlistName": "Playlist " + text });
+    }
+
+    function pushVideoPlaylist(id): void {
+        const text = String(id);
+        history.pushRoute({ "kind": "playlist", "id": text, "name": "Playlist " + text,
+                            "key": "playlists", "title": "Playlists" });
     }
 
     function pushAlbumUnfavorite(id): void {
@@ -435,6 +450,18 @@ Item {
         }
     }
 
+    component PlaylistProbe: FocusScope {
+        objectName: "playlistPage"
+        focus: true
+    }
+
+    component MusicPlaylistProbe: FocusScope {
+        property string playlistId: ""
+        property string playlistName: ""
+        objectName: "musicPlaylistPage"
+        focus: true
+    }
+
     component ArtistProbe: FocusScope {
         property var artistItem: ({})
         readonly property string routeId: String(artistItem.itemId)
@@ -722,6 +749,8 @@ Item {
 
     Component { id: detailsComponent; DetailsProbe {} }
     Component { id: albumComponent; AlbumProbe {} }
+    Component { id: playlistComponent; PlaylistProbe {} }
+    Component { id: musicPlaylistComponent; MusicPlaylistProbe {} }
     Component { id: artistComponent; ArtistProbe {} }
     Component { id: twinOwnerAComponent; TwinOwnerA {} }
     Component { id: twinOwnerBComponent; TwinOwnerB {} }
@@ -789,6 +818,8 @@ Item {
         initialItem: detailsComponent
         detailsPageComponent: detailsComponent
         albumPageComponent: albumComponent
+        playlistPageComponent: playlistComponent
+        musicPlaylistPageComponent: musicPlaylistComponent
         artistPageComponent: artistComponent
         personPageComponent: personComponent
         libraryPageComponent: libraryComponent
@@ -1417,7 +1448,10 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(!main.isEmpty());
     QVERIFY(main.contains("function onRouteRequested(kind, target)"));
     QVERIFY(main.contains("function openRoute(kind, target)"));
-    QVERIFY(main.contains("case \"playlist\": root.openPlaylist(id, name)"));
+    QVERIFY(main.contains("root.openMusicPlaylist(id, name)"));
+    QVERIFY(main.contains("root.openPlaylist(id, name)"));
+    QVERIFY(main.contains("AlbumCtl.open(route.id, route.name)"));
+    QVERIFY(main.contains("ArtistCtl.open(route.id, route.name, root.musicLibraryId())"));
     QVERIFY(!main.contains("function openMusic("));
     QVERIFY(!main.contains("item.type"));
     QVERIFY(!main.contains("onDetailsRequested"));
@@ -1431,10 +1465,11 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(!details.contains("Actions.shuffleSeries("));
     QVERIFY(!details.contains("Actions.playAll(page.itemId"));
 
-    const QByteArray album = sourceFor(QStringLiteral("src/ui/pages/AlbumPage.qml"));
-    QVERIFY(album.contains("Actions.artistTarget(page.albumItem)"));
-    QVERIFY(album.contains("Actions.openArtist(page.albumArtistId"));
+    const QByteArray album = sourceFor(QStringLiteral("src/ui/pages/MusicAlbumPage.qml"));
+    QVERIFY(!album.isEmpty());
+    QVERIFY(album.contains("Actions.openArtist(AlbumCtl.artistId, AlbumCtl.artist)"));
     QVERIFY(!album.contains("\"type\": \"MusicArtist\""));
+    QVERIFY(!album.contains("MusicCtl"));
 
     const QByteArray mini = sourceFor(QStringLiteral("src/ui/shell/MiniPlayer.qml"));
     QVERIFY(mini.contains("Actions.openArtist(mini.artistId, mini.artistText)"));
@@ -1453,9 +1488,16 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(!search.contains("function playAlbumResult("));
     QVERIFY(search.contains("page.playResult(page.albumModel, index)"));
 
-    const QByteArray artist = sourceFor(QStringLiteral("src/ui/pages/ArtistPage.qml"));
-    QVERIFY(artist.contains("Actions.play(item)"));
-    QVERIFY(!artist.contains("MusicCtl.playAlbum("));
+    const QByteArray artist = sourceFor(QStringLiteral("src/ui/pages/MusicArtistPage.qml"));
+    QVERIFY(!artist.isEmpty());
+    QVERIFY(artist.contains("MusicPlay.playAlbum("));
+    QVERIFY(!artist.contains("MusicCtl"));
+
+    const QByteArray musicPlaylist = sourceFor(QStringLiteral("src/ui/pages/MusicPlaylistPage.qml"));
+    QVERIFY(!musicPlaylist.isEmpty());
+    QVERIFY(musicPlaylist.contains(
+        "onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)"));
+
     QVERIFY(music.contains("MusicPlay.playAlbum("));
     QVERIFY(!music.contains("MusicCtl."));
 
@@ -1526,6 +1568,18 @@ void NavigationHistoryTest::musicInteractionContextNamesPagesThatExist()
         pages << it.next().captured(1);
     QVERIFY2(pages.contains(QStringLiteral("musicBrowsePage")),
              "the browse page is no longer part of the music interaction context");
+    // The loop below only checks names the branch already carries, so a page
+    // dropped OUT of the chain passes it vacuously. The Crate pages take the
+    // same music shortcuts as Browse, and a missing name here disables them
+    // with no warning and no other failing assertion, so each is pinned.
+    for (const QString &crate : {QStringLiteral("musicHomePage"), QStringLiteral("albumPage"),
+                                 QStringLiteral("artistPage"),
+                                 QStringLiteral("musicPlaylistPage")}) {
+        QVERIFY2(pages.contains(crate),
+                 qPrintable(QStringLiteral("interactionContext no longer names %1, so its music "
+                                           "shortcuts are silently dead")
+                                .arg(crate)));
+    }
     for (const QString &page : std::as_const(pages)) {
         const QByteArray declaration = "objectName: \"" + page.toUtf8() + "\"";
         QVERIFY2(main.contains(declaration),
@@ -1588,21 +1642,20 @@ void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()
     // Artist top tracks use the same initially-empty active-refill handoff.
     // Visibility follows content, but enabled must remain the default so an
     // active empty owner can consume its terminal edge.
-    QFile artistPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/ArtistPage.qml"));
+    QFile artistPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicArtistPage.qml"));
     QVERIFY(artistPage.open(QIODevice::ReadOnly));
     const QByteArray artistSource = artistPage.readAll();
     const qsizetype topTracksBegin =
         artistSource.indexOf("navigationFocusKey: \"artist-top-tracks\"");
     const qsizetype topTracksModel =
-        artistSource.indexOf("model: MusicCtl.artistTracks", topTracksBegin);
+        artistSource.indexOf("model: ArtistCtl.topTracks", topTracksBegin);
     QVERIFY(topTracksBegin >= 0);
     QVERIFY(topTracksModel > topTracksBegin);
     const QByteArray topTracksOwner =
         artistSource.mid(topTracksBegin, topTracksModel - topTracksBegin);
-    QVERIFY(topTracksOwner.contains("navigationFocusRefillActive:"));
-    QVERIFY(topTracksOwner.contains("MusicCtl.artistTracksLoading"));
+    QVERIFY(topTracksOwner.contains("navigationFocusRefillActive: ArtistCtl.loading"));
     QVERIFY(topTracksOwner.contains("visible: page.hasTopTracks"));
-    QVERIFY(!topTracksOwner.contains("enabled: page.hasTopTracks"));
+    QVERIFY(!topTracksOwner.contains("enabled:"));
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -2068,6 +2121,49 @@ void NavigationHistoryTest::preservesBaseAndKeepsTransientPagesOutOfHistory()
     QVERIFY(invoke(root, "goHome"));
     QCOMPARE(history->property("currentEntry").toMap().value(QStringLiteral("kind")).toString(),
              QStringLiteral("login"));
+}
+
+void NavigationHistoryTest::audioPlaylistRouteSelectsTheMusicPlaylistPage()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "pushAudioPlaylist", QStringLiteral("pl-a")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicPlaylistPage"));
+    QCOMPARE(currentItem(history)->property("playlistId").toString(), QStringLiteral("pl-a"));
+
+    QVERIFY(invoke(root, "pushVideoPlaylist", QStringLiteral("pl-v")));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("playlistPage"));
+
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicPlaylistPage"));
+    const QVariantMap entry = history->property("currentEntry").toMap();
+    QCOMPARE(entry.value(QStringLiteral("kind")).toString(), QStringLiteral("playlist"));
+    QCOMPARE(entry.value(QStringLiteral("mode")).toString(), QStringLiteral("audio"));
+    QCOMPARE(currentItem(history)->property("playlistId").toString(), QStringLiteral("pl-a"));
+    QVERIFY(root->property("preparedRoutes").toStringList().contains(QStringLiteral("playlist:pl-a")));
+
+    // The history key is built by concatenation, so an empty id degenerates to
+    // the bare prefix and every audio playlist then shares one entry. The key
+    // that reaches history must carry the id, and Main must refuse to build one
+    // without it.
+    const QString key = entry.value(QStringLiteral("key")).toString();
+    QCOMPARE(key, QStringLiteral("musicPlaylist:pl-a"));
+    QVERIFY2(key != QStringLiteral("musicPlaylist:"), "the audio playlist key lost its id");
+    QFile mainFile(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/Main.qml"));
+    QVERIFY(mainFile.open(QIODevice::ReadOnly));
+    const QByteArray mainSource = mainFile.readAll();
+    const qsizetype openAt = mainSource.indexOf("function openMusicPlaylist(playlistId, name)");
+    QVERIFY(openAt >= 0);
+    const qsizetype keyAt = mainSource.indexOf("\"musicPlaylist:\" + playlistId", openAt);
+    const qsizetype guardAt = mainSource.indexOf("if (!playlistId)", openAt);
+    QVERIFY(keyAt > openAt);
+    QVERIFY2(guardAt > openAt && guardAt < keyAt,
+             "openMusicPlaylist builds its key before rejecting an empty id");
 }
 
 QTEST_MAIN(NavigationHistoryTest)

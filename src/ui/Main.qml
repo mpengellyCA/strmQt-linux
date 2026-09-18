@@ -69,7 +69,8 @@ ApplicationWindow {
                                                  && (stack.currentItem.objectName === "musicHomePage"
                                                      || stack.currentItem.objectName === "musicBrowsePage"
                                                      || stack.currentItem.objectName === "albumPage"
-                                                     || stack.currentItem.objectName === "artistPage")
+                                                     || stack.currentItem.objectName === "artistPage"
+                                                     || stack.currentItem.objectName === "musicPlaylistPage")
                                                  ? "music" : "browse"
 
     Binding {
@@ -314,7 +315,7 @@ ApplicationWindow {
             SeriesCtl.ensureOpen(route.id, route.name, route.seasonId);
             break;
         case "playlist":
-            if (PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
+            if (route.mode !== "audio" && PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
                 PlaylistCtl.refresh();
             if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
                 PlaylistCtl.open(route.id, route.name);
@@ -327,12 +328,12 @@ ApplicationWindow {
             MusicBrowseCtl.restore(route.id, route.tab, route.query);
             break;
         case "artist":
-            if (MusicCtl.detailKind !== "artist" || MusicCtl.detailId !== route.id)
-                MusicCtl.openArtist(route.id, route.name);
+            if (ArtistCtl.artistId !== route.id)
+                ArtistCtl.open(route.id, route.name, root.musicLibraryId());
             break;
         case "album":
-            if (MusicCtl.detailKind !== "album" || MusicCtl.detailId !== route.id)
-                MusicCtl.openAlbum(route.id, route.name);
+            if (AlbumCtl.albumId !== route.id)
+                AlbumCtl.open(route.id, route.name);
             break;
         case "details":
             if (DetailsCtl.itemId !== route.id)
@@ -363,7 +364,7 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        MusicCtl.openAlbum(id, name);
+        AlbumCtl.open(id, name);
         root.pushPage({ "kind": "album", "id": id, "name": name,
                         "key": key, "title": name },
                       { "albumItem": item });
@@ -379,7 +380,7 @@ ApplicationWindow {
             root.focusCurrentPage();
             return;
         }
-        MusicCtl.openArtist(id, name);
+        ArtistCtl.open(id, name, root.musicLibraryId());
         root.pushPage({ "kind": "artist", "id": id, "name": name,
                         "key": key, "title": name },
                       { "artistItem": item });
@@ -396,7 +397,14 @@ ApplicationWindow {
         }
         case "album": root.openAlbum(target); break;
         case "artist": root.openArtist(target); break;
-        case "playlist": root.openPlaylist(id, name); break;
+        case "playlist":
+            // A generic playlist map carries no reliable media type; the
+            // surface the request came from does.
+            if (root.interactionContext === "music")
+                root.openMusicPlaylist(id, name);
+            else
+                root.openPlaylist(id, name);
+            break;
         case "details": root.openDetails(target); break;
         default: break;
         }
@@ -488,6 +496,33 @@ ApplicationWindow {
                         "key": "playlists", "title": qsTr("Playlists") });
     }
 
+    // The Crate playlist page, for an audio playlist opened from music. Its
+    // own history key: the generic Playlists destination is a two-pane
+    // browser, while this is one record, and Back between the two must not
+    // collapse them into one entry.
+    function openMusicPlaylist(playlistId, name): void {
+        if (!playlistId)
+            return;
+        const key = "musicPlaylist:" + playlistId;
+        if (root.currentKey === key) {
+            root.focusCurrentPage();
+            return;
+        }
+        PlaylistCtl.open(playlistId, name);
+        root.pushPage({ "kind": "playlist", "mode": "audio", "id": playlistId, "name": name,
+                        "key": key, "title": name },
+                      { "playlistId": playlistId, "playlistName": name });
+    }
+
+    // The music library the user is in, for surfaces that know only an item:
+    // Browse's scope when Browse has been opened, else Home's. Empty before
+    // either has been visited this session.
+    function musicLibraryId(): string {
+        if (MusicBrowseCtl.libraryId.length > 0)
+            return MusicBrowseCtl.libraryId;
+        return MusicHomeCtl.libraryId;
+    }
+
     // A music library's browse page (Crate spec §5). One history entry per
     // library: section switches on screen never push, and the entry retains
     // the section (tab) and the whole query (routeState) for Back/Forward.
@@ -524,6 +559,23 @@ ApplicationWindow {
                                 "key": key, "title": name,
                                 "tab": MusicBrowseCtl.section,
                                 "query": MusicBrowseCtl.routeState });
+    }
+
+    // A liner-notes genre link. Inside the music library it filters Browse
+    // by that genre; with no music library known it falls back to the
+    // generic genre destination rather than doing nothing.
+    //
+    // It sits AFTER openMusicGenre, not beside the other music helpers above:
+    // `tst_navigation_history` slices Main.qml into function bodies with
+    // `indexOf("function openMusicGenre")`, which this name is a prefix match
+    // for. Declared earlier it captured openMusicBrowse's push into the genre
+    // body and inverted the prepare/push ordering the test pins.
+    function openMusicGenreFromPage(genreId, genreName): void {
+        const libraryId = root.musicLibraryId();
+        if (libraryId.length > 0)
+            root.openMusicGenre(libraryId, qsTr("Music"), genreId, genreName);
+        else
+            Actions.browseGenre(genreId, genreName);
     }
 
     function openSearch(): void {
@@ -634,6 +686,7 @@ ApplicationWindow {
         libraryPageComponent: libraryComponent
         personPageComponent: personComponent
         playlistPageComponent: playlistComponent
+        musicPlaylistPageComponent: musicPlaylistComponent
         artistPageComponent: artistComponent
         albumPageComponent: albumComponent
         musicBrowsePageComponent: musicBrowseComponent
@@ -664,6 +717,7 @@ ApplicationWindow {
                     ["search", searchComponent], ["settings", settingsComponent],
                     ["person", personComponent], ["playlist", playlistComponent],
                     ["artist", artistComponent], ["album", albumComponent],
+                    ["musicPlaylist", musicPlaylistComponent],
                     ["musicHome", musicHomeComponent], ["musicBrowse", musicBrowseComponent]
                 ];
                 let failures = 0;
@@ -783,6 +837,9 @@ ApplicationWindow {
         target: stack.currentItem
         ignoreUnknownSignals: true
         function onBackRequested() { root.goBack(); }
+        function onMusicGenreRequested(genreId, genreName) {
+            root.openMusicGenreFromPage(genreId, genreName);
+        }
     }
 
     // Above every piece of chrome: the sleeve travels over the rail and the bar,
@@ -1123,12 +1180,17 @@ ApplicationWindow {
 
     Component {
         id: artistComponent
-        ArtistPage { objectName: "artistPage" }
+        MusicArtistPage { objectName: "artistPage" }
     }
 
     Component {
         id: albumComponent
-        AlbumPage { objectName: "albumPage" }
+        MusicAlbumPage { objectName: "albumPage" }
+    }
+
+    Component {
+        id: musicPlaylistComponent
+        MusicPlaylistPage { objectName: "musicPlaylistPage" }
     }
 
     Component {

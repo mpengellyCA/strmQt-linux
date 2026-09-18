@@ -31,6 +31,9 @@ StackView {
     property Component libraryPageComponent: null
     property Component personPageComponent: null
     property Component playlistPageComponent: null
+    // Audio playlists open as the Crate page. Chosen by the route's mode, so
+    // a retained or reconstructed entry keeps the page it was opened as.
+    property Component musicPlaylistPageComponent: null
     property Component artistPageComponent: null
     property Component albumPageComponent: null
     property Component musicBrowsePageComponent: null
@@ -247,7 +250,10 @@ StackView {
         case "home": return navigation.homePageComponent;
         case "library": return navigation.libraryPageComponent;
         case "person": return navigation.personPageComponent;
-        case "playlist": return navigation.playlistPageComponent;
+        case "playlist":
+            return route.mode === "audio" && navigation.musicPlaylistPageComponent !== null
+                   ? navigation.musicPlaylistPageComponent
+                   : navigation.playlistPageComponent;
         case "artist": return navigation.artistPageComponent;
         case "album": return navigation.albumPageComponent;
         case "musicBrowse": return navigation.musicBrowsePageComponent;
@@ -293,6 +299,9 @@ StackView {
         case "musicBrowse": return { "libraryId": route.id, "libraryName": route.name,
                                      "initialSection": route.tab };
         case "musicHome": return { "libraryId": route.id, "libraryName": route.name };
+        case "playlist": return route.mode === "audio"
+                                ? { "playlistId": route.id, "playlistName": route.name }
+                                : ({});
         default: return ({});
         }
     }

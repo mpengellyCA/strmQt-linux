@@ -4351,7 +4351,7 @@ MSG
 
 Main.qml changes a lot in Phases 2 and 3, so every edit below is anchored on content, not line numbers. Where a step says "if still present", Phase 3 may already have removed that code, and there is nothing to do.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `tests/unit/tst_navigation_history.cpp`:
 
@@ -4517,14 +4517,14 @@ Leave every line that reads `music` (`MusicPage.qml`) as Phase 3 left it. If Pha
     QVERIFY(!topTracksOwner.contains("enabled:"));
 ```
 
-- [ ] **Step 2: Run the test and watch it fail**
+- [x] **Step 2: Run the test and watch it fail**
 
 Run: `cmake --build --preset dev --target tst_navigation_history && ctest --preset dev -R tst_navigation_history --output-on-failure`
 Expected: FAIL.
 - `audioPlaylistRouteSelectsTheMusicPlaylistPage` fails: `Cannot assign to non-existent property "musicPlaylistPageComponent"`, so the probe does not load, and every test in the file fails at `QVERIFY(root)`.
 - `itemPolicyIsCentralizedAcrossQmlSurfaces` fails on `root.openMusicPlaylist(id, name)`.
 
-- [ ] **Step 3: `BoundedNavigationStack`**
+- [x] **Step 3: `BoundedNavigationStack`**
 
 In `src/ui/shell/BoundedNavigationStack.qml`, after `property Component playlistPageComponent: null`:
 
@@ -4557,7 +4557,7 @@ In `reconstructedProperties`, before `default: return ({});`:
                                 : ({});
 ```
 
-- [ ] **Step 4: `Main.qml`**
+- [x] **Step 4: `Main.qml`**
 
 1. **`interactionContext`**: in the `objectName` chain that yields `"music"`, add the playlist page next to `"artistPage"`:
 
@@ -4708,7 +4708,7 @@ with
 
    `MusicPlaylistPage.backRequested` already reaches `onBackRequested`, which is the same transaction Search uses.
 
-- [ ] **Step 5: Run the tests and the self-test**
+- [x] **Step 5: Run the tests and the self-test**
 
 Run:
 
@@ -4724,7 +4724,7 @@ Expected:
 
 If a page fails with `Cannot assign to non-existent property`, the named Crate control's property differs from the index's contract table. Fix the page (Tasks 6–8) to match the control.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/Main.qml src/ui/shell/BoundedNavigationStack.qml tests/unit/tst_navigation_history.cpp
