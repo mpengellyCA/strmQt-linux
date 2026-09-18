@@ -133,8 +133,8 @@ Item {
     // window's overlay layer and simply keeps floating there, with only Esc to
     // find it (measured on Qt 6.11 for the queue peek, and it is the same
     // popup class here). A select disappears whenever the view around it
-    // changes: FilterBar's genre control is a Repeater delegate that goes away
-    // with the filter set, and the sort control's options change per tab.
+    // changes: a page swaps whole views under it, and a filter bar's sort
+    // options change with the library.
     onVisibleChanged: { if (!select.visible) menu.close() }
     onEnabledChanged: { if (!select.enabled) menu.close() }
 

@@ -44,7 +44,6 @@ private slots:
     void libraryRetargetPublishesClearedModelBeforeTerminal();
     void filtersAreSharedAcrossTabsAndInvalidateThem();
     void aHiddenOldQueryReplyCannotBypassLazyInvalidation();
-    void musicPageInstantiatesOnlyTheActiveTab();
     void songsAreTheirOwnModelWithTheirOwnQuery();
     void artistEndpointsCarryTheNarrowingAxes();
     void genresPageOnTheArrayNotTheCount();
@@ -733,44 +732,6 @@ void MusicQueryTest::aHiddenOldQueryReplyCannotBypassLazyInvalidation()
              QStringLiteral("fresh-artist"));
     QCOMPARE(lastQueryFor(artistsPath).queryItemValue(QStringLiteral("Filters")),
              QStringLiteral("IsFavorite"));
-}
-
-// The UI half of the lazy-lane contract is structural: Component declarations
-// are inert, and exactly one Loader chooses among them. Pin the capture ->
-// controller retarget -> source swap order too, because swapping first destroys
-// the old view before its bounded navigation cursor can be retained.
-void MusicQueryTest::musicPageInstantiatesOnlyTheActiveTab()
-{
-    const QString path = QFINDTESTDATA("../../src/ui/pages/MusicPage.qml");
-    QVERIFY2(!path.isEmpty(), "MusicPage.qml test data was not found");
-    QFile page(path);
-    QVERIFY(page.open(QIODevice::ReadOnly));
-    const QByteArray source = page.readAll();
-
-    QCOMPARE(source.count("id: tabViewLoader"), 1);
-    QCOMPARE(source.count("Loader {"), 1);
-    for (const QByteArray &component : {QByteArrayLiteral("albumsViewComponent"),
-                                        QByteArrayLiteral("artistsViewComponent"),
-                                        QByteArrayLiteral("songsViewComponent"),
-                                        QByteArrayLiteral("playlistsViewComponent")}) {
-        QCOMPARE(source.count("id: " + component), 1);
-    }
-    QVERIFY(source.contains("sourceComponent: page.loadedTab === 1 ? artistsViewComponent"));
-    QCOMPARE(source.count("visible: page.albumsTab"), 0);
-    QCOMPARE(source.count("visible: page.songsTab"), 0);
-    QCOMPARE(source.count("visible: page.playlistsTab"), 0);
-
-    const qsizetype handler = source.indexOf("onTabSelected: index => {");
-    const qsizetype capture = source.indexOf("page.captureActiveView()", handler);
-    const qsizetype retarget = source.indexOf("MusicCtl.tab =", handler);
-    const qsizetype swap = source.indexOf("page.loadedTab = index", handler);
-    QVERIFY(handler >= 0);
-    QVERIFY(capture > handler);
-    QVERIFY(retarget > capture);
-    QVERIFY(swap > retarget);
-    QVERIFY(source.contains("view.navigationFocusSnapshot()"));
-    QVERIFY(source.contains("view.restoreNavigationFocus(String(state.identity),"
-                            " Number(state.index))"));
 }
 
 // The Songs tab must never be the open album's `tracks` model. Sharing it is

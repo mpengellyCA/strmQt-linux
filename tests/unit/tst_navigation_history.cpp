@@ -17,11 +17,12 @@ private slots:
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void searchEscapeClearsQueryThenGoesBackThroughTransaction();
-    void restoresPerEntryMusicTab();
+    void restoresPerEntryMusicBrowseState();
     void reconstructsMusicHomeAfterEviction();
     void restoresPerEntrySeriesSeasonAndAcceptsLaterSelection();
     void productionRetargetOrderingRetainsDepartingScopes();
     void itemPolicyIsCentralizedAcrossQmlSurfaces();
+    void musicBrowsePageInstantiatesOnlyTheActiveSection();
     void searchTrackOwnerRestoresAcrossResultLifecycle();
     void restoresVirtualFocusAcrossDelayedRefill();
     void pendingBackRestoreHonorsUserOverride();
@@ -54,7 +55,8 @@ Item {
     property string preparedDetailsId: ""
     property string preparedAlbumId: ""
     property string searchQuery: ""
-    property string musicTab: "albums"
+    property string musicBrowseSection: "albums"
+    property string musicBrowseState: ""
     property string seriesSeasonId: ""
     property string preparedSeriesSeasonId: ""
     property int refillBatch: 0
@@ -290,23 +292,30 @@ Item {
         if (history.currentItem && history.currentItem.focusOverride)
             history.currentItem.focusOverride();
     }
-    function pushMusic(tab): void {
-        root.musicTab = String(tab);
-        history.pushRoute({ "kind": "music", "id": "music-1", "name": "Music",
-                            "key": "music-1", "title": "Music", "tab": root.musicTab });
+    function pushMusicBrowse(section): void {
+        root.musicBrowseSection = String(section);
+        root.musicBrowseState = "";
+        history.pushRoute({ "kind": "musicBrowse", "id": "music-1", "name": "Music",
+                            "key": "musicBrowse:music-1", "title": "Music",
+                            "tab": root.musicBrowseSection, "query": root.musicBrowseState });
     }
-    function setMusicTab(tab): void {
-        root.musicTab = String(tab);
-        if (history.currentItem && history.currentItem.selectedTab !== undefined)
-            history.currentItem.selectedTab = root.musicTab;
+    function setMusicBrowseSection(section): void {
+        root.musicBrowseSection = String(section);
+        if (history.currentItem && history.currentItem.selectedSection !== undefined)
+            history.currentItem.selectedSection = root.musicBrowseSection;
+    }
+    function setMusicBrowseState(state): void {
+        root.musicBrowseState = String(state);
     }
     // The production Main.qml transaction: capture A, retarget the shared
     // controller to Albums in B, then construct B without re-snapshotting A.
-    function openMusicLibraryFromMain(libraryId): void {
+    function openMusicBrowseFromMain(libraryId): void {
         history.rememberFocus();
-        root.musicTab = "albums";
-        history.pushRoute({ "kind": "music", "id": String(libraryId), "name": "Music B",
-                            "key": String(libraryId), "title": "Music B", "tab": "albums" },
+        root.musicBrowseSection = "albums";
+        root.musicBrowseState = "";
+        history.pushRoute({ "kind": "musicBrowse", "id": String(libraryId), "name": "Music B",
+                            "key": "musicBrowse:" + String(libraryId), "title": "Music B",
+                            "tab": "albums", "query": "" },
                           undefined, true);
     }
     function pushMusicHome(libraryId): void {
@@ -354,8 +363,10 @@ Item {
             root.preparedAlbumId = route.id;
         else if (route.kind === "search")
             root.searchQuery = route.query;
-        else if (route.kind === "music")
-            root.musicTab = route.tab;
+        else if (route.kind === "musicBrowse") {
+            root.musicBrowseSection = route.tab;
+            root.musicBrowseState = route.query;
+        }
         else if (route.kind === "series") {
             root.seriesSeasonId = route.seasonId;
             root.preparedSeriesSeasonId = route.seasonId;
@@ -681,15 +692,15 @@ Item {
         }
     }
 
-    component MusicProbe: FocusScope {
+    component MusicBrowseProbe: FocusScope {
         property string libraryId: ""
         property string libraryName: ""
-        property string initialTab: "albums"
-        property string selectedTab: initialTab
-        property string controllerTabAtCreation: ""
-        objectName: "music-" + selectedTab
+        property string initialSection: "albums"
+        property string selectedSection: initialSection
+        property string controllerSectionAtCreation: ""
+        objectName: "musicBrowse-" + selectedSection
         focus: true
-        Component.onCompleted: controllerTabAtCreation = root.musicTab
+        Component.onCompleted: controllerSectionAtCreation = root.musicBrowseSection
     }
 
     component MusicHomeProbe: FocusScope {
@@ -715,7 +726,7 @@ Item {
     Component { id: personComponent; TwinProbe {} }
     Component { id: libraryComponent; VirtualProbe {} }
     Component { id: searchComponent; SearchProbe {} }
-    Component { id: musicComponent; MusicProbe {} }
+    Component { id: musicBrowseComponent; MusicBrowseProbe {} }
     Component { id: musicHomeComponent; MusicHomeProbe {} }
     Component { id: seriesComponent; SeriesProbe {} }
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
@@ -759,7 +770,8 @@ Item {
         historyLimit: 4
         focusItem: root.Window.window ? root.Window.window.activeFocusItem : null
         currentSearchQuery: root.searchQuery
-        currentMusicTab: root.musicTab
+        currentMusicBrowseSection: root.musicBrowseSection
+        currentMusicBrowseState: root.musicBrowseState
         currentSeriesSeasonId: root.seriesSeasonId
         initialRoute: ({
             "kind": "details", "id": "0", "name": "Item 0", "itemType": "Movie",
@@ -779,7 +791,7 @@ Item {
         personPageComponent: personComponent
         libraryPageComponent: libraryComponent
         searchPageComponent: searchComponent
-        musicPageComponent: musicComponent
+        musicBrowsePageComponent: musicBrowseComponent
         musicHomePageComponent: musicHomeComponent
         seriesPageComponent: seriesComponent
         loginPageComponent: loginComponent
@@ -1161,8 +1173,10 @@ void NavigationHistoryTest::searchEscapeClearsQueryThenGoesBackThroughTransactio
              QStringLiteral("search:"));
 }
 
-void NavigationHistoryTest::restoresPerEntryMusicTab()
+void NavigationHistoryTest::restoresPerEntryMusicBrowseState()
 {
+    const QString state = QStringLiteral(
+        "{\"v\":1,\"g\":[\"genre-1\"],\"d\":1970,\"f\":\"any\",\"fav\":true}");
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     QQuickView view;
@@ -1170,22 +1184,28 @@ void NavigationHistoryTest::restoresPerEntryMusicTab()
     QVERIFY(root);
     QVERIFY(history);
 
-    QVERIFY(invoke(root, "pushMusic", QStringLiteral("albums")));
-    QVERIFY(invoke(root, "setMusicTab", QStringLiteral("songs")));
+    QVERIFY(invoke(root, "pushMusicBrowse", QStringLiteral("albums")));
+    QVERIFY(invoke(root, "setMusicBrowseSection", QStringLiteral("songs")));
+    QVERIFY(invoke(root, "setMusicBrowseState", state));
     QVERIFY(invoke(root, "pushRoute", 91));
 
-    const QVariantMap retainedMusic = listProperty(history, "navTrail").at(1).toMap();
-    QCOMPARE(retainedMusic.value(QStringLiteral("tab")).toString(), QStringLiteral("songs"));
+    const QVariantMap retained = listProperty(history, "navTrail").at(1).toMap();
+    QCOMPARE(retained.value(QStringLiteral("tab")).toString(), QStringLiteral("songs"));
+    QCOMPARE(retained.value(QStringLiteral("query")).toString(), state);
 
+    // Another scope moves the shared controller on; Back must put it back.
+    QVERIFY(invoke(root, "setMusicBrowseState", QString()));
     QVERIFY(invoke(root, "goBack"));
-    QTRY_COMPARE(currentItem(history)->property("selectedTab").toString(),
+    QTRY_COMPARE(currentItem(history)->property("selectedSection").toString(),
                  QStringLiteral("songs"));
+    QTRY_COMPARE(root->property("musicBrowseState").toString(), state);
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goForward"));
-    QTRY_COMPARE(currentItem(history)->property("initialTab").toString(),
+    QTRY_COMPARE(currentItem(history)->property("initialSection").toString(),
                  QStringLiteral("songs"));
-    QTRY_COMPARE(currentItem(history)->property("selectedTab").toString(),
+    QTRY_COMPARE(currentItem(history)->property("selectedSection").toString(),
                  QStringLiteral("songs"));
+    QTRY_COMPARE(root->property("musicBrowseState").toString(), state);
 }
 
 void NavigationHistoryTest::reconstructsMusicHomeAfterEviction()
@@ -1284,14 +1304,13 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QVERIFY(seriesPush >= 0);
     QVERIFY(seriesCapture < seriesPrepare);
     QVERIFY(seriesPrepare < seriesPush);
-    // A music library lands on its Home. Home's section strip opens the music
-    // route, which still retargets the shared MusicController before the push.
+    // A music library lands on its Home; Home's strip and bins open Browse.
     const QByteArray libraryBody = functionBody("openLibrary", "openMusicHome");
     QVERIFY(!libraryBody.isEmpty());
     QVERIFY(libraryBody.contains("root.openMusicHome(libraryId, name)"));
-    QVERIFY(!libraryBody.contains("MusicCtl.loadAlbums"));
+    QVERIFY(!libraryBody.contains("MusicCtl."));
 
-    const QByteArray homeBody = functionBody("openMusicHome", "openMusicSection");
+    const QByteArray homeBody = functionBody("openMusicHome", "openPlaylists");
     QVERIFY(!homeBody.isEmpty());
     const qsizetype homeCapture = homeBody.indexOf("root.capturePageDeparture");
     const qsizetype homeOpen = homeBody.indexOf("MusicHomeCtl.open");
@@ -1302,30 +1321,42 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QVERIFY(homeCapture < homeOpen);
     QVERIFY(homeOpen < homePush);
 
-    const QByteArray sectionBody = functionBody("openMusicSection", "openPlaylists");
-    QVERIFY(!sectionBody.isEmpty());
-    const qsizetype musicCapture = sectionBody.indexOf("root.capturePageDeparture");
-    const qsizetype musicPrepare = sectionBody.indexOf("MusicCtl.setLibrary");
-    const qsizetype musicRoute = sectionBody.indexOf("root.prepareRoute");
-    const qsizetype musicPush = sectionBody.indexOf("root.pushCapturedPage");
-    QVERIFY(musicCapture >= 0);
-    QVERIFY(musicPrepare >= 0);
-    QVERIFY(musicRoute >= 0);
-    QVERIFY(musicPush >= 0);
-    QVERIFY(musicCapture < musicPrepare);
-    QVERIFY(musicPrepare < musicRoute);
-    QVERIFY(musicRoute < musicPush);
+    // Capture the departing route before the shared controller moves, and
+    // push only once it has: the page is built against the new scope.
+    const QByteArray browseBody = functionBody("openMusicBrowse", "openMusicGenre");
+    QVERIFY(!browseBody.isEmpty());
+    const qsizetype browseCapture = browseBody.indexOf("root.capturePageDeparture");
+    const qsizetype browsePrepare = browseBody.lastIndexOf("MusicBrowseCtl.open(");
+    const qsizetype browsePush = browseBody.indexOf("root.pushCapturedPage");
+    QVERIFY(browseCapture >= 0);
+    QVERIFY(browsePrepare >= 0);
+    QVERIFY(browsePush >= 0);
+    QVERIFY(browseCapture < browsePrepare);
+    QVERIFY(browsePrepare < browsePush);
+    QVERIFY(browseBody.contains("\"query\": MusicBrowseCtl.routeState"));
 
-    QFile musicPage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicPage.qml"));
-    QVERIFY(musicPage.open(QIODevice::ReadOnly));
-    const QByteArray musicSource = musicPage.readAll();
-    QCOMPARE(musicSource.count("navigationFocusRefillActive: MusicCtl.loading"), 0);
+    const QByteArray genreBody = functionBody("openMusicGenre", "openSearch");
+    QVERIFY(!genreBody.isEmpty());
+    const qsizetype genreCapture = genreBody.indexOf("root.capturePageDeparture");
+    const qsizetype genrePrepare = genreBody.lastIndexOf("MusicBrowseCtl.openGenre(");
+    const qsizetype genrePush = genreBody.indexOf("root.pushCapturedPage");
+    QVERIFY(genreCapture >= 0);
+    QVERIFY(genrePrepare >= 0);
+    QVERIFY(genrePush >= 0);
+    QVERIFY(genreCapture < genrePrepare);
+    QVERIFY(genrePrepare < genrePush);
+
+    QFile browsePage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicBrowsePage.qml"));
+    QVERIFY(browsePage.open(QIODevice::ReadOnly));
+    const QByteArray browseSource = browsePage.readAll();
+    QVERIFY(!browseSource.contains("MusicCtl."));
     for (const QByteArray &lane : {QByteArrayLiteral("albums"), QByteArrayLiteral("artists"),
-                                   QByteArrayLiteral("songs"),
+                                   QByteArrayLiteral("songs"), QByteArrayLiteral("genres"),
                                    QByteArrayLiteral("playlists")}) {
-        QVERIFY(musicSource.contains("navigationFocusRefillActive: MusicCtl." + lane
-                                     + "Loading"));
+        QVERIFY(browseSource.contains("navigationFocusRefillActive: MusicBrowseCtl." + lane
+                                      + "Lane.loading"));
     }
+    QVERIFY(!QFile::exists(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicPage.qml")));
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1344,14 +1375,17 @@ void NavigationHistoryTest::productionRetargetOrderingRetainsDepartingScopes()
     QCOMPARE(currentItem(history)->property("controllerSeasonAtCreation").toString(), QString{});
 
     QVERIFY(invoke(root, "resetRoute", QStringLiteral("between-scopes")));
-    QVERIFY(invoke(root, "pushMusic", QStringLiteral("albums")));
-    QVERIFY(invoke(root, "setMusicTab", QStringLiteral("songs")));
-    QVERIFY(invoke(root, "openMusicLibraryFromMain", QStringLiteral("music-2")));
+    const QString departingState = QStringLiteral("{\"v\":1,\"fav\":true}");
+    QVERIFY(invoke(root, "pushMusicBrowse", QStringLiteral("albums")));
+    QVERIFY(invoke(root, "setMusicBrowseSection", QStringLiteral("songs")));
+    QVERIFY(invoke(root, "setMusicBrowseState", departingState));
+    QVERIFY(invoke(root, "openMusicBrowseFromMain", QStringLiteral("music-2")));
     trail = listProperty(history, "navTrail");
     QCOMPARE(trail.size(), 3);
     QCOMPARE(trail.at(1).toMap().value(QStringLiteral("tab")).toString(),
              QStringLiteral("songs"));
-    QCOMPARE(currentItem(history)->property("controllerTabAtCreation").toString(),
+    QCOMPARE(trail.at(1).toMap().value(QStringLiteral("query")).toString(), departingState);
+    QCOMPARE(currentItem(history)->property("controllerSectionAtCreation").toString(),
              QStringLiteral("albums"));
 }
 
@@ -1406,7 +1440,8 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     QVERIFY(!mini.contains("artistRequested("));
     QVERIFY(!mini.contains("albumRequested("));
 
-    const QByteArray music = sourceFor(QStringLiteral("src/ui/pages/MusicPage.qml"));
+    const QByteArray music = sourceFor(QStringLiteral("src/ui/pages/MusicBrowsePage.qml"));
+    QVERIFY(!music.isEmpty());
     QVERIFY(music.contains("profile: \"musicBrowse\""));
     QCOMPARE(music.count("musicMenu.popupForItem("), 3);
     QVERIFY(!music.contains("musicMenu.popupFor("));
@@ -1419,12 +1454,39 @@ void NavigationHistoryTest::itemPolicyIsCentralizedAcrossQmlSurfaces()
     const QByteArray artist = sourceFor(QStringLiteral("src/ui/pages/ArtistPage.qml"));
     QVERIFY(artist.contains("Actions.play(item)"));
     QVERIFY(!artist.contains("MusicCtl.playAlbum("));
-    QVERIFY(music.contains("Actions.play(item)"));
-    QVERIFY(!music.contains("MusicCtl.playAlbum("));
+    QVERIFY(music.contains("MusicPlay.playAlbum("));
+    QVERIFY(!music.contains("MusicCtl."));
 
     const QByteArray playlist = sourceFor(QStringLiteral("src/ui/pages/PlaylistPage.qml"));
     QVERIFY(
         playlist.contains("onRemoveFromPlaylistRequested: item => PlaylistCtl.removeItem(item)"));
+}
+
+// Only the visible section is a live tree: five Components, one Loader. The
+// swap follows the controller's sectionChanged, after the departing view's
+// cursor is captured, and a rebuilt view restores that cursor.
+void NavigationHistoryTest::musicBrowsePageInstantiatesOnlyTheActiveSection()
+{
+    QFile file(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/pages/MusicBrowsePage.qml"));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray source = file.readAll();
+
+    QCOMPARE(source.count("Loader {"), 1);
+    for (const QByteArray &component : {QByteArrayLiteral("albumsComponent"),
+                                        QByteArrayLiteral("artistsComponent"),
+                                        QByteArrayLiteral("songsComponent"),
+                                        QByteArrayLiteral("genresComponent"),
+                                        QByteArrayLiteral("playlistsComponent")}) {
+        QCOMPARE(source.count("id: " + component), 1);
+    }
+    const qsizetype handler = source.indexOf("function onSectionChanged()");
+    const qsizetype capture = source.indexOf("page.captureActiveView();", handler);
+    const qsizetype swapSection = source.indexOf("page.loadedSection = MusicBrowseCtl.section;", handler);
+    QVERIFY(handler >= 0);
+    QVERIFY(capture > handler);
+    QVERIFY(swapSection > capture);
+    QVERIFY(source.contains("onLoaded: Qt.callLater(page.restoreActiveView)"));
+    QVERIFY(source.contains("view.restoreNavigationFocus(String(state.identity), Number(state.index))"));
 }
 
 void NavigationHistoryTest::searchTrackOwnerRestoresAcrossResultLifecycle()

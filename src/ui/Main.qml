@@ -67,7 +67,7 @@ ApplicationWindow {
                                                : root.playerOnTop ? "player"
                                                : stack.currentItem !== null
                                                  && (stack.currentItem.objectName === "musicHomePage"
-                                                     || stack.currentItem.objectName === "musicPage"
+                                                     || stack.currentItem.objectName === "musicBrowsePage"
                                                      || stack.currentItem.objectName === "albumPage"
                                                      || stack.currentItem.objectName === "artistPage")
                                                  ? "music" : "browse"
@@ -83,11 +83,9 @@ ApplicationWindow {
     // "settings", "details", "series", or a library id.
     readonly property string currentKey: root.currentEntry !== null
                                          ? root.currentEntry.key : "home"
-    // The nav rail's view of currentKey. A library's Music Home is that library
-    // as far as the rail and the library cycle are concerned.
-    readonly property string railKey: root.currentKey.startsWith("musicHome:")
-                                      ? root.currentKey.substring("musicHome:".length)
-                                      : root.currentKey
+    // The nav rail's view of currentKey. A library's Music Home and Browse are
+    // that library as far as the rail and the library cycle are concerned.
+    readonly property string railKey: root.currentKey.replace(/^music(?:Home|Browse):/, "")
     readonly property string pageTitle: root.currentEntry !== null
                                         ? root.currentEntry.title : qsTr("Home")
 
@@ -325,17 +323,8 @@ ApplicationWindow {
             // The same library again is refreshStale(): free within the TTL.
             MusicHomeCtl.open(route.id);
             break;
-        case "music":
-            MusicCtl.setLibrary(route.id);
-            MusicCtl.tab = route.tab;
-            if (MusicCtl.tab === "artists" && MusicCtl.artists.count === 0)
-                MusicCtl.loadArtists();
-            else if (MusicCtl.tab === "songs" && MusicCtl.songs.count === 0)
-                MusicCtl.loadSongs();
-            else if (MusicCtl.tab === "playlists" && MusicCtl.playlists.count === 0)
-                MusicCtl.loadPlaylists();
-            else if (MusicCtl.tab === "albums" && MusicCtl.albums.count === 0)
-                MusicCtl.loadAlbums();
+        case "musicBrowse":
+            MusicBrowseCtl.restore(route.id, route.tab, route.query);
             break;
         case "artist":
             if (MusicCtl.detailKind !== "artist" || MusicCtl.detailId !== route.id)
@@ -459,8 +448,8 @@ ApplicationWindow {
                         "key": libraryId, "title": name });
     }
 
-    // Home's key is not the library id: MusicPage keeps that key, so Home and a
-    // section are two history entries rather than one replacing the other.
+    // Home's key is not Browse's ("musicHome:" and "musicBrowse:" + id), so Home
+    // and a section are two history entries rather than one replacing the other.
     function openMusicHome(libraryId, name): void {
         const key = "musicHome:" + libraryId;
         if (root.currentKey === key) {
@@ -471,23 +460,6 @@ ApplicationWindow {
         MusicHomeCtl.open(libraryId);
         root.pushCapturedPage({ "kind": "musicHome", "id": libraryId, "name": name,
                                 "key": key, "title": name });
-    }
-
-    // Interim (Phase 2). Home's section strip and genre bins open the existing
-    // MusicPage; Phase 3 replaces this body with openMusicBrowse/openMusicGenre
-    // and keeps the page signals. MusicPage has no Genres tab, so "genres" is
-    // Albums, and a genre bin is Albums filtered to that genre.
-    function openMusicSection(libraryId, name, section, genreId): void {
-        const tab = section === "artists" || section === "songs" || section === "playlists"
-                  ? section : "albums";
-        root.capturePageDeparture();
-        MusicCtl.setLibrary(libraryId);
-        MusicCtl.setGenreIds(genreId ? [genreId] : []);
-        const route = { "kind": "music", "id": libraryId, "name": name,
-                        "collectionType": "music",
-                        "key": libraryId, "title": name, "tab": tab };
-        root.prepareRoute(route);
-        root.pushCapturedPage(route);
     }
 
     function openPlaylists(): void {
@@ -514,6 +486,44 @@ ApplicationWindow {
         PlaylistCtl.refresh();
         root.pushPage({ "kind": "playlist", "id": playlistId, "name": name,
                         "key": "playlists", "title": qsTr("Playlists") });
+    }
+
+    // A music library's browse page (Crate spec §5). One history entry per
+    // library: section switches on screen never push, and the entry retains
+    // the section (tab) and the whole query (routeState) for Back/Forward.
+    // The controller moves between the capture and the push, so the departing
+    // route keeps its own scope and the new page is built on the new one.
+    function openMusicBrowse(libraryId, name, section): void {
+        const key = "musicBrowse:" + libraryId;
+        if (root.currentKey === key) {
+            MusicBrowseCtl.open(libraryId, section);
+            root.focusCurrentPage();
+            return;
+        }
+        root.capturePageDeparture();
+        MusicBrowseCtl.open(libraryId, section);
+        root.pushCapturedPage({ "kind": "musicBrowse", "id": libraryId, "name": name,
+                                "key": key, "title": name,
+                                "tab": MusicBrowseCtl.section,
+                                "query": MusicBrowseCtl.routeState });
+    }
+
+    // A genre bin is a filter, not a page: the browse page on Albums with only
+    // that genre set (openGenre replaces every other filter).
+    function openMusicGenre(libraryId, name, genreId, genreName): void {
+        const key = "musicBrowse:" + libraryId;
+        if (root.currentKey === key) {
+            MusicBrowseCtl.openGenre(genreId, genreName);
+            root.focusCurrentPage();
+            return;
+        }
+        root.capturePageDeparture();
+        MusicBrowseCtl.open(libraryId, "albums");
+        MusicBrowseCtl.openGenre(genreId, genreName);
+        root.pushCapturedPage({ "kind": "musicBrowse", "id": libraryId, "name": name,
+                                "key": key, "title": name,
+                                "tab": MusicBrowseCtl.section,
+                                "query": MusicBrowseCtl.routeState });
     }
 
     function openSearch(): void {
@@ -611,7 +621,8 @@ ApplicationWindow {
         historyLimit: root.navigationHistoryLimit
         focusItem: root.activeFocusItem
         currentSearchQuery: SearchCtl.query
-        currentMusicTab: MusicCtl.tab
+        currentMusicBrowseSection: MusicBrowseCtl.section
+        currentMusicBrowseState: MusicBrowseCtl.routeState
         currentSeriesSeasonId: SeriesCtl.currentSeasonId
         initialRoute: Session.authenticated
                       ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
@@ -625,7 +636,7 @@ ApplicationWindow {
         playlistPageComponent: playlistComponent
         artistPageComponent: artistComponent
         albumPageComponent: albumComponent
-        musicPageComponent: musicComponent
+        musicBrowsePageComponent: musicBrowseComponent
         musicHomePageComponent: musicHomeComponent
         detailsPageComponent: detailsComponent
         seriesPageComponent: seriesComponent
@@ -652,8 +663,7 @@ ApplicationWindow {
                     ["series", seriesComponent], ["player", playerComponent],
                     ["search", searchComponent], ["settings", settingsComponent],
                     ["person", personComponent], ["playlist", playlistComponent],
-                    ["artist", artistComponent], ["album", albumComponent],
-                    ["music", musicComponent], ["musicHome", musicHomeComponent],
+                    ["artist", artistComponent], ["album", albumComponent], ["musicHome", musicHomeComponent],
                     ["musicBrowse", musicBrowseComponent]
                 ];
                 let failures = 0;
@@ -1122,11 +1132,6 @@ ApplicationWindow {
     }
 
     Component {
-        id: musicComponent
-        MusicPage { objectName: "musicPage" }
-    }
-
-    Component {
         id: musicHomeComponent
 
         MusicHomePage {
@@ -1134,9 +1139,10 @@ ApplicationWindow {
 
             objectName: "musicHomePage"
             onSectionRequested: key =>
-                root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, key, "")
+                root.openMusicBrowse(musicHomePage.libraryId, musicHomePage.libraryName, key)
             onGenreRequested: (genreId, genreName) =>
-                root.openMusicSection(musicHomePage.libraryId, musicHomePage.libraryName, "albums", genreId)
+                root.openMusicGenre(musicHomePage.libraryId, musicHomePage.libraryName,
+                                    genreId, genreName)
         }
     }
 
@@ -1451,7 +1457,7 @@ ApplicationWindow {
         }
     }
 
-    // ▸ on an album card is a one-shot verb, and neither MusicPage nor
+    // ▸ on an album card is a one-shot verb, and neither AlbumPage nor
     // ArtistPage carries a toast host of its own. Here, so both are covered by
     // one connection.
     Connections {

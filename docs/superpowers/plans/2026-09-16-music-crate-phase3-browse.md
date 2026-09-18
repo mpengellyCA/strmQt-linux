@@ -4625,7 +4625,7 @@ MSG
 
 Order inside `Main.qml`: `openMusicBrowse` and `openMusicGenre` go directly before `function openSearch(): void {`, in that order. The test's `functionBody(name, next)` slices by that order: `openMusicBrowse` ends at `openMusicGenre` and `openMusicGenre` at `openSearch`. Both stay clear of the `openSeries → openFavorites` and `openLibrary → openPlaylists` slices other pins use.
 
-- [ ] **Step 1: Port the navigation tests (they fail first)**
+- [x] **Step 1: Port the navigation tests (they fail first)**
 
 Save as `/tmp/w3e-nav-test.py` and run it from the repository root. It changes only `tests/unit/tst_navigation_history.cpp` and `tests/integration/tst_music_query.cpp`, and stops at the first anchor it cannot find.
 
@@ -4922,7 +4922,7 @@ Expected:
 - `tst_navigation_history` FAILS. The probe does not load (`Cannot assign to non-existent property "currentMusicBrowseSection"`), so every slot fails at `createHistoryProbe`. After Step 2, `productionRetargetOrderingRetainsDepartingScopes` still fails on `!browseBody.isEmpty()` until Step 3.
 - `tst_music_query` passes.
 
-- [ ] **Step 2: Retarget `BoundedNavigationStack.qml`**
+- [x] **Step 2: Retarget `BoundedNavigationStack.qml`**
 
 Save as `/tmp/w3e-stack.py` and run it from the repository root:
 
@@ -4973,7 +4973,7 @@ python3 /tmp/w3e-stack.py
 
 Expected: `stack retargeted`.
 
-- [ ] **Step 3: Rewire `Main.qml`**
+- [x] **Step 3: Rewire `Main.qml`**
 
 Save as `/tmp/w3e-main.py` and run it from the repository root. It edits `src/ui/Main.qml` only:
 
@@ -5144,7 +5144,7 @@ After the script, `Main.qml` must satisfy both of these:
 - `grep -n "musicBrowse" src/ui/Main.qml` lists the context line, `case "musicBrowse"`, both functions, both Home handlers, `railKey`, the two stack bindings, the component binding, `musicBrowseComponent` and its self-test entry.
 - `grep -n "MusicCtl" src/ui/Main.qml` lists only the `album`/`artist` routes and the `onActionFailed` toast connection. Phase 4 retires those.
 
-- [ ] **Step 4: Remove the FilterBar music branches and retire `MusicPage`**
+- [x] **Step 4: Remove the FilterBar music branches and retire `MusicPage`**
 
 Save as `/tmp/w3e-filterbar.py` and run it from the repository root:
 
@@ -5290,7 +5290,7 @@ Expected:
 
 The `FilterBar` check for `"usic"` is deliberate: after this step the file names no music concept at all. If it trips on text the anchors did not cover, reword that text so it names no music concept.
 
-- [ ] **Step 5: Build, test, self-test**
+- [x] **Step 5: Build, test, self-test**
 
 Run:
 
@@ -5305,7 +5305,7 @@ Expected:
 - All three tests PASS. `tst_navigation_history` includes `restoresPerEntryMusicBrowseState` and `musicBrowsePageInstantiatesOnlyTheActiveSection`.
 - The self-test prints `selftest ok   musicBrowse` and no `music` line, and ends with `exit=0`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A src/ui/Main.qml src/ui/shell/BoundedNavigationStack.qml src/ui/shell/FilterBar.qml \

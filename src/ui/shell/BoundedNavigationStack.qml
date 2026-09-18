@@ -17,9 +17,11 @@ StackView {
     // binds this to the current controller query so a route captures edits made
     // while its page is active before any navigation transition hides it.
     property string currentSearchQuery: ""
-    // MusicController is process-wide while each retained music route owns the
-    // tab its semantic focus key belongs to.
-    property string currentMusicTab: "albums"
+    // MusicBrowseController is process-wide while each retained musicBrowse
+    // route owns its section (the tab its semantic focus key belongs to) and
+    // its query, as the controller's compact routeState.
+    property string currentMusicBrowseSection: "albums"
+    property string currentMusicBrowseState: ""
     // SeriesController is likewise process-wide. History retains the stable
     // server season id rather than a row that can move after reconstruction.
     property string currentSeriesSeasonId: ""
@@ -31,7 +33,7 @@ StackView {
     property Component playlistPageComponent: null
     property Component artistPageComponent: null
     property Component albumPageComponent: null
-    property Component musicPageComponent: null
+    property Component musicBrowsePageComponent: null
     property Component musicHomePageComponent: null
     property Component detailsPageComponent: null
     property Component seriesPageComponent: null
@@ -248,7 +250,7 @@ StackView {
         case "playlist": return navigation.playlistPageComponent;
         case "artist": return navigation.artistPageComponent;
         case "album": return navigation.albumPageComponent;
-        case "music": return navigation.musicPageComponent;
+        case "musicBrowse": return navigation.musicBrowsePageComponent;
         case "musicHome": return navigation.musicHomePageComponent;
         case "details": return navigation.detailsPageComponent;
         case "series": return navigation.seriesPageComponent;
@@ -288,8 +290,8 @@ StackView {
         case "artist": return { "artistItem": item };
         case "album": return { "albumItem": item };
         case "person": return { "personId": route.id, "personName": route.name };
-        case "music": return { "libraryId": route.id, "libraryName": route.name,
-                               "initialTab": route.tab };
+        case "musicBrowse": return { "libraryId": route.id, "libraryName": route.name,
+                                     "initialSection": route.tab };
         case "musicHome": return { "libraryId": route.id, "libraryName": route.name };
         default: return ({});
         }
@@ -335,8 +337,10 @@ StackView {
             return;
         if (route.kind === "search")
             route.query = navigation.boundedText(navigation.currentSearchQuery, 1024);
-        else if (route.kind === "music")
-            route.tab = navigation.boundedText(navigation.currentMusicTab, 16);
+        else if (route.kind === "musicBrowse") {
+            route.tab = navigation.boundedText(navigation.currentMusicBrowseSection, 16);
+            route.query = navigation.boundedText(navigation.currentMusicBrowseState, 1024);
+        }
         else if (route.kind === "series")
             route.seasonId = navigation.boundedText(navigation.currentSeriesSeasonId, 1024);
     }
