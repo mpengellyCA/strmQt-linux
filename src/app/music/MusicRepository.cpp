@@ -749,6 +749,9 @@ QFuture<Result<QList<Artist>>> MusicRepository::topArtists(const QString &librar
             return pending.resolve(Result<QList<Artist>>::failure(QStringLiteral("request canceled")));
         ItemsQuery query;
         query.ids = ids;
+        // Measured live 2026-09-17: Ids alone returns nothing for artist ids —
+        // /Users/{uid}/Items only resolves them when MusicArtist is named.
+        query.includeItemTypes = {QStringLiteral("MusicArtist")};
         query.limit = static_cast<int>(ids.size());
         fetchItems(query).then(this, [this, pending, key, epoch, ids](Result<QJsonDocument> r) {
             if (!r.ok())

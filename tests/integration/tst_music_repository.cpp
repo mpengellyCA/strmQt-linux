@@ -432,7 +432,10 @@ void MusicRepositoryTest::topArtistsRankByPlays()
                           page({playedTrack("a", "al", "arX", "2026-09-15T20:00:00Z"),
                                 playedTrack("b", "al", "arY", "2026-09-15T19:00:00Z"),
                                 playedTrack("c", "al", "arY", "2026-09-15T18:00:00Z")}));
-    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Ids", "arY,arX"}}, 200,
+    // Measured live 2026-09-17: /Users/{uid}/Items?Ids=<artist ids> returns 0
+    // items unless IncludeItemTypes names MusicArtist, so the shelf and the
+    // "More like" station came back empty against the real server.
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"Ids", "arY,arX"}, {"IncludeItemTypes", "MusicArtist"}}, 200,
                           page({QJsonObject{{"Id", "arX"}, {"Name", "X"}}, QJsonObject{{"Id", "arY"}, {"Name", "Y"}}}));
     const auto result = waitFor(m_repo->topArtists(kLibrary, 5));
     QVERIFY2(result.ok(), qPrintable(result.error));
