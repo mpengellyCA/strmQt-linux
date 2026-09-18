@@ -89,6 +89,24 @@ void MusicPlayback::playStation(const QString &libraryId, const Station &station
                  tr("Station · %1").arg(station.label));
 }
 
+void MusicPlayback::shuffleStation(const QString &libraryId, const Station &station)
+{
+    const quint64 generation = m_actions->reservePlaybackIntent();
+    playResolved(m_repository->resolveStation(libraryId, station), generation, 0, Order::Shuffled,
+                 tr("Station · %1").arg(station.label));
+}
+
+void MusicPlayback::queueStation(const QString &libraryId, const Station &station)
+{
+    m_repository->resolveStation(libraryId, station).then(this, [this](Result<QList<Track>> result) {
+        if (!result.ok()) {
+            emit m_actions->actionFailed(tr("Couldn't add to the queue: %1").arg(result.error));
+            return;
+        }
+        m_actions->addAllToQueue(toMaps(result.value));
+    });
+}
+
 void MusicPlayback::playStationTile(const QString &libraryId, const QVariantMap &tile)
 {
     const auto kind = StationModel::kindFromKey(tile.value(QStringLiteral("itemId")).toString());

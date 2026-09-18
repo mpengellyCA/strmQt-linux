@@ -507,7 +507,7 @@ MSG
   - `void MusicPlayback::shuffleStation(const QString &libraryId, const Station &station)`
   - `void MusicPlayback::queueStation(const QString &libraryId, const Station &station)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/integration/tst_music_home_controller.cpp`:
 
@@ -1072,12 +1072,12 @@ strmqt_add_test(tst_music_home_controller
 target_include_directories(tst_music_home_controller PRIVATE mocks)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cmake --preset dev && cmake --build --preset dev --target tst_music_home_controller`
 Expected: FAIL to compile with `app/controllers/music/MusicHomeController.h: No such file or directory`.
 
-- [ ] **Step 3: Add the station verbs to `MusicPlayback`**
+- [x] **Step 3: Add the station verbs to `MusicPlayback`**
 
 In `src/app/music/MusicPlayback.h`, after `playStation`:
 
@@ -1109,7 +1109,7 @@ void MusicPlayback::queueStation(const QString &libraryId, const Station &statio
 }
 ```
 
-- [ ] **Step 4: Write the controller header**
+- [x] **Step 4: Write the controller header**
 
 `src/app/controllers/music/MusicHomeController.h`:
 
@@ -1266,7 +1266,7 @@ private:
 } // namespace strmqt::music
 ```
 
-- [ ] **Step 5: Write the controller**
+- [x] **Step 5: Write the controller**
 
 `src/app/controllers/music/MusicHomeController.cpp`:
 
@@ -1737,7 +1737,7 @@ Add to the `strmqt_app` list in `src/CMakeLists.txt`, after the `MusicLane` line
     app/controllers/music/MusicHomeController.h app/controllers/music/MusicHomeController.cpp
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `cmake --build --preset dev --target tst_music_home_controller && ctest --preset dev -R "tst_music_home_controller|tst_music_playback" --output-on-failure`
 Expected: PASS (`tst_music_home_controller`: 9 tests; `tst_music_playback` unchanged).
@@ -1746,7 +1746,7 @@ If `heroResumesTheLastAlbum` fails only on `summary`, the mapper has read a diff
 
 If `lanesFailIndependently` still sees a genre lane without an error, check `MusicRepository::allGenres` in the Phase 1 source for the request it sends when `caps::kGenreItemCounts` is false. Route that request with status 500 in `routeGenres`, using the same required keys it actually sends.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/app/controllers/music/MusicHomeController.h src/app/controllers/music/MusicHomeController.cpp src/app/music/MusicPlayback.h src/app/music/MusicPlayback.cpp src/CMakeLists.txt tests/integration/tst_music_home_controller.cpp tests/CMakeLists.txt

@@ -250,6 +250,13 @@ strmqt_add_test(tst_music_playback
 )
 target_include_directories(tst_music_playback PRIVATE mocks)
 
+strmqt_add_test(tst_music_home_controller
+    integration/tst_music_home_controller.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h
+)
+target_include_directories(tst_music_home_controller PRIVATE mocks)
+
 strmqt_add_test(tst_crate_tokens unit/tst_crate_tokens.cpp)
 target_link_libraries(tst_crate_tokens PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick)
 target_compile_definitions(tst_crate_tokens PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

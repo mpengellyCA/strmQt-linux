@@ -33,6 +33,9 @@ public:
     Q_INVOKABLE void shuffleAlbum(const QString &albumId, const QString &title);
     Q_INVOKABLE void radio(const QString &seedId, const QString &seedName);
     void playStation(const QString &libraryId, const Station &station);
+    void shuffleStation(const QString &libraryId, const Station &station);
+    // Appends without replacing what plays, so it reserves no intent.
+    void queueStation(const QString &libraryId, const Station &station);
     Q_INVOKABLE void playStationTile(const QString &libraryId, const QVariantMap &tile);
     void shuffleQuery(const MusicQuery &query, const QString &label);
 
