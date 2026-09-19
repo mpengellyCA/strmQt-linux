@@ -7,8 +7,13 @@
 #include <mpv/client.h>
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 
 #include <clocale>
+
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace strmqt {
 
@@ -63,8 +68,18 @@ QVariant variantFromNode(const mpv_node &node)
 } // namespace
 
 MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent)
-    : PlayerBackend(parent), m_toneMapping(toneMapping)
+    : PlayerBackend(parent),
+      m_toneMapping(toneMapping),
+      // deleteLater(): the last reference may be dropped by a renderer on the
+      // render thread, and a QObject must be destroyed on its own thread.
+      m_renderLink(new mpvdetail::RenderLink,
+                   [](mpvdetail::RenderLink *link) { link->deleteLater(); })
 {
+    m_idleRelease.setSingleShot(true);
+    m_idleRelease.setInterval(mpvdetail::kCoreIdleReleaseMs);
+    connect(&m_idleRelease, &QTimer::timeout, this, &MpvPlayer::beginCoreRelease);
+    connect(m_renderLink.get(), &mpvdetail::RenderLink::released, this,
+            &MpvPlayer::finishCoreRelease);
 }
 
 bool MpvPlayer::ensureInitialized()
@@ -88,6 +103,15 @@ bool MpvPlayer::ensureInitialized()
     mpv_set_option_string(m_mpv, "audio-client-name", "StrmQt");
     // Do not freeze on a dead last frame; END_FILE must fire (PLAN §3.5).
     mpv_set_option_string(m_mpv, "keep-open", "no");
+    // No Lua: mpv's bundled scripts each run their own VM on their own thread and
+    // serve nothing an embedded Emby player uses (no mpv OSD, console, menus or
+    // youtube-dl). load-scripts only covers the script directories; every
+    // built-in has its own switch. All must be set before mpv_initialize, and an
+    // older libmpv that lacks one just rejects that option.
+    for (const char *option : {"load-scripts", "ytdl", "load-stats-overlay", "load-console",
+                               "load-auto-profiles", "load-select", "load-positioning",
+                               "load-commands", "load-context-menu"})
+        mpv_set_option_string(m_mpv, option, "no");
     // Network resilience basics; the full ladder/watchdog sits above (PlayerController).
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "256MiB");
@@ -159,13 +183,89 @@ void MpvPlayer::applyDeferredSettings()
 
 MpvPlayer::~MpvPlayer()
 {
-    if (m_mpv) {
-        mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
-        // Render contexts (MpvVideoItem) must already be gone by now: the QML
-        // scene is torn down before the Application object graph.
-        mpv_terminate_destroy(m_mpv);
-        m_mpv = nullptr;
+    // Render contexts (MpvVideoItem) must already be gone by now: the QML
+    // scene is torn down before the Application object graph.
+    destroyCore();
+}
+
+void MpvPlayer::scheduleCoreRelease()
+{
+    if (m_mpv)
+        m_idleRelease.start();
+}
+
+void MpvPlayer::beginCoreRelease()
+{
+    if (!m_mpv || m_coreReleasing)
+        return;
+    // load() stops the timer, so this is belt and braces against a state the
+    // timer did not see coming.
+    if (m_state == State::Loading || m_state == State::Playing || m_state == State::Paused)
+        return;
+    int idle = 0;
+    if (mpv_get_property(m_mpv, "idle-active", MPV_FORMAT_FLAG, &idle) < 0 || !idle) {
+        m_idleRelease.start();
+        return;
     }
+    m_coreReleasing = true;
+    // handle() now answers null: every video item re-synchronizes, frees its
+    // render context on the render thread and releases the link.
+    emit renderHandleChanged();
+    finishCoreRelease();
+}
+
+void MpvPlayer::finishCoreRelease()
+{
+    if (!m_coreReleasing || m_renderLink->holders() > 0)
+        return;
+    QElapsedTimer timer;
+    timer.start();
+    destroyCore();
+    const qint64 destroyMs = timer.elapsed();
+#if defined(__GLIBC__)
+    // The core's memory is free now, but most of it sits in the per-thread
+    // arenas of mpv threads that no longer exist, where glibc keeps it mapped
+    // until something asks. Nothing else in the app will reuse it soon.
+    malloc_trim(0);
+#endif
+    qCInfo(logPlayback).nospace() << "released the idle mpv core (destroy " << destroyMs
+                                  << " ms, trim " << timer.elapsed() - destroyMs << " ms)";
+}
+
+void MpvPlayer::destroyCore()
+{
+    m_idleRelease.stop();
+    m_coreReleasing = false;
+    if (!m_mpv)
+        return;
+    // mpv keeps these across files, so the next core must start from what this
+    // one last had. Volume and mute live in the core; the others are mirrored,
+    // but a change made while no file is loaded never reaches the mirror.
+    m_requestedVolume = volume();
+    m_requestedMuted = muted();
+    double value = 0;
+    if (mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &value) >= 0 &&
+        !qFuzzyCompare(value, m_speed)) {
+        m_speed = value;
+        emit playbackSpeedChanged();
+    }
+    if (mpv_get_property(m_mpv, "audio-delay", MPV_FORMAT_DOUBLE, &value) >= 0) {
+        const int ms = static_cast<int>(qRound(value * 1000.0));
+        if (ms != m_audioDelayMs) {
+            m_audioDelayMs = ms;
+            emit audioDelayChanged();
+        }
+    }
+    if (mpv_get_property(m_mpv, "sub-delay", MPV_FORMAT_DOUBLE, &value) >= 0) {
+        const int ms = static_cast<int>(qRound(value * 1000.0));
+        if (ms != m_subtitleDelayMs) {
+            m_subtitleDelayMs = ms;
+            emit subtitleDelayChanged();
+        }
+    }
+    mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
+    mpv_terminate_destroy(m_mpv);
+    m_mpv = nullptr;
 }
 
 bool MpvPlayer::command(const char *args[])
@@ -180,6 +280,12 @@ bool MpvPlayer::command(const char *args[])
 
 void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
 {
+    m_idleRelease.stop();
+    if (m_coreReleasing) {
+        // Still alive: keep it, and let the video items take the handle back.
+        m_coreReleasing = false;
+        emit renderHandleChanged();
+    }
     m_loadId = loadId;
     m_pendingLoadId = loadId;
     // Publish the requested position directly. A synthetic zero stamped with
@@ -223,6 +329,7 @@ void MpvPlayer::stop()
     m_pendingLoadId = 0;
     resetPerLoadState(0, 0);
     setState(State::Idle, 0);
+    scheduleCoreRelease();
 }
 
 void MpvPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
@@ -645,6 +752,8 @@ void MpvPlayer::drainEvents()
                 emit endReached(m_eventLoadId);
             }
             // STOP/REDIRECT/QUIT: state handled by the caller (stop()).
+            if (end->reason == MPV_END_FILE_REASON_ERROR || end->reason == MPV_END_FILE_REASON_EOF)
+                scheduleCoreRelease();
             break;
         }
         case MPV_EVENT_PROPERTY_CHANGE: {

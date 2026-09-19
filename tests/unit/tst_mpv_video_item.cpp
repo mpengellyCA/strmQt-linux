@@ -5,6 +5,7 @@
 
 #include <QQuickWindow>
 #include <QSGNode>
+#include <QTcpServer>
 #include <QThread>
 
 #include <atomic>
@@ -34,6 +35,30 @@ protected:
     }
 };
 
+const QUrl kMissingMedia = QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media"));
+
+QString stringProperty(mpv_handle *handle, const char *name)
+{
+    char *raw = mpv_get_property_string(handle, name);
+    const QString result = QString::fromUtf8(raw ? raw : "");
+    mpv_free(raw);
+    return result;
+}
+
+// Loads a file that cannot open and waits for mpv to say so, which leaves the
+// core idle exactly as an ended or failed playback does.
+bool failLoad(MpvPlayer &player, PlayerBackend::LoadId loadId)
+{
+    QSignalSpy errors(&player, &PlayerBackend::errorOccurred);
+    player.load(kMissingMedia, 0, loadId);
+    return QTest::qWaitFor([&] {
+        for (const QList<QVariant> &error : errors)
+            if (error.at(1).value<PlayerBackend::LoadId>() == loadId)
+                return true;
+        return false;
+    });
+}
+
 } // namespace
 
 class MpvVideoItemTest : public QObject
@@ -44,8 +69,15 @@ private slots:
     void coreInitializesOnFirstLoad();
     void deferredSettingsApplyOnFirstLoad();
     void deferredSettingsNormalizeBeforeFirstLoad();
+    void bundledScriptsAreNotLoaded();
     void playerDetachSynchronizesBeforeOwnerDestruction();
     void offThreadFrameNotificationRedrawsTheItem();
+    void idleCoreIsReleased();
+    void coreInUseIsKept();
+    void recreatedCoreKeepsOptionsSettingsAndEvents();
+    void releaseWaitsForEveryHolder();
+    void releaseWaitsForTheRenderer();
+    void hiddenPlaneStillLetsGo();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -173,6 +205,42 @@ void MpvVideoItemTest::deferredSettingsNormalizeBeforeFirstLoad()
     player.stop();
 }
 
+// mpv's bundled Lua scripts (ytdl_hook, stats, select, positioning, ...) each
+// start a VM on a thread of their own at mpv_initialize. Nothing in an embedded
+// Emby player drives them, so the core must come up without any.
+void MpvVideoItemTest::bundledScriptsAreNotLoaded()
+{
+    MpvPlayer player;
+    player.load(QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media")), 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+
+    const auto stringProperty = [handle](const char *name) {
+        char *raw = mpv_get_property_string(handle, name);
+        const QString result = QString::fromUtf8(raw ? raw : "");
+        mpv_free(raw);
+        return result;
+    };
+    QCOMPARE(stringProperty("load-scripts"), QStringLiteral("no"));
+    QCOMPARE(stringProperty("ytdl"), QStringLiteral("no"));
+
+#ifdef Q_OS_LINUX
+    // The observable cost: mpv names each script's thread "lua/<script>".
+    QStringList luaThreads;
+    const QDir tasks(QStringLiteral("/proc/self/task"));
+    for (const QString &tid : tasks.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        QFile comm(tasks.filePath(tid + QStringLiteral("/comm")));
+        if (comm.open(QIODevice::ReadOnly)) {
+            const QString name = QString::fromUtf8(comm.readAll()).trimmed();
+            if (name.startsWith(QLatin1String("lua/")))
+                luaThreads << name;
+        }
+    }
+    QVERIFY2(luaThreads.isEmpty(), qPrintable(luaThreads.join(QLatin1Char(','))));
+#endif
+    player.stop();
+}
+
 void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
 {
     QQuickWindow window;
@@ -241,6 +309,197 @@ void MpvVideoItemTest::offThreadFrameNotificationRedrawsTheItem()
     QTRY_VERIFY(item.paintNodeUpdates > baseline);
     notifier.quit();
     QVERIFY(notifier.wait(5000));
+}
+
+// mpv 0.41 keeps every demuxer packet it ever cached until its core is
+// destroyed, so a stopped, ended or failed player gives its core back.
+void MpvVideoItemTest::idleCoreIsReleased()
+{
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    QVERIFY(failLoad(player, 1));
+    QTRY_VERIFY2(!player.hasCore(), "a failed playback left its mpv core alive");
+    QCOMPARE(player.handle(), nullptr);
+
+    player.load(kMissingMedia, 0, 2);
+    QVERIFY(player.hasCore());
+    player.stop();
+    QTRY_VERIFY2(!player.hasCore(), "a stopped player kept its mpv core");
+}
+
+// A pending release must not take the core from a load that follows it.
+void MpvVideoItemTest::coreInUseIsKept()
+{
+    // Accepts and never answers, so the next load stays in Loading.
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    QVERIFY(failLoad(player, 1));
+    mpv_handle *core = player.handle();
+    QVERIFY(core != nullptr);
+
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 2);
+    QTest::qWait(200);
+    QCOMPARE(player.state(), PlayerBackend::State::Loading);
+    QVERIFY2(player.hasCore(), "the core was destroyed under a load in progress");
+    QCOMPARE(player.handle(), core);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+}
+
+// The replacement core is the same player to everything above it: same options,
+// the settings the old core ended with, and a working event channel.
+void MpvVideoItemTest::recreatedCoreKeepsOptionsSettingsAndEvents()
+{
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    QSignalSpy handleChanges(&player, &MpvPlayer::renderHandleChanged);
+    QVERIFY(failLoad(player, 1));
+    // Changed on the live core after stop(): mpv keeps the value, but no
+    // property event for it reaches the player any more.
+    player.stop();
+    player.setPlaybackSpeed(1.5);
+    player.setVolume(61);
+    QTRY_VERIFY(!player.hasCore());
+    player.setMuted(true);
+
+    QVERIFY2(failLoad(player, 2), "the recreated core does not deliver events");
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+    QCOMPARE(stringProperty(handle, "load-scripts"), QStringLiteral("no"));
+    QCOMPARE(stringProperty(handle, "ytdl"), QStringLiteral("no"));
+    QCOMPARE(stringProperty(handle, "vo"), QStringLiteral("libmpv"));
+    QCOMPARE(stringProperty(handle, "hwdec"), QStringLiteral("auto-safe"));
+    QCOMPARE(stringProperty(handle, "demuxer-max-bytes"), QStringLiteral("268435456"));
+    QCOMPARE(stringProperty(handle, "keep-open"), QStringLiteral("no"));
+    QCOMPARE(stringProperty(handle, "speed"), QStringLiteral("1.500000"));
+    QCOMPARE(stringProperty(handle, "volume"), QStringLiteral("61.000000"));
+    QCOMPARE(stringProperty(handle, "mute"), QStringLiteral("yes"));
+    QCOMPARE(player.playbackSpeed(), 1.5);
+    // Created, released, created again: every video item was told each time.
+    QVERIFY(handleChanges.size() >= 3);
+    player.stop();
+}
+
+// mpv requires every render context gone before its core is destroyed. The
+// player half of that contract, with the test standing in for a renderer.
+void MpvVideoItemTest::releaseWaitsForEveryHolder()
+{
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    QSignalSpy handleChanges(&player, &MpvPlayer::renderHandleChanged);
+    player.load(kMissingMedia, 0, 1);
+    QVERIFY(player.handle() != nullptr);
+    const std::shared_ptr<mpvdetail::RenderLink> link = player.renderLink();
+    link->acquire();
+
+    QTRY_COMPARE(player.handle(), nullptr);
+    const qsizetype releaseNotices = handleChanges.size();
+    QTest::qWait(100);
+    QVERIFY2(player.hasCore(), "the core was destroyed while a renderer still held it");
+
+    link->release();
+    QTRY_VERIFY2(!player.hasCore(), "the last holder let go but the core stayed");
+    QCOMPARE(handleChanges.size(), releaseNotices);
+
+    // A load while the release still waits keeps the core and hands it back.
+    player.load(kMissingMedia, 0, 2);
+    mpv_handle *core = player.handle();
+    QVERIFY(core != nullptr);
+    link->acquire();
+    QTRY_COMPARE(player.handle(), nullptr);
+    player.load(kMissingMedia, 0, 3);
+    QCOMPARE(player.handle(), core);
+    link->release();
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+}
+
+// The same contract through the real renderer, which only exists when the
+// scene graph renders with OpenGL: run it on a GL platform (see the commit).
+void MpvVideoItemTest::releaseWaitsForTheRenderer()
+{
+    QQuickWindow window;
+    window.resize(320, 180);
+    MpvVideoItem item(window.contentItem());
+    item.setSize(window.size());
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    item.setPlayerObject(&player);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
+        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+
+    // Long enough to be seen held: this load stays open until stop().
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 1);
+    QTRY_COMPARE(player.renderLink()->holders(), 1);
+
+    // No frames while hidden, so the renderer cannot let go yet.
+    window.hide();
+    player.stop();
+    QTest::qWait(200);
+    QCOMPARE(player.handle(), nullptr);
+    QVERIFY2(player.hasCore(), "the core was destroyed while a renderer still held it");
+    QCOMPARE(player.renderLink()->holders(), 1);
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY2(!player.hasCore(), "the renderer let go but the core stayed");
+    QCOMPARE(player.renderLink()->holders(), 0);
+
+    // And the next playback reattaches to the fresh core.
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 2);
+    QTRY_COMPARE(player.renderLink()->holders(), 1);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+    item.setPlayerObject(nullptr);
+}
+
+// Main.qml parks the one video plane in the picture-in-picture frame, which is
+// hidden once playback stops: exactly when the core is released. A hidden
+// item must still re-synchronize, or the core would never be let go.
+void MpvVideoItemTest::hiddenPlaneStillLetsGo()
+{
+    QQuickWindow window;
+    window.resize(320, 180);
+    QQuickItem frame(window.contentItem());
+    frame.setSize(window.size());
+    MpvVideoItem item(&frame);
+    item.setSize(window.size());
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    item.setPlayerObject(&player);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
+        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 1);
+    QTRY_COMPARE(player.renderLink()->holders(), 1);
+
+    frame.setVisible(false);
+    player.stop();
+    QTRY_VERIFY2(!player.hasCore(), "a renderer under a hidden parent never let go of the core");
+    QCOMPARE(player.renderLink()->holders(), 0);
+
+    item.setVisible(false);
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 2);
+    QTRY_COMPARE(player.renderLink()->holders(), 1);
+    player.stop();
+    QTRY_VERIFY2(!player.hasCore(), "a hidden renderer never let go of the core");
+    item.setPlayerObject(nullptr);
 }
 
 QTEST_MAIN(MpvVideoItemTest)

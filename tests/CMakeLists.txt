@@ -57,7 +57,7 @@ strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
 target_link_libraries(tst_mpv_video_item PRIVATE
-    Qt6::Gui Qt6::Quick Qt6::OpenGL PkgConfig::MPV_RENDER_TEST)
+    Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
 set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # Integration: client/controllers against a local mock HTTP server replaying fixtures.

@@ -71,16 +71,8 @@ public:
 
     ~MpvRenderer() override
     {
-        QQuickWindow *win = m_window.load(std::memory_order_acquire);
-        if (m_context) {
-            if (win)
-                win->beginExternalCommands();
-            mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
-            mpv_render_context_free(m_context);
-            if (win)
-                win->endExternalCommands();
-            m_context = nullptr;
-        }
+        freeContext();
+        letGo();
         m_window.store(nullptr, std::memory_order_release);
     }
 
@@ -90,19 +82,19 @@ public:
         // supported boundary for copying QQuickItem/QObject state to the render
         // thread; render() never dereferences either object.
         auto *videoItem = static_cast<MpvVideoItem *>(item);
-        mpv_handle *handle = videoItem->player() ? videoItem->player()->handle() : nullptr;
+        MpvPlayer *player = videoItem->player();
+        mpv_handle *handle = player ? player->handle() : nullptr;
         m_window.store(videoItem->window(), std::memory_order_release);
         if (handle == m_handle)
             return;
-        if (m_context) {
-            QQuickWindow *win = m_window.load(std::memory_order_acquire);
-            if (win)
-                win->beginExternalCommands();
-            mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
-            mpv_render_context_free(m_context);
-            if (win)
-                win->endExternalCommands();
-            m_context = nullptr;
+        freeContext();
+        letGo();
+        // Registered before anything can create a context on it, and while the
+        // GUI thread is blocked, so the player can never see zero holders while
+        // this renderer still has its handle.
+        if (handle) {
+            m_link = player->renderLink();
+            m_link->acquire();
         }
         m_handle = handle;
     }
@@ -132,6 +124,30 @@ public:
     }
 
 private:
+    void freeContext()
+    {
+        if (!m_context)
+            return;
+        QQuickWindow *win = m_window.load(std::memory_order_acquire);
+        if (win)
+            win->beginExternalCommands();
+        mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
+        mpv_render_context_free(m_context);
+        if (win)
+            win->endExternalCommands();
+        m_context = nullptr;
+    }
+
+    // After freeContext(): the player may destroy the core as soon as the last
+    // holder lets go, and mpv requires the context to be gone by then.
+    void letGo()
+    {
+        if (m_link)
+            m_link->release();
+        m_link.reset();
+        m_handle = nullptr;
+    }
+
     static void onUpdate(void *ctx)
     {
         // Called from an arbitrary mpv thread. The context is the bridge, not
@@ -165,6 +181,7 @@ private:
     }
 
     std::shared_ptr<MpvUpdateBridge> m_bridge;
+    std::shared_ptr<mpvdetail::RenderLink> m_link;
     mpv_handle *m_handle = nullptr;
     std::atomic<QQuickWindow *> m_window = nullptr;
     mpv_render_context *m_context = nullptr;

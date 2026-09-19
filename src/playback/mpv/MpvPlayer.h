@@ -4,8 +4,10 @@
 
 #include <QCoreApplication>
 #include <QStringList>
+#include <QTimer>
 
 #include <atomic>
+#include <memory>
 
 struct mpv_handle;
 
@@ -29,6 +31,39 @@ public:
 private:
     std::atomic_bool m_pending = false;
 };
+
+// Counts the render-thread holders of one MpvPlayer's mpv_handle (the
+// MpvVideoItem renderers that copied it in synchronize()). mpv requires every
+// render context to be freed before its core is destroyed, and a renderer that
+// still holds the raw handle could create a new context at any time, so the
+// player tears its core down only once this reaches zero. Shared by pointer:
+// a renderer can outlive the player, and releases from the render thread.
+class RenderLink : public QObject
+{
+    Q_OBJECT
+
+public:
+    // Render thread, inside synchronize(), while the GUI thread is blocked.
+    void acquire() { m_holders.fetch_add(1, std::memory_order_acq_rel); }
+    // Render thread, any time. The last release wakes the player on its thread.
+    void release()
+    {
+        if (m_holders.fetch_sub(1, std::memory_order_acq_rel) == 1)
+            QMetaObject::invokeMethod(this, &RenderLink::released, Qt::QueuedConnection);
+    }
+    int holders() const { return m_holders.load(std::memory_order_acquire); }
+
+signals:
+    void released();
+
+private:
+    std::atomic_int m_holders = 0;
+};
+
+// How long the core may sit idle (stopped, ended or failed, nothing loading)
+// before it is destroyed. Long enough that advancing a queue, or the retry
+// ladder moving to its next rung, reuses the running core.
+inline constexpr int kCoreIdleReleaseMs = 5000;
 
 } // namespace mpvdetail
 
@@ -177,16 +212,33 @@ public:
     qint64 durationMs() const override { return m_durationMs; }
 
     // For MpvVideoItem's render context; never used to bypass this wrapper.
-    mpv_handle *handle() const { return m_mpv; }
+    // Null while there is no core, and also while an idle core is being
+    // released: a renderer that sees null frees its context and lets go.
+    mpv_handle *handle() const { return m_coreReleasing ? nullptr : m_mpv; }
+    // Every holder of handle() on a render thread registers here; see RenderLink.
+    std::shared_ptr<mpvdetail::RenderLink> renderLink() const { return m_renderLink; }
+    // Whether an mpv core exists at all, releasing or not.
+    bool hasCore() const { return m_mpv != nullptr; }
+    // Test seam for mpvdetail::kCoreIdleReleaseMs.
+    void setCoreIdleReleaseDelayForTests(int ms) { m_idleRelease.setInterval(ms); }
 
 signals:
-    // The object exists before the expensive mpv core does. Video items use
-    // this to resynchronize their render-thread handle on first playback.
+    // The object exists before the expensive mpv core does, and outlives every
+    // core it creates. Video items use this to resynchronize their render-thread
+    // handle whenever a core appears or begins to be released.
     void renderHandleChanged();
 
 private:
     bool ensureInitialized();
     void applyDeferredSettings();
+    // mpv 0.41's demuxer packet pool keeps every packet the cache ever held,
+    // data included, for the life of the core; nothing but destroying the core
+    // gives it back. So an idle core is destroyed and the next load() makes a
+    // fresh one.
+    void scheduleCoreRelease();
+    void beginCoreRelease();
+    void finishCoreRelease();
+    void destroyCore();
     static void wakeup(void *ctx);
     Q_INVOKABLE void drainEvents();
     void setState(State state, LoadId loadId);
@@ -228,6 +280,9 @@ private:
     int m_audioDelayMs = 0;
     int m_subtitleDelayMs = 0;
     mpvdetail::WakeupGate m_wakeupGate;
+    std::shared_ptr<mpvdetail::RenderLink> m_renderLink;
+    QTimer m_idleRelease;
+    bool m_coreReleasing = false;
 };
 
 } // namespace strmqt
