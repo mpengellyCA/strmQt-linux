@@ -6,9 +6,12 @@
 #include <mpv/client.h>
 #include <mpv/render_gl.h>
 
+#include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QThread>
 
 #include <atomic>
 
@@ -37,6 +40,8 @@ void *glProcAddress(void *, const char *name)
 // the bridge outlives the render context (both holders keep it alive), Qt drops
 // any queued call if it is destroyed first, and the QPointer is only read on
 // the thread that can destroy the item.
+class MpvRenderer;
+
 class MpvUpdateBridge : public QObject
 {
 public:
@@ -49,6 +54,11 @@ public:
             return;
         QMetaObject::invokeMethod(this, [this] { deliverUpdate(); }, Qt::QueuedConnection);
     }
+
+    // GUI thread only. Set while this item's renderer lives on the GUI thread
+    // too, which is the basic render loop: the one case where the item may
+    // call into its renderer directly (see MpvVideoItem::onRenderHandleChanged).
+    MpvRenderer *sameThreadRenderer = nullptr;
 
 private:
     void deliverUpdate()
@@ -67,13 +77,28 @@ private:
 class MpvRenderer : public QQuickFramebufferObject::Renderer
 {
 public:
-    explicit MpvRenderer(std::shared_ptr<MpvUpdateBridge> bridge) : m_bridge(std::move(bridge)) {}
+    explicit MpvRenderer(std::shared_ptr<MpvUpdateBridge> bridge) : m_bridge(std::move(bridge))
+    {
+        if (QThread::currentThread() == m_bridge->thread())
+            m_bridge->sameThreadRenderer = this;
+    }
 
     ~MpvRenderer() override
     {
+        if (m_bridge->sameThreadRenderer == this)
+            m_bridge->sameThreadRenderer = nullptr;
         freeContext();
         letGo();
         m_window.store(nullptr, std::memory_order_release);
+    }
+
+    // Basic render loop only, on the GUI (= render) thread, between frames and
+    // with the window's GL context made current by the caller. No frame is
+    // being recorded, so there are no external commands to fence.
+    void releaseBetweenFrames()
+    {
+        freeContext(/*insideFrame=*/false);
+        letGo();
     }
 
     void synchronize(QQuickFramebufferObject *item) override
@@ -124,11 +149,11 @@ public:
     }
 
 private:
-    void freeContext()
+    void freeContext(bool insideFrame = true)
     {
         if (!m_context)
             return;
-        QQuickWindow *win = m_window.load(std::memory_order_acquire);
+        QQuickWindow *win = insideFrame ? m_window.load(std::memory_order_acquire) : nullptr;
         if (win)
             win->beginExternalCommands();
         mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
@@ -238,20 +263,63 @@ void MpvVideoItem::onRenderHandleChanged()
     update();
     // A release is waiting for this item's renderer, which lets go at its next
     // synchronize(). An unexposed window (hidden, minimised) never gets one,
-    // and would keep the whole core alive until it is shown again. Dropping
-    // the window's scene graph deletes every node on the render thread with
-    // its GL context current, and this item's node takes the renderer, and so
-    // the mpv render context, with it. Rebuilt on the next expose, as Qt does
-    // for any window that is not persistent. Only the scene graph goes: the
-    // graphics context stays, whatever the window's own setting.
+    // and would keep the whole core alive until it is shown again.
     QQuickWindow *win = window();
     if (!win || win->isExposed() || !m_player || m_player->handle() || !m_player->hasCore()
         || m_player->renderLink()->holders() == 0)
         return;
-    const bool persistent = win->isPersistentSceneGraph();
+
+    if (MpvRenderer *renderer = m_bridge->sameThreadRenderer) {
+        // Basic render loop: this thread is the render thread, and its
+        // releaseResources() only trims caches, whatever the persistence
+        // flags say, so it would never drop the renderer. Nothing renders
+        // between two calls on this thread, so the renderer can free its mpv
+        // context right here, once the window's own GL context is current. A
+        // pbuffer-backed offscreen surface stands in for the unexposed window.
+        // doneCurrent() afterwards makes the scene graph make its context
+        // current again at the start of its next frame, rather than trusting
+        // a binding it did not make; a context something else had current is
+        // put back. If the context cannot be made current, nothing is freed:
+        // the core then stays until the window is exposed again, which is safe.
+        auto *context = static_cast<QOpenGLContext *>(win->rendererInterface()->getResource(
+            win, QSGRendererInterface::OpenGLContextResource));
+        if (!context)
+            return;
+        QOpenGLContext *previous = QOpenGLContext::currentContext();
+        QSurface *previousSurface = previous ? previous->surface() : nullptr;
+        QOffscreenSurface surface(win->screen());
+        surface.setFormat(context->format());
+        surface.create();
+        if (!context->makeCurrent(&surface)) {
+            qCWarning(logPlayback) << "could not free the video renderer of an unexposed window;"
+                                   << "the mpv core stays until it is shown";
+            return;
+        }
+        renderer->releaseBetweenFrames();
+        context->doneCurrent();
+        if (previous && previousSurface && previous != context)
+            previous->makeCurrent(previousSurface);
+        return;
+    }
+
+    // Threaded render loop: dropping the window's scene graph deletes every
+    // node on the render thread with its GL context current, and this item's
+    // node takes the renderer, and so the mpv render context, with it. Qt
+    // wipes the scene graph only when it is not persistent, and additionally
+    // destroys the graphics context (the QRhi and its GL context) unless THAT
+    // is persistent, so both flags are forced for the one call and restored:
+    // the scene graph goes, the graphics context stays.
+    //
+    // The wipe drops every node, texture and glyph cache in the window, not
+    // only the video's, so the next expose rebuilds them all: a one-off hitch,
+    // at most once per pending release while the window is unexposed.
+    const bool persistentSceneGraph = win->isPersistentSceneGraph();
+    const bool persistentGraphics = win->isPersistentGraphics();
+    win->setPersistentGraphics(true);
     win->setPersistentSceneGraph(false);
     win->releaseResources();
-    win->setPersistentSceneGraph(persistent);
+    win->setPersistentSceneGraph(persistentSceneGraph);
+    win->setPersistentGraphics(persistentGraphics);
 }
 
 } // namespace strmqt

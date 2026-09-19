@@ -3,6 +3,7 @@
 #include "playback/mpv/MpvPlayer.h"
 #include "playback/mpv/MpvVideoItem.h"
 
+#include <QOpenGLContext>
 #include <QProcess>
 #include <QQuickWindow>
 #include <QSGNode>
@@ -10,6 +11,7 @@
 #include <QThread>
 
 #include <atomic>
+#include <memory>
 #ifdef Q_OS_LINUX
 #include <sys/prctl.h>
 #endif
@@ -249,11 +251,14 @@ void MpvVideoItemTest::bundledScriptsAreNotLoaded()
 
 void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
 {
+    // Owned from before the window, so a failed check that returns early still
+    // destroys the renderer first; the test itself destroys it at the end.
+    auto owned = std::make_unique<MpvPlayer>();
+    MpvPlayer *player = owned.get();
     QQuickWindow window;
     window.resize(320, 180);
     MpvVideoItem item(window.contentItem());
     item.setSize(window.size());
-    auto *player = new MpvPlayer;
     QSignalSpy playerSpy(&item, &MpvVideoItem::playerChanged);
     QSignalSpy synchronizedSpy(&window, &QQuickWindow::afterSynchronizing);
     item.setPlayerObject(player);
@@ -272,7 +277,7 @@ void MpvVideoItemTest::playerDetachSynchronizesBeforeOwnerDestruction()
     // handle before the application tears down the owning backend.
     window.update();
     QTRY_VERIFY(synchronizedSpy.size() > priorSynchronizations);
-    delete player;
+    owned.reset();
 }
 
 // mpv notifies about new frames from its own thread, and in simple-control mode
@@ -428,12 +433,14 @@ void MpvVideoItemTest::releaseWaitsForEveryHolder()
 // scene graph renders with OpenGL: run it on a GL platform (see the commit).
 void MpvVideoItemTest::releaseWaitsForTheRenderer()
 {
+    // Declared first, so destroyed last: a failed check returns early, and the
+    // window has to take its renderer down before the player goes.
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
     QQuickWindow window;
     window.resize(320, 180);
     MpvVideoItem item(window.contentItem());
     item.setSize(window.size());
-    MpvPlayer player;
-    player.setCoreIdleReleaseDelayForTests(20);
     item.setPlayerObject(&player);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
@@ -454,6 +461,17 @@ void MpvVideoItemTest::releaseWaitsForTheRenderer()
 
     // Stopped, then the window goes away before the release: an unexposed
     // window never synchronizes, and the core must be released regardless.
+    // That release may take the scene graph but never the graphics context,
+    // even from a window that does not keep it persistent, and it hands the
+    // window's own settings back unchanged.
+    window.setPersistentGraphics(false);
+    auto *gl = static_cast<QOpenGLContext *>(window.rendererInterface()->getResource(
+        &window, QSGRendererInterface::OpenGLContextResource));
+    QVERIFY(gl);
+    auto glDestroyed = std::make_shared<std::atomic<bool>>(false);
+    QObject::connect(
+        gl, &QOpenGLContext::aboutToBeDestroyed, gl, [glDestroyed] { *glDestroyed = true; },
+        Qt::DirectConnection);
     player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
                 0, 2);
     QTRY_COMPARE(player.renderLink()->holders(), 1);
@@ -461,6 +479,10 @@ void MpvVideoItemTest::releaseWaitsForTheRenderer()
     window.hide();
     QTRY_VERIFY2(!player.hasCore(), "an unexposed window kept the idle core");
     QCOMPARE(player.renderLink()->holders(), 0);
+    QVERIFY2(!glDestroyed->load(), "releasing the core destroyed the window's GL context");
+    QVERIFY(!window.isPersistentGraphics());
+    QVERIFY(window.isPersistentSceneGraph());
+    window.setPersistentGraphics(true);
 
     // Shown again, the rebuilt scene attaches to the next core.
     window.show();
@@ -488,14 +510,15 @@ void MpvVideoItemTest::releaseWaitsForTheRenderer()
 // item must still re-synchronize, or the core would never be let go.
 void MpvVideoItemTest::hiddenPlaneStillLetsGo()
 {
+    // Before the window, as in releaseWaitsForTheRenderer().
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
     QQuickWindow window;
     window.resize(320, 180);
     QQuickItem frame(window.contentItem());
     frame.setSize(window.size());
     MpvVideoItem item(&frame);
     item.setSize(window.size());
-    MpvPlayer player;
-    player.setCoreIdleReleaseDelayForTests(20);
     item.setPlayerObject(&player);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
