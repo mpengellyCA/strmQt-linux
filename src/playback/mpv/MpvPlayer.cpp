@@ -78,6 +78,8 @@ MpvPlayer::MpvPlayer(const QString &toneMapping, QObject *parent)
     m_idleRelease.setSingleShot(true);
     m_idleRelease.setInterval(mpvdetail::kCoreIdleReleaseMs);
     connect(&m_idleRelease, &QTimer::timeout, this, &MpvPlayer::beginCoreRelease);
+    m_releaseReminder.setInterval(1000);
+    connect(&m_releaseReminder, &QTimer::timeout, this, &MpvPlayer::renderHandleChanged);
     connect(m_renderLink.get(), &mpvdetail::RenderLink::released, this,
             &MpvPlayer::finishCoreRelease);
 }
@@ -184,7 +186,15 @@ void MpvPlayer::applyDeferredSettings()
 MpvPlayer::~MpvPlayer()
 {
     // Render contexts (MpvVideoItem) must already be gone by now: the QML
-    // scene is torn down before the Application object graph.
+    // scene is torn down before the Application object graph. A renderer that
+    // still holds the handle has a live render context, and mpv aborts when
+    // its core is destroyed under one.
+    if (const int holders = m_renderLink->holders(); holders > 0 && m_mpv) {
+        qCCritical(logPlayback) << "MpvPlayer destroyed while" << holders
+                                << "video renderer(s) still hold its mpv core";
+        Q_ASSERT_X(false, "MpvPlayer::~MpvPlayer",
+                   "a video item outlived its player; the QML scene must go first");
+    }
     destroyCore();
 }
 
@@ -212,6 +222,8 @@ void MpvPlayer::beginCoreRelease()
     // render context on the render thread and releases the link.
     emit renderHandleChanged();
     finishCoreRelease();
+    if (m_coreReleasing)
+        m_releaseReminder.start();
 }
 
 void MpvPlayer::finishCoreRelease()
@@ -220,6 +232,7 @@ void MpvPlayer::finishCoreRelease()
         return;
     QElapsedTimer timer;
     timer.start();
+    captureCoreSettings();
     destroyCore();
     const qint64 destroyMs = timer.elapsed();
 #if defined(__GLIBC__)
@@ -232,12 +245,8 @@ void MpvPlayer::finishCoreRelease()
                                   << " ms, trim " << timer.elapsed() - destroyMs << " ms)";
 }
 
-void MpvPlayer::destroyCore()
+void MpvPlayer::captureCoreSettings()
 {
-    m_idleRelease.stop();
-    m_coreReleasing = false;
-    if (!m_mpv)
-        return;
     // mpv keeps these across files, so the next core must start from what this
     // one last had. Volume and mute live in the core; the others are mirrored,
     // but a change made while no file is loaded never reaches the mirror.
@@ -263,6 +272,15 @@ void MpvPlayer::destroyCore()
             emit subtitleDelayChanged();
         }
     }
+}
+
+void MpvPlayer::destroyCore()
+{
+    m_idleRelease.stop();
+    m_releaseReminder.stop();
+    m_coreReleasing = false;
+    if (!m_mpv)
+        return;
     mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
     mpv_terminate_destroy(m_mpv);
     m_mpv = nullptr;
@@ -281,6 +299,7 @@ bool MpvPlayer::command(const char *args[])
 void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
 {
     m_idleRelease.stop();
+    m_releaseReminder.stop();
     if (m_coreReleasing) {
         // Still alive: keep it, and let the video items take the handle back.
         m_coreReleasing = false;

@@ -39,6 +39,8 @@ signals:
     void playerChanged();
 
 private:
+    void onRenderHandleChanged();
+
     QPointer<MpvPlayer> m_player;
     // Shared with the render thread; see MpvUpdateBridge in the .cpp for why
     // the redraw request cannot go straight to this item.

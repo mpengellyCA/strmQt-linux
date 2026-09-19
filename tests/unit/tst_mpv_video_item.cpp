@@ -3,12 +3,16 @@
 #include "playback/mpv/MpvPlayer.h"
 #include "playback/mpv/MpvVideoItem.h"
 
+#include <QProcess>
 #include <QQuickWindow>
 #include <QSGNode>
 #include <QTcpServer>
 #include <QThread>
 
 #include <atomic>
+#ifdef Q_OS_LINUX
+#include <sys/prctl.h>
+#endif
 #include <mpv/client.h>
 #include <utility>
 
@@ -78,6 +82,8 @@ private slots:
     void releaseWaitsForEveryHolder();
     void releaseWaitsForTheRenderer();
     void hiddenPlaneStillLetsGo();
+    void destroyingAHeldPlayerIsLoud();
+    void destructionEmitsNoSettingChanges();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -441,25 +447,39 @@ void MpvVideoItemTest::releaseWaitsForTheRenderer()
                 0, 1);
     QTRY_COMPARE(player.renderLink()->holders(), 1);
 
-    // No frames while hidden, so the renderer cannot let go yet.
-    window.hide();
+    // On screen: the next synchronize() frees the context and lets go.
     player.stop();
-    QTest::qWait(200);
-    QCOMPARE(player.handle(), nullptr);
-    QVERIFY2(player.hasCore(), "the core was destroyed while a renderer still held it");
-    QCOMPARE(player.renderLink()->holders(), 1);
-
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
     QTRY_VERIFY2(!player.hasCore(), "the renderer let go but the core stayed");
     QCOMPARE(player.renderLink()->holders(), 0);
 
-    // And the next playback reattaches to the fresh core.
+    // Stopped, then the window goes away before the release: an unexposed
+    // window never synchronizes, and the core must be released regardless.
     player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
                 0, 2);
     QTRY_COMPARE(player.renderLink()->holders(), 1);
     player.stop();
-    QTRY_VERIFY(!player.hasCore());
+    window.hide();
+    QTRY_VERIFY2(!player.hasCore(), "an unexposed window kept the idle core");
+    QCOMPARE(player.renderLink()->holders(), 0);
+
+    // Shown again, the rebuilt scene attaches to the next core.
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 3);
+    QTRY_COMPARE(player.renderLink()->holders(), 1);
+
+    // Minimised rather than hidden, where the platform stops exposing it.
+    window.showMinimized();
+    if (QTest::qWaitFor([&] { return !window.isExposed(); }, 2000)) {
+        player.stop();
+        QTRY_VERIFY2(!player.hasCore(), "a minimised window kept the idle core");
+        QCOMPARE(player.renderLink()->holders(), 0);
+    } else {
+        qInfo("this platform keeps a minimised window exposed; nothing to test");
+        player.stop();
+        QTRY_VERIFY(!player.hasCore());
+    }
     item.setPlayerObject(nullptr);
 }
 
@@ -500,6 +520,59 @@ void MpvVideoItemTest::hiddenPlaneStillLetsGo()
     player.stop();
     QTRY_VERIFY2(!player.hasCore(), "a hidden renderer never let go of the core");
     item.setPlayerObject(nullptr);
+}
+
+// A player destroyed under a renderer that still holds its core would take a
+// live render context down with it, which mpv answers with an abort of its
+// own, far from the cause. The player has to say so first, and loudly. Run in
+// a child process, because in a debug build "loudly" includes Q_ASSERT.
+void MpvVideoItemTest::destroyingAHeldPlayerIsLoud()
+{
+    if (qEnvironmentVariableIsSet("STRMQT_TEST_HELD_PLAYER")) {
+#ifdef Q_OS_LINUX
+        // The abort is the expected outcome: keep it out of the core dump store.
+        prctl(PR_SET_DUMPABLE, 0);
+#endif
+        auto *player = new MpvPlayer;
+        player->load(kMissingMedia, 0, 1);
+        QVERIFY(player->hasCore());
+        player->renderLink()->acquire(); // what a renderer with a context does
+        delete player;
+        return;
+    }
+
+    QProcess child;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("STRMQT_TEST_HELD_PLAYER"), QStringLiteral("1"));
+    env.insert(QStringLiteral("QTEST_DISABLE_STACK_DUMP"), QStringLiteral("1"));
+    child.setProcessEnvironment(env);
+    child.start(QCoreApplication::applicationFilePath(),
+                {QStringLiteral("destroyingAHeldPlayerIsLoud")});
+    QVERIFY(child.waitForFinished(60000));
+    const QString output = QString::fromLocal8Bit(child.readAllStandardError())
+        + QString::fromLocal8Bit(child.readAllStandardOutput());
+    QVERIFY2(output.contains(QLatin1String("still hold its mpv core")), qPrintable(output));
+#ifndef QT_NO_DEBUG
+    QVERIFY2(child.exitStatus() == QProcess::CrashExit || child.exitCode() != 0,
+             "a debug build let a held player be destroyed without asserting");
+#endif
+}
+
+// Reading the core's settings back is for the next core. A player on its way
+// out has none, and must not tell its listeners about changes mid-destruction.
+void MpvVideoItemTest::destructionEmitsNoSettingChanges()
+{
+    auto *player = new MpvPlayer;
+    QVERIFY(failLoad(*player, 1));
+    player->stop();
+    // Set on the live core after stop(): the mirror still says 1.0.
+    player->setPlaybackSpeed(1.5);
+    player->setAudioDelayMs(40);
+    QSignalSpy speed(player, &PlayerBackend::playbackSpeedChanged);
+    QSignalSpy audioDelay(player, &PlayerBackend::audioDelayChanged);
+    delete player;
+    QCOMPARE(speed.count(), 0);
+    QCOMPARE(audioDelay.count(), 0);
 }
 
 QTEST_MAIN(MpvVideoItemTest)

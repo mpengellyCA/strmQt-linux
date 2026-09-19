@@ -228,9 +228,30 @@ void MpvVideoItem::setPlayerObject(QObject *player)
     m_player = mpvPlayer;
     if (m_player)
         connect(m_player, &MpvPlayer::renderHandleChanged, this,
-                [this] { update(); });
+                &MpvVideoItem::onRenderHandleChanged);
     emit playerChanged();
     update();
+}
+
+void MpvVideoItem::onRenderHandleChanged()
+{
+    update();
+    // A release is waiting for this item's renderer, which lets go at its next
+    // synchronize(). An unexposed window (hidden, minimised) never gets one,
+    // and would keep the whole core alive until it is shown again. Dropping
+    // the window's scene graph deletes every node on the render thread with
+    // its GL context current, and this item's node takes the renderer, and so
+    // the mpv render context, with it. Rebuilt on the next expose, as Qt does
+    // for any window that is not persistent. Only the scene graph goes: the
+    // graphics context stays, whatever the window's own setting.
+    QQuickWindow *win = window();
+    if (!win || win->isExposed() || !m_player || m_player->handle() || !m_player->hasCore()
+        || m_player->renderLink()->holders() == 0)
+        return;
+    const bool persistent = win->isPersistentSceneGraph();
+    win->setPersistentSceneGraph(false);
+    win->releaseResources();
+    win->setPersistentSceneGraph(persistent);
 }
 
 } // namespace strmqt

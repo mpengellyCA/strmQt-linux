@@ -238,6 +238,7 @@ private:
     void scheduleCoreRelease();
     void beginCoreRelease();
     void finishCoreRelease();
+    void captureCoreSettings();
     void destroyCore();
     static void wakeup(void *ctx);
     Q_INVOKABLE void drainEvents();
@@ -282,6 +283,9 @@ private:
     mpvdetail::WakeupGate m_wakeupGate;
     std::shared_ptr<mpvdetail::RenderLink> m_renderLink;
     QTimer m_idleRelease;
+    // While a release waits on a renderer, the video items are asked again
+    // every so often: a window can stop being exposed after the first ask.
+    QTimer m_releaseReminder;
     bool m_coreReleasing = false;
 };
 
