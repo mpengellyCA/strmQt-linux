@@ -1,5 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+// For the StackView attached properties: a covered page drops its view.
+import QtQuick.Controls.Basic
 import StrmQt
 
 // MusicBrowsePage — one music library read five ways (Crate spec §5).
@@ -44,6 +46,43 @@ FocusScope {
     // The Playlists view always has its New playlist tile to stand on.
     readonly property bool contentFocusable: page.shownCount > 0 || page.playlistsShown
 
+    // ── Covered-page content gate ──────────────────────────────────────────
+    // A retained page the user cannot see keeps its scalar state and its view
+    // snapshots, but holds no delegates and no decoded covers: the section view
+    // IS the expensive part of this page. Off screen it also stops reacting to
+    // the shared controller's section changes, which is what made every covered
+    // copy of this page rebuild a view over MusicBrowseCtl's models at once.
+    //
+    // `inStack` latches when this page joins the shell's StackView. Until then
+    // it is a bare page — the startup self-test and the unit probes construct
+    // pages directly — and draws unconditionally.
+    property bool inStack: false
+    readonly property bool pageShown: !page.inStack
+                                      || page.StackView.status === StackView.Active
+    StackView.onActivated: page.inStack = true
+
+    // Set while the Loader is rebuilding because the page came back on screen
+    // rather than because the user switched section. Both need the view's cursor
+    // put back — that IS the scroll position — but only a section switch may
+    // take the keyboard with it: on the way back from Back the navigation
+    // history owns where focus lands, and it restores a moment later.
+    property bool uncovering: false
+
+    onPageShownChanged: {
+        if (page.pageShown) {
+            // Applied immediately, inside the pop that uncovered this page, so
+            // the view exists and its cursor restore is already queued before
+            // the navigation history restores focus for this route.
+            page.syncViewContent();
+            return;
+        }
+        // Deferred. Evicting the oldest live page rebuilds the StackView (Qt 6
+        // has no StackView.removeItem()), which takes the page on screen out of
+        // the stack and puts it straight back inside one frame; settling the
+        // tear-down collapses that into no change at all.
+        Qt.callLater(page.syncViewContent);
+    }
+
     readonly property string songRowFormat: qsTr("%1 · %2")
     readonly property int songRowHeight: Theme.scale(52)
     readonly property int songNumberColumn: Theme.scale(46)
@@ -59,7 +98,31 @@ FocusScope {
         if (page.libraryId.length > 0 && MusicBrowseCtl.libraryId !== page.libraryId)
             MusicBrowseCtl.open(page.libraryId, page.initialSection);
         page.loadedSection = MusicBrowseCtl.section;
+        Qt.callLater(page.syncViewContent);
+    }
+
+    // Brings the view into line with pageShown. Covered: snapshot and drop it.
+    // Shown: adopt whatever section the controller is on now — onSectionChanged
+    // deliberately ignored every change while this page was off screen — and
+    // rebuild, which restores the snapshot through viewLoader.onLoaded.
+    function syncViewContent(): void {
+        if (page.viewReady === page.pageShown)
+            return;
+        if (!page.pageShown) {
+            page.captureActiveView();
+            page.viewReady = false;
+            return;
+        }
+        page.uncovering = page.inStack;
+        page.adoptSection();
         page.viewReady = true;
+    }
+
+    function adoptSection(): void {
+        if (page.loadedSection === MusicBrowseCtl.section)
+            return;
+        page.captureActiveView();
+        page.loadedSection = MusicBrowseCtl.section;
     }
 
     Connections {
@@ -68,10 +131,12 @@ FocusScope {
         // The controller has already started the new section's lane; only
         // now may the Loader build delegates over its model.
         function onSectionChanged() {
-            if (page.loadedSection === MusicBrowseCtl.section)
+            // A covered page must not rebuild a view nobody can see over the
+            // model the visible page is reading. It adopts the section when it
+            // comes back on screen instead (syncViewContent).
+            if (!page.pageShown)
                 return;
-            page.captureActiveView();
-            page.loadedSection = MusicBrowseCtl.section;
+            page.adoptSection();
         }
 
         function onAlbumTracksCollected(subject, trackIds) {
@@ -95,8 +160,16 @@ FocusScope {
     function restoreActiveView(): void {
         const view = page.activeView;
         const state = page.viewStates[page.loadedSection];
-        if (!view || !state || state.valid !== true
-                || typeof view.restoreNavigationFocus !== "function")
+        const cursorOnly = page.uncovering;
+        page.uncovering = false;
+        if (!view || !state || state.valid !== true)
+            return;
+        if (cursorOnly) {
+            if (typeof view.restoreNavigationCursor === "function")
+                view.restoreNavigationCursor(Number(state.index));
+            return;
+        }
+        if (typeof view.restoreNavigationFocus !== "function")
             return;
         view.restoreNavigationFocus(String(state.identity), Number(state.index));
     }
@@ -989,6 +1062,9 @@ FocusScope {
             function navigationFocusSnapshot(): var { return playlistsGrid.navigationFocusSnapshot(); }
             function restoreNavigationFocus(identity, index): bool {
                 return playlistsGrid.restoreNavigationFocus(identity, index);
+            }
+            function restoreNavigationCursor(index): bool {
+                return playlistsGrid.restoreNavigationCursor(index);
             }
             function pageBy(step): bool { return playlistsGrid.pageBy(step); }
 

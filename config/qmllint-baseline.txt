@@ -85,7 +85,6 @@ src/ui/Main.qml: Unqualified access [unqualified]	if (Session.secretStorage === 
 src/ui/Main.qml: Unqualified access [unqualified]	if (route.id.length > 0 && PlaylistCtl.currentId !== route.id)
 src/ui/Main.qml: Unqualified access [unqualified]	if (route.mode !== "audio" && PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
 src/ui/Main.qml: Unqualified access [unqualified]	if (route.mode !== "audio" && PlaylistCtl.playlists.count === 0 && !PlaylistCtl.loading)
-src/ui/Main.qml: Unqualified access [unqualified]	initialItem: Session.authenticated ? homeComponent : loginComponent
 src/ui/Main.qml: Unqualified access [unqualified]	initialRoute: Session.authenticated
 src/ui/Main.qml: Unqualified access [unqualified]	onFocusRestoreOverrideRequested: stack.retireFocusRestoreOwnership()
 src/ui/Main.qml: Unqualified access [unqualified]	onHomeRequested: root.openMusicHome(browsePage.libraryId, browsePage.libraryName)
@@ -311,7 +310,7 @@ src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	const model = Lib
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	const step = Prefs.libraryCardSizeStep(page.scopeKey)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	controller: LibraryCtl
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	controller: LibraryCtl
-src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	gridModel: LibraryCtl.model
+src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	gridModel: page.gridReady ? LibraryCtl.model : null
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	headline: LibraryCtl.filtered ? qsTr("Nothing matches these filters")
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	headline: qsTr("Couldn't load %1").arg(LibraryCtl.title)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	iconName: LibraryCtl.filtered ? "filter" : "library"
@@ -685,9 +684,9 @@ src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Keys.onEnterPre
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	Keys.onReturnPressed: event => { if (!event.isAutoRepeat) page.openItem(MusicHomeCtl.heroLane, row.index) }
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.playStation(stationMenu.row)
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.queueStation(stationMenu.row)
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.refreshStale()
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicHomeCtl.shuffleStation(stationMenu.row)
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	MusicPlay.playAlbum(id, item.title !== undefined ? String(item.title) : "", 0)
-src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	StackView.onActivated: MusicHomeCtl.refreshStale()
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	active: page.musicActive && PlayerCtl.active
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	albumMenu.popupForItem(page.itemAt(MusicHomeCtl.heroLane, row.index), p.x, p.y)
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	albumMenu.popupForItem(page.itemAt(MusicHomeCtl.heroLane, row.index), p.x, p.y)
@@ -701,7 +700,7 @@ src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHome
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.pullLane
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.recentLane
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	lane: MusicHomeCtl.stationLane
-src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	model: MusicHomeCtl.heroLane.model
+src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	model: page.contentActive ? MusicHomeCtl.heroLane.model : null
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActionTriggered: MusicHomeCtl.reshuffle()
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActivated: Actions.openDetails(page.hero.albumItem)
 src/ui/pages/MusicHomePage.qml: Unqualified access [unqualified]	onActivated: MusicHomeCtl.playStation(page.stationRow("shuffleAll"))

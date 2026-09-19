@@ -241,6 +241,14 @@ QQuickItem *findItem(QQuickItem *from, const QString &name)
     return nullptr;
 }
 
+int countSleeves(QQuickItem *from)
+{
+    int total = from->objectName().startsWith(QStringLiteral("shelfSleeve-")) ? 1 : 0;
+    for (QQuickItem *child : from->childItems())
+        total += countSleeves(child);
+    return total;
+}
+
 bool stage(const QString &sourceDir, const QString &type, const QString &modulePath, QByteArray &qmldir)
 {
     const QString file = type + QStringLiteral(".qml");
@@ -322,6 +330,7 @@ private slots:
     void shelfDrawsTheDelegateAndForwardsActivation();
     void shelfErrorAndRailSwapFocusReactively();
     void shelfUpReachesTheActionThenDeclines();
+    void shelfDropsItsRowsWhileCoveredAndPutsTheCursorBack();
     // Ruling P3-R2: two focus bugs reached the user in Phase 2 (StrmRail's
     // hover chevrons stealing a Tab stop; hover being mistaken for focus).
     // Every control added in Task 4 is checked against both.
@@ -594,6 +603,59 @@ void CrateControlsTest::shelfUpReachesTheActionThenDeclines()
     QVERIFY(!action->hasActiveFocus());
     shelf->forceActiveFocus();
     QTRY_VERIFY(rail->hasActiveFocus());
+}
+
+// Remedy 2 of the memory fix: a shelf on a covered page drops its delegates and
+// their decoded covers, and getting it back is a cursor restore, not a focus
+// grab — seven shelves on one page would otherwise fight over the keyboard, and
+// the navigation history's own locator would lose.
+void CrateControlsTest::shelfDropsItsRowsWhileCoveredAndPutsTheCursorBack()
+{
+    QQuickItem *shelf = item("shelf");
+    QVERIFY(QMetaObject::invokeMethod(m_root, "fillShelf"));
+    QQuickItem *rail = shelf->property("rail").value<QQuickItem *>();
+    QVERIFY(rail);
+    QTRY_COMPARE(rail->property("count").toInt(), 3);
+
+    // Every delegate still in the shelf's item tree, pooled ones included.
+    const auto sleeveCount = [shelf] { return countSleeves(shelf); };
+    const int rows = rail->property("count").toInt();
+    QCOMPARE(rows, 3);
+    QTRY_VERIFY(sleeveCount() >= rows);
+    const int populated = sleeveCount();
+
+    // Walk the cursor onto the last card with the keyboard. Stepping until it
+    // arrives rather than pressing a fixed number of times keeps the test
+    // independent of wherever an earlier test left the cursor.
+    QTRY_VERIFY(findItem(shelf, QStringLiteral("shelfSleeve-c")));
+    shelf->forceActiveFocus();
+    QTRY_VERIFY(rail->hasActiveFocus());
+    for (int guard = 0; guard < 6 && rail->property("currentIndex").toInt() < 2; ++guard)
+        QTest::keyClick(&m_view, Qt::Key_Right);
+    QTRY_COMPARE(rail->property("currentIndex").toInt(), 2);
+
+    // A covered page has the keyboard somewhere else entirely.
+    QQuickItem *pill = item("pill");
+    pill->forceActiveFocus();
+    QTRY_VERIFY(pill->hasActiveFocus());
+
+    // Covered: the view holds no rows, and the delegates that drew them — with
+    // the covers they had decoded — are released. A rail reuses delegates, so
+    // the sleeves that survive are pooled shells this fixture's earlier tests
+    // left behind, which is why the count is asserted as a drop of one per row
+    // rather than as zero.
+    shelf->setProperty("contentActive", false);
+    QTRY_COMPARE(rail->property("count").toInt(), 0);
+    QTRY_VERIFY(sleeveCount() <= populated - rows);
+    QCOMPARE(shelf->property("lane").value<QObject *>(), m_root->findChild<QObject *>("fakeLane"));
+
+    // Uncovered: the rows come back, the cursor is where the user left it, and
+    // the keyboard has not moved.
+    shelf->setProperty("contentActive", true);
+    QTRY_COMPARE(rail->property("count").toInt(), rows);
+    QTRY_COMPARE(rail->property("currentIndex").toInt(), 2);
+    QVERIFY(pill->hasActiveFocus());
+    QVERIFY(!rail->hasActiveFocus());
 }
 
 // ── Task 4 (P3-R2): FilterPill, CrateDividers, GenrePicker ─────────────────

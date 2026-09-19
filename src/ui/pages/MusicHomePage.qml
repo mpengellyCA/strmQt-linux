@@ -37,6 +37,34 @@ FocusScope {
     readonly property bool musicActive: App.interactionContext === "music"
                                         && page.StackView.status === StackView.Active
 
+    // ── Covered-page content gate ──────────────────────────────────────────
+    // Seven shelves of decoded covers are what a retained Home page costs. A
+    // page the user cannot see keeps its lanes, its layout and each shelf's
+    // cursor, and holds no delegates; each CrateShelf puts its own cursor back
+    // when the page returns.
+    //
+    // `inStack` latches when this page joins the shell's StackView. Until then
+    // it is a bare page — the startup self-test constructs pages directly — and
+    // draws unconditionally.
+    property bool inStack: false
+    readonly property bool contentShown: !page.inStack
+                                         || page.StackView.status === StackView.Active
+    property bool contentActive: false
+
+    // Immediate on the way back (so each shelf's cursor restore is queued before
+    // the navigation history restores focus), deferred on the way out (evicting
+    // the oldest live page rebuilds the StackView, which takes the page on
+    // screen out of it and puts it straight back inside one frame).
+    onContentShownChanged: {
+        if (page.contentShown) {
+            page.contentActive = true
+            return
+        }
+        Qt.callLater(page.syncContentActive)
+    }
+    function syncContentActive(): void { page.contentActive = page.contentShown }
+    Component.onCompleted: Qt.callLater(page.syncContentActive)
+
     readonly property var sections: [strip, heroScope, recentShelf, newShelf, stationShelf,
                                      genreShelf, artistShelf, forgottenShelf, pullShelf]
 
@@ -51,7 +79,10 @@ FocusScope {
 
     // Stale shelves refetch when Home comes back on screen. Within the TTL this
     // sends nothing (MusicRepository's cache answers).
-    StackView.onActivated: MusicHomeCtl.refreshStale()
+    StackView.onActivated: {
+        page.inStack = true
+        MusicHomeCtl.refreshStale()
+    }
 
     // ── Sections ───────────────────────────────────────────────────────────
     function sectionFocusable(section): bool {
@@ -753,7 +784,7 @@ FocusScope {
                             Repeater {
                                 id: recentRows
 
-                                model: MusicHomeCtl.heroLane.model
+                                model: page.contentActive ? MusicHomeCtl.heroLane.model : null
                                 delegate: RecentRow {}
                                 // A refresh can destroy the row the keyboard was
                                 // on (heroScope's own activeFocus never toggles
@@ -772,6 +803,8 @@ FocusScope {
                 // ── Shelves, in spec order ─────────────────────────────────
                 CrateShelf {
                     id: recentShelf
+
+                    contentActive: page.contentActive
 
                     title: qsTr("Recently played")
                     lane: MusicHomeCtl.recentLane
@@ -795,6 +828,8 @@ FocusScope {
                 CrateShelf {
                     id: newShelf
 
+                    contentActive: page.contentActive
+
                     title: qsTr("New in the crate")
                     kicker: MusicHomeCtl.addedThisWeekText
                     lane: MusicHomeCtl.newLane
@@ -817,6 +852,8 @@ FocusScope {
 
                 CrateShelf {
                     id: stationShelf
+
+                    contentActive: page.contentActive
 
                     title: qsTr("Stations")
                     lane: MusicHomeCtl.stationLane
@@ -842,6 +879,8 @@ FocusScope {
                 CrateShelf {
                     id: genreShelf
 
+                    contentActive: page.contentActive
+
                     title: qsTr("Dig by genre")
                     lane: MusicHomeCtl.genreLane
                     delegate: genreCard
@@ -860,6 +899,8 @@ FocusScope {
 
                 CrateShelf {
                     id: artistShelf
+
+                    contentActive: page.contentActive
 
                     title: qsTr("Artists you play")
                     lane: MusicHomeCtl.artistLane
@@ -883,6 +924,8 @@ FocusScope {
                 CrateShelf {
                     id: forgottenShelf
 
+                    contentActive: page.contentActive
+
                     title: qsTr("Forgotten favourites")
                     lane: MusicHomeCtl.forgottenLane
                     delegate: sleeveCard
@@ -904,6 +947,8 @@ FocusScope {
 
                 CrateShelf {
                     id: pullShelf
+
+                    contentActive: page.contentActive
 
                     title: qsTr("Pull one out")
                     actionText: qsTr("Reshuffle")

@@ -69,6 +69,20 @@ FocusScope {
     function restoreNavigationFocus(identity, index): bool {
         return navigationFocus.restore(identity, index)
     }
+    // Puts the cursor and the viewport back WITHOUT taking the keyboard. A page
+    // that comes back on screen has to look the way the user left it, but where
+    // the keyboard lands on that path belongs to the navigation history, which
+    // restores its own locator a moment later.
+    function restoreNavigationCursor(index): bool {
+        const target = Number(index)
+        if (!Number.isInteger(target) || target < 0 || target >= list.count)
+            return false
+        rail._navigationFocusWriting = true
+        list.currentIndex = target
+        list.positionViewAtIndex(target, ListView.Contain)
+        rail._navigationFocusWriting = false
+        return true
+    }
     function cancelNavigationFocusRestore(): void { navigationFocus.cancel() }
     function _cancelNavigationFocusForUser(): void {
         if (!rail._navigationFocusWriting)

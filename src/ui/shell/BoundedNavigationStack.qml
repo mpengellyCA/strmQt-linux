@@ -10,7 +10,18 @@ import QtQuick.Controls.Basic
 StackView {
     id: navigation
 
+    // How many ROUTES the session remembers. A route is a scalar descriptor of
+    // a few hundred bytes, so this is cheap and deliberately generous.
     property int historyLimit: 40
+    // How many live PAGE GRAPHS may exist at once — a completely different
+    // currency, and the one that was never bounded. A retained page is a whole
+    // QML object tree (measured at ~50 MB for MusicBrowsePage, ~48 MB for
+    // LibraryPage), so 21 un-backed navigations reached 1.2 GB while
+    // historyLimit was nowhere near tripping. 4 is the owner's choice: the page
+    // on screen plus three instant Back hops. Back deeper than the window
+    // reconstructs its page from the route descriptor, which is exactly what
+    // reconstructedProperties() and prepareRequested() already exist for.
+    property int livePageLimit: 4
     property var initialRoute: ({})
     property Item focusItem: null
     // SearchController is process-wide while search routes are per-entry. Main
@@ -46,7 +57,16 @@ StackView {
     property var navTrail: []
     property var navForward: []
     property var focusMemory: ({})
+    // The tokens of the routes that currently have a live page graph, oldest
+    // first. Always a contiguous SUFFIX of navTrail: goBack's fast path pops
+    // one page and expects the next token down to be the new current entry, so
+    // any drift between this and the StackView's contents is a wrong-page bug.
     property var instantiatedTokens: []
+    // The page items behind those tokens, index for index. pushResolved creates
+    // them itself instead of handing a Component to push(), because StackView
+    // only ever destroys what it created — and a page has to be removable from
+    // UNDER the pages above it. See trimLivePages().
+    property var instantiatedPages: []
     property int nextRouteToken: 0
     property int _focusRetryToken: -1
     property string _focusRetryLocator: ""
@@ -63,6 +83,15 @@ StackView {
     readonly property int semanticTraversalLimit: 4096
     readonly property int semanticIndexLimit: 2147483646
     readonly property int focusRetryLimit: 400
+
+    // The window can never be wider than the tail the route history keeps
+    // CONTIGUOUS. pushRoute's route trim keeps navTrail[0] plus the newest
+    // historyLimit-1 entries, so a wider live window would leave a live page
+    // whose route is no longer in navTrail — the exact drift described on
+    // instantiatedTokens.
+    readonly property int liveWindow: Math.max(
+                                          1, Math.min(navigation.livePageLimit,
+                                                      Math.max(2, navigation.historyLimit) - 1))
 
     readonly property int retainedRouteCount: navTrail.length + navForward.length
     readonly property int focusMemoryCount: Object.keys(focusMemory).length
@@ -638,6 +667,78 @@ StackView {
         }
     }
 
+    // ── Live page ownership ────────────────────────────────────────────────
+    // Every page in instantiatedPages is OURS, so every removal has to destroy
+    // it here; StackView's pop()/clear() only free what StackView created. The
+    // three functions below are the only places that may shorten either array,
+    // and each keeps tokens, pages and the StackView's contents in one step.
+
+    function destroyPages(pages): void {
+        for (let i = 0; i < pages.length; ++i) {
+            if (pages[i])
+                pages[i].destroy();
+        }
+    }
+
+    // True while the StackView's top is the newest page we own — i.e. no
+    // transient overlay (the player) is covering it. Every structural operation
+    // below is a no-op otherwise rather than removing something it does not own.
+    function ownsCurrentItem(): bool {
+        const pages = navigation.instantiatedPages;
+        return pages.length > 0 && navigation.currentItem === pages[pages.length - 1];
+    }
+
+    function popLivePage(): void {
+        const pages = navigation.instantiatedPages;
+        if (pages.length === 0)
+            return;
+        if (!navigation.ownsCurrentItem()) {
+            console.warn("BoundedNavigationStack: top of stack is not the current route's page");
+            return;
+        }
+        const leaving = pages[pages.length - 1];
+        navigation.instantiatedPages = pages.slice(0, -1);
+        navigation.instantiatedTokens = navigation.instantiatedTokens.slice(0, -1);
+        navigation.pop(StackView.Immediate);
+        navigation.destroyPages([leaving]);
+    }
+
+    function clearLivePages(): void {
+        const pages = navigation.instantiatedPages;
+        navigation.instantiatedPages = [];
+        navigation.instantiatedTokens = [];
+        navigation.clear(StackView.Immediate);
+        navigation.destroyPages(pages);
+    }
+
+    // Evict the OLDEST live pages until the window fits, keeping the newest
+    // tail — and above all keeping the current item untouched.
+    //
+    // Qt 6.11's StackView has push/pop/replace/clear and no removeItem(), so a
+    // page cannot be taken out from under the pages above it. The stack is
+    // therefore rebuilt from the retained tail; because those pages are ours,
+    // clear() only unparents them and re-pushing them constructs nothing. The
+    // current item is briefly deactivated and reactivated within this one call,
+    // which is why a page's content gate settles through the event loop instead
+    // of reacting to each StackView.status edge.
+    function trimLivePages(): void {
+        const limit = navigation.liveWindow;
+        if (navigation.instantiatedPages.length <= limit)
+            return;
+        if (!navigation.ownsCurrentItem()) {
+            console.warn("BoundedNavigationStack: not trimming under a foreign top item");
+            return;
+        }
+        const drop = navigation.instantiatedPages.length - limit;
+        const evicted = navigation.instantiatedPages.slice(0, drop);
+        const kept = navigation.instantiatedPages.slice(drop);
+        navigation.clear(StackView.Immediate);
+        navigation.instantiatedPages = kept;
+        navigation.instantiatedTokens = navigation.instantiatedTokens.slice(drop);
+        navigation.push(kept, StackView.Immediate);
+        navigation.destroyPages(evicted);
+    }
+
     function pushResolved(route, initialProperties, operation): bool {
         const component = navigation.componentFor(route);
         if (!component) {
@@ -646,8 +747,19 @@ StackView {
         }
         const properties = initialProperties !== undefined && initialProperties !== null
                          ? initialProperties : navigation.reconstructedProperties(route);
-        navigation.push(component, properties, operation);
+        // Constructed here rather than by push(component, ...) so this page is
+        // ours to evict and to destroy; see the note on instantiatedPages.
+        const page = component.createObject(navigation, properties);
+        if (!page) {
+            console.warn("Could not construct page for route " + route.kind);
+            return false;
+        }
+        navigation.push(page, operation);
         navigation.instantiatedTokens = navigation.instantiatedTokens.concat([route.token]);
+        navigation.instantiatedPages = navigation.instantiatedPages.concat([page]);
+        // After the push, never before: the page that is being covered stays
+        // covered across the rebuild instead of flickering back to Active.
+        navigation.trimLivePages();
         return true;
     }
 
@@ -657,18 +769,25 @@ StackView {
         const entry = navigation.descriptor(route, null);
         navigation.navTrail = [entry];
         navigation.navForward = [];
-        navigation.instantiatedTokens = [entry.token];
+        navigation.instantiatedTokens = [];
+        navigation.instantiatedPages = [];
         navigation.clearFocusMemory();
+        // The base page is pushed here rather than through StackView's
+        // initialItem, so that every page in the window has one owner and one
+        // eviction rule. A StackView-created bottom page would have to be
+        // special-cased in all three functions above.
+        if (navigation.depth > 0)
+            navigation.clear(StackView.Immediate);
+        navigation.pushResolved(entry, null, StackView.Immediate);
     }
 
     function resetToRoute(route): void {
         navigation.cancelFocusRetry();
         navigation.cancelLiveFocusRestores();
         const entry = navigation.descriptor(route, null);
-        navigation.clear(StackView.Immediate);
+        navigation.clearLivePages();
         navigation.navTrail = [entry];
         navigation.navForward = [];
-        navigation.instantiatedTokens = [];
         navigation.clearFocusMemory();
         navigation.pushResolved(entry, null, StackView.Immediate);
         Qt.callLater(navigation.focusCurrentPage);
@@ -690,13 +809,11 @@ StackView {
         if (navigation.navTrail.length > limit) {
             // Keep the session's base destination (Home or Login) reachable;
             // evict the oldest intermediate route and retain the newest tail.
+            // This drops ROUTE DESCRIPTORS only. Page graphs are bounded by the
+            // live window instead (liveWindow, trimLivePages), which is why
+            // this no longer has to clear the whole StackView to stay honest.
             navigation.navTrail = [navigation.navTrail[0]].concat(
                         navigation.navTrail.slice(navigation.navTrail.length - (limit - 1)));
-            // StackView cannot remove its bottom page without also removing the
-            // pages above it. Rebuild only the current destination: all old
-            // graphs are destroyed, while retained routes stay reconstructable.
-            navigation.clear(StackView.Immediate);
-            navigation.instantiatedTokens = [];
         }
 
         navigation.pruneFocusMemory();
@@ -715,13 +832,14 @@ StackView {
         navigation.navForward = [leaving].concat(navigation.navForward);
 
         const target = navigation.currentEntry;
+        // Inside the live window this is a pop and the page is already built.
+        // Past it — the common case now that the window is four deep — the page
+        // is rebuilt from the retained descriptor.
         if (navigation.instantiatedTokens.length > 1) {
-            navigation.pop(StackView.Immediate);
-            navigation.instantiatedTokens = navigation.instantiatedTokens.slice(0, -1);
+            navigation.popLivePage();
             navigation.prepareRequested(target);
         } else {
-            navigation.clear(StackView.Immediate);
-            navigation.instantiatedTokens = [];
+            navigation.clearLivePages();
             navigation.prepareRequested(target);
             navigation.pushResolved(target, null, StackView.Immediate);
         }
@@ -754,15 +872,20 @@ StackView {
                                 .concat(navigation.navForward);
         navigation.navTrail = [home];
 
+        // Home usually falls out of the live window long before this runs, in
+        // which case it is rebuilt from its descriptor like any other deep Back.
         if (navigation.instantiatedTokens.length > 0
                 && navigation.instantiatedTokens[0] === home.token) {
             while (navigation.instantiatedTokens.length > 1) {
-                navigation.pop(StackView.Immediate);
-                navigation.instantiatedTokens = navigation.instantiatedTokens.slice(0, -1);
+                const before = navigation.instantiatedTokens.length;
+                navigation.popLivePage();
+                // popLivePage refuses to remove a page it does not own; without
+                // this the refusal would spin here forever.
+                if (navigation.instantiatedTokens.length >= before)
+                    break;
             }
         } else {
-            navigation.clear(StackView.Immediate);
-            navigation.instantiatedTokens = [];
+            navigation.clearLivePages();
             navigation.pushResolved(home, null, StackView.Immediate);
         }
         navigation.pruneFocusMemory();

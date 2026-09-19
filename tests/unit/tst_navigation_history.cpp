@@ -6,6 +6,7 @@
 #include <QQuickView>
 #include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QPointer>
 #include <QTest>
 
 #include <algorithm>
@@ -17,6 +18,9 @@ class NavigationHistoryTest : public QObject
 
 private slots:
     void capsGraphsAndReconstructsMetadata();
+    void forwardWalkBoundsLivePagesNotRoutes();
+    void trimEvictsTheOldestLivePageAndNotTheCurrentOne();
+    void backBeyondTheLiveWindowRebuildsAndRestoresFocus();
     void restoresForwardFocusAndReplacesBranches();
     void restoresPerEntrySearchAndPreparesRouteKinds();
     void searchEscapeClearsQueryThenGoesBackThroughTransaction();
@@ -815,6 +819,10 @@ Item {
         objectName: "history"
         anchors.fill: parent
         historyLimit: 4
+        // Two live page graphs: the page on screen plus one instant Back hop.
+        // Small on purpose, so a five-push sequence exercises BOTH branches of
+        // goBack() — the pop inside the window and the reconstruction past it.
+        livePageLimit: 2
         focusItem: root.Window.window ? root.Window.window.activeFocusItem : null
         currentSearchQuery: root.searchQuery
         currentMusicBrowseSection: root.musicBrowseSection
@@ -831,7 +839,8 @@ Item {
             "albumArtist": "Artist 0", "artistIds": ["artist-0", "guest-0"],
             "childCount": 12, "favorite": true
         })
-        initialItem: detailsComponent
+        // No initialItem: adoptInitialRoute pushes the base page from
+        // initialRoute, so the stack owns no page it cannot evict.
         detailsPageComponent: detailsComponent
         albumPageComponent: albumComponent
         playlistPageComponent: playlistComponent
@@ -1046,11 +1055,13 @@ void NavigationHistoryTest::capsGraphsAndReconstructsMetadata()
     QTRY_COMPARE(history->property("retainedRouteCount").toInt(), 4);
     QCOMPARE(listProperty(history, "navTrail").size(), 4);
     QCOMPARE(listProperty(history, "navForward").size(), 0);
-    QCOMPARE(history->property("pageGraphCount").toInt(), 1);
-    QCOMPARE(history->property("depth").toInt(), 1);
+    // Seven forward navigations leave the live window's worth of page graphs —
+    // not seven, and not one: the trim evicts the oldest and keeps the tail.
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+    QCOMPARE(history->property("depth").toInt(), 2);
     QVERIFY(history->property("focusMemoryCount").toInt() <= 4);
     QTRY_VERIFY(root->property("destroyedCount").toInt() > destroyedBeforeOverflow);
-    QCOMPARE(root->property("createdCount").toInt() - root->property("destroyedCount").toInt(), 1);
+    QCOMPARE(root->property("createdCount").toInt() - root->property("destroyedCount").toInt(), 2);
 
     const QVariantMap retained = listProperty(history, "navTrail").constLast().toMap();
     QCOMPARE(retained.value(QStringLiteral("id")).toString(), QStringLiteral("7"));
@@ -1062,30 +1073,37 @@ void NavigationHistoryTest::capsGraphsAndReconstructsMetadata()
     for (const QVariant &value : history->property("focusMemory").toMap())
         QCOMPARE(value.metaType().id(), QMetaType::QString);
 
-    // Route 6 no longer has a page graph. Back must reconstruct the honest
-    // Details header from the retained scalar DTO and re-arm its controller.
+    // Route 6 is still inside the live window, so Back to it is a pop of a page
+    // that already exists — and it still re-arms its controller.
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("6"));
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("6"));
+
+    // Route 5 is past the window and has no page graph. Back must reconstruct
+    // the honest Details header from the retained scalar DTO and re-arm its
+    // controller.
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("5"));
     const QVariantMap details = currentItem(history)->property("item").toMap();
-    QCOMPARE(details.value(QStringLiteral("posterUrl")).toString(), QStringLiteral("poster://6"));
+    QCOMPARE(details.value(QStringLiteral("posterUrl")).toString(), QStringLiteral("poster://5"));
     QCOMPARE(details.value(QStringLiteral("backdropUrl")).toString(),
-             QStringLiteral("backdrop://6"));
-    QCOMPARE(details.value(QStringLiteral("overview")).toString(), QStringLiteral("Overview 6"));
-    QCOMPARE(details.value(QStringLiteral("year")).toInt(), 2006);
-    QCOMPARE(details.value(QStringLiteral("officialRating")).toString(), QStringLiteral("PG-6"));
+             QStringLiteral("backdrop://5"));
+    QCOMPARE(details.value(QStringLiteral("overview")).toString(), QStringLiteral("Overview 5"));
+    QCOMPARE(details.value(QStringLiteral("year")).toInt(), 2005);
+    QCOMPARE(details.value(QStringLiteral("officialRating")).toString(), QStringLiteral("PG-5"));
     QCOMPARE(details.value(QStringLiteral("communityRating")).toDouble(), 8.25);
     QVERIFY(details.value(QStringLiteral("resumable")).toBool());
     QCOMPARE(details.value(QStringLiteral("positionMs")).toLongLong(), 1234);
-    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("6"));
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("5"));
 
-    // Put an Album inside the retained tail, force another whole-stack
-    // eviction, then walk back to it. Its header DTO must survive too.
+    // Put an Album outside the live window, then walk back to it. Its header
+    // DTO must survive its page graph too.
     QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
     QVERIFY(invoke(root, "pushRoute", 1));
     QVERIFY(invoke(root, "pushAlbum", 42));
     QVERIFY(invoke(root, "pushRoute", 3));
     QVERIFY(invoke(root, "pushRoute", 4));
-    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QTRY_COMPARE(history->property("depth").toInt(), 2);
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("42"));
@@ -1097,6 +1115,136 @@ void NavigationHistoryTest::capsGraphsAndReconstructsMetadata()
              QStringList({QStringLiteral("artist-42"), QStringLiteral("guest-42")}));
     QVERIFY(album.value(QStringLiteral("favorite")).toBool());
     QCOMPARE(root->property("preparedAlbumId").toString(), QStringLiteral("42"));
+}
+
+// Remedy 1 of the memory fix: N forward navigations leave the LIVE WINDOW's
+// worth of page graphs, not N of them. The route history is a different currency
+// and keeps its own, larger limit, and every route the window has dropped is
+// still reconstructable from its descriptor.
+void NavigationHistoryTest::forwardWalkBoundsLivePagesNotRoutes()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+    QTRY_COMPARE(root->property("createdCount").toInt(), 1);
+
+    for (int id = 1; id <= 6; ++id)
+        QVERIFY(invoke(root, "pushRoute", id));
+
+    // Six constructions, a two-page window: two graphs alive, four already gone.
+    QTRY_COMPARE(history->property("pageGraphCount").toInt(), 2);
+    QCOMPARE(history->property("depth").toInt(), 2);
+    QTRY_COMPARE(root->property("createdCount").toInt() - root->property("destroyedCount").toInt(),
+                 2);
+    QCOMPARE(root->property("createdCount").toInt(), 7);
+    // The live trim does not touch the route history, which keeps its own limit.
+    QCOMPARE(listProperty(history, "navTrail").size(), 4);
+
+    // instantiatedTokens must be the TAIL of navTrail. If it drifts, goBack's
+    // fast path pops to a page that belongs to a different route.
+    const QVariantList trail = listProperty(history, "navTrail");
+    const QVariantList tokens = listProperty(history, "instantiatedTokens");
+    QCOMPARE(tokens.size(), 2);
+    QCOMPARE(tokens.at(0).toInt(),
+             trail.at(2).toMap().value(QStringLiteral("token")).toInt());
+    QCOMPARE(tokens.at(1).toInt(),
+             trail.at(3).toMap().value(QStringLiteral("token")).toInt());
+
+    // Walk the whole trail back. Every entry still produces its own page; the
+    // ones the window dropped do it from the retained scalar descriptor.
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("5"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("4"));
+    QCOMPARE(currentItem(history)->property("item").toMap().value(QStringLiteral("overview")).toString(),
+             QStringLiteral("Overview 4"));
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("0"));
+    QVERIFY(!history->property("canGoBack").toBool());
+}
+
+// The trim takes the OLDEST live page. Removing the top instead would leave the
+// route the user just opened off screen; removing the wrong middle index would
+// take the page the next Back needs. Both are the same off-by-one, and the
+// StackView cannot remove a page from under the ones above it, so this also
+// pins that the retained tail is kept rather than reconstructed.
+void NavigationHistoryTest::trimEvictsTheOldestLivePageAndNotTheCurrentOne()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("base"));
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("1"));
+    const QPointer<QObject> pageOne(currentItem(history));
+    QVERIFY(!pageOne.isNull());
+
+    // The push that overflows the two-page window.
+    QVERIFY(invoke(root, "pushRoute", 2));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("2"));
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+    QCOMPARE(history->property("depth").toInt(), 2);
+
+    // The base page was the oldest and is the one that went.
+    QTRY_VERIFY(root->property("destroyedIds").toStringList().contains(
+        QStringLiteral("details:base")));
+    const QStringList destroyed = root->property("destroyedIds").toStringList();
+    QVERIFY(!destroyed.contains(QStringLiteral("details:2")));
+    QVERIFY(!destroyed.contains(QStringLiteral("details:1")));
+
+    // Route 1 came through the rebuild as the SAME object, so Back into the
+    // window costs no construction at all.
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("1"));
+    QVERIFY(!pageOne.isNull());
+    QCOMPARE(currentItem(history), pageOne.data());
+}
+
+// Past the live window Back is a reconstruction rather than a reveal, so the
+// route's focus locator has to land on the remembered control on a page graph
+// that did not exist a moment ago. That is the whole risk of a small window.
+void NavigationHistoryTest::backBeyondTheLiveWindowRebuildsAndRestoresFocus()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("1"));
+    QVERIFY(invoke(root, "focusSecond"));
+    QTRY_VERIFY(view.activeFocusItem());
+    QCOMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-1"));
+    const QPointer<QObject> firstGraph(currentItem(history));
+
+    // Two more pushes put route 1 outside the two-page window: its graph is
+    // destroyed while its descriptor stays in navTrail.
+    QVERIFY(invoke(root, "pushRoute", 2));
+    QVERIFY(invoke(root, "pushRoute", 3));
+    QTRY_VERIFY(firstGraph.isNull());
+    QCOMPARE(listProperty(history, "navTrail").size(), 4);
+
+    QVERIFY(invoke(root, "goBack"));
+    QTRY_VERIFY(currentItem(history));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("2"));
+    QVERIFY(invoke(root, "goBack"));
+    // Back past the window must land on a page, not on an empty stack.
+    QTRY_VERIFY(currentItem(history));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("1"));
+    // A different object from the one that held the keyboard, and the keyboard
+    // is back on the same control.
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-1"));
 }
 
 void NavigationHistoryTest::restoresForwardFocusAndReplacesBranches()
@@ -1142,8 +1290,10 @@ void NavigationHistoryTest::restoresForwardFocusAndReplacesBranches()
     QCOMPARE(listProperty(history, "navTrail").size(), 3);
     QCOMPARE(listProperty(history, "navForward").size(), 0);
     QCOMPARE(history->property("retainedRouteCount").toInt(), 3);
-    QCOMPARE(history->property("pageGraphCount").toInt(), 3);
-    QCOMPARE(history->property("depth").toInt(), 3);
+    // Three retained ROUTES, but only the live window's worth of page graphs:
+    // the trail behind the current page was walked back past the window.
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+    QCOMPARE(history->property("depth").toInt(), 2);
     QVERIFY(history->property("focusMemoryCount").toInt() <= 3);
 
     const QVariantMap focus = history->property("focusMemory").toMap();
@@ -1345,10 +1495,10 @@ void NavigationHistoryTest::reconstructsMusicHomeAfterEviction()
     const QVariantMap entry = history->property("currentEntry").toMap();
     QCOMPARE(entry.value(QStringLiteral("key")).toString(), QStringLiteral("musicHome:lib-1"));
 
-    // Evict Home's page graph, then walk back to it.
+    // Push Home out of the live window, then walk back to it.
     QVERIFY(invoke(root, "pushRoute", 3));
     QVERIFY(invoke(root, "pushRoute", 4));
-    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QTRY_COMPARE(history->property("depth").toInt(), 2);
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicHome-lib-1"));
@@ -1642,12 +1792,23 @@ void NavigationHistoryTest::musicBrowsePageInstantiatesOnlyTheActiveSection()
                                         QByteArrayLiteral("playlistsComponent")}) {
         QCOMPARE(source.count("id: " + component), 1);
     }
+    // SOURCE-SHAPE PIN. The handler's first act is to decline the change while
+    // the page is covered — a covered page rebuilding a view over the shared
+    // controller model is the fan-out this page was measured causing — and the
+    // capture-before-swap ordering now lives in adoptSection(), which both the
+    // controller's signal and the covered-page reload go through.
     const qsizetype handler = source.indexOf("function onSectionChanged()");
-    const qsizetype capture = source.indexOf("page.captureActiveView();", handler);
-    const qsizetype swapSection =
-        source.indexOf("page.loadedSection = MusicBrowseCtl.section;", handler);
     QVERIFY(handler >= 0);
-    QVERIFY(capture > handler);
+    const qsizetype guard = source.indexOf("if (!page.pageShown)", handler);
+    QVERIFY(guard > handler);
+    QVERIFY(source.indexOf("page.adoptSection();", guard) > guard);
+
+    const qsizetype adopt = source.indexOf("function adoptSection()");
+    QVERIFY(adopt >= 0);
+    const qsizetype capture = source.indexOf("page.captureActiveView();", adopt);
+    const qsizetype swapSection =
+        source.indexOf("page.loadedSection = MusicBrowseCtl.section;", adopt);
+    QVERIFY(capture > adopt);
     QVERIFY(swapSection > capture);
     QVERIFY(source.contains("onLoaded: Qt.callLater(page.restoreActiveView)"));
     QVERIFY(source.contains(
@@ -2355,11 +2516,12 @@ void NavigationHistoryTest::evictedAudioPlaylistIsRebuiltFromItsRoute()
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("musicPlaylistPage"));
     QCOMPARE(currentItem(history)->property("playlistId").toString(), QStringLiteral("pl-a"));
 
-    // Push past historyLimit 4 so the playlist's page graph is evicted. depth
-    // collapsing to 1 is the evidence the graph is gone, not merely covered.
+    // Push the playlist out of the live window (2 here) so its page graph is
+    // evicted. depth settling at the window's width with two newer routes on
+    // top is the evidence the graph is gone, not merely covered.
     QVERIFY(invoke(root, "pushRoute", 3));
     QVERIFY(invoke(root, "pushRoute", 4));
-    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QTRY_COMPARE(history->property("depth").toInt(), 2);
 
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goBack"));
@@ -2380,7 +2542,7 @@ void NavigationHistoryTest::evictedAudioPlaylistIsRebuiltFromItsRoute()
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("playlistPage"));
     QVERIFY(invoke(root, "pushRoute", 6));
     QVERIFY(invoke(root, "pushRoute", 7));
-    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QTRY_COMPARE(history->property("depth").toInt(), 2);
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("playlistPage"));
@@ -2413,10 +2575,10 @@ void NavigationHistoryTest::artistEntryRetainsTheLibraryItWasOpenedUnder()
     QCOMPARE(retained.value(QStringLiteral("id")).toString(), QStringLiteral("ar-1"));
     QCOMPARE(retained.value(QStringLiteral("libraryId")).toString(), QStringLiteral("lib-x"));
 
-    // Evict the page graph, then walk back: the library can only have come
-    // from the route through reconstructedProperties.
+    // Push the artist out of the live window, then walk back: the library can
+    // only have come from the route through reconstructedProperties.
     QVERIFY(invoke(root, "pushRoute", 4));
-    QTRY_COMPARE(history->property("depth").toInt(), 1);
+    QTRY_COMPARE(history->property("depth").toInt(), 2);
     QVERIFY(invoke(root, "goBack"));
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("artist-ar-1"));

@@ -32,8 +32,13 @@ ApplicationWindow {
     // ── Navigation history (ARCHITECTURE.md) ──────────────────────────────────
     // Retained records are compact scalar routes, never page Components, model
     // rows or controller closures. BoundedNavigationStack caps both those
-    // descriptors and the live page graphs reconstructed from them.
+    // descriptors and the live page graphs reconstructed from them — and it caps
+    // them separately, because a route costs a few hundred bytes and a live page
+    // costs tens of megabytes.
     readonly property int navigationHistoryLimit: 40
+    // The page on screen plus three instant Back hops. Deeper Back rebuilds the
+    // page from its route descriptor.
+    readonly property int navigationLivePageLimit: 4
     readonly property var navTrail: stack.navTrail
     readonly property var navForward: stack.navForward
     readonly property var focusMemory: stack.focusMemory
@@ -680,6 +685,7 @@ ApplicationWindow {
         anchors.bottomMargin: miniPlayer.reservedHeight
         focus: true
         historyLimit: root.navigationHistoryLimit
+        livePageLimit: root.navigationLivePageLimit
         focusItem: root.activeFocusItem
         currentSearchQuery: SearchCtl.query
         currentMusicBrowseSection: MusicBrowseCtl.section
@@ -688,7 +694,9 @@ ApplicationWindow {
         initialRoute: Session.authenticated
                       ? ({ "kind": "home", "key": "home", "title": qsTr("Home") })
                       : ({ "kind": "login", "key": "login", "title": qsTr("Sign in") })
-        initialItem: Session.authenticated ? homeComponent : loginComponent
+        // No initialItem: the base page is pushed by adoptInitialRoute from the
+        // route above, so every live page has one owner and the oldest can be
+        // evicted from under the newer ones (BoundedNavigationStack).
 
         loginPageComponent: loginComponent
         homePageComponent: homeComponent

@@ -29,6 +29,31 @@ FocusScope {
     property int cardHeight: Theme.crateSleeveSize
     property string skeletonShape: "square"
     property int skeletonCount: 6
+    // Covered-page content gate. False drops the rail's delegates and their
+    // decoded covers while keeping the lane, the heading and the cursor: a
+    // retained page the user cannot see should cost its chrome, not its
+    // artwork. The page owns the condition; the shelf owns remembering where
+    // the cursor was and putting it back.
+    property bool contentActive: true
+    property var cursorState: null
+
+    onContentActiveChanged: {
+        if (!shelf.contentActive) {
+            shelf.cursorState = railView.navigationFocusSnapshot()
+            return
+        }
+        // Cursor only, and deferred so the rail has its rows back first. Where
+        // the keyboard lands belongs to the navigation history, which restores
+        // its own locator for whichever shelf actually held it.
+        Qt.callLater(shelf.restoreCursor)
+    }
+
+    function restoreCursor(): void {
+        const state = shelf.cursorState
+        if (!state || state.valid !== true)
+            return
+        railView.restoreNavigationCursor(Number(state.index))
+    }
 
     signal actionTriggered()
     signal itemActivated(int index)
@@ -212,7 +237,7 @@ FocusScope {
             focus: !shelf.showError
             showHeading: false
             title: shelf.title
-            railModel: shelf.lane !== null ? shelf.lane.model : null
+            railModel: shelf.contentActive && shelf.lane !== null ? shelf.lane.model : null
             cardComponent: shelf.delegate
             customCardWidth: shelf.cardWidth
             customCardHeight: shelf.cardHeight

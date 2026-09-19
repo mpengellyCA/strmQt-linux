@@ -1,4 +1,6 @@
 import QtQuick
+// For the StackView attached properties: a covered page drops its rows.
+import QtQuick.Controls.Basic
 import StrmQt
 
 // One library, as a paged grid drawn as posters, wide art or a list (E2).
@@ -17,6 +19,60 @@ FocusScope {
 
     readonly property bool failed: LibraryCtl.errorMessage.length > 0
     readonly property bool isEmpty: grid.count === 0 && !LibraryCtl.loading
+
+    // ── Covered-page content gate ──────────────────────────────────────────
+    // The grid's delegates and their decoded posters are what this page costs,
+    // and LibraryCtl.model is process-wide: a covered grid tearing delegates
+    // down over a model the visible page is resetting is exactly the fan-out
+    // measured on this page. So a page the user cannot see holds no rows — it
+    // keeps its view mode, its card size and its cursor, and puts the cursor
+    // back when it returns.
+    //
+    // `inStack` latches when this page joins the shell's StackView. Until then
+    // it is a bare page — the startup self-test constructs pages directly — and
+    // draws unconditionally.
+    property bool inStack: false
+    readonly property bool pageShown: !page.inStack
+                                      || page.StackView.status === StackView.Active
+    StackView.onActivated: page.inStack = true
+    property bool gridReady: false
+    property var gridState: null
+
+    onPageShownChanged: {
+        if (page.pageShown) {
+            // Immediately, inside the pop that uncovered this page, so the
+            // cursor restore is queued before the navigation history restores
+            // focus for this route and can therefore not fight it.
+            page.syncGridContent()
+            return
+        }
+        // Deferred: evicting the oldest live page rebuilds the StackView (Qt 6
+        // has no StackView.removeItem()), which takes the page on screen out of
+        // the stack and puts it straight back inside one frame.
+        Qt.callLater(page.syncGridContent)
+    }
+
+    function syncGridContent() {
+        if (page.gridReady === page.pageShown)
+            return
+        if (!page.pageShown) {
+            page.gridState = grid.navigationFocusSnapshot()
+            page.gridReady = false
+            return
+        }
+        page.gridReady = true
+        Qt.callLater(page.restoreGridCursor)
+    }
+
+    // Cursor only. Where the keyboard lands after Back is the navigation
+    // history's decision, and it restores the same {identity, index} itself
+    // whenever the keyboard was in this grid.
+    function restoreGridCursor() {
+        const state = page.gridState
+        if (!state || state.valid !== true)
+            return
+        grid.restoreNavigationCursor(Number(state.index))
+    }
 
     // ── View modes (ARCHITECTURE.md) ──────────────────────────────────────────
     // Three shapes of the same query: 2:3 posters, 16:9 wide art, or one row
@@ -137,7 +193,10 @@ FocusScope {
     // The page outlives one library: opening a genre or Favorites through the
     // same controller changes the scope without rebuilding this page.
     onScopeKeyChanged: page.loadViewPrefs()
-    Component.onCompleted: page.loadViewPrefs()
+    Component.onCompleted: {
+        page.loadViewPrefs()
+        Qt.callLater(page.syncGridContent)
+    }
 
     // ── The pad's triggers (Main.qml jumpLetter) ───────────────────────────
     // A letter is the only sane way across a 1300-item library from a
@@ -483,7 +542,7 @@ FocusScope {
         // its active focus and does not hand it back when it reappears, so the
         // grid stays visible-but-empty and only the focus moves.
         focus: grid.count > 0
-        gridModel: LibraryCtl.model
+        gridModel: page.gridReady ? LibraryCtl.model : null
         cardVariant: "poster"
         viewMode: page.viewMode
         cardScale: page.sizeSteps[page.sizeStep]
