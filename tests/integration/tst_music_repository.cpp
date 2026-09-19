@@ -107,6 +107,7 @@ private slots:
     void genreBinsSampleCoversOnce();
     void coverGenresSamplesOnlyBinsWithoutCovers();
     void coverGenresRefusesStaleCoversAfterIdentityChanges();
+    void coverCacheExpiresAfterTtl();
     void topArtistsRankByPlays();
     void stationsDescribeFiveTilesWithCovers();
     void heavyRotationIsShuffledPlayedTracks();
@@ -488,6 +489,32 @@ void MusicRepositoryTest::coverGenresRefusesStaleCoversAfterIdentityChanges()
     const auto result = waitFor(std::move(future));
     QVERIFY(!result.ok());
     QCOMPARE(result.error, QStringLiteral("request canceled"));
+}
+
+void MusicRepositoryTest::coverCacheExpiresAfterTtl()
+{
+    // perf-fix-b (2026-09-16): m_coverCache used to be built with a TTL of -1
+    // (never expires), so a genre's sampled covers were pinned for the life
+    // of the process (289 of them for the owner's library). This pins the
+    // fix: once the TTL has actually elapsed, the next sample re-fetches
+    // instead of serving the same cached list forever.
+    m_mock->addQueryRoute("GET", itemsPath(), Q{{"GenreIds", "g1"}, {"SortBy", "Random"}}, 200,
+                          page({albumJson("c-g1")}));
+
+    GenreBin jazz;
+    jazz.id = QStringLiteral("g1");
+    jazz.name = QStringLiteral("Jazz");
+
+    QVERIFY(waitFor(m_repo->coverGenres(kLibrary, {jazz})).ok());
+    const int afterFirst = m_mock->requestCount();
+
+    m_now = m_now.addSecs(4 * 60);
+    QVERIFY(waitFor(m_repo->coverGenres(kLibrary, {jazz})).ok());
+    QCOMPARE(m_mock->requestCount(), afterFirst); // still within the cover cache's TTL
+
+    m_now = m_now.addSecs(2 * 60); // 6 minutes after the first sample
+    QVERIFY(waitFor(m_repo->coverGenres(kLibrary, {jazz})).ok());
+    QVERIFY(m_mock->requestCount() > afterFirst); // expired: re-fetched, not served forever
 }
 
 void MusicRepositoryTest::topArtistsRankByPlays()

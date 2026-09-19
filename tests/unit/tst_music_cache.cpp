@@ -29,6 +29,8 @@ class MusicCacheTest : public QObject
 
 private slots:
     void cacheExpiresAndGoesStale();
+    void cacheErasesExpiredEntryRatherThanJustMissing();
+    void cacheEvictsLeastRecentlyUsedBeyondCap();
     void cacheRemovesByPredicate();
     void fanoutWaitsForAllAndSeal();
     void fanoutEmptyFiresOnSeal();
@@ -59,6 +61,47 @@ void MusicCacheTest::cacheExpiresAndGoesStale()
     QCOMPARE(session.get(QStringLiteral("k"), t0.addYears(1)), std::optional(9));
     session.clear();
     QCOMPARE(session.size(), 0);
+}
+
+void MusicCacheTest::cacheErasesExpiredEntryRatherThanJustMissing()
+{
+    // perf-fix-b (2026-09-16): the old TtlCache made an expired entry
+    // unreachable through get() but never removed it from the backing QHash,
+    // so it occupied memory for the life of the process. Asserting only the
+    // miss (as cacheExpiresAndGoesStale does above) cannot tell that apart
+    // from a fixed cache, so this test checks size() too.
+    const QDateTime t0 = QDateTime::fromSecsSinceEpoch(2'000'000);
+    TtlCache<int> cache(5min);
+    cache.put(QStringLiteral("tracks:al1"), 42, t0);
+    QCOMPARE(cache.size(), 1);
+
+    QVERIFY(!cache.get(QStringLiteral("tracks:al1"), t0.addSecs(301)).has_value());
+    QCOMPARE(cache.size(), 0); // erased on expiry, not merely reported as a miss
+}
+
+void MusicCacheTest::cacheEvictsLeastRecentlyUsedBeyondCap()
+{
+    const QDateTime t0 = QDateTime::fromSecsSinceEpoch(3'000'000);
+    TtlCache<int> cache(10min, /*maxEntries=*/3);
+    cache.put(QStringLiteral("a"), 1, t0);
+    cache.put(QStringLiteral("b"), 2, t0);
+    cache.put(QStringLiteral("c"), 3, t0);
+    QCOMPARE(cache.size(), 3);
+
+    // Touching "a" makes "b" the least recently used of the three.
+    QVERIFY(cache.get(QStringLiteral("a"), t0).has_value());
+    cache.put(QStringLiteral("d"), 4, t0);
+
+    QCOMPARE(cache.size(), 3); // the cap holds -- the cache does not grow past it
+    QVERIFY(!cache.get(QStringLiteral("b"), t0).has_value()); // LRU evicted
+    QVERIFY(cache.get(QStringLiteral("a"), t0).has_value());
+    QVERIFY(cache.get(QStringLiteral("c"), t0).has_value());
+    QVERIFY(cache.get(QStringLiteral("d"), t0).has_value());
+
+    // Keep inserting past the cap: size must never grow beyond it.
+    for (int i = 0; i < 20; ++i)
+        cache.put(QStringLiteral("extra-%1").arg(i), i, t0);
+    QCOMPARE(cache.size(), 3);
 }
 
 void MusicCacheTest::cacheRemovesByPredicate()

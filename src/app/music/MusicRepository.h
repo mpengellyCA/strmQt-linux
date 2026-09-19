@@ -107,7 +107,13 @@ private:
     TtlCache<NewAlbums> m_newCache{std::chrono::minutes(5)};
     TtlCache<QList<Artist>> m_artistListCache{std::chrono::minutes(5)};
     TtlCache<QList<GenreBin>> m_genreCache{std::chrono::minutes(5)};
-    TtlCache<QList<ImageRef>> m_coverCache{std::chrono::milliseconds(-1)};
+    // perf-fix-b (2026-09-16): was milliseconds(-1) (never expires), so a
+    // 289-genre library (the owner's) pinned 289 cover-sample entries for the
+    // life of the process. 5 minutes matches m_genreCache and the other
+    // home:*/lib:* list caches: covers:<genreId> is catalog data of the same
+    // kind and staleness tolerance as the genre bins it decorates, so it
+    // should invalidate on the same clock rather than never.
+    TtlCache<QList<ImageRef>> m_coverCache{std::chrono::minutes(5)};
 };
 
 } // namespace strmqt::music

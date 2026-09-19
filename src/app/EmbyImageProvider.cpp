@@ -524,19 +524,31 @@ void EmbyImageFetcher::fetchFromNetwork(const QPointer<EmbyImageResponse> &respo
         if (!guardedReply)
             return;
         QNetworkReply *reply = guardedReply.data();
-        drainBounded(reply, state);
         if (!response || response->state()->canceled.load(std::memory_order_acquire))
             return;
         if (!partition->active.load(std::memory_order_acquire)) {
             response->complete({}, QStringLiteral("stale image request"));
             return;
         }
+        // A prior readyRead already tripped the size limit and aborted the
+        // reply: report that (not the abort's own generic error) and skip the
+        // read below — drainBounded() already no-ops once overflow is set.
         if (state->overflow) {
             response->complete({}, QStringLiteral("image response exceeds size limit"));
             return;
         }
+        // Check the transport error before touching the device. Draining a
+        // reply that failed (e.g. a non-2xx HTTP status) used to call
+        // reply->read() on a socket that had already closed, which is what
+        // produced the "QIODevice::read (QSslSocket): device not open"
+        // warning alongside every failed image fetch.
         if (reply->error() != QNetworkReply::NoError) {
             response->complete({}, reply->errorString());
+            return;
+        }
+        drainBounded(reply, state);
+        if (state->overflow) {
+            response->complete({}, QStringLiteral("image response exceeds size limit"));
             return;
         }
         decodeAsync(response, id, partition, cachePath, state->bytes, /*storeToCache=*/true,

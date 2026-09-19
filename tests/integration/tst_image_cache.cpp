@@ -52,6 +52,7 @@ private slots:
     void fetchReturnsBeforeTheImageIsDecoded();
     void largeSourceIsDecodedNearTheRequestedSize();
     void canceledResponseAbortsAndSuppressesDecode();
+    void serverErrorCompletesWithReplyErrorAndNoImage();
     void identitySwitchRejectsDelayedOldWork();
     void qmlPixmapCacheSeparatesIdentityNamespaces();
     void delayedCleanupCannotDeleteReactivatedPartition();
@@ -221,6 +222,29 @@ void ImageCacheTest::canceledResponseAbortsAndSuppressesDecode()
     QCOMPARE(response.errorString(), QStringLiteral("request canceled"));
     QTest::qWait(600);
     QCOMPARE(decoded.count(), 0);
+}
+
+// perf-fix-b (2026-09-16): fetchFromNetwork()'s finished handler used to call
+// drainBounded() (which reads the reply) before checking reply->error(), so a
+// failed reply was read from a device the transport had already closed --
+// harmless over this test's plain-HTTP mock, but the same read against a real
+// TLS connection is exactly what produced the owner's 14 "QIODevice::read
+// (QSslSocket): device not open" warnings, one per failed image fetch. This
+// pins the completion contract the reorder must preserve: an HTTP error still
+// completes the response with that error and no image, it just does not
+// touch the (possibly already-closed) device to do it.
+void ImageCacheTest::serverErrorCompletesWithReplyErrorAndNoImage()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"), 500,
+                     QByteArrayLiteral("{}"));
+    EmbyImageResponse response;
+    QSignalSpy finished(&response, &QQuickImageResponse::finished);
+    m_fetcher->fetch(&response, currentProviderId(), QSize(200, 0));
+    QVERIFY(finished.wait(5000));
+    QVERIFY(!response.errorString().isEmpty());
+    QCOMPARE(response.errorString().contains(QStringLiteral("stale")), false);
+    QCOMPARE(response.errorString().contains(QStringLiteral("exceeds size limit")), false);
+    QVERIFY(response.textureFactory() == nullptr);
 }
 
 void ImageCacheTest::identitySwitchRejectsDelayedOldWork()
