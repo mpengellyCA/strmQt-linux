@@ -12,6 +12,7 @@ private slots:
     void tailscaleDetection();
     void lanIpDetection();
     void urlFormatting();
+    void bindNeverFallsBackToAny();
 };
 
 void NetworkAddressHelperTest::sanIpAddressesIncludesLoopback()
@@ -53,6 +54,21 @@ void NetworkAddressHelperTest::urlFormatting()
     } else {
         QVERIFY(lanUrl.isEmpty());
     }
+}
+
+void NetworkAddressHelperTest::bindNeverFallsBackToAny()
+{
+    // With no matching address the server binds this computer only, never every interface.
+    const QString lan = NetworkAddressHelper::lanIp();
+    QCOMPARE(NetworkAddressHelper::resolveBindAddress(QStringLiteral("lan")),
+             lan.isEmpty() ? QHostAddress(QHostAddress::LocalHost) : QHostAddress(lan));
+    const QString ts = NetworkAddressHelper::tailscaleIp();
+    QCOMPARE(NetworkAddressHelper::resolveBindAddress(QStringLiteral("tailscale")),
+             ts.isEmpty() ? QHostAddress(QHostAddress::LocalHost) : QHostAddress(ts));
+    QCOMPARE(NetworkAddressHelper::resolveBindAddress(QStringLiteral("localhost")),
+             QHostAddress(QHostAddress::LocalHost));
+    QCOMPARE(NetworkAddressHelper::resolveBindAddress(QStringLiteral("all")),
+             QHostAddress(QHostAddress::Any));
 }
 
 QTEST_MAIN(NetworkAddressHelperTest)

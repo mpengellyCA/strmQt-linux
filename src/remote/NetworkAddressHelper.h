@@ -22,8 +22,8 @@ public:
 
     // Resolves the QHostAddress to bind to according to the bind mode:
     // "all" -> QHostAddress::Any
-    // "tailscale" -> tailscaleIp() or QHostAddress::Null
-    // "lan" -> lanIp() or QHostAddress::Null
+    // "tailscale" -> tailscaleIp() or QHostAddress::LocalHost
+    // "lan" -> lanIp() or QHostAddress::LocalHost
     // "localhost" -> QHostAddress::LocalHost
     static QHostAddress resolveBindAddress(const QString &mode);
 };

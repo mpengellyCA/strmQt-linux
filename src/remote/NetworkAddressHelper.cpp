@@ -149,13 +149,14 @@ QHostAddress NetworkAddressHelper::resolveBindAddress(const QString &mode)
         const QString ts = tailscaleIp();
         if (!ts.isEmpty())
             return QHostAddress(ts);
-        return QHostAddress::Any; // fallback if tailscale not available
+        // No tailscale address: this computer only, never every interface.
+        return QHostAddress::LocalHost;
     }
     if (mode == QLatin1String("lan")) {
         const QString lan = lanIp();
         if (!lan.isEmpty())
             return QHostAddress(lan);
-        return QHostAddress::Any;
+        return QHostAddress::LocalHost; // no LAN address: this computer only, never Any
     }
     if (mode == QLatin1String("localhost") || mode == QLatin1String("loopback")) {
         return QHostAddress::LocalHost;
