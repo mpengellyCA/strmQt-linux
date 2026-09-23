@@ -56,6 +56,9 @@ void HomeController::resetSessionState()
     m_userDataRefreshTimer.stop();
     m_userDataRefreshQueued = false;
     m_lastUserDataRefresh.invalidate();
+    m_refreshOnWire = false;
+    m_libraryRefreshOwed = false;
+    m_userDataRefreshOwed = false;
 
     m_resume->clear();
     m_nextUp->clear();
@@ -110,8 +113,7 @@ void HomeController::onLibraryInvalidated(const QStringList &itemIds)
 {
     Q_UNUSED(itemIds); // Home's rails are "latest across the library", not per item
     if (busy()) {
-        // A refresh is already fetching; it will carry these changes.
-        qCDebug(logApp) << "home: library invalidation folded into an in-flight refresh";
+        noteInvalidationWhileBusy(true);
         return;
     }
     startRefresh();
@@ -137,8 +139,10 @@ void HomeController::onUserDataPatched(const QVariantList &entries)
 void HomeController::onUserDataInvalidated(const QStringList &itemIds)
 {
     Q_UNUSED(itemIds);
-    if (busy())
+    if (busy()) {
+        noteInvalidationWhileBusy(false);
         return;
+    }
     // Continue Watching, Next Up and Favorites are three server-side queries.
     // The changed ids do not contain enough type/series context to decide who
     // enters them, so fetch one coherent snapshot and respect the page's
@@ -173,6 +177,15 @@ void HomeController::startRefresh()
     m_pending = 0;
     m_incoming = Snapshot{};
     setError({});
+    // Anything reported before this refresh's requests go out is covered by
+    // them, including a follow-up this refresh was started to pay.
+    m_libraryRefreshOwed = false;
+    m_userDataRefreshOwed = false;
+    m_refreshOnWire = false;
+    QTimer::singleShot(0, this, [this, generation] {
+        if (generation == m_generation)
+            m_refreshOnWire = true;
+    });
 
     beginRequest();
     m_client->resumeItems(20).then(this, [this, generation](const Result<ItemsPage> &result) {
@@ -251,6 +264,33 @@ void HomeController::startRefresh()
     });
     if (!wasBusy && busy())
         emit busyChanged();
+}
+
+void HomeController::noteInvalidationWhileBusy(bool library)
+{
+    if (!m_refreshOnWire) {
+        // refreshNow() lands here: its invalidations follow refreshRequested
+        // in the same call stack, before the refresh has sent anything.
+        qCDebug(logApp) << "home: invalidation folded into a refresh not yet sent";
+        return;
+    }
+    // The server may have answered the in-flight queries before this change
+    // happened — the end of playback races PlaybackStopped exactly like this.
+    qCDebug(logApp) << "home: invalidation behind an in-flight refresh; another follows";
+    if (library)
+        m_libraryRefreshOwed = true;
+    else
+        m_userDataRefreshOwed = true;
+}
+
+void HomeController::runOwedRefresh()
+{
+    if (m_libraryRefreshOwed) {
+        startRefresh();
+    } else if (m_userDataRefreshOwed) {
+        m_userDataRefreshOwed = false;
+        onUserDataInvalidated({}); // keeps the floor between membership refreshes
+    }
 }
 
 void HomeController::finishRefresh()
@@ -504,6 +544,7 @@ void HomeController::endRequest(int generation)
     if (--m_pending == 0) {
         finishRefresh();
         emit busyChanged();
+        runOwedRefresh();
     }
 }
 

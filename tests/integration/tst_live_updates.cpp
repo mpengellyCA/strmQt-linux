@@ -83,6 +83,8 @@ private slots:
     void filteredLaterPageAnnouncesMembershipChange();
     void homeMembershipRefreshHasAFloorBetweenBursts();
     void homeLibraryInvalidationAppliesCoherentSnapshot();
+    void homeInvalidationBehindAnInFlightRefreshIsNotLost();
+    void homeRefreshNowCostsOneSnapshot();
     void libraryGridAnnouncesNewItemsInsteadOfReloading();
 
 private:
@@ -586,6 +588,69 @@ void LiveUpdatesTest::homeLibraryInvalidationAppliesCoherentSnapshot()
     QCOMPARE(updatedRail->rowCount(), 2);
     QCOMPARE(updatedRail->get(0).value(QStringLiteral("itemId")).toString(),
              QStringLiteral("999999"));
+}
+
+// The end of playback is the common case: PlayerController posts
+// PlaybackStopped and goes inactive in the same breath, so Home's refresh races
+// the report. When the server's UserDataChanged lands, the refresh already on
+// the wire was answered from the old state — folding the invalidation into it
+// would leave Continue Watching stale until something else changed.
+void LiveUpdatesTest::homeInvalidationBehindAnInFlightRefreshIsNotLost()
+{
+    routeHomeFixtures();
+    const QString resumePath = QStringLiteral("/Users/%1/Items/Resume").arg(kUserId);
+
+    HomeController home(m_client);
+    home.setUserDataRefreshFloorMsForTests(0);
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+    QVERIFY(home.resume()->rowCount() > 0);
+
+    const auto resumeRequests = [this, resumePath] {
+        int count = 0;
+        for (const auto &request : m_mock->requests())
+            count += request.path == resumePath ? 1 : 0;
+        return count;
+    };
+    const int resumeBefore = resumeRequests();
+    m_mock->setRouteDelay(QStringLiteral("GET"), resumePath, 200);
+    home.refresh();
+    QTRY_COMPARE(resumeRequests(), resumeBefore + 1);
+    QVERIFY(home.busy());
+
+    // The server moves on after it has already read the in-flight query.
+    m_mock->addRoute(QStringLiteral("GET"), resumePath, 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    home.onUserDataInvalidated({});
+
+    QTRY_COMPARE_WITH_TIMEOUT(home.resume()->rowCount(), 0, 3000);
+    QTRY_VERIFY(!home.busy());
+}
+
+// refreshNow() emits refreshRequested and then the ordinary invalidations in
+// the same breath. Those invalidations describe nothing the refresh has not
+// yet asked for, so they must not buy a second snapshot.
+void LiveUpdatesTest::homeRefreshNowCostsOneSnapshot()
+{
+    routeHomeFixtures();
+
+    HomeController home(m_client);
+    home.setUserDataRefreshFloorMsForTests(0);
+    LiveUpdateService live(m_client, m_settings);
+    home.bindLiveUpdates(&live);
+
+    const int beforeFirst = m_mock->requestCount();
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+    const int requestsPerSnapshot = m_mock->requestCount() - beforeFirst;
+    QVERIFY(requestsPerSnapshot > 0);
+
+    const int before = m_mock->requestCount();
+    live.refreshNow();
+    QTRY_VERIFY(!home.busy());
+    QTest::qWait(100); // room for a spurious follow-up to show itself
+    QVERIFY(!home.busy());
+    QCOMPARE(m_mock->requestCount() - before, requestsPerSnapshot);
 }
 
 void LiveUpdatesTest::libraryGridAnnouncesNewItemsInsteadOfReloading()

@@ -80,8 +80,9 @@ public:
 
 public slots:
     // Server said these items changed (empty = everything). Fetches into a
-    // staging snapshot; dropped while a refresh is already in flight, because
-    // that refresh will deliver the same data.
+    // staging snapshot. While a refresh is in flight it is folded into that
+    // refresh only if its requests have not left yet; otherwise the server may
+    // already have answered from the old state, so one more refresh follows.
     void onLibraryInvalidated(const QStringList &itemIds);
     // In-place user-data patch; entries as emitted by
     // LiveUpdateService::userDataPatched.
@@ -128,6 +129,10 @@ private:
 
     void startRefresh();
     void finishRefresh();
+    // Called while busy: remember whether the in-flight refresh can still carry
+    // the change or a follow-up refresh is owed.
+    void noteInvalidationWhileBusy(bool library);
+    void runOwedRefresh();
     void applySnapshot(const Snapshot &snapshot);
     void beginRequest();
     void endRequest(int generation);
@@ -160,6 +165,11 @@ private:
     QString m_errorMessage;
     int m_pending = 0;
     int m_generation = 0; // invalidates in-flight replies across refreshes
+    // False until control returns to the event loop after startRefresh(): up to
+    // then its requests are unsent and will see any change reported meanwhile.
+    bool m_refreshOnWire = false;
+    bool m_libraryRefreshOwed = false;
+    bool m_userDataRefreshOwed = false;
     int m_genreGeneration = 0;
     int m_sessionGeneration = 0;
 
