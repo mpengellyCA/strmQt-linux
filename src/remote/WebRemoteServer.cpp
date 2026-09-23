@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMimeDatabase>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QRegularExpression>
@@ -122,6 +123,38 @@ bool isSafeId(const QString &value)
     static const QRegularExpression re(
         QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z0-9_-]{1,128}")));
     return re.match(value).hasMatch();
+}
+
+// An Emby item id as the server issues them: decimal on Emby, 32 hex digits
+// (bare or as a dashed GUID) on Jellyfin and for some views.
+bool isEmbyItemId(const QString &value)
+{
+    static const QRegularExpression re(QRegularExpression::anchoredPattern(QStringLiteral(
+        "[0-9]{1,20}|[0-9A-Fa-f]{32}"
+        "|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")));
+    return re.match(value).hasMatch();
+}
+
+// Emby's ImageType names; the image proxy asks for no other.
+bool isImageType(const QString &value)
+{
+    static const QSet<QString> types{
+        QStringLiteral("Primary"), QStringLiteral("Art"),   QStringLiteral("Backdrop"),
+        QStringLiteral("Banner"),  QStringLiteral("Logo"),  QStringLiteral("Thumb"),
+        QStringLiteral("Disc"),    QStringLiteral("Box"),   QStringLiteral("Screenshot"),
+        QStringLiteral("Menu"),    QStringLiteral("Chapter"), QStringLiteral("BoxRear"),
+        QStringLiteral("Profile")};
+    return types.contains(value);
+}
+
+// Only these are safe to hand back as an <img> source: no SVG (it can carry
+// script), no other document type that a browser might render or execute.
+bool isAllowedImageMime(const QString &mime)
+{
+    static const QSet<QString> allowed{
+        QStringLiteral("image/jpeg"), QStringLiteral("image/png"), QStringLiteral("image/webp"),
+        QStringLiteral("image/gif"), QStringLiteral("image/avif")};
+    return allowed.contains(mime);
 }
 
 QStringList splitList(const QString &value)
@@ -1577,9 +1610,9 @@ void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId,
         return;
     }
 
-    static const QRegularExpression typeRegex(
-        QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z]{1,24}")));
-    if (!isSafeId(itemId) || !typeRegex.match(imageType).hasMatch()) {
+    // The upstream path is built here from an id and a type that each match
+    // a closed form; nothing else the phone sent reaches the path.
+    if (!isEmbyItemId(itemId) || !isImageType(imageType)) {
         sendResponse(socket, 400, "text/plain", "Invalid image parameters");
         return;
     }
@@ -1609,12 +1642,23 @@ void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId,
             return;
         }
         const QByteArray data = reply->readAll();
-        const QByteArray cType = reply->rawHeader("Content-Type");
+        // Only a raster image goes back, typed by its own bytes rather than
+        // by whatever the upstream claimed. A login page or error body from a
+        // proxy in front of Emby is not relayed, and neither is an SVG: it
+        // can carry a <script> that would run on the remote's own origin,
+        // where the phone keeps its token.
+        const QString mime = QMimeDatabase().mimeTypeForData(data).name();
+        if (!isAllowedImageMime(mime)) {
+            sendResponse(safeSocket, 502, "text/plain", "Image unavailable");
+            return;
+        }
         QHash<QByteArray, QByteArray> headers;
         // A tag names one version of the image, so a tagged URL never changes.
         headers["Cache-Control"] = tagged ? "private, max-age=2592000, immutable"
                                           : "private, max-age=3600";
-        sendResponse(safeSocket, 200, cType.isEmpty() ? "image/jpeg" : cType, data, headers);
+        // Opened as a page of its own, it still runs nothing.
+        headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+        sendResponse(safeSocket, 200, mime.toLatin1(), data, headers);
     });
 }
 

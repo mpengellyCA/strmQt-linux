@@ -16,10 +16,12 @@
 #include <memory>
 #include <vector>
 
+#include "MockEmbyServer.h"
 #include "RemoteTestClient.h"
 #include "core/Settings.h"
 #include "remote/TlsCertificateGenerator.h"
 #include "remote/WebRemoteServer.h"
+#include "server/emby/EmbyClient.h"
 
 using namespace strmqt;
 
@@ -50,6 +52,7 @@ private slots:
     void qualityWritesSettings();
     void subtitleStyleValidatesColour();
     void playbackWithoutPlayerIsUnavailable();
+    void imageProxyServesOnlyRasterImages();
 
     // Request framing
     void oversizedBodyIsRefused();
@@ -87,6 +90,7 @@ private:
     QTemporaryDir m_dir;
     Settings *m_settings = nullptr;
     WebRemoteServer *m_server = nullptr;
+    emby::EmbyClient *m_client = nullptr;
     QNetworkAccessManager *m_nam = nullptr;
     std::unique_ptr<RemoteTestClient> m_http;
     int m_port = 18337;
@@ -101,7 +105,9 @@ void WebRemoteServerTest::initTestCase()
     m_settings->setWebRemoteBindMode(QStringLiteral("localhost"));
     m_settings->setWebRemoteRequirePin(false);
 
-    m_server = new WebRemoteServer(m_settings, nullptr, nullptr, nullptr, nullptr, nullptr, this);
+    // Signed out until a test signs it in against a mock Emby.
+    m_client = new emby::EmbyClient(this);
+    m_server = new WebRemoteServer(m_settings, nullptr, nullptr, nullptr, nullptr, m_client, this);
     QVERIFY(m_server->start());
     QVERIFY(m_server->isRunning());
 
@@ -474,6 +480,60 @@ void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()
     QCOMPARE(request("POST", QStringLiteral("/api/playback"), R"({"action":"togglePause"})").status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/libraries")).status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/unknown")).status, 404);
+}
+
+void WebRemoteServerTest::imageProxyServesOnlyRasterImages()
+{
+    MockEmbyServer emby;
+    QVERIFY(emby.start());
+    m_client->setBaseUrl(emby.baseUrl());
+    m_client->setSession(QStringLiteral("image-proxy-token"), QStringLiteral("user"));
+    const auto signOut = qScopeGuard([this] { m_client->setSession({}, {}); });
+
+    // A PNG the upstream mislabels: typed by its bytes, not by the label.
+    QByteArray png("\x89PNG\r\n\x1a\n", 8);
+    png += QByteArray(64, '\0');
+    emby.addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"), 200, png,
+                  "text/html");
+    const RemoteResponse image = m_http->get(QStringLiteral("/api/image/301001/Primary?w=400"));
+    QCOMPARE(image.status, 200);
+    QCOMPARE(image.body, png);
+    QCOMPARE(image.headers.value("content-type"), QByteArray("image/png"));
+    QCOMPARE(image.headers.value("content-security-policy"),
+             QByteArray("default-src 'none'; sandbox"));
+    QCOMPARE(image.headers.value("x-content-type-options"), QByteArray("nosniff"));
+    // The key goes to Emby in a header and never back to the phone.
+    QCOMPARE(emby.lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Items/301001/Images/Primary"))
+                 .headers.value("x-emby-token"),
+             QByteArray("image-proxy-token"));
+    QVERIFY(!image.body.contains("image-proxy-token"));
+    for (const QByteArray &value : image.headers)
+        QVERIFY(!value.contains("image-proxy-token"));
+
+    // An SVG can carry script that would run on the remote's own origin.
+    emby.addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301002/Images/Primary"), 200,
+                  "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
+                  "image/svg+xml");
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/301002/Primary")).status, 502);
+    // So can a login page from a proxy in front of Emby, whatever it is labelled.
+    emby.addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301003/Images/Primary"), 200,
+                  "<!DOCTYPE html><html><body>Sign in</body></html>", "image/jpeg");
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/301003/Primary")).status, 502);
+
+    // Ids and types in the forms Emby issues; nothing else reaches the path.
+    emby.addRoute(QStringLiteral("GET"),
+                  QStringLiteral("/Items/6c17e0e282e84f7c92e8358ebf054111/Images/Backdrop"), 200,
+                  png, "image/png");
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/6c17e0e282e84f7c92e8358ebf054111/Backdrop")).status,
+             200);
+    const int before = emby.requestCount();
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/301001/Script")).status, 400);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw(
+                 "GET /api/image/..%2F..%2FUsers/Primary HTTP/1.1\r\nHost: x\r\n\r\n")),
+             404);
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/301001%20x/Primary")).status, 400);
+    QCOMPARE(m_http->get(QStringLiteral("/api/image/abc_def/Primary")).status, 400);
+    QCOMPARE(emby.requestCount(), before);
 }
 
 void WebRemoteServerTest::oversizedBodyIsRefused()
