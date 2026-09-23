@@ -52,7 +52,8 @@ export function withQuery(path, params = {}) {
 
 async function request(method, path, body, signal) {
   const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const sent = token;
+  if (sent) headers.Authorization = `Bearer ${sent}`;
   const init = { method, headers, signal };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -78,6 +79,9 @@ async function request(method, path, body, signal) {
   }
 
   if (response.status === 401) {
+    // Revoked (a new PIN, or the TV restarted the remote): don't send it again.
+    // A late answer to a request made before the latest PIN leaves that one alone.
+    if (token === sent) setToken('');
     announceUnauthorized();
     throw new ApiError(401, 'Enter the PIN shown on the TV.');
   }
@@ -113,27 +117,34 @@ export function connectEvents(handlers) {
   const open = () => {
     clearTimeout(timer);
     source?.close();
-    source = new EventSource(withQuery('/api/events', { token }));
+    const sent = token;
+    source = new EventSource(withQuery('/api/events', { token: sent }));
     source.addEventListener('open', () => {
       retries = 0;
       handlers.connection?.(true);
     });
     source.addEventListener('status', (event) => handlers.status?.(JSON.parse(event.data)));
     source.addEventListener('queue', (event) => handlers.queue?.(JSON.parse(event.data)));
+    const mine = source;
     source.addEventListener('error', async () => {
-      if (source.readyState === EventSource.CONNECTING) {
+      if (source !== mine) return; // an older stream, already replaced
+      if (mine.readyState === EventSource.CONNECTING) {
         handlers.connection?.(false);
         return; // The browser is already retrying.
       }
-      source.close();
+      mine.close();
       handlers.connection?.(false);
       try {
         const pin = await get('/api/auth/pin');
+        // Reconnected (a PIN entered, the page shown again) while this waited.
+        if (source !== mine) return;
         if (pin.required && !pin.authorized) {
+          if (token === sent) setToken('');
           announceUnauthorized();
           return;
         }
       } catch {
+        if (source !== mine) return;
         // Unreachable: fall through to a backed-off retry.
       }
       const delay = Math.min(15000, 1000 * 2 ** retries++);

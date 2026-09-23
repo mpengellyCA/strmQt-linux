@@ -331,16 +331,17 @@ function pagedCollection(host, { endpoint = '/api/items', query, shape, layout, 
       if (!items.length) {
         status.replaceChildren(emptyState(emptyTitle || 'Nothing matches', emptyDetail || 'Try another filter or letter.'));
       }
+      // A short first page may not reach the sentinel; keep going until it
+      // does. Only after a success: a failure waits for "Try again".
+      requestAnimationFrame(() => {
+        if (mine === generation && startIndex < total && sentinel.getBoundingClientRect().top < window.innerHeight + 900) fetchPage();
+      });
     } catch (error) {
       if (mine !== generation) return;
       status.replaceChildren(errorState(error, () => { loading = false; fetchPage(); }));
     } finally {
       if (mine === generation) loading = false;
     }
-    // A short first page may not reach the sentinel; keep going until it does.
-    requestAnimationFrame(() => {
-      if (mine === generation && startIndex < total && sentinel.getBoundingClientRect().top < window.innerHeight + 900) fetchPage();
-    });
   };
 
   observer = new IntersectionObserver((entries) => {
@@ -975,6 +976,7 @@ export function searchView(node, params, ctx) {
   const results = h('div', { class: 'search-results', 'aria-live': 'polite' });
   let controller = null;
   let lastTerm = null;
+  let disposed = false;
 
   const showRecent = () => {
     const recent = recentSearches();
@@ -991,6 +993,7 @@ export function searchView(node, params, ctx) {
   };
 
   const update = async () => {
+    if (disposed) return; // a debounce that outlived the page
     const term = input.value.trim();
     clear.hidden = !input.value;
     if (term === lastTerm) return;
@@ -1053,6 +1056,10 @@ export function searchView(node, params, ctx) {
   return {
     onShow() {
       if (!input.value) requestAnimationFrame(() => input.focus({ preventScroll: true }));
+    },
+    dispose() {
+      disposed = true;
+      controller?.abort();
     },
   };
 }

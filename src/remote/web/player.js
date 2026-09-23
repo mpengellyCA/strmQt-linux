@@ -284,6 +284,9 @@ export function initPlayer({ openItem }) {
   let volumeDragging = false;
   const sendVolume = throttle((value) => command.volume('set', value), 120);
   volumeRange.addEventListener('pointerdown', () => { volumeDragging = true; });
+  // A tap that doesn't move the thumb fires no change event: release on lift too.
+  volumeRange.addEventListener('pointerup', () => { volumeDragging = false; });
+  volumeRange.addEventListener('pointercancel', () => { volumeDragging = false; });
   volumeRange.addEventListener('input', () => {
     const value = Number(volumeRange.value);
     volumeValue.textContent = String(value);
