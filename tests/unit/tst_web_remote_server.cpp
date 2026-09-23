@@ -9,9 +9,14 @@
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslKey>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <memory>
+#include <vector>
+
+#include "RemoteTestClient.h"
 #include "core/Settings.h"
 #include "remote/TlsCertificateGenerator.h"
 #include "remote/WebRemoteServer.h"
@@ -25,12 +30,16 @@ class WebRemoteServerTest : public QObject
 private slots:
     void initTestCase();
     void cleanupTestCase();
+    void init();
 
     void serverStartsAndListens();
     void servesStaticHtml();
     void apiStatusReturnsValidJson();
     void pinRequirementCheck();
-    void pinAuthAndRateLimiting();
+    void pinRateLimiting();
+    void pinLockoutEscalatesPerAddress();
+    void pinLengthMismatchIsRefused();
+    void newPinSignsEveryPhoneOut();
     void keyNavigationSignal();
     void postWithoutJsonIsRefused();
     void navigationAllowlist();
@@ -41,6 +50,29 @@ private slots:
     void qualityWritesSettings();
     void subtitleStyleValidatesColour();
     void playbackWithoutPlayerIsUnavailable();
+
+    // Request framing
+    void oversizedBodyIsRefused();
+    void malformedContentLengthIsRefused();
+    void oversizedHeadersAre431();
+    void ambiguousFramingIsRefused();
+    void controlCharactersInPathAreRefused();
+    void queryTokenIsGetOnly();
+
+    // Resource limits
+    void pipelinedRequestsAreBackpressured();
+    void slowAndIdleClientsAreClosed();
+    void connectionsAreCapped();
+
+    // Event streams
+    void eventStreamIsExemptFromTimeouts();
+    void newPinClosesEventStreams();
+    void oneEventStreamPerToken();
+    void inputOnAnEventStreamIsIgnored();
+    void streamThatStopsReadingIsDropped();
+
+    // Last: it stops the server.
+    void stopClosesOpenConnections();
 
 private:
     struct Response {
@@ -56,6 +88,7 @@ private:
     Settings *m_settings = nullptr;
     WebRemoteServer *m_server = nullptr;
     QNetworkAccessManager *m_nam = nullptr;
+    std::unique_ptr<RemoteTestClient> m_http;
     int m_port = 18337;
     QSslCertificate m_cert;
 };
@@ -80,13 +113,21 @@ void WebRemoteServerTest::initTestCase()
     connect(m_nam, &QNetworkAccessManager::sslErrors, this, [](QNetworkReply *reply, const QList<QSslError> &) {
         reply->ignoreSslErrors();
     });
+    m_http = std::make_unique<RemoteTestClient>(static_cast<quint16>(m_port));
 }
 
 void WebRemoteServerTest::cleanupTestCase()
 {
+    m_http.reset();
     if (m_server) {
         m_server->stop();
     }
+}
+
+void WebRemoteServerTest::init()
+{
+    m_settings->setWebRemoteRequirePin(false);
+    m_http->setToken({});
 }
 
 void WebRemoteServerTest::serverStartsAndListens()
@@ -160,49 +201,114 @@ void WebRemoteServerTest::pinRequirementCheck()
     reply->deleteLater();
 }
 
-void WebRemoteServerTest::pinAuthAndRateLimiting()
+void WebRemoteServerTest::pinRateLimiting()
 {
+    qint64 now = 1000000;
+    m_server->setClockForTests([&now] { return now; });
+    const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
     m_settings->setWebRemotePin(QStringLiteral("0000"));
     QCOMPARE(m_settings->webRemotePin(), QStringLiteral("0000"));
-
-    QSslConfiguration sslConf = QSslConfiguration::defaultConfiguration();
-    sslConf.setCaCertificates({m_cert});
-    sslConf.setPeerVerifyMode(QSslSocket::VerifyNone);
-
-    auto sendPin = [&](const QString &pin) -> int {
-        QNetworkRequest req(QUrl(QStringLiteral("https://127.0.0.1:%1/api/auth/pin").arg(m_port)));
-        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-        req.setSslConfiguration(sslConf);
-
-        QJsonObject body;
-        body.insert(QStringLiteral("pin"), pin);
-        QNetworkReply *reply = m_nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
-        reply->ignoreSslErrors();
-        QSignalSpy spy(reply, &QNetworkReply::finished);
-        if (!spy.wait(5000)) {
-            reply->deleteLater();
-            return -1;
-        }
-        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        reply->deleteLater();
-        return statusCode;
-    };
+    const QString path = QStringLiteral("/api/auth/pin");
 
     // 5 failed attempts return 403 Forbidden
-    for (int i = 0; i < 5; ++i) {
-        QCOMPARE(sendPin(QStringLiteral("1234")), 403);
-    }
+    for (int i = 0; i < 5; ++i)
+        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
 
-    // 6th attempt immediately returns 429 Too Many Requests
-    QCOMPARE(sendPin(QStringLiteral("1234")), 429);
-
-    // Wait 2100 ms for the rate limit window to expire
-    QTest::qWait(2100);
-
-    // Valid PIN "0000" succeeds with 200 OK
-    QCOMPARE(sendPin(QStringLiteral("0000")), 200);
+    // The next attempt is refused outright, even with the right PIN.
+    const RemoteResponse locked = m_http->post(path, R"({"pin":"1234"})");
+    QCOMPARE(locked.status, 429);
+    QCOMPARE(locked.json().value(QStringLiteral("error")).toString(),
+             QStringLiteral("Too many failed attempts. Please wait."));
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    now += 1999;
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    now += 1;
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
 }
 
+void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
+{
+    qint64 now = 5000000;
+    m_server->setClockForTests([&now] { return now; });
+    const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("0000"));
+    const QString path = QStringLiteral("/api/auth/pin");
+    const QHostAddress other(QStringLiteral("127.0.0.2"));
+    const auto fromOther = [this, &other](const QByteArray &pin) {
+        const QByteArray body = "{\"pin\":\"" + pin + "\"}";
+        return RemoteTestClient::statusOf(m_http->raw(
+            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body,
+            3000, other));
+    };
+
+    for (int i = 0; i < 5; ++i)
+        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
+    QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 429);
+    // Another address is not locked out by this one's misses...
+    QCOMPARE(fromOther("0000"), 200);
+    // ...and its own misses count from zero.
+    for (int i = 0; i < 4; ++i)
+        QCOMPARE(fromOther("1234"), 403);
+    QCOMPARE(fromOther("1234"), 403); // fifth miss: locked for 2 s
+    QCOMPARE(fromOther("0000"), 429);
+
+    // 127.0.0.1: each miss once a lockout has passed doubles it (2, 4, 8 s...).
+    qint64 lock = 2000;
+    for (int round = 0; round < 10; ++round) {
+        now += lock - 1;
+        QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+        now += 1;
+        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
+        lock = std::min<qint64>(lock * 2, 5 * 60 * 1000);
+    }
+    QCOMPARE(lock, 5 * 60 * 1000); // capped at 5 min
+    now += lock - 1;
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    now += 1;
+    // The right PIN resets the address: five fresh misses before the next lockout.
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
+    for (int i = 0; i < 5; ++i)
+        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
+    QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 429);
+    now += 2000;
+    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
+
+    // An address idle for over 10 min is forgotten: 127.0.0.2 had five misses
+    // and a lockout; after pruning it has five fresh ones.
+    now += 10 * 60 * 1000 + 1;
+    QCOMPARE(fromOther("1234"), 403);
+    QCOMPARE(fromOther("1234"), 403);
+    QCOMPARE(fromOther("0000"), 200);
+}
+
+void WebRemoteServerTest::pinLengthMismatchIsRefused()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("1357"));
+    const QString path = QStringLiteral("/api/auth/pin");
+    QCOMPARE(m_http->post(path, R"({"pin":"135"})").status, 403);
+    QCOMPARE(m_http->post(path, R"({"pin":"13570"})").status, 403);
+    QCOMPARE(m_http->post(path, R"({"pin":"1357"})").status, 200);
+}
+
+void WebRemoteServerTest::newPinSignsEveryPhoneOut()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("4321"));
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 401);
+
+    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})");
+    QCOMPARE(auth.status, 200);
+    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    QVERIFY(!token.isEmpty());
+    m_http->setToken(token);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
+
+    m_settings->setWebRemotePin(QStringLiteral("8765"));
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 401);
+}
 void WebRemoteServerTest::keyNavigationSignal()
 {
     QSignalSpy navSpy(m_server, &WebRemoteServer::actionRequested);
@@ -368,6 +474,332 @@ void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()
     QCOMPARE(request("POST", QStringLiteral("/api/playback"), R"({"action":"togglePause"})").status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/libraries")).status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/unknown")).status, 404);
+}
+
+void WebRemoteServerTest::oversizedBodyIsRefused()
+{
+    QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
+    // Refused on the header alone: the body is never read.
+    const QByteArray res = m_http->raw("POST /api/navigate HTTP/1.1\r\nHost: x\r\n"
+                                       "Content-Type: application/json\r\n"
+                                       "Content-Length: 1048577\r\n\r\n{\"key\":\"up\"");
+    QCOMPARE(RemoteTestClient::statusOf(res), 413);
+    // The cap exactly is still accepted.
+    QByteArray body = "{\"key\":\"up\",\"pad\":\"";
+    body += QByteArray(1024 * 1024 - body.size() - 2, 'a');
+    body += "\"}";
+    QCOMPARE(body.size(), 1024 * 1024);
+    QCOMPARE(m_http->post(QStringLiteral("/api/navigate"), body).status, 200);
+    QCOMPARE(nav.size(), 1);
+}
+
+void WebRemoteServerTest::malformedContentLengthIsRefused()
+{
+    QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("POST /api/navigate HTTP/1.1\r\nHost: x\r\n"
+                                                    "Content-Type: application/json\r\n"
+                                                    "Content-Length: 99999999999999999999\r\n\r\n")),
+             400);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("POST /api/navigate HTTP/1.1\r\nHost: x\r\n"
+                                                    "Content-Type: application/json\r\n"
+                                                    "Content-Length: -5\r\n\r\n")),
+             400);
+    QCOMPARE(nav.size(), 0);
+}
+
+void WebRemoteServerTest::oversizedHeadersAre431()
+{
+    const QByteArray res = m_http->raw("GET / HTTP/1.1\r\nX-Pad: " + QByteArray(70 * 1024, 'a'));
+    QCOMPARE(RemoteTestClient::statusOf(res), 431);
+}
+
+void WebRemoteServerTest::ambiguousFramingIsRefused()
+{
+    QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
+    // Two lengths: which one frames the body is anyone's guess.
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("POST /api/navigate HTTP/1.1\r\nHost: x\r\n"
+                                                    "Content-Type: application/json\r\n"
+                                                    "Content-Length: 0\r\nContent-Length: 12\r\n\r\n"
+                                                    "{\"key\":\"up\"}")),
+             400);
+    // Chunked bodies are not understood, so they are not guessed at.
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("POST /api/navigate HTTP/1.1\r\nHost: x\r\n"
+                                                    "Content-Type: application/json\r\n"
+                                                    "Transfer-Encoding: chunked\r\n\r\n"
+                                                    "c\r\n{\"key\":\"up\"}\r\n0\r\n\r\n")),
+             501);
+    QCOMPARE(nav.size(), 0);
+}
+
+void WebRemoteServerTest::controlCharactersInPathAreRefused()
+{
+    QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("POST /api/navigate%0A HTTP/1.1\r\nHost: x\r\n"
+                                                    "Content-Type: application/json\r\n"
+                                                    "Content-Length: 12\r\n\r\n{\"key\":\"up\"}")),
+             400);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("GET /style.css%00 HTTP/1.1\r\nHost: x\r\n\r\n")), 400);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("GET /style.css%7F HTTP/1.1\r\nHost: x\r\n\r\n")), 400);
+    // A newline before the end of an id must not pass an id pattern either.
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw("GET /api/item/123%0A HTTP/1.1\r\nHost: x\r\n\r\n")), 400);
+    QCOMPARE(nav.size(), 0);
+}
+
+void WebRemoteServerTest::queryTokenIsGetOnly()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("1122"));
+    const RemoteResponse auth =
+        m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"1122"})");
+    QCOMPARE(auth.status, 200);
+    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
+    QCOMPARE(m_http->post(QStringLiteral("/api/navigate?token=") + token, R"({"key":"up"})").status,
+             401);
+    QCOMPARE(nav.size(), 0);
+    // EventSource and <img> cannot set headers: on a GET the token may ride in the query.
+    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 404);
+    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=wrong")).status, 401);
+    m_http->setToken(token);
+    QCOMPARE(m_http->post(QStringLiteral("/api/navigate"), R"({"key":"up"})").status, 200);
+    QCOMPARE(nav.size(), 1);
+}
+
+void WebRemoteServerTest::pipelinedRequestsAreBackpressured()
+{
+    const qsizetype cssSize = m_http->get(QStringLiteral("/style.css")).body.size();
+    QVERIFY(cssSize > 0);
+    auto socket = m_http->connectTls();
+    QVERIFY(socket);
+    // Qt would otherwise drain the kernel buffer into memory on our behalf.
+    socket->setReadBufferSize(4096);
+    QByteArray burst;
+    for (int i = 0; i < 2000; ++i)
+        burst += "GET /style.css HTTP/1.1\r\nHost: x\r\n\r\n";
+    socket->write(burst); // and never read a byte back
+    // Plaintext not yet encrypted plus ciphertext not yet sent: on a TLS
+    // socket bytesToWrite() alone drops to 0 once Qt has encrypted it.
+    const auto backlog = [this] {
+        qint64 most = 0;
+        for (QSslSocket *s : m_server->findChildren<QSslSocket *>())
+            most = qMax(most, s->bytesToWrite() + s->encryptedBytesToWrite());
+        return most;
+    };
+    // The server fills the kernel buffers, then stops parsing: its own
+    // backlog stays at the pause threshold plus at most one response.
+    QTRY_VERIFY_WITH_TIMEOUT(backlog() > 256 * 1024, 10000);
+    QTest::qWait(200);
+    QVERIFY2(backlog() <= 256 * 1024 + cssSize + 4096, QByteArray::number(backlog()).constData());
+}
+
+void WebRemoteServerTest::slowAndIdleClientsAreClosed()
+{
+    m_server->setTimeoutsForTests(300, 600);
+    const auto restore = qScopeGuard([this] { m_server->setTimeoutsForTests(20000, 60000); });
+    // Headers trickling in never complete: closed on the request timeout,
+    // however often a byte arrives.
+    auto slow = m_http->connectTls();
+    QVERIFY(slow);
+    slow->write("GET / HTTP/1.1\r\n");
+    QElapsedTimer timer;
+    timer.start();
+    while (slow->state() == QAbstractSocket::ConnectedState && timer.elapsed() < 5000) {
+        slow->write("X");
+        QTest::qWait(50);
+    }
+    QCOMPARE(slow->state(), QAbstractSocket::UnconnectedState);
+    QVERIFY(timer.elapsed() < 2000);
+    // A keep-alive connection with nothing to say is closed once idle.
+    auto idle = m_http->connectTls();
+    QVERIFY(idle);
+    idle->write("GET /api/auth/pin HTTP/1.1\r\nHost: x\r\n\r\n");
+    QTRY_VERIFY_WITH_TIMEOUT(idle->bytesAvailable() > 0, 5000);
+    idle->readAll();
+    QTRY_COMPARE_WITH_TIMEOUT(idle->state(), QAbstractSocket::UnconnectedState, 5000);
+    // A body promised and never sent is a request that never completes.
+    auto stalled = m_http->connectTls();
+    QVERIFY(stalled);
+    stalled->write("POST /api/navigate HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                   "Content-Length: 65536\r\n\r\n{");
+    QTRY_COMPARE_WITH_TIMEOUT(stalled->state(), QAbstractSocket::UnconnectedState, 5000);
+}
+
+void WebRemoteServerTest::connectionsAreCapped()
+{
+    // Both clients drop their keep-alive connections.
+    m_http = std::make_unique<RemoteTestClient>(static_cast<quint16>(m_port));
+    delete m_nam;
+    m_nam = new QNetworkAccessManager(this);
+    m_nam->setProxy(QNetworkProxy::NoProxy);
+    const auto live = [this] {
+        int n = 0;
+        for (QSslSocket *s : m_server->findChildren<QSslSocket *>())
+            n += s->state() == QAbstractSocket::ConnectedState ? 1 : 0;
+        return n;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(live(), 0, 5000);
+    const QByteArray ping = "GET /api/auth/pin HTTP/1.1\r\nHost: x\r\n\r\n";
+    std::vector<std::unique_ptr<QSslSocket>> sockets;
+    for (int i = 0; i < 32; ++i) {
+        auto s = m_http->connectTls();
+        QVERIFY(s);
+        s->write(ping);
+        QTRY_VERIFY_WITH_TIMEOUT(s->bytesAvailable() > 0, 5000);
+        s->readAll();
+        sockets.push_back(std::move(s));
+    }
+    auto extra = m_http->connectTls();
+    if (extra) // the handshake may finish before the server drops it
+        QTRY_COMPARE_WITH_TIMEOUT(extra->state(), QAbstractSocket::UnconnectedState, 5000);
+    for (const auto &s : sockets)
+        QCOMPARE(s->state(), QAbstractSocket::ConnectedState);
+    // A slot frees up when a connection closes.
+    sockets.pop_back();
+    QTRY_COMPARE_WITH_TIMEOUT(live(), 31, 5000);
+    auto next = m_http->connectTls();
+    QVERIFY(next);
+    next->write(ping);
+    QTRY_VERIFY_WITH_TIMEOUT(next->bytesAvailable() > 0, 5000);
+}
+
+void WebRemoteServerTest::eventStreamIsExemptFromTimeouts()
+{
+    m_server->setTimeoutsForTests(200, 200);
+    const auto restore = qScopeGuard([this] { m_server->setTimeoutsForTests(20000, 60000); });
+    auto events = m_http->openEvents();
+    QVERIFY(events);
+    // Several idle and request timeouts pass with nothing but silence.
+    RemoteTestClient::collect(events.get(), 1000);
+    QCOMPARE(events->state(), QAbstractSocket::ConnectedState);
+    QCOMPARE(m_server->connectedClientsCount(), 1);
+    m_server->setInteractionContext(QStringLiteral("exempt-check"));
+    const QByteArray got = RemoteTestClient::collect(events.get(), 600);
+    QVERIFY2(got.contains("exempt-check"), got.constData());
+    events->abort();
+    QTRY_COMPARE_WITH_TIMEOUT(m_server->connectedClientsCount(), 0, 5000);
+}
+
+void WebRemoteServerTest::newPinClosesEventStreams()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("4321"));
+    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})");
+    QCOMPARE(auth.status, 200);
+    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    auto events = m_http->openEvents(token);
+    QVERIFY(events);
+    QCOMPARE(m_server->connectedClientsCount(), 1);
+    QSignalSpy changed(m_server, &WebRemoteServer::connectedClientsChanged);
+    m_settings->setWebRemotePin(QStringLiteral("8765"));
+    QCOMPARE(m_server->connectedClientsCount(), 0);
+    QVERIFY(!changed.isEmpty());
+    QCOMPARE(changed.last().first().toInt(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(events->state(), QAbstractSocket::UnconnectedState, 5000);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status?token=") + token).status, 401);
+}
+
+void WebRemoteServerTest::oneEventStreamPerToken()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("4321"));
+    const auto signIn = [this] {
+        return m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})")
+            .json()
+            .value(QStringLiteral("token"))
+            .toString();
+    };
+    const QString token = signIn();
+    const QString otherToken = signIn();
+    QVERIFY(!token.isEmpty() && !otherToken.isEmpty());
+    auto first = m_http->openEvents(token);
+    QVERIFY(first);
+    auto other = m_http->openEvents(otherToken);
+    QVERIFY(other);
+    QCOMPARE(m_server->connectedClientsCount(), 2);
+    QSignalSpy changed(m_server, &WebRemoteServer::connectedClientsChanged);
+    // The same phone again (a reload), this time with the header: the old stream goes.
+    auto second = m_http->openEvents(token, true);
+    QVERIFY(second);
+    QTRY_COMPARE_WITH_TIMEOUT(first->state(), QAbstractSocket::UnconnectedState, 5000);
+    QCOMPARE(m_server->connectedClientsCount(), 2);
+    QCOMPARE(changed.size(), 0); // replaced in place: the count never moved
+    QCOMPARE(second->state(), QAbstractSocket::ConnectedState);
+    QCOMPARE(other->state(), QAbstractSocket::ConnectedState);
+    // The replacement stream is live.
+    m_server->setInteractionContext(QStringLiteral("replacement-live"));
+    QVERIFY(RemoteTestClient::collect(second.get(), 600).contains("replacement-live"));
+    other->abort();
+    second->abort();
+    QTRY_COMPARE_WITH_TIMEOUT(m_server->connectedClientsCount(), 0, 5000);
+}
+
+void WebRemoteServerTest::inputOnAnEventStreamIsIgnored()
+{
+    auto socket = m_http->connectTls();
+    QVERIFY(socket);
+    // A request pipelined behind the stream's own, and one sent later.
+    socket->write("GET /api/events HTTP/1.1\r\nHost: x\r\n\r\n"
+                  "GET /api/status HTTP/1.1\r\nHost: x\r\n\r\n");
+    QByteArray got = RemoteTestClient::collect(socket.get(), 400);
+    QVERIFY(got.contains("event: queue"));
+    socket->write("GET /api/queue HTTP/1.1\r\nHost: x\r\n\r\n");
+    got += RemoteTestClient::collect(socket.get(), 400);
+    QCOMPARE(RemoteTestClient::countOf(got, "HTTP/1.1 "), 1);
+    QCOMPARE(socket->state(), QAbstractSocket::ConnectedState);
+    QCOMPARE(m_server->connectedClientsCount(), 1);
+    socket->abort();
+    QTRY_COMPARE_WITH_TIMEOUT(m_server->connectedClientsCount(), 0, 5000);
+}
+
+void WebRemoteServerTest::streamThatStopsReadingIsDropped()
+{
+    auto events = m_http->openEvents();
+    QVERIFY(events);
+    // The phone stops reading: Qt must not drain the kernel buffer for it.
+    events->setReadBufferSize(4096);
+    // Every context change is one more status event of about 1 MiB. Once the
+    // kernel buffers are full, the server's own backlog grows past the cap
+    // and the stream is dropped rather than buffered without bound.
+    const QString big(1024 * 1024, QLatin1Char('x'));
+    int step = 0;
+    QTRY_VERIFY_WITH_TIMEOUT((m_server->setInteractionContext(big + QString::number(++step % 2)),
+                              m_server->connectedClientsCount() == 0),
+                             30000);
+    m_server->setInteractionContext({});
+}
+
+void WebRemoteServerTest::stopClosesOpenConnections()
+{
+    auto socket = m_http->connectTls();
+    QVERIFY(socket);
+    socket->write("GET /api/auth/pin HTTP/1.1\r\nHost: x\r\n\r\n");
+    QTRY_VERIFY_WITH_TIMEOUT(socket->bytesAvailable() > 0, 5000); // a live keep-alive connection
+    socket->readAll();
+    QSignalSpy running(m_server, &WebRemoteServer::runningChanged);
+    m_server->stop();
+    QVERIFY(!m_server->isRunning());
+    QVERIFY(m_server->boundAddress().isNull());
+    QCOMPARE(running.size(), 1);
+    QCOMPARE(running.first().first().toBool(), false);
+    QTRY_COMPARE_WITH_TIMEOUT(socket->state(), QAbstractSocket::UnconnectedState, 5000);
+    m_server->stop(); // idempotent: no second signal
+    QCOMPARE(running.size(), 1);
+    QVERIFY(m_server->start());
+    QCOMPARE(m_server->boundAddress(), QHostAddress(QHostAddress::LocalHost));
+    QCOMPARE(m_http->get(QStringLiteral("/api/auth/pin")).status, 200);
+
+    // A stop (a restart, logout, server switch) signs every phone out: tokens
+    // do not survive it.
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("2468"));
+    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"2468"})");
+    QCOMPARE(auth.status, 200);
+    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    QVERIFY(!token.isEmpty());
+    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 404);
+    m_server->stop();
+    QVERIFY(m_server->start());
+    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 401);
 }
 
 QTEST_MAIN(WebRemoteServerTest)

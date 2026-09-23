@@ -2,6 +2,7 @@
 
 #include "core/Result.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -14,6 +15,8 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+
+#include <functional>
 
 class QSslServer;
 class QSslSocket;
@@ -56,9 +59,16 @@ public:
     ~WebRemoteServer() override;
 
     bool start();
+    // Closes the listener AND every open connection (keep-alive requests and
+    // event streams), and forgets every token: nothing authorised before a
+    // stop survives it.
     void stop();
     bool isRunning() const;
     quint16 port() const;
+    // The address the listener is bound to; null while stopped.
+    QHostAddress boundAddress() const;
+    // Why the last start() failed; empty after a successful start.
+    QString errorString() const { return m_error; }
     int connectedClientsCount() const;
 
     // Forces regenerating self-signed certs and restarts server
@@ -75,6 +85,15 @@ public:
     // keys, so a user who rebinds Back still has a working Back on the phone.
     static QString actionForNavigationKey(const QString &key);
 
+    // Per-connection timeouts: a request must complete within requestMs of its
+    // first byte, and a connection idle between requests closes after idleMs.
+    // Defaults 20 s and 60 s; tests shorten them. Applies to timers armed later.
+    void setTimeoutsForTests(int requestMs, int idleMs);
+    // Replaces NetworkAddressHelper::resolveBindAddress for start().
+    void setBindAddressResolverForTests(std::function<QHostAddress(const QString &mode)> resolver);
+    // Replaces the monotonic clock the PIN lockout runs on (milliseconds).
+    void setClockForTests(std::function<qint64()> nowMs);
+
 signals:
     void runningChanged(bool running);
     void connectedClientsChanged(int count);
@@ -87,7 +106,6 @@ signals:
 
 private slots:
     void onStartedEncryptionHandshake(QSslSocket *socket);
-    void onClientDisconnected();
     void broadcastPlayerStatus();
     void broadcastQueue();
 
@@ -100,7 +118,16 @@ private:
         QByteArray body;
     };
 
+    void onEncrypted(QSslSocket *socket);
     void handleReadyRead(QSslSocket *socket, QByteArray &buffer);
+    // Each connection has one single-shot timer. While a request is pending
+    // (first byte seen, not yet complete) it runs the request timeout; between
+    // requests, the idle timeout. On expiry the connection is aborted.
+    void restartTimeout(QSslSocket *socket, bool pending);
+    bool requestPending(QSslSocket *socket) const;
+    // For long-lived responses (the SSE event stream): stops and removes the
+    // socket's timer, so neither timeout applies to it again.
+    void exemptFromIdleTimeout(QSslSocket *socket);
     void dispatchRequest(QSslSocket *socket, const HttpRequest &req);
     bool dispatchApi(QSslSocket *socket, const HttpRequest &req);
 
@@ -127,7 +154,7 @@ private:
     void handleApiQuality(QSslSocket *socket, const QJsonObject &body);
     void handleApiSubtitleStyle(QSslSocket *socket, const QJsonObject &body);
     void handleApiNavigate(QSslSocket *socket, const QJsonObject &body);
-    void handleApiEvents(QSslSocket *socket);
+    void handleApiEvents(QSslSocket *socket, const HttpRequest &req);
     void handleApiAuthPin(QSslSocket *socket, const QJsonObject &body);
 
     bool isAuthorized(const HttpRequest &req) const;
@@ -137,6 +164,12 @@ private:
     void sendJsonArray(QSslSocket *socket, int statusCode, const QJsonArray &json);
     void sendOk(QSslSocket *socket);
     void sendError(QSslSocket *socket, int statusCode, const QString &message);
+    // Writes one chunk to an event stream, under the same backlog cap as
+    // sendResponse: a phone that stopped reading has its stream aborted
+    // rather than buffered without bound. False when the stream is gone.
+    bool writeSse(QSslSocket *socket, const QByteArray &chunk);
+    // Writes `chunk` to every open stream and forgets the ones that are gone.
+    void writeToAllStreams(const QByteArray &chunk);
     void broadcastSse(const QString &eventName, const QByteArray &data);
     void scheduleStatus();
 
@@ -154,12 +187,24 @@ private:
     emby::EmbyClient *m_client;
 
     QSslServer *m_server = nullptr;
-    QList<QPointer<QSslSocket>> m_sseClients;
-    QSet<QString> m_authorizedTokens;
+    QList<QPointer<QSslSocket>> m_clients;    // every open connection
+    QList<QPointer<QSslSocket>> m_sseClients; // open /api/events streams
+    QSet<QString> m_authorizedTokens;         // in memory only; cleared by stop() and a new PIN
     QNetworkAccessManager *m_imageNam = nullptr;
-    int m_failedPinAttempts = 0;
-    qint64 m_lastFailedPinTimeMs = 0;
+    struct PinFailures {
+        int misses = 0;    // in a row, since the last right PIN
+        qint64 lockMs = 0; // the current lockout; doubles per miss past the fifth
+        qint64 lockedUntil = 0;
+        qint64 lastMiss = 0;
+    };
+    QHash<QString, PinFailures> m_pinFailures; // by peer address
+    QElapsedTimer m_pinClock;
+    std::function<qint64()> m_clock;
+    std::function<QHostAddress(const QString &)> m_bindResolver;
+    QString m_error;
     QString m_interactionContext;
+    int m_requestTimeoutMs = 20000;
+    int m_idleTimeoutMs = 60000;
 
     // Many player signals fire together (a new item changes title, duration,
     // sources and tracks in one pass); one status event carries all of them.

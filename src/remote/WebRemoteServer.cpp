@@ -17,7 +17,6 @@
 #include "server/emby/EmbyClient.h"
 
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -31,6 +30,7 @@
 #include <QUuid>
 
 #include <memory>
+#include <utility>
 
 namespace strmqt {
 
@@ -38,12 +38,69 @@ namespace {
 
 // A request line plus headers larger than this is not a browser talking to us.
 constexpr qsizetype kMaxHeaderBytes = 64 * 1024;
-// Every JSON body the remote sends is a handful of fields.
+// Most JSON bodies the remote sends are a handful of fields; the largest is a
+// "play this list" carrying up to 300 rows the phone already holds.
 constexpr qsizetype kMaxBodyBytes = 1024 * 1024;
 
 constexpr int kStatusCoalesceMs = 120;
 constexpr int kStatusTickMs = 5000;
 constexpr int kKeepAliveMs = 20000;
+
+// Backpressure: no further request on a connection is parsed while this much
+// output is still unsent, and a connection whose backlog keeps growing past
+// the hard cap is dropped. Neither the client's input nor our output can grow
+// without bound for a client that never reads.
+constexpr qint64 kWritePauseBytes = 256 * 1024;
+constexpr qint64 kWriteAbortBytes = 4 * 1024 * 1024;
+// Room for one largest request; QSslSocket stops reading beyond it.
+constexpr qint64 kReadBufferBytes = kMaxHeaderBytes + kMaxBodyBytes + 16 * 1024;
+// Past this many open connections, a new one is closed as soon as it is up.
+// (Handshakes still in progress are capped by QTcpServer's pending limit and
+// QSslServer's handshake timeout.)
+constexpr qsizetype kMaxConnections = 32;
+constexpr char kTimeoutTimerName[] = "remoteTimeout";
+// Set on a connection once it is an /api/events stream: from then on it only
+// receives, and anything the client sends on it is discarded unparsed.
+constexpr char kEventStreamProperty[] = "remoteEventStream";
+// The bearer token an event stream was opened with: one stream per token.
+constexpr char kEventTokenProperty[] = "remoteEventToken";
+
+// Unsent output on a TLS socket: plaintext Qt has not yet encrypted, plus
+// ciphertext the kernel has not yet taken. bytesToWrite() alone drops to zero
+// as soon as Qt encrypts, however much is still queued.
+qint64 writeBacklog(const QSslSocket *socket)
+{
+    return socket->bytesToWrite() + socket->encryptedBytesToWrite();
+}
+
+// Per peer address: the fifth miss in a row locks that address out for 2 s;
+// each further miss once the lockout has passed doubles it, up to 5 min.
+// Every try while locked out is 429, even the right PIN. Nothing is shared
+// between addresses, and an address idle for 10 min is forgotten.
+constexpr int kMaxFailedPins = 5;
+constexpr qint64 kPinLockoutMs = 2000;
+constexpr qint64 kPinMaxLockoutMs = 5 * 60 * 1000;
+constexpr qint64 kPinFailureIdleMs = 10 * 60 * 1000;
+
+// Fixed-length XOR over the expected PIN. The time taken depends on the PIN's
+// length only, never on how many leading digits a guess got right.
+bool constantTimeEquals(const QByteArray &given, const QByteArray &expected)
+{
+    const QByteArray padded = given.leftJustified(expected.size(), '\0', true);
+    quint8 diff = given.size() == expected.size() ? 0 : 1;
+    for (qsizetype i = 0; i < expected.size(); ++i)
+        diff |= quint8(padded.at(i)) ^ quint8(expected.at(i));
+    return diff == 0;
+}
+
+bool hasControlCharacter(const QString &text)
+{
+    for (const QChar c : text) {
+        if (c.unicode() < 0x20 || c.unicode() == 0x7F)
+            return true;
+    }
+    return false;
+}
 
 QByteArray mimeTypeForPath(const QString &path)
 {
@@ -58,9 +115,12 @@ QByteArray mimeTypeForPath(const QString &path)
     return "application/octet-stream";
 }
 
+// Every pattern here is anchored with anchoredPattern() (\A...\z): `$` would
+// also match before a trailing newline.
 bool isSafeId(const QString &value)
 {
-    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9_-]{1,128}$"));
+    static const QRegularExpression re(
+        QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z0-9_-]{1,128}")));
     return re.match(value).hasMatch();
 }
 
@@ -213,6 +273,7 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
       m_server(new QSslServer(this)),
       m_imageNam(new QNetworkAccessManager(this))
 {
+    m_pinClock.start();
     connect(m_server, &QSslServer::startedEncryptionHandshake, this, &WebRemoteServer::onStartedEncryptionHandshake);
     connect(m_server, &QSslServer::sslErrors, this, [](QSslSocket *, const QList<QSslError> &errors) {
         qCWarning(logApp) << "webremote server sslErrors:" << errors;
@@ -237,10 +298,7 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
     m_keepAlive.setInterval(kKeepAliveMs);
     connect(&m_keepAlive, &QTimer::timeout, this, [this] {
         // An SSE comment line: ignored by EventSource, but it is traffic.
-        for (const auto &socket : std::as_const(m_sseClients)) {
-            if (socket && socket->state() == QAbstractSocket::ConnectedState)
-                socket->write(": keep-alive\n\n");
-        }
+        writeToAllStreams(": keep-alive\n\n");
     });
 
     // Player signal bindings for live status push
@@ -280,6 +338,20 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
         }
     }
     if (m_settings) {
+        // A new PIN signs out every phone that signed in with the old one.
+        connect(m_settings, &Settings::webRemotePinChanged, this, [this] {
+            m_authorizedTokens.clear();
+            // An open event stream was authorised with the old PIN: close it
+            // too. Swapped out first: abort() emits disconnected synchronously,
+            // and that handler edits m_sseClients.
+            const QList<QPointer<QSslSocket>> streams = std::exchange(m_sseClients, {});
+            for (const QPointer<QSslSocket> &socket : streams) {
+                if (socket)
+                    socket->abort();
+            }
+            if (!streams.isEmpty())
+                emit connectedClientsChanged(0);
+        });
         const auto schedule = [this] { scheduleStatus(); };
         connect(m_settings, &Settings::maxBitrateKbpsChanged, this, schedule);
         connect(m_settings, &Settings::playbackModeChanged, this, schedule);
@@ -297,10 +369,12 @@ bool WebRemoteServer::start()
 {
     if (m_server->isListening())
         return true;
+    m_error.clear();
 
     // Ensure self-signed certificate exists with SANs
     const QStringList sanAddresses = NetworkAddressHelper::allHostAddressesForSan();
     if (!TlsCertificateGenerator::ensureCertificate(sanAddresses)) {
+        m_error = QStringLiteral("Could not create the TLS certificate.");
         qCWarning(logApp) << "webremote: failed to ensure TLS certificate";
         return false;
     }
@@ -308,6 +382,7 @@ bool WebRemoteServer::start()
     QSslCertificate cert;
     QSslKey key;
     if (!TlsCertificateGenerator::load(cert, key)) {
+        m_error = QStringLiteral("Could not load the TLS certificate.");
         qCWarning(logApp) << "webremote: failed to load TLS certificate and key";
         return false;
     }
@@ -320,9 +395,13 @@ bool WebRemoteServer::start()
 
     const int port = m_settings ? m_settings->webRemotePort() : 8337;
     const QString mode = m_settings ? m_settings->webRemoteBindMode() : QStringLiteral("all");
-    const QHostAddress bindAddr = NetworkAddressHelper::resolveBindAddress(mode);
+    const QHostAddress bindAddr = m_bindResolver ? m_bindResolver(mode)
+                                                 : NetworkAddressHelper::resolveBindAddress(mode);
 
     if (!m_server->listen(bindAddr, static_cast<quint16>(port))) {
+        m_error = QStringLiteral("Could not listen on port %1: %2")
+                      .arg(port)
+                      .arg(m_server->errorString());
         qCWarning(logApp) << "webremote: failed to listen on" << bindAddr.toString() << port
                          << ":" << m_server->errorString();
         emit runningChanged(false);
@@ -338,19 +417,27 @@ bool WebRemoteServer::start()
 
 void WebRemoteServer::stop()
 {
+    const bool wasListening = m_server->isListening();
+    if (wasListening)
+        m_server->close();
     m_statusTick.stop();
     m_keepAlive.stop();
     m_statusCoalesce.stop();
-    for (auto &socket : m_sseClients) {
-        if (socket) {
-            socket->disconnectFromHost();
-        }
-    }
+    // Every phone signs in again after a stop: a restart, a logout or a
+    // server switch.
+    m_authorizedTokens.clear();
     m_sseClients.clear();
+    // Every open connection goes too: a keep-alive socket or event stream
+    // must not outlive the server it was opened on. A copy, because abort()
+    // emits disconnected synchronously and its handler edits m_clients.
+    const QList<QPointer<QSslSocket>> clients = std::exchange(m_clients, {});
+    for (const QPointer<QSslSocket> &socket : clients) {
+        if (socket)
+            socket->abort();
+    }
     emit connectedClientsChanged(0);
 
-    if (m_server && m_server->isListening()) {
-        m_server->close();
+    if (wasListening) {
         emit runningChanged(false);
         qCInfo(logApp) << "webremote: stopped";
     }
@@ -364,6 +451,28 @@ bool WebRemoteServer::isRunning() const
 quint16 WebRemoteServer::port() const
 {
     return m_server ? m_server->serverPort() : 0;
+}
+
+QHostAddress WebRemoteServer::boundAddress() const
+{
+    return m_server->isListening() ? m_server->serverAddress() : QHostAddress();
+}
+
+void WebRemoteServer::setTimeoutsForTests(int requestMs, int idleMs)
+{
+    m_requestTimeoutMs = requestMs;
+    m_idleTimeoutMs = idleMs;
+}
+
+void WebRemoteServer::setBindAddressResolverForTests(
+    std::function<QHostAddress(const QString &)> resolver)
+{
+    m_bindResolver = std::move(resolver);
+}
+
+void WebRemoteServer::setClockForTests(std::function<qint64()> nowMs)
+{
+    m_clock = std::move(nowMs);
 }
 
 int WebRemoteServer::connectedClientsCount() const
@@ -438,40 +547,111 @@ QString WebRemoteServer::actionForNavigationKey(const QString &key)
 
 void WebRemoteServer::onStartedEncryptionHandshake(QSslSocket *socket)
 {
-    connect(socket, &QSslSocket::encrypted, this, [this, socket] {
-        // Dequeue from QSslServer/QTcpServer internal pending queue to prevent queue buildup
-        m_server->nextPendingConnection();
-
-        auto buffer = std::make_shared<QByteArray>();
-        connect(socket, &QSslSocket::readyRead, this, [this, socket, buffer] {
-            handleReadyRead(socket, *buffer);
-        });
-        connect(socket, &QAbstractSocket::disconnected, this, &WebRemoteServer::onClientDisconnected);
-        if (socket->bytesAvailable() > 0) {
-            handleReadyRead(socket, *buffer);
-        }
-    });
+    // QSslServer's own `encrypted` handler (connected before this signal)
+    // queues the socket as pending; ours runs after it and dequeues it.
+    connect(socket, &QSslSocket::encrypted, this, [this, socket] { onEncrypted(socket); });
     connect(socket, &QAbstractSocket::disconnected, socket, &QObject::deleteLater);
 }
 
-void WebRemoteServer::onClientDisconnected()
+void WebRemoteServer::onEncrypted(QSslSocket *socket)
 {
-    auto *socket = qobject_cast<QSslSocket *>(sender());
-    if (!socket)
+    m_server->nextPendingConnection(); // keep QTcpServer's pending queue empty
+    // A handshake that finishes after stop() must not become a live connection.
+    if (!m_server->isListening()) {
+        socket->abort();
         return;
+    }
+    m_clients.removeIf([](const QPointer<QSslSocket> &client) { return client.isNull(); });
+    if (m_clients.size() >= kMaxConnections) {
+        qCWarning(logApp) << "webremote: connection limit reached; closing a new connection";
+        socket->abort();
+        return;
+    }
+    m_clients.append(socket);
+    socket->setReadBufferSize(kReadBufferBytes);
+    auto *timer = new QTimer(socket);
+    timer->setObjectName(QLatin1String(kTimeoutTimerName));
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, socket, [socket] {
+        qCDebug(logApp) << "webremote: closing a slow or idle connection";
+        socket->abort();
+    });
+    restartTimeout(socket, false);
 
-    if (m_sseClients.removeAll(socket) > 0)
-        emit connectedClientsChanged(m_sseClients.size());
+    auto buffer = std::make_shared<QByteArray>();
+    connect(socket, &QSslSocket::readyRead, this, [this, socket, buffer] {
+        handleReadyRead(socket, *buffer);
+    });
+    // Output drained: a download in progress is not idle, and parsing paused
+    // by backpressure picks up where it stopped.
+    connect(socket, &QSslSocket::encryptedBytesWritten, this, [this, socket, buffer] {
+        if (!requestPending(socket))
+            restartTimeout(socket, false);
+        if (writeBacklog(socket) <= kWritePauseBytes
+            && (!buffer->isEmpty() || socket->bytesAvailable() > 0))
+            handleReadyRead(socket, *buffer);
+    });
+    connect(socket, &QAbstractSocket::disconnected, this, [this, socket] {
+        m_clients.removeAll(socket);
+        if (m_sseClients.removeAll(socket) > 0)
+            emit connectedClientsChanged(connectedClientsCount());
+    });
+    if (socket->bytesAvailable() > 0)
+        handleReadyRead(socket, *buffer);
+}
+
+void WebRemoteServer::restartTimeout(QSslSocket *socket, bool pending)
+{
+    auto *timer = socket->findChild<QTimer *>(QLatin1String(kTimeoutTimerName),
+                                              Qt::FindDirectChildrenOnly);
+    if (!timer)
+        return; // exempt
+    timer->setProperty("requestPending", pending);
+    timer->start(pending ? m_requestTimeoutMs : m_idleTimeoutMs);
+}
+
+bool WebRemoteServer::requestPending(QSslSocket *socket) const
+{
+    const auto *timer = socket->findChild<QTimer *>(QLatin1String(kTimeoutTimerName),
+                                                    Qt::FindDirectChildrenOnly);
+    return timer && timer->property("requestPending").toBool();
+}
+
+void WebRemoteServer::exemptFromIdleTimeout(QSslSocket *socket)
+{
+    auto *timer = socket->findChild<QTimer *>(QLatin1String(kTimeoutTimerName),
+                                              Qt::FindDirectChildrenOnly);
+    if (!timer)
+        return;
+    timer->stop();
+    timer->setObjectName(QString()); // no longer found, so never restarted
+    timer->deleteLater();
 }
 
 void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 {
+    // An event stream takes no further requests: a response written into it
+    // would corrupt the stream.
+    if (socket->property(kEventStreamProperty).toBool()) {
+        buffer.clear();
+        socket->readAll();
+        return;
+    }
+    // Backpressure: leave further input unread (QSslSocket's read buffer is
+    // bounded) until encryptedBytesWritten shows the client is reading.
+    if (writeBacklog(socket) > kWritePauseBytes)
+        return;
     buffer.append(socket->readAll());
+    // The request clock starts at a request's first byte and is not extended
+    // by later ones.
+    if (!buffer.isEmpty() && !requestPending(socket))
+        restartTimeout(socket, true);
 
-    while (!buffer.isEmpty()) {
+    while (!buffer.isEmpty() && socket->state() == QAbstractSocket::ConnectedState
+           && writeBacklog(socket) <= kWritePauseBytes) {
         const qsizetype headerEnd = buffer.indexOf("\r\n\r\n");
-        if (headerEnd < 0) {
-            if (buffer.size() > kMaxHeaderBytes) {
+        if (headerEnd < 0 || headerEnd > kMaxHeaderBytes) {
+            if (headerEnd > kMaxHeaderBytes || buffer.size() > kMaxHeaderBytes) {
                 sendResponse(socket, 431, "text/plain", "Request headers too large");
                 buffer.clear();
                 socket->disconnectFromHost();
@@ -484,6 +664,9 @@ void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 
         HttpRequest req;
         qsizetype contentLength = 0;
+        bool badLength = false;
+        bool seenLength = false;
+        bool transferEncoding = false;
 
         const QList<QByteArray> requestLine = lines.value(0).trimmed().split(' ');
         req.method = QString::fromLatin1(requestLine.value(0)).toUpper();
@@ -498,10 +681,34 @@ void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
             const QByteArray key = line.left(colon).trimmed().toLower();
             const QByteArray val = line.mid(colon + 1).trimmed();
             req.headers.insert(key, val);
-            if (key == "content-length")
-                contentLength = qMax<qsizetype>(0, val.toLongLong());
+            if (key == "content-length") {
+                bool ok = false;
+                const qlonglong n = val.toLongLong(&ok);
+                // Two lengths are ambiguous framing (request smuggling): refused.
+                badLength = badLength || seenLength || !ok || n < 0;
+                seenLength = true;
+                contentLength =
+                    badLength ? 0 : static_cast<qsizetype>(qMin<qlonglong>(n, kMaxBodyBytes + 1));
+            } else if (key == "transfer-encoding") {
+                transferEncoding = true;
+            }
         }
 
+        // Only Content-Length framing is understood; guessing at chunked
+        // bodies would desynchronise the connection.
+        if (transferEncoding) {
+            sendResponse(socket, 501, "text/plain", "Transfer-Encoding not supported");
+            buffer.clear();
+            socket->disconnectFromHost();
+            return;
+        }
+        if (badLength) {
+            sendResponse(socket, 400, "text/plain", "Bad Content-Length");
+            buffer.clear();
+            socket->disconnectFromHost();
+            return;
+        }
+        // Refused on the header alone: a body over the cap is never buffered.
         if (contentLength > kMaxBodyBytes) {
             sendResponse(socket, 413, "text/plain", "Request body too large");
             buffer.clear();
@@ -515,13 +722,31 @@ void WebRemoteServer::handleReadyRead(QSslSocket *socket, QByteArray &buffer)
 
         req.body = buffer.mid(bodyStart, contentLength);
         buffer.remove(0, bodyStart + contentLength);
-
+        // Idle until the next request; a pipelined one already buffered starts
+        // its own request clock now.
+        restartTimeout(socket, !buffer.isEmpty());
         dispatchRequest(socket, req);
+        // That request opened an event stream: whatever was pipelined behind
+        // it is dropped, not answered into the stream.
+        if (socket->property(kEventStreamProperty).toBool()) {
+            buffer.clear();
+            return;
+        }
     }
 }
 
 void WebRemoteServer::dispatchRequest(QSslSocket *socket, const HttpRequest &req)
 {
+    if (!m_server->isListening()) { // stopped while this request was in flight
+        socket->abort();
+        return;
+    }
+    // A decoded %0A, %00 or %7F has no business in a path, and a newline could
+    // otherwise slip past a pattern or into a log line.
+    if (hasControlCharacter(req.path)) {
+        sendResponse(socket, 400, "text/plain", "Bad Request");
+        return;
+    }
     qCDebug(logApp) << "webremote:" << req.method << req.path;
 
     // The page and its API share one origin, so there is no cross-origin
@@ -597,7 +822,7 @@ bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
             return true;
         }
         if (path == QLatin1String("/api/events")) {
-            handleApiEvents(socket);
+            handleApiEvents(socket, req);
             return true;
         }
         if (path == QLatin1String("/api/home")) {
@@ -723,8 +948,8 @@ bool WebRemoteServer::handleStaticFile(QSslSocket *socket, const QString &path)
     } else {
         // Flat names only: no directory can be named, so nothing outside the
         // remote's own resource prefix is reachable.
-        static const QRegularExpression safe(
-            QStringLiteral("^/([a-z0-9][a-z0-9-]*\\.(?:js|css|svg|json|png))$"));
+        static const QRegularExpression safe(QRegularExpression::anchoredPattern(
+            QStringLiteral("/([a-z0-9][a-z0-9-]*\\.(?:js|css|svg|json|png))")));
         const QRegularExpressionMatch match = safe.match(path);
         if (!match.hasMatch())
             return false;
@@ -752,18 +977,31 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
         if (m_authorizedTokens.contains(token))
             return true;
     }
-    // EventSource and <img> cannot set headers.
+    // EventSource and <img> cannot set headers, and both only GET. Anything
+    // that changes state needs the header: a token in a URL leaks through
+    // history and logs far more easily.
+    if (req.method != QLatin1String("GET"))
+        return false;
     const QString queryToken = QUrlQuery(req.url).queryItemValue(QStringLiteral("token"));
-    if (!queryToken.isEmpty() && m_authorizedTokens.contains(queryToken))
-        return true;
-
-    return false;
+    return !queryToken.isEmpty() && m_authorizedTokens.contains(queryToken);
 }
 
 void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &body)
 {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_failedPinAttempts >= 5 && (now - m_lastFailedPinTimeMs) < 2000) {
+    const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
+    m_pinFailures.removeIf([now](const QHash<QString, PinFailures>::iterator it) {
+        return now >= it->lockedUntil && now - it->lastMiss > kPinFailureIdleMs;
+    });
+    // The same client over IPv4 and IPv4-mapped IPv6 is one address.
+    QHostAddress peer = socket->peerAddress();
+    bool isV4 = false;
+    const quint32 v4 = peer.toIPv4Address(&isV4);
+    if (isV4)
+        peer = QHostAddress(v4);
+    const QString peerKey = peer.toString();
+
+    const auto found = m_pinFailures.constFind(peerKey);
+    if (found != m_pinFailures.cend() && now < found->lockedUntil) {
         QJsonObject err;
         err[QStringLiteral("error")] = QStringLiteral("Too many failed attempts. Please wait.");
         sendJson(socket, 429, err);
@@ -771,20 +1009,28 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
     }
 
     const QString pin = body.value(QLatin1String("pin")).toString();
-    if (m_settings && !pin.isEmpty() && pin == m_settings->webRemotePin()) {
-        m_failedPinAttempts = 0;
+    const QString expected = m_settings ? m_settings->webRemotePin() : QString();
+    if (!pin.isEmpty() && !expected.isEmpty()
+        && constantTimeEquals(pin.toUtf8(), expected.toUtf8())) {
+        m_pinFailures.remove(peerKey);
         const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_authorizedTokens.insert(token);
         QJsonObject resp;
         resp[QStringLiteral("token")] = token;
         sendJson(socket, 200, resp);
-    } else {
-        m_failedPinAttempts++;
-        m_lastFailedPinTimeMs = now;
-        QJsonObject err;
-        err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
-        sendJson(socket, 403, err);
+        return;
     }
+    PinFailures &failures = m_pinFailures[peerKey];
+    ++failures.misses;
+    failures.lastMiss = now;
+    if (failures.misses >= kMaxFailedPins) {
+        failures.lockMs = failures.lockMs == 0 ? kPinLockoutMs
+                                               : std::min(failures.lockMs * 2, kPinMaxLockoutMs);
+        failures.lockedUntil = now + failures.lockMs;
+    }
+    QJsonObject err;
+    err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
+    sendJson(socket, 403, err);
 }
 
 // ── Serialisation ────────────────────────────────────────────────────────────
@@ -1331,7 +1577,8 @@ void WebRemoteServer::handleApiImage(QSslSocket *socket, const QString &itemId,
         return;
     }
 
-    static const QRegularExpression typeRegex(QStringLiteral("^[A-Za-z]{1,24}$"));
+    static const QRegularExpression typeRegex(
+        QRegularExpression::anchoredPattern(QStringLiteral("[A-Za-z]{1,24}")));
     if (!isSafeId(itemId) || !typeRegex.match(imageType).hasMatch()) {
         sendResponse(socket, 400, "text/plain", "Invalid image parameters");
         return;
@@ -1690,7 +1937,8 @@ void WebRemoteServer::handleApiSubtitleStyle(QSslSocket *socket, const QJsonObje
     if (body.contains(QLatin1String("background")))
         m_settings->setSubtitleBackground(body.value(QLatin1String("background")).toInt());
     if (body.contains(QLatin1String("color"))) {
-        static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+        static const QRegularExpression hex(
+            QRegularExpression::anchoredPattern(QStringLiteral("#[0-9A-Fa-f]{6}")));
         const QString color = body.value(QLatin1String("color")).toString();
         if (!hex.match(color).hasMatch()) {
             sendError(socket, 400, QStringLiteral("Invalid colour"));
@@ -1726,49 +1974,104 @@ void WebRemoteServer::handleApiNavigate(QSslSocket *socket, const QJsonObject &b
 
 // ── Events ───────────────────────────────────────────────────────────────────
 
-void WebRemoteServer::handleApiEvents(QSslSocket *socket)
+void WebRemoteServer::handleApiEvents(QSslSocket *socket, const HttpRequest &req)
 {
+    // A stream is long-lived and mostly silent by design: neither the request
+    // nor the idle timeout may close it. The keep-alive comment and the
+    // backlog cap in writeSse take their place.
+    exemptFromIdleTimeout(socket);
+    socket->setProperty(kEventStreamProperty, true);
+
     const QByteArray sseHeaders =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream; charset=utf-8\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: keep-alive\r\n"
-        "X-Accel-Buffering: no\r\n\r\n";
+        "X-Accel-Buffering: no\r\n"
+        "X-Content-Type-Options: nosniff\r\n\r\n";
 
     socket->write(sseHeaders);
     // Reconnect quickly after a phone wakes.
     socket->write("retry: 2000\n\n");
 
-    if (!m_sseClients.contains(socket)) {
-        m_sseClients.append(socket);
-        emit connectedClientsChanged(m_sseClients.size());
+    // One stream per signed-in phone: a phone that reconnects (a reload, a
+    // wake from sleep) often leaves its old stream half-open, and it would
+    // count as a second phone until the backlog cap finally dropped it.
+    QString token;
+    const QByteArray auth = req.headers.value("authorization");
+    if (auth.startsWith("Bearer "))
+        token = QString::fromUtf8(auth.mid(7)).trimmed();
+    if (!m_authorizedTokens.contains(token))
+        token = QUrlQuery(req.url).queryItemValue(QStringLiteral("token"));
+    if (!m_authorizedTokens.contains(token))
+        token.clear();
+    const qsizetype streamsBefore = m_sseClients.size();
+    QList<QPointer<QSslSocket>> replaced;
+    if (!token.isEmpty()) {
+        socket->setProperty(kEventTokenProperty, token);
+        m_sseClients.removeIf([&](const QPointer<QSslSocket> &other) {
+            if (!other || other == socket
+                || other->property(kEventTokenProperty).toString() != token)
+                return false;
+            replaced.append(other);
+            return true;
+        });
     }
+    // Already forgotten, so the disconnected handler has nothing to report.
+    for (const QPointer<QSslSocket> &old : std::as_const(replaced)) {
+        if (old)
+            old->abort();
+    }
+    if (!m_sseClients.contains(socket))
+        m_sseClients.append(socket);
+    if (m_sseClients.size() != streamsBefore)
+        emit connectedClientsChanged(connectedClientsCount());
 
+    // Through writeSse like every later event: the preamble goes onto a
+    // drained connection, so the cap only bites on a phone already backlogged.
     const QByteArray statusData = QJsonDocument(currentStatusJson()).toJson(QJsonDocument::Compact);
-    socket->write("event: status\ndata: " + statusData + "\n\n");
-
     const QByteArray queueData = QJsonDocument(currentQueueJson()).toJson(QJsonDocument::Compact);
-    socket->write("event: queue\ndata: " + queueData + "\n\n");
+    if (!writeSse(socket, "event: status\ndata: " + statusData + "\n\n")
+        || !writeSse(socket, "event: queue\ndata: " + queueData + "\n\n"))
+        return; // aborted: the disconnected handler has already forgotten it
     socket->flush();
+}
+
+bool WebRemoteServer::writeSse(QSslSocket *socket, const QByteArray &chunk)
+{
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState)
+        return false;
+    // The same rule as sendResponse: one chunk onto a drained connection is
+    // always let through; a phone already backlogged past the pause threshold
+    // that would now hold more than the hard cap has stopped reading.
+    const qint64 backlogBefore = writeBacklog(socket);
+    if (socket->write(chunk) == -1
+        || (backlogBefore > kWritePauseBytes && writeBacklog(socket) > kWriteAbortBytes)) {
+        qCWarning(logApp) << "webremote: event stream is not reading; closing it";
+        socket->abort();
+        return false;
+    }
+    return true;
+}
+
+void WebRemoteServer::writeToAllStreams(const QByteArray &chunk)
+{
+    // A copy: abort() emits disconnected synchronously, and its handler
+    // removes the socket from m_sseClients.
+    const QList<QPointer<QSslSocket>> streams = m_sseClients;
+    for (const QPointer<QSslSocket> &socket : streams)
+        writeSse(socket, chunk);
+    // Whatever the disconnected handler did not already remove.
+    const qsizetype removed = m_sseClients.removeIf([](const QPointer<QSslSocket> &socket) {
+        return !socket || socket->state() != QAbstractSocket::ConnectedState;
+    });
+    if (removed > 0)
+        emit connectedClientsChanged(connectedClientsCount());
 }
 
 void WebRemoteServer::broadcastSse(const QString &eventName, const QByteArray &data)
 {
-    const QByteArray msg = "event: " + eventName.toUtf8() + "\ndata: " + data + "\n\n";
-
-    bool changed = false;
-    auto it = m_sseClients.begin();
-    while (it != m_sseClients.end()) {
-        QSslSocket *sock = *it;
-        if (!sock || sock->state() != QAbstractSocket::ConnectedState || sock->write(msg) == -1) {
-            it = m_sseClients.erase(it);
-            changed = true;
-            continue;
-        }
-        ++it;
-    }
-    if (changed)
-        emit connectedClientsChanged(m_sseClients.size());
+    writeToAllStreams("event: " + eventName.toUtf8() + "\ndata: " + data + "\n\n");
 }
 
 void WebRemoteServer::scheduleStatus()
@@ -1813,6 +2116,7 @@ void WebRemoteServer::sendResponse(QSslSocket *socket, int statusCode, const QBy
     case 429: statusText = "Too Many Requests"; break;
     case 431: statusText = "Request Header Fields Too Large"; break;
     case 500: statusText = "Internal Server Error"; break;
+    case 501: statusText = "Not Implemented"; break;
     case 502: statusText = "Bad Gateway"; break;
     case 503: statusText = "Service Unavailable"; break;
     default: break;
@@ -1830,7 +2134,18 @@ void WebRemoteServer::sendResponse(QSslSocket *socket, int statusCode, const QBy
     }
     res += "\r\n" + body;
 
+    const qint64 backlogBefore = writeBacklog(socket);
     socket->write(res);
+    // Parsing already pauses at kWritePauseBytes, so only responses that
+    // arrive later (async handlers) can pile up. One response onto a drained
+    // connection is always let through, however large.
+    if (backlogBefore > kWritePauseBytes && writeBacklog(socket) > kWriteAbortBytes) {
+        qCWarning(logApp) << "webremote: client is not reading; closing the connection";
+        socket->abort();
+        return;
+    }
+    if (!requestPending(socket))
+        restartTimeout(socket, false);
 }
 
 void WebRemoteServer::sendJson(QSslSocket *socket, int statusCode, const QJsonObject &json)
