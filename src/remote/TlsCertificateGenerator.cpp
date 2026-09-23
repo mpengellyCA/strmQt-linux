@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 
 #include <openssl/bio.h>
+#include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -81,7 +82,18 @@ bool TlsCertificateGenerator::ensureCertificate(const QStringList &sanAddresses,
 
     // X509v3
     X509_set_version(x509, 2);
-    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+    // A random non-zero 64-bit serial: a browser that remembered an earlier
+    // certificate (same issuer, serial 1) can refuse a regenerated one.
+    BIGNUM *serial = BN_new();
+    if (!serial || BN_rand(serial, 64, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY) != 1
+        || BN_is_zero(serial) || !BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(x509))) {
+        qCWarning(logApp) << "tls: failed to generate a certificate serial";
+        BN_free(serial);
+        X509_free(x509);
+        EVP_PKEY_free(pkey);
+        return false;
+    }
+    BN_free(serial);
     X509_gmtime_adj(X509_get_notBefore(x509), -3600); // 1 hour ago
     X509_gmtime_adj(X509_get_notAfter(x509), 10LL * 365 * 24 * 3600); // 10 years validity
 
@@ -99,16 +111,17 @@ bool TlsCertificateGenerator::ensureCertificate(const QStringList &sanAddresses,
     X509V3_set_ctx_nodb(&ctx);
     X509V3_set_ctx(&ctx, x509, x509, nullptr, nullptr, 0);
 
-    // Basic constraints: CA:TRUE, pathlen:0 (self-signed root)
-    X509_EXTENSION *ext = X509V3_EXT_conf_nid(nullptr, &ctx, NID_basic_constraints, "CA:TRUE,pathlen:0");
+    // Basic constraints: a leaf server certificate, never a CA. A trusted
+    // CA:TRUE certificate could sign certificates for any host.
+    X509_EXTENSION *ext = X509V3_EXT_conf_nid(nullptr, &ctx, NID_basic_constraints, "critical,CA:FALSE");
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);
     }
 
-    // Key Usage: digitalSignature, keyEncipherment, keyCertSign
+    // Key Usage: digitalSignature, keyEncipherment (no keyCertSign: not a CA)
     ext = X509V3_EXT_conf_nid(nullptr, &ctx, NID_key_usage,
-                              "digitalSignature, keyEncipherment, keyCertSign");
+                              "critical,digitalSignature,keyEncipherment");
     if (ext) {
         X509_add_ext(x509, ext, -1);
         X509_EXTENSION_free(ext);

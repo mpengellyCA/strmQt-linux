@@ -1,4 +1,5 @@
 #include <QFile>
+#include <QSslCertificateExtension>
 #include <QTemporaryDir>
 #include <QtTest>
 #include "remote/TlsCertificateGenerator.h"
@@ -14,6 +15,7 @@ private slots:
     void privateKeyPermissionsAreRestricted();
     void fingerprintFormat();
     void ensureCertificateAndLoad();
+    void regeneratedCertificatesHaveDistinctSerials();
 };
 
 void TlsCertificateGeneratorTest::generateAndVerifyProperties()
@@ -34,7 +36,21 @@ void TlsCertificateGeneratorTest::generateAndVerifyProperties()
 
     const QSslCertificate &cert = certs.first();
     QVERIFY(!cert.isNull());
-    QVERIFY(cert.isSelfSigned());
+    // A leaf without keyCertSign is not isSelfSigned() to Qt; it still signs itself.
+    QCOMPARE(cert.issuerDisplayName(), cert.subjectDisplayName());
+    QCOMPARE(cert.issuerInfo(QSslCertificate::CommonName),
+             cert.subjectInfo(QSslCertificate::CommonName));
+
+    // A leaf server certificate: critical CA:FALSE, never a CA root.
+    bool sawBasicConstraints = false;
+    for (const QSslCertificateExtension &ext : cert.extensions()) {
+        if (ext.name() == QLatin1String("basicConstraints")) {
+            sawBasicConstraints = true;
+            QVERIFY(ext.isCritical());
+            QCOMPARE(ext.value().toMap().value(QStringLiteral("ca")).toBool(), false);
+        }
+    }
+    QVERIFY(sawBasicConstraints);
 
     const QString subject = cert.subjectDisplayName();
     QVERIFY(subject.contains(QStringLiteral("StrmQt")));
@@ -98,6 +114,27 @@ void TlsCertificateGeneratorTest::ensureCertificateAndLoad()
     QVERIFY(TlsCertificateGenerator::load(cert, key, certPath, keyPath));
     QVERIFY(!cert.isNull());
     QVERIFY(!key.isNull());
+}
+
+void TlsCertificateGeneratorTest::regeneratedCertificatesHaveDistinctSerials()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString certPath = dir.filePath(QStringLiteral("test_cert.pem"));
+    const QString keyPath = dir.filePath(QStringLiteral("test_key.pem"));
+
+    QVERIFY(TlsCertificateGenerator::ensureCertificate({}, true, certPath, keyPath));
+    const QList<QSslCertificate> first = QSslCertificate::fromPath(certPath);
+    QCOMPARE(first.count(), 1);
+    QVERIFY(TlsCertificateGenerator::ensureCertificate({}, true, certPath, keyPath));
+    const QList<QSslCertificate> second = QSslCertificate::fromPath(certPath);
+    QCOMPARE(second.count(), 1);
+
+    // Same issuer, same serial, different certificate: Firefox refuses that pair.
+    QVERIFY(!first.first().serialNumber().isEmpty());
+    QVERIFY(first.first().serialNumber() != QByteArrayLiteral("01"));
+    QVERIFY(first.first().serialNumber() != second.first().serialNumber());
 }
 
 QTEST_MAIN(TlsCertificateGeneratorTest)
