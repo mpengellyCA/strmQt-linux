@@ -240,7 +240,9 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_remote = new RemoteControlService(m_client, m_live, m_player, m_actions, this);
 
     m_webRemoteServer = new WebRemoteServer(m_settings, m_player, m_actions, m_home, m_session, m_client, this);
-    m_webRemote = new WebRemoteController(m_settings, m_webRemoteServer, this);
+    // The controller owns the run policy: enabled AND signed in, restarted on
+    // a port or bind-mode change, stopped at every session boundary.
+    m_webRemote = new WebRemoteController(m_settings, m_session, m_webRemoteServer, this);
 
     connect(m_webRemote, &WebRemoteController::copyToClipboardRequested, this, [](const QString &text) {
         if (QClipboard *cb = QGuiApplication::clipboard())
@@ -259,29 +261,6 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_webRemoteServer->setInteractionContext(m_interactionContext);
     connect(this, &Application::interactionContextChanged, m_webRemoteServer,
             [this] { m_webRemoteServer->setInteractionContext(m_interactionContext); });
-
-    connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
-        if (m_settings->webRemoteEnabled())
-            m_webRemoteServer->start();
-        else
-            m_webRemoteServer->stop();
-    });
-    connect(m_settings, &Settings::webRemotePortChanged, this, [this] {
-        if (m_webRemoteServer->isRunning()) {
-            m_webRemoteServer->stop();
-            m_webRemoteServer->start();
-        }
-    });
-    connect(m_settings, &Settings::webRemoteBindModeChanged, this, [this] {
-        if (m_webRemoteServer->isRunning()) {
-            m_webRemoteServer->stop();
-            m_webRemoteServer->start();
-        }
-    });
-
-    if (m_settings->webRemoteEnabled()) {
-        m_webRemoteServer->start();
-    }
 
     m_powerInhibit = new PowerInhibit(this);
     m_mpris = new MprisPlayer(this);

@@ -217,6 +217,11 @@ strmqt_add_test(tst_web_remote_server unit/tst_web_remote_server.cpp
 target_include_directories(tst_web_remote_server PRIVATE mocks)
 target_link_libraries(tst_web_remote_server PRIVATE strmqt_remote)
 
+strmqt_add_test(tst_web_remote_controller unit/tst_web_remote_controller.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp)
+target_include_directories(tst_web_remote_controller PRIVATE mocks)
+target_link_libraries(tst_web_remote_controller PRIVATE strmqt_remote)
+
 # Real-libvlc lifecycle coverage for SOL-12: VlcPlayer.cpp is compiled into the
 # executable rather than a library, so the test builds it the same way
 # tst_mpv_video_item builds the mpv sources. Registered only when libvlc was

@@ -1300,7 +1300,9 @@ FocusScope {
                         label: qsTr("Server Status")
                         value: (page.webRemoteAvailable && page.webRemote.running)
                                ? qsTr("Running (%1 connected client(s))").arg(page.webRemote.connectedClientsCount)
-                               : qsTr("Stopped")
+                               : (page.webRemoteAvailable && page.webRemote.error.length > 0)
+                                 ? page.webRemote.error
+                                 : qsTr("Stopped")
                         mono: true
                     }
                 }

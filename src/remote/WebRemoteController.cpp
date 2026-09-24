@@ -4,35 +4,87 @@
 #include "QrCodeGenerator.h"
 #include "TlsCertificateGenerator.h"
 #include "WebRemoteServer.h"
+#include "app/controllers/SessionController.h"
+#include "core/Log.h"
 #include "core/Settings.h"
 
 #include <QRandomGenerator>
+#include <QUrl>
+
+#include <utility>
 
 namespace strmqt {
 
-WebRemoteController::WebRemoteController(Settings *settings, WebRemoteServer *server, QObject *parent)
-    : QObject(parent), m_settings(settings), m_server(server)
+namespace {
+
+constexpr int kRebindIntervalMs = 30000;
+
+bool followsNetwork(const QString &mode)
 {
+    return mode == QLatin1String("lan") || mode == QLatin1String("tailscale");
+}
+
+bool isWildcard(const QHostAddress &address)
+{
+    return address.isNull() || address == QHostAddress(QHostAddress::Any)
+           || address == QHostAddress(QHostAddress::AnyIPv4)
+           || address == QHostAddress(QHostAddress::AnyIPv6);
+}
+
+} // namespace
+
+WebRemoteController::WebRemoteController(Settings *settings, SessionController *session,
+                                         WebRemoteServer *server, QObject *parent)
+    : QObject(parent), m_settings(settings), m_session(session), m_server(server)
+{
+    m_rebindTimer.setInterval(kRebindIntervalMs);
+    connect(&m_rebindTimer, &QTimer::timeout, this, &WebRemoteController::checkBindAddress);
     if (m_server) {
         connect(m_server, &WebRemoteServer::runningChanged, this, &WebRemoteController::runningChanged);
+        // The URL follows the bound address: every start and stop (a port or
+        // mode change, a rebind, a regenerated certificate, a failed start)
+        // can move it, so the URL and QR code are re-read here, after the
+        // restart rather than before it.
+        connect(m_server, &WebRemoteServer::runningChanged, this, [this] {
+            updateRebindTimer();
+            announceUrls();
+        });
         connect(m_server, &WebRemoteServer::connectedClientsChanged, this, &WebRemoteController::connectedClientsChanged);
     }
     if (m_settings) {
-        connect(m_settings, &Settings::webRemoteEnabledChanged, this, &WebRemoteController::enabledChanged);
-        connect(m_settings, &Settings::webRemotePortChanged, this, &WebRemoteController::portChanged);
-        connect(m_settings, &Settings::webRemotePortChanged, this, &WebRemoteController::urlsChanged);
+        connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
+            emit enabledChanged();
+            evaluate();
+        });
+        connect(m_settings, &Settings::webRemotePortChanged, this, [this] {
+            emit portChanged();
+            restart();
+            announceUrls(); // also when it stays stopped
+        });
         connect(m_settings, &Settings::webRemotePinChanged, this, &WebRemoteController::pinChanged);
         connect(m_settings, &Settings::webRemoteRequirePinChanged, this, &WebRemoteController::requirePinChanged);
-        connect(m_settings, &Settings::webRemoteBindModeChanged, this, &WebRemoteController::bindModeChanged);
+        connect(m_settings, &Settings::webRemoteBindModeChanged, this, [this] {
+            emit bindModeChanged();
+            restart();
+            announceUrls();
+        });
+    }
+    if (m_session) {
+        connect(m_session, &SessionController::authenticatedChanged, this,
+                &WebRemoteController::evaluate);
+        // Emitted before the credentials change: nothing opened or signed in
+        // under the old session may carry over. The policy is looked at again
+        // once the boundary has run its course (a profile switch may leave
+        // `authenticated` set throughout and never emit authenticatedChanged).
+        connect(m_session, &SessionController::sessionBoundaryChanged, this, [this] {
+            if (m_server)
+                m_server->stop();
+            QTimer::singleShot(0, this, &WebRemoteController::evaluate);
+        });
     }
 
-    // Default active URL: Tailscale if present, else LAN
-    if (hasTailscale())
-        m_activeUrl = tailscaleUrl();
-    else
-        m_activeUrl = lanUrl();
-
     updateFingerprint();
+    evaluate();
 }
 
 bool WebRemoteController::isEnabled() const
@@ -79,12 +131,21 @@ bool WebRemoteController::hasTailscale() const
 
 QString WebRemoteController::activeUrl() const
 {
-    if (m_activeUrl.isEmpty()) {
-        if (hasTailscale())
-            return tailscaleUrl();
-        return lanUrl();
+    if (!m_activeUrl.isEmpty())
+        return m_activeUrl;
+    // A server on one address (lan, tailscale, localhost) is reachable at
+    // exactly that one; only "all" leaves the choice to the network.
+    const QHostAddress address = effectiveBindAddress();
+    if (!isWildcard(address)) {
+        QUrl url;
+        url.setScheme(QStringLiteral("https"));
+        url.setHost(address.toString());
+        url.setPort(port());
+        return url.toString();
     }
-    return m_activeUrl;
+    if (hasTailscale())
+        return tailscaleUrl();
+    return lanUrl();
 }
 
 void WebRemoteController::setActiveUrl(const QString &url)
@@ -168,8 +229,7 @@ void WebRemoteController::setBindMode(const QString &mode)
 
 void WebRemoteController::start()
 {
-    if (m_server)
-        m_server->start();
+    evaluate();
 }
 
 void WebRemoteController::stop()
@@ -180,18 +240,104 @@ void WebRemoteController::stop()
 
 void WebRemoteController::restart()
 {
-    if (m_server) {
-        m_server->stop();
-        m_server->start();
-    }
+    if (!m_server)
+        return;
+    m_server->stop();
+    evaluate();
 }
 
 void WebRemoteController::regenerateCertificate()
 {
-    if (m_server) {
-        m_server->regenerateCertificate();
+    if (!m_server)
+        return;
+    if (!m_server->regenerateCertificate()) {
+        setError(QStringLiteral("Could not create the TLS certificate."));
         updateFingerprint();
+        return;
     }
+    updateFingerprint();
+    // The server restarted its listener under the new certificate. If that
+    // failed (the port or address was taken meanwhile), evaluate() reports it
+    // in `error` instead of Settings still claiming "Running".
+    if (m_server->isRunning())
+        setError({});
+    else
+        evaluate();
+}
+
+void WebRemoteController::evaluate()
+{
+    if (!m_server) // the owner has torn the server down; nothing left to do
+        return;
+    const bool wanted = isEnabled() && m_session && m_session->authenticated();
+    if (!wanted) {
+        m_server->stop(); // also drops every connection, stream and token
+        setError({});
+    } else if (!m_server->isRunning()) {
+        if (m_server->start()) {
+            setError({});
+            updateFingerprint(); // the first start creates the certificate
+        } else {
+            setError(m_server->errorString());
+        }
+    }
+}
+
+void WebRemoteController::setError(const QString &error)
+{
+    if (m_error == error)
+        return;
+    m_error = error;
+    emit errorChanged();
+}
+
+void WebRemoteController::announceUrls()
+{
+    emit urlsChanged();
+    emit activeUrlChanged();
+}
+
+QHostAddress WebRemoteController::resolveBindAddress() const
+{
+    const QString mode = bindMode();
+    return m_resolver ? m_resolver(mode) : NetworkAddressHelper::resolveBindAddress(mode);
+}
+
+QHostAddress WebRemoteController::effectiveBindAddress() const
+{
+    if (m_server && m_server->isRunning())
+        return m_server->boundAddress();
+    return resolveBindAddress();
+}
+
+void WebRemoteController::updateRebindTimer()
+{
+    if (m_server && m_server->isRunning() && followsNetwork(bindMode())) {
+        if (!m_rebindTimer.isActive())
+            m_rebindTimer.start();
+    } else {
+        m_rebindTimer.stop();
+    }
+}
+
+void WebRemoteController::checkBindAddress()
+{
+    if (!m_server || !m_server->isRunning() || !followsNetwork(bindMode()))
+        return;
+    const QHostAddress resolved = resolveBindAddress();
+    if (resolved == m_server->boundAddress())
+        return;
+    qCInfo(logApp) << "webremote: network address changed; rebinding to" << resolved.toString();
+    restart(); // runningChanged re-announces the URLs
+}
+
+void WebRemoteController::setAddressResolverForTests(
+    std::function<QHostAddress(const QString &)> resolver, int rebindIntervalMs)
+{
+    m_resolver = resolver;
+    if (m_server)
+        m_server->setBindAddressResolverForTests(std::move(resolver));
+    m_rebindTimer.setInterval(rebindIntervalMs);
 }
 
 void WebRemoteController::generateNewPin()
