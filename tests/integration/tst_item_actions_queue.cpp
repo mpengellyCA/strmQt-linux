@@ -625,7 +625,16 @@ void ItemActionsQueueTest::collectionWalkCapsRowsAndNestedExpansions()
     const int beforeRequests = m_mock->requestCount();
     m_actions->playCollection(QStringLiteral("box-too-deep"));
     QTRY_COMPARE(failed.count(), 1);
-    QCOMPARE(m_mock->requestCount() - beforeRequests, 65); // root + 64 expansions
+    // Only the walk's own requests: the first play's item and PlaybackInfo
+    // requests were sent before stop(), but this mock shares the test's thread
+    // and records them whenever the event loop next reads them — sometimes
+    // after beforeRequests was taken.
+    int walkRequests = 0;
+    for (int index = beforeRequests; index < m_mock->requestCount(); ++index) {
+        const auto &request = m_mock->requests().at(index);
+        walkRequests += request.method == QLatin1String("GET") && request.path == itemsPath();
+    }
+    QCOMPARE(walkRequests, 65); // root + 64 expansions
     QCOMPARE(m_player->queue()->rowCount(), 0);
 }
 
