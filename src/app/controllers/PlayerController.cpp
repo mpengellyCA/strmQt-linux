@@ -921,11 +921,18 @@ void PlayerController::fetchChapters(const QString &itemId, int generation)
         m_queue->enrichEntry(result.value.item);
         updateIsAudio();
 
+        // Emby lists chapters in stored order, not start order. The current
+        // chapter lookup (upper_bound), chapter stepping and the phone remote
+        // all index this list by start, so it is sorted once here.
+        QList<Chapter> ordered = result.value.chapters;
+        std::stable_sort(ordered.begin(), ordered.end(), [](const Chapter &a, const Chapter &b) {
+            return a.startPositionTicks < b.startPositionTicks;
+        });
         QVariantList list;
         QList<qint64> starts;
-        list.reserve(result.value.chapters.size());
-        starts.reserve(result.value.chapters.size());
-        for (const Chapter &chapter : result.value.chapters) {
+        list.reserve(ordered.size());
+        starts.reserve(ordered.size());
+        for (const Chapter &chapter : ordered) {
             list.append(chapter.toVariantMap());
             starts.append(chapter.startMs());
         }

@@ -82,6 +82,7 @@ private slots:
     void playbackSettingsFollowBackendReadback();
     void screenshotSuccessRequiresBackendConfirmation();
     void positionSnapshotsBoundQmlChurn();
+    void chaptersAreOrderedByStart();
 
     void replayGainReachesTheEngineOnLoadAndOnChange();
 
@@ -178,6 +179,39 @@ void PlayerControllerTest::screenshotSuccessRequiresBackendConfirmation()
     QCOMPARE(saved.count(), 1);
     QCOMPARE(failed.count(), 1);
     QCOMPARE(m_backend->screenshots.size(), 2);
+}
+
+void PlayerControllerTest::chaptersAreOrderedByStart()
+{
+    // Emby lists chapters in whatever order they were stored. The current
+    // chapter lookup, chapter stepping and the phone remote all assume start
+    // order, so the controller sorts them once on arrival.
+    const QByteArray details = R"json({
+        "Id": "301001",
+        "Name": "The Matrix",
+        "Type": "Movie",
+        "Chapters": [
+            {"Name": "Second scene", "StartPositionTicks": 20000000},
+            {"Name": "Opening", "StartPositionTicks": 0},
+            {"Name": "First scene", "StartPositionTicks": 5000000}
+        ]
+    })json";
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/301001").arg(kUserId), 200, details);
+
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QTRY_COMPARE(m_controller->chapters().size(), 3);
+    const QVariantList chapters = m_controller->chapters();
+    QCOMPARE(chapters.at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Opening"));
+    QCOMPARE(chapters.at(1).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("First scene"));
+    QCOMPARE(chapters.at(2).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Second scene"));
+    QCOMPARE(m_controller->currentChapter(), 0);
+
+    m_backend->simulatePosition(600);
+    QCOMPARE(m_controller->currentChapter(), 1);
+    m_backend->simulatePosition(2500);
+    QCOMPARE(m_controller->currentChapter(), 2);
 }
 
 void PlayerControllerTest::positionSnapshotsBoundQmlChurn()
