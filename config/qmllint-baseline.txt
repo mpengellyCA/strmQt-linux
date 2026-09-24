@@ -96,6 +96,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	onVideoSlotReleasing: root.pla
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	readonly property bool shown: Session.authenticated && PlayerCtl.active === true
+src/ui/Main.qml: Unqualified access [unqualified]	readonly property var remote: typeof WebRemoteCtl !== "undefined" ? WebRemoteCtl : null
 src/ui/Main.qml: Unqualified access [unqualified]	return MusicBrowseCtl.libraryId;
 src/ui/Main.qml: Unqualified access [unqualified]	return MusicHomeCtl.libraryId;
 src/ui/Main.qml: Unqualified access [unqualified]	root.openLibrary(libraryId, name, collectionType)

@@ -470,6 +470,16 @@ FocusScope {
 
     Window.onActiveFocusItemChanged: page.revealInContent(page.Window.activeFocusItem)
 
+    // Opens the section with this key, e.g. "remote" from the first-login offer.
+    function showSection(key: string): void {
+        for (let i = 0; i < page.sections.length; ++i) {
+            if (page.sections[i].key === key) {
+                page.currentSection = i;
+                return;
+            }
+        }
+    }
+
     function focusContent() {
         contentColumn.forceActiveFocus(Qt.OtherFocusReason);
         const next = contentColumn.nextItemInFocusChain(true);

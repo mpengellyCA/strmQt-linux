@@ -94,6 +94,9 @@ class Settings : public QObject
                    webRemoteRequirePinChanged)
     Q_PROPERTY(QString webRemotePin READ webRemotePin WRITE setWebRemotePin NOTIFY
                    webRemotePinChanged)
+    // Whether the one-time "use your phone as a remote?" offer has been answered.
+    Q_PROPERTY(bool webRemoteSetupOffered READ webRemoteSetupOffered WRITE
+                   setWebRemoteSetupOffered NOTIFY webRemoteSetupOfferedChanged)
 
 public:
     explicit Settings(QObject *parent = nullptr);
@@ -188,6 +191,8 @@ public:
     void setWebRemoteRequirePin(bool required);
     QString webRemotePin() const;
     void setWebRemotePin(const QString &pin);
+    bool webRemoteSetupOffered() const;
+    void setWebRemoteSetupOffered(bool offered);
     static QStringList webRemoteBindModes();
 
     // Per-library view preferences (ARCHITECTURE.md). Keyed by the library's
@@ -295,6 +300,7 @@ signals:
     void webRemoteBindModeChanged();
     void webRemoteRequirePinChanged();
     void webRemotePinChanged();
+    void webRemoteSetupOfferedChanged();
 
 private:
     struct PendingLastPlayback

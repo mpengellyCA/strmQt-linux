@@ -50,6 +50,9 @@ private slots:
     void rebindsWhenTheNetworkChanges();
     void urlsChangedFollowsTheRestart();
     void failedRestartAfterRegenerateSetsError();
+    void setupIsOfferedOnceAfterSignIn();
+    void acceptingTheOfferEnablesWithAPin();
+    void enablingInSettingsWithdrawsTheOffer();
 
 private:
     void signIn();
@@ -83,6 +86,10 @@ void WebRemoteControllerTest::init()
     m_settings->setServerUrl(m_emby->baseUrl());
     m_settings->setWebRemotePort(kPort);
     m_settings->setWebRemoteBindMode(QStringLiteral("localhost"));
+    // The remote is off and PIN-protected by default; most of these tests are
+    // about a running, open remote. The offer tests turn it back off.
+    m_settings->setWebRemoteEnabled(true);
+    m_settings->setWebRemoteRequirePin(false);
     m_secrets = std::make_unique<SecretsStore>(m_dir->filePath(QStringLiteral("secrets.ini")));
     m_client = std::make_unique<emby::EmbyClient>();
     m_client->setDeviceId(QStringLiteral("test-device"));
@@ -113,7 +120,7 @@ void WebRemoteControllerTest::signIn()
 
 void WebRemoteControllerTest::runsOnlyWhenEnabledAndSignedIn()
 {
-    QVERIFY(m_remote->isEnabled()); // StrmQt's default
+    QVERIFY(m_remote->isEnabled());
     QVERIFY(!m_remote->isRunning()); // signed out: off
     QVERIFY(m_remote->error().isEmpty());
     QSignalSpy running(m_remote.get(), &WebRemoteController::runningChanged);
@@ -305,6 +312,55 @@ void WebRemoteControllerTest::failedRestartAfterRegenerateSetsError()
     m_remote->regenerateCertificate();
     QVERIFY(!m_remote->isRunning());
     QVERIFY2(m_remote->error().contains(QStringLiteral("18345")), qPrintable(m_remote->error()));
+}
+
+void WebRemoteControllerTest::setupIsOfferedOnceAfterSignIn()
+{
+    m_settings->setWebRemoteEnabled(false);
+    QVERIFY(!m_remote->offerSetup()); // signed out: nothing to offer yet
+    QSignalSpy offer(m_remote.get(), &WebRemoteController::offerSetupChanged);
+    signIn();
+    QVERIFY(m_remote->offerSetup());
+    QVERIFY(offer.size() >= 1);
+
+    m_remote->declineSetup();
+    QVERIFY(!m_remote->offerSetup());
+    QVERIFY(!m_remote->isEnabled());
+    QVERIFY(!m_remote->isRunning());
+
+    // Asked once per install: signing in again, or a restart, does not ask again.
+    m_session->switchUser();
+    signIn();
+    QVERIFY(!m_remote->offerSetup());
+    WebRemoteController again(m_settings.get(), m_session.get(), m_server.get());
+    QVERIFY(!again.offerSetup());
+}
+
+void WebRemoteControllerTest::acceptingTheOfferEnablesWithAPin()
+{
+    m_settings->setWebRemoteEnabled(false);
+    signIn();
+    QVERIFY(m_remote->offerSetup());
+    QVERIFY(!m_remote->requirePin()); // init() turned it off
+
+    m_remote->acceptSetup();
+    QVERIFY(!m_remote->offerSetup());
+    QVERIFY(m_remote->isEnabled());
+    QVERIFY(m_remote->requirePin());
+    QVERIFY(m_remote->isRunning());
+}
+
+void WebRemoteControllerTest::enablingInSettingsWithdrawsTheOffer()
+{
+    m_settings->setWebRemoteEnabled(false);
+    signIn();
+    QVERIFY(m_remote->offerSetup());
+
+    m_remote->setEnabled(true);
+    QVERIFY(!m_remote->offerSetup());
+    // Turning it off again later is a choice already made, not a new install.
+    m_remote->setEnabled(false);
+    QVERIFY(!m_remote->offerSetup());
 }
 
 QTEST_GUILESS_MAIN(WebRemoteControllerTest)

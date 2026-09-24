@@ -53,9 +53,15 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
     }
     if (m_settings) {
         connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
+            // Turned on from Settings: the offer has been answered.
+            if (isEnabled())
+                m_settings->setWebRemoteSetupOffered(true);
             emit enabledChanged();
+            emit offerSetupChanged();
             evaluate();
         });
+        connect(m_settings, &Settings::webRemoteSetupOfferedChanged, this,
+                &WebRemoteController::offerSetupChanged);
         connect(m_settings, &Settings::webRemotePortChanged, this, [this] {
             emit portChanged();
             restart();
@@ -72,6 +78,8 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
     if (m_session) {
         connect(m_session, &SessionController::authenticatedChanged, this,
                 &WebRemoteController::evaluate);
+        connect(m_session, &SessionController::authenticatedChanged, this,
+                &WebRemoteController::offerSetupChanged);
         // Emitted before the credentials change: nothing opened or signed in
         // under the old session may carry over. The policy is looked at again
         // once the boundary has run its course (a profile switch may leave
@@ -351,6 +359,29 @@ void WebRemoteController::generateNewPin()
 void WebRemoteController::copyUrlToClipboard(const QString &url)
 {
     emit copyToClipboardRequested(url);
+}
+
+bool WebRemoteController::offerSetup() const
+{
+    return m_settings && m_session && m_session->authenticated() && !isEnabled()
+           && !m_settings->webRemoteSetupOffered();
+}
+
+void WebRemoteController::acceptSetup()
+{
+    if (!m_settings)
+        return;
+    m_settings->setWebRemoteSetupOffered(true);
+    // Offered to someone who has not seen the Settings page yet: the PIN is
+    // what keeps other devices on the network from taking over playback.
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemoteEnabled(true);
+}
+
+void WebRemoteController::declineSetup()
+{
+    if (m_settings)
+        m_settings->setWebRemoteSetupOffered(true);
 }
 
 } // namespace strmqt

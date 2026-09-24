@@ -47,6 +47,7 @@ const auto kWebRemotePortKey = QStringLiteral("remote/port");
 const auto kWebRemoteBindModeKey = QStringLiteral("remote/bindMode");
 const auto kWebRemoteRequirePinKey = QStringLiteral("remote/requirePin");
 const auto kWebRemotePinKey = QStringLiteral("remote/pin");
+const auto kWebRemoteSetupOfferedKey = QStringLiteral("remote/setupOffered");
 constexpr int kDefaultWebRemotePort = 8337;
 const auto kDefaultWebRemoteBindMode = QStringLiteral("all");
 const auto kLastItemKey = QStringLiteral("resume/itemId");
@@ -798,7 +799,9 @@ void Settings::setPollIntervalSeconds(int seconds)
 
 bool Settings::webRemoteEnabled() const
 {
-    return m_store.value(kWebRemoteEnabledKey, true).toBool();
+    // Opt-in: a listener that can drive playback is not something to open on
+    // the network before the user has asked for it.
+    return m_store.value(kWebRemoteEnabledKey, false).toBool();
 }
 
 void Settings::setWebRemoteEnabled(bool enabled)
@@ -850,7 +853,7 @@ void Settings::setWebRemoteBindMode(const QString &mode)
 
 bool Settings::webRemoteRequirePin() const
 {
-    return m_store.value(kWebRemoteRequirePinKey, false).toBool();
+    return m_store.value(kWebRemoteRequirePinKey, true).toBool();
 }
 
 void Settings::setWebRemoteRequirePin(bool required)
@@ -880,6 +883,19 @@ void Settings::setWebRemotePin(const QString &pin)
         return;
     m_store.setValue(kWebRemotePinKey, pin);
     emit webRemotePinChanged();
+}
+
+bool Settings::webRemoteSetupOffered() const
+{
+    return m_store.value(kWebRemoteSetupOfferedKey, false).toBool();
+}
+
+void Settings::setWebRemoteSetupOffered(bool offered)
+{
+    if (offered == webRemoteSetupOffered())
+        return;
+    m_store.setValue(kWebRemoteSetupOfferedKey, offered);
+    emit webRemoteSetupOfferedChanged();
 }
 
 void Settings::setLastPlayback(const QString &itemId, const QString &title, qint64 positionMs)

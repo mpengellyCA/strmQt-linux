@@ -25,6 +25,11 @@ class WebRemoteServer;
 // running: a StrmQt started before Wi-Fi came up, or one whose DHCP lease
 // changed, moves to the new address by itself.
 //
+// `offerSetup` drives the one-time "use your phone as a remote?" prompt: true
+// once signed in, while the remote is off and the offer was never answered.
+// Accepting turns it on with a PIN; either answer, or turning the remote on
+// in Settings, retires the offer for good.
+//
 // m_server is a QPointer: the server's destructor calls stop(), which emits
 // runningChanged while this object may still be connected, and everything
 // this class calls on its own initiative guards against the server having been
@@ -47,6 +52,7 @@ class WebRemoteController : public QObject
     Q_PROPERTY(QString pin READ pin WRITE setPin NOTIFY pinChanged)
     Q_PROPERTY(bool requirePin READ requirePin WRITE setRequirePin NOTIFY requirePinChanged)
     Q_PROPERTY(QString bindMode READ bindMode WRITE setBindMode NOTIFY bindModeChanged)
+    Q_PROPERTY(bool offerSetup READ offerSetup NOTIFY offerSetupChanged)
 
 public:
     WebRemoteController(Settings *settings, SessionController *session, WebRemoteServer *server,
@@ -74,6 +80,7 @@ public:
     void setRequirePin(bool require);
     QString bindMode() const;
     void setBindMode(const QString &mode);
+    bool offerSetup() const;
 
     // start() and restart() still follow the run policy: neither starts a
     // disabled or signed-out remote.
@@ -83,6 +90,8 @@ public:
     Q_INVOKABLE void regenerateCertificate();
     Q_INVOKABLE void generateNewPin();
     Q_INVOKABLE void copyUrlToClipboard(const QString &url);
+    Q_INVOKABLE void acceptSetup();
+    Q_INVOKABLE void declineSetup();
 
     // Replaces NetworkAddressHelper::resolveBindAddress, here and in the
     // server, and sets how often a running lan/tailscale server re-resolves.
@@ -101,6 +110,7 @@ signals:
     void pinChanged();
     void requirePinChanged();
     void bindModeChanged();
+    void offerSetupChanged();
     void copyToClipboardRequested(const QString &text);
 
 private:

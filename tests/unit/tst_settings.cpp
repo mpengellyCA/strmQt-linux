@@ -19,6 +19,7 @@ private slots:
     void retainedPlaybackChoicesAreBoundedAndKeepRecentEntries();
     void oversizedLegacyChoicesArePrunedWhenSessionRestores();
     void accountProfileRemovalClearsSession();
+    void webRemoteIsOffAndPinnedByDefault();
 };
 
 void SettingsTest::defaultServerUrl()
@@ -242,6 +243,24 @@ void SettingsTest::accountProfileRemovalClearsSession()
     const QString scope = Settings::sessionScopeFor(QUrl(QStringLiteral("https://one.example")), QStringLiteral("alice"));
     const QString sessionKey = QStringLiteral("sessions/%1/libraryView/movies/mode").arg(scope);
     QVERIFY(!raw.contains(sessionKey));
+}
+
+void SettingsTest::webRemoteIsOffAndPinnedByDefault()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    {
+        Settings settings(ini);
+        // The phone remote is a network listener that can drive playback: it
+        // is opt-in, and once on, a phone has to know the PIN.
+        QVERIFY(!settings.webRemoteEnabled());
+        QVERIFY(settings.webRemoteRequirePin());
+        QVERIFY(!settings.webRemoteSetupOffered());
+        settings.setWebRemoteSetupOffered(true);
+    }
+    Settings settings(ini);
+    QVERIFY(settings.webRemoteSetupOffered());
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)

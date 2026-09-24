@@ -54,7 +54,7 @@ ApplicationWindow {
     readonly property bool shortcutSheetOpened: shortcutSheetLoader.opened
     readonly property bool commandPaletteOpened: commandPaletteLoader.opened
     readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
-                                        || resumePrompt.visible
+                                        || resumePrompt.visible || remoteOffer.visible
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 
     function toggleShortcutSheet(): void {
@@ -601,13 +601,16 @@ ApplicationWindow {
                         "key": "search", "title": qsTr("Search") });
     }
 
-    function openSettings(): void {
-        if (root.currentKey === "settings") {
+    // `section` optionally names a Settings section to land on ("remote").
+    function openSettings(section): void {
+        if (root.currentKey !== "settings")
+            root.pushPage({ "kind": "settings", "key": "settings",
+                            "title": qsTr("Settings") });
+        else
             root.focusCurrentPage();
-            return;
-        }
-        root.pushPage({ "kind": "settings", "key": "settings",
-                        "title": qsTr("Settings") });
+        const settings = stack.currentItem as SettingsPage;
+        if (section && settings)
+            settings.showSection(section);
     }
 
     // A genre chip, a cast member or a studio: the same grid with one server-side
@@ -1307,7 +1310,7 @@ ApplicationWindow {
         fallback: ["?"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
                 || (root.shortcutSheetOpened && !root.commandPaletteOpened
-                    && !resumePrompt.visible)
+                    && !resumePrompt.visible && !remoteOffer.visible)
         onActivated: root.toggleShortcutSheet()
     }
 
@@ -1316,7 +1319,7 @@ ApplicationWindow {
         fallback: ["Ctrl+K"]
         active: root.interactionContext === "browse" || root.interactionContext === "music"
                 || (root.commandPaletteOpened && !root.shortcutSheetOpened
-                    && !resumePrompt.visible)
+                    && !resumePrompt.visible && !remoteOffer.visible)
         onActivated: root.toggleCommandPalette()
     }
 
@@ -1764,6 +1767,98 @@ ApplicationWindow {
         function dismiss() {
             PlayerCtl.clearCrashResume();
             resumePrompt.visible = false;
+            if (stack.currentItem)
+                stack.currentItem.forceActiveFocus();
+        }
+    }
+
+    // Phone-remote offer: asked once, after the first sign-in (WebRemoteController
+    // decides when). The remote is off until the user says yes here or in
+    // Settings. Waits behind the crash-resume prompt and the player.
+    Rectangle {
+        id: remoteOffer
+
+        readonly property var remote: typeof WebRemoteCtl !== "undefined" ? WebRemoteCtl : null
+
+        visible: remoteOffer.remote !== null && remoteOffer.remote.offerSetup
+                 && !resumePrompt.visible && !root.playerOnTop
+        anchors.fill: parent
+        color: Theme.scrimColor
+        z: 950
+
+        onVisibleChanged: if (visible) remoteOfferScope.forceActiveFocus()
+
+        FocusScope {
+            id: remoteOfferScope
+            anchors.fill: parent
+
+            Keys.onReturnPressed: event => { if (!event.isAutoRepeat) remoteOffer.accept(); }
+            Keys.onEnterPressed: event => { if (!event.isAutoRepeat) remoteOffer.accept(); }
+            Keys.onEscapePressed: remoteOffer.decline()
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Theme.scale(560)
+                height: offerColumn.height + Theme.pageMarginValue
+                radius: Theme.radiusCardValue
+                color: Theme.surfaceRaisedColor
+                border.color: Theme.accentColor
+                border.width: Theme.focusRingWidth
+
+                Column {
+                    id: offerColumn
+                    anchors.centerIn: parent
+                    width: parent.width - Theme.pageMarginValue
+                    spacing: Theme.spacingValue
+
+                    Text {
+                        text: qsTr("Use your phone as a remote?")
+                        color: Theme.textPrimaryColor
+                        font.family: Theme.fontDisplay
+                        font.pixelSize: Theme.fontTitle
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        width: parent.width
+                        text: qsTr("Browse and control playback from your phone's browser. Phones on your network sign in with a PIN. You can change this later in Settings.")
+                        color: Theme.textSecondaryColor
+                        font.family: Theme.fontBody
+                        font.pixelSize: Theme.fontBodySize
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Row {
+                        spacing: Theme.spacingTight
+
+                        StrmButton {
+                            text: qsTr("Set up")
+                            variant: "primary"
+                            onClicked: remoteOffer.accept()
+                        }
+                        StrmButton {
+                            text: qsTr("Not now")
+                            variant: "ghost"
+                            onClicked: remoteOffer.decline()
+                        }
+                    }
+
+                    Text {
+                        text: qsTr("Enter — set up   ·   Esc — not now")
+                        color: Theme.textTertiary
+                        font.family: Theme.fontBody
+                        font.pixelSize: Theme.fontSmall
+                    }
+                }
+            }
+        }
+
+        // Turns the remote on with a PIN and shows its QR code and PIN.
+        function accept() {
+            remoteOffer.remote.acceptSetup();
+            root.openSettings("remote");
+        }
+        function decline() {
+            remoteOffer.remote.declineSetup();
             if (stack.currentItem)
                 stack.currentItem.forceActiveFocus();
         }
