@@ -189,7 +189,7 @@ QString containerCollectionType(ItemKind kind)
 QString playAllSortFor(const QStringList &types)
 {
     if (types.size() == 1 && types.first() == QLatin1String("Episode"))
-        return QStringLiteral("PremiereDate,SortName");
+        return episodeAirOrderSort();
     // Music plays in TRACK order. SortName would play an album alphabetically
     // by title, which is never what anyone means.
     //
@@ -769,7 +769,7 @@ void ItemActions::continueCollectionWalk(const std::shared_ptr<CollectionWalk> &
         query.parentId = member.id;
         query.recursive = true;
         query.includeItemTypes = {QStringLiteral("Episode")};
-        query.sortBy = QStringLiteral("PremiereDate,SortName");
+        query.sortBy = episodeAirOrderSort();
         query.limit = kQueueFetchLimit - walk->playable.size();
         m_client->items(query, &m_collectionRequest)
             .then(this, [this, walk](const Result<ItemsPage> &result) {

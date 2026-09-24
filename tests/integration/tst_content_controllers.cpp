@@ -641,6 +641,14 @@ void ContentControllersTest::detailsSeriesUpcomingEpisodes()
     QCOMPARE(details.nextEpisode().value(QStringLiteral("itemId")).toString(), QStringLiteral("ep-1"));
     QCOMPARE(details.nextEpisode().value(QStringLiteral("name")).toString(), QStringLiteral("Pilot"));
     QVERIFY(upcomingSpy.count() > 0);
+
+    // A double premiere shares one date: the tie must fall to season and
+    // episode number, not the title (which put "Eye Contact" before
+    // "FreeCommerce", S1E2 before S1E1).
+    const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath).query);
+    QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")), QStringLiteral("Episode"));
+    QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
+             QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName"));
 }
 
 void ContentControllersTest::seriesFetchesItsOwnRecord()
@@ -712,7 +720,7 @@ void ContentControllersTest::seriesNextUnwatchedQueryIsBounded()
              QStringLiteral("Episode"));
     QCOMPARE(query.queryItemValue(QStringLiteral("Filters")), QStringLiteral("IsUnplayed"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
-             QStringLiteral("PremiereDate,SortName"));
+             QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortOrder")), QStringLiteral("Ascending"));
     QCOMPARE(query.queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("0"));
     QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("1"));

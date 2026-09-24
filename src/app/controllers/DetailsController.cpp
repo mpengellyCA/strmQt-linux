@@ -299,7 +299,7 @@ void DetailsController::refreshUpcomingEpisodes()
     query.recursive = true;
     query.includeItemTypes = {QStringLiteral("Episode")};
     query.filters = {QStringLiteral("IsUnplayed")};
-    query.sortBy = QStringLiteral("PremiereDate,SortName");
+    query.sortBy = episodeAirOrderSort();
     query.limit = 12;
 
     m_client->items(query, &m_upcomingEpisodesRequest)
@@ -320,7 +320,7 @@ void DetailsController::refreshUpcomingEpisodes()
             fallbackQuery.parentId = m_itemId;
             fallbackQuery.recursive = true;
             fallbackQuery.includeItemTypes = {QStringLiteral("Episode")};
-            fallbackQuery.sortBy = QStringLiteral("PremiereDate,SortName");
+            fallbackQuery.sortBy = episodeAirOrderSort();
             fallbackQuery.limit = 12;
 
             m_client->items(fallbackQuery, &m_upcomingEpisodesRequest)

@@ -241,7 +241,7 @@ void ItemActionsQueueTest::seasonDispatchExpandsEpisodeChildren()
     QCOMPARE(query.queryItemValue(QStringLiteral("Recursive")), QStringLiteral("true"));
     QCOMPARE(query.queryItemValue(QStringLiteral("IncludeItemTypes")), QStringLiteral("Episode"));
     QCOMPARE(query.queryItemValue(QStringLiteral("SortBy")),
-             QStringLiteral("PremiereDate,SortName"));
+             QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName"));
 }
 
 void ItemActionsQueueTest::playAllFromQueuesTheItemsItIsGiven()
@@ -556,7 +556,7 @@ void ItemActionsQueueTest::mixedCollectionWalkIsOrderedAtomicAndTolerant()
         QCOMPARE(childQuery.queryItemValue(QStringLiteral("IncludeItemTypes")),
                  QStringLiteral("Episode"));
         QCOMPARE(childQuery.queryItemValue(QStringLiteral("SortBy")),
-                 QStringLiteral("PremiereDate,SortName"));
+                 QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName"));
     }
 }
 

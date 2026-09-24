@@ -247,7 +247,7 @@ void SeriesController::refreshNextUnwatched()
     // This is the same verified cross-season air order used by series play-all:
     // PremiereDate is accepted by every Emby 4.x server and SortName makes ties
     // deterministic without requesting episode overviews.
-    query.sortBy = QStringLiteral("PremiereDate,SortName");
+    query.sortBy = episodeAirOrderSort();
     query.limit = 1;
 
     const int generation = ++m_nextUnwatchedGeneration;

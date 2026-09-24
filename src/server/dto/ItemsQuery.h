@@ -6,6 +6,16 @@
 
 namespace strmqt {
 
+// Episodes in air order, across seasons. PremiereDate leads because every Emby
+// 4.x server accepts it and it orders a multi-season play-all correctly, but
+// episodes can share a date — a double premiere — and a SortName tiebreak then
+// orders them by title: Murderbot played "Eye Contact" (S1E2) before
+// "FreeCommerce" (S1E1). Season and episode number break the tie instead.
+inline QString episodeAirOrderSort()
+{
+    return QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName");
+}
+
 // Backend-neutral item query (PLAN §3.3): parent, filters, sort, search, paging.
 struct ItemsQuery
 {
