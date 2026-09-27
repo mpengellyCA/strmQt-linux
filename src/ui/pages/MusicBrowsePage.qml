@@ -1294,7 +1294,7 @@ FocusScope {
         anchors.bottomMargin: page.songsShown ? Theme.spacingValue : 0
         active: page.viewReady
         // A Loader is a focus scope. Its claim follows the strip's, so the
-        // keyboard is never parked in an empty view (see MusicPage history).
+        // keyboard is never parked in an empty view (see the deleted MusicPage.qml's history).
         focus: page.contentFocusable
         sourceComponent: page.loadedSection === "artists" ? artistsComponent
                        : page.loadedSection === "songs" ? songsComponent

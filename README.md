@@ -36,9 +36,13 @@ still on it.
 
 ### Music treated as music
 
-One library read four ways — albums, artists, songs and playlists — sharing one set of
-filters. ReplayGain volume normalisation, instant mixes from anything, multi-select for
-batch favouriting and queueing, and a now-playing page built around the cover.
+A music library opens on its own home: pick up where you left off, stations, genre
+bins, the artists you actually play, and a record pulled out at random. Browse it as
+albums, artists, songs, genres or playlists with filter pills (genre, decade, format,
+favourites, unplayed) and A–Z crate dividers. Albums show their liner notes, discs and
+format; the full player pulls the record out of the sleeve. ReplayGain volume
+normalisation, instant mixes from anything, and multi-select for batch favouriting
+and queueing.
 
 ### It works with whatever is in your hand
 

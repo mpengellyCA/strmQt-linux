@@ -1,5 +1,11 @@
 # Music — plan to make it a first-class citizen
 
+> **Superseded (2026-09-16).** The music surface described here was replaced by the
+> *Crate* redesign: `docs/superpowers/specs/2026-09-16-music-crate-design.md`. This
+> file is kept because source comments still cite its reasoning (the cover wash in
+> §4, the audio path in §6, the batch and instant-mix verbs in §7). Its page,
+> controller and component names are historical.
+
 Date: 2026-08-23. Scope: `src/ui/pages/{Music,Album,Artist,Playlist}Page.qml`,
 `src/ui/player/`, `src/ui/shell/{MiniPlayer,FilterBar}.qml`,
 `src/app/controllers/{Music,Playlist,Player}Controller`, `src/app/models/MediaItemModel`,
