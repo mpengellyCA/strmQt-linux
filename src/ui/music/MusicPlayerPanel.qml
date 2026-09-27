@@ -296,6 +296,11 @@ FocusScope {
 
                 onActivated: index => panel.jump(index)
 
+                // Left leaves the panel for the stage, as it does off the tabs.
+                Keys.onLeftPressed: event => {
+                    panel.leftRequested();
+                    event.accepted = true;
+                }
                 Keys.onDeletePressed: event => {
                     if (!event.isAutoRepeat)
                         panel.remove(queueList.currentIndex);
@@ -458,6 +463,10 @@ FocusScope {
 
                 onActivated: index => NowPlayingMusicCtl.playAlbumFrom(index)
 
+                Keys.onLeftPressed: event => {
+                    panel.leftRequested();
+                    event.accepted = true;
+                }
                 Keys.onUpPressed: event => {
                     if (albumList.currentIndex <= 0) {
                         panel.focusTabs();
@@ -539,6 +548,10 @@ FocusScope {
                 preferredHighlightEnd: Math.round(lyricList.height * 0.6)
                 highlightMoveDuration: Theme.animSlow
 
+                Keys.onLeftPressed: event => {
+                    panel.leftRequested();
+                    event.accepted = true;
+                }
                 Keys.onUpPressed: event => {
                     if (lyricList.atYBeginning)
                         panel.focusTabs();

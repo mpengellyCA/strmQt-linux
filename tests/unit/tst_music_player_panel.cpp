@@ -22,6 +22,7 @@
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QVariantList>
@@ -140,6 +141,7 @@ private slots:
 
     void lyricsHiddenMidReadReclaimsFocusAndRestoresWhenAvailableAgain();
     void userChoiceMadeWhileHiddenIsNotOverriddenByLyricsReturning();
+    void leftFromEveryListLeavesThePanel();
 
 private:
     bool stage(const QString &sourceDir, const QString &file, const QString &modulePath, QByteArray &qmldir);
@@ -298,6 +300,28 @@ void TestMusicPlayerPanel::userChoiceMadeWhileHiddenIsNotOverriddenByLyricsRetur
     // pick the user made in the meantime.
     m_nowPlaying->setLyricsAvailable(true);
     QCOMPARE(m_panel->property("currentTab").toString(), QStringLiteral("album"));
+}
+
+// Left off the tab strip already handed the keyboard back to the stage; the
+// lists under the tabs swallowed it, so the only way out of a list was Up to
+// the tabs first.
+void TestMusicPlayerPanel::leftFromEveryListLeavesThePanel()
+{
+    m_nowPlaying->setLyricsAvailable(true);
+    QSignalSpy left(m_panel, SIGNAL(leftRequested()));
+    const QList<QPair<QString, QQuickItem *>> tabs = {
+        {QStringLiteral("upNext"), m_queueList},
+        {QStringLiteral("album"), m_albumList},
+        {QStringLiteral("lyrics"), m_lyricList},
+    };
+    for (const auto &[tab, list] : tabs) {
+        m_panel->setProperty("_desiredTab", tab);
+        QMetaObject::invokeMethod(m_panel, "focusContent");
+        QVERIFY2(list->hasActiveFocus(), qPrintable(tab));
+        const qsizetype before = left.size();
+        QTest::keyClick(m_view, Qt::Key_Left);
+        QVERIFY2(left.size() == before + 1, qPrintable(tab));
+    }
 }
 
 QTEST_MAIN(TestMusicPlayerPanel)

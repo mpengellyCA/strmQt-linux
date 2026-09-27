@@ -24,6 +24,7 @@ private slots:
     void playerPageUsesTheCrateView();
     void nowPlayingViewDrivesTheRecord();
     void nowPlayingPanelIsGone();
+    void panelListsLeaveLeftForTheStage();
 };
 
 void MusicPlayerSourcesTest::playerPageUsesTheCrateView()
@@ -60,6 +61,19 @@ void MusicPlayerSourcesTest::nowPlayingPanelIsGone()
     QVERIFY(!QFile::exists(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/player/NowPlayingPanel.qml")));
     QVERIFY(!sourceFor(QStringLiteral("src/ui/player/Player.cmake")).contains("NowPlayingPanel"));
     QVERIFY(!sourceFor(QStringLiteral("src/ui/shell/SleeveFlight.qml")).contains("NowPlayingPanel"));
+}
+
+void MusicPlayerSourcesTest::panelListsLeaveLeftForTheStage()
+{
+    const QByteArray panel = sourceFor(QStringLiteral("src/ui/music/MusicPlayerPanel.qml"));
+    QVERIFY(!panel.isEmpty());
+    // The tab strip and all three lists under it.
+    QCOMPARE(panel.count("panel.leftRequested();"), 4);
+    for (const char *list : {"id: queueList", "id: albumList", "id: lyricList"}) {
+        const qsizetype at = panel.indexOf(list);
+        QVERIFY2(at >= 0, list);
+        QVERIFY2(panel.indexOf("Keys.onLeftPressed", at) > at, list);
+    }
 }
 
 QTEST_GUILESS_MAIN(MusicPlayerSourcesTest)
