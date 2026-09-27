@@ -31,6 +31,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QStringList>
+#include <QUrl>
 #include <QWindow>
 
 #include <utility>
@@ -98,7 +99,15 @@ int main(int argc, char *argv[])
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
         [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     engine.loadFromModule("StrmQt", "Main");
+#else
+    // loadFromModule is Qt 6.5, and 6.4's default import path lacks
+    // qrc:/qt/qml. RESOURCE_PREFIX pins the module there on every Qt
+    // (src/CMakeLists.txt), so one URL serves (spec 2026-09-27 §4.1).
+    engine.addImportPath(QStringLiteral("qrc:/qt/qml"));
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/StrmQt/ui/Main.qml")));
+#endif
 
     // The remote and the gamepad drive this window while another one is
     // active; it has to keep its focused item for their keys to land.

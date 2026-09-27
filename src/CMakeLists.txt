@@ -159,6 +159,9 @@ set_source_files_properties(ui/ModelUtils.qml PROPERTIES QT_QML_SINGLETON_TYPE T
 qt_add_qml_module(strmqt
     URI StrmQt
     VERSION 1.0
+    # QTP0001's default from Qt 6.5 on, spelled out so Qt 6.4 (whose default is
+    # "/") puts the module in the same place: qrc:/qt/qml/StrmQt/... (spec §4.1).
+    RESOURCE_PREFIX /qt/qml
     QML_FILES
         ui/Main.qml
         ui/Theme.qml

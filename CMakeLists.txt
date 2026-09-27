@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.25)
 
 project(StrmQt VERSION 0.7.0 LANGUAGES CXX)
 
@@ -13,9 +13,18 @@ include(GNUInstallDirs)
 # Canonical run path is ./build/<preset>/strmqt (AGENTS.md).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS
+# Qt 6.4.2 is the floor: Ubuntu 24.04 LTS and Debian 12 ship exactly that, and
+# no supported distro ships 6.5-6.7 (spec 2026-09-27 §2). Qt 6.8+ is the full
+# tier; older Qt builds the compat QML shims (src/ui/shims, spec §3).
+find_package(Qt6 6.4 REQUIRED COMPONENTS
     Core DBus Gui Network OpenGL Quick QuickControls2 Test WebSockets)
-qt_standard_project_setup(REQUIRES 6.8)
+# REQUIRES and the QTP policies are Qt 6.5+. Guarding at 6.8 keeps the full
+# tier's policy set exactly what it was.
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.8)
+    qt_standard_project_setup(REQUIRES 6.8)
+else()
+    qt_standard_project_setup()
+endif()
 
 find_package(OpenSSL REQUIRED)
 
