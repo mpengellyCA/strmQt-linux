@@ -79,7 +79,9 @@ public:
     QString timeText() const { return m_timeText; }
     bool lyricsAvailable() const { return m_lyricsEnabled && !m_lyrics.isEmpty(); }
     QVariantList lyrics() const { return m_lyricsVariant; }
-    bool lyricsTimed() const { return !m_lyrics.isEmpty() && m_lyrics.constFirst().timeMs >= 0; }
+    // The parser's verdict (emby::parseLyrics): timed lyrics are timed on
+    // every line and sorted, untimed ones on none.
+    bool lyricsTimed() const { return m_lyricsTimed; }
     int currentLyricRow() const { return m_currentLyricRow; }
 
     // Plays the current album from `row` of albumTracks, labelled with the album.
@@ -151,6 +153,7 @@ private:
     quint64 m_lyricsGeneration = 0;
     QList<LyricLine> m_lyrics;
     QVariantList m_lyricsVariant;
+    bool m_lyricsTimed = false;
     int m_currentLyricRow = -1;
 };
 

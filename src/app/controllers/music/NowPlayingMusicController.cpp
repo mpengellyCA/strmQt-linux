@@ -320,6 +320,7 @@ void NowPlayingMusicController::clearLyrics()
     if (!m_lyrics.isEmpty()) {
         m_lyrics.clear();
         m_lyricsVariant.clear();
+        m_lyricsTimed = false;
         emit lyricsChanged();
     }
     refreshCurrentLyricRow();
@@ -370,6 +371,8 @@ void NowPlayingMusicController::loadLyrics()
                 return;
             }
             m_lyrics = result.value;
+            m_lyricsTimed = std::any_of(m_lyrics.cbegin(), m_lyrics.cend(),
+                                        [](const LyricLine &line) { return line.timeMs >= 0; });
             m_lyricsVariant.clear();
             for (const LyricLine &line : std::as_const(m_lyrics))
                 m_lyricsVariant.append(QVariantMap{{QStringLiteral("timeMs"), line.timeMs},

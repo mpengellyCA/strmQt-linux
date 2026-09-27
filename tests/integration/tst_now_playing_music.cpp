@@ -109,6 +109,7 @@ private slots:
     void timeTextFormatsBothClocks();
     void favouriteToggles();
     void lyricsBehindCaps();
+    void lyricsTimedFollowsTheParser();
 
 private:
     PlayQueue *queue() const { return m_player->queue(); }
@@ -146,6 +147,12 @@ void NowPlayingMusicTest::init()
     m_mock->addRoute("GET", "/Videos/l1/ms301004/Subtitles/1/Stream.js", 200,
                      R"({"TrackEvents":[{"StartPositionTicks":10000000,"Text":"Salt on the window"},
                                         {"StartPositionTicks":50000000,"Text":"Tide in the hall"}]})");
+    // Out of order, and the first line (a title) carries no time at all.
+    m_mock->addRoute("POST", "/Items/l2/PlaybackInfo", 200, playbackInfo(true));
+    m_mock->addRoute("GET", "/Videos/l2/ms301004/Subtitles/1/Stream.js", 200,
+                     R"({"TrackEvents":[{"Text":"Harbour Song"},
+                                        {"StartPositionTicks":80000000,"Text":"Bells at the quay"},
+                                        {"StartPositionTicks":30000000,"Text":"Ropes on the deck"}]})");
     m_mock->addRoute("POST", "/Sessions/Playing", 204, {});
     m_mock->addRoute("POST", "/Sessions/Playing/Progress", 204, {});
     m_mock->addRoute("POST", "/Sessions/Playing/Stopped", 204, {});
@@ -400,6 +407,30 @@ void NowPlayingMusicTest::lyricsBehindCaps()
     QTest::qWait(50);
     QCOMPARE(requestsTo(QStringLiteral("GET"), a1LyricsPath), 0);
     QVERIFY(m_controller->lyrics().isEmpty());
+}
+
+void NowPlayingMusicTest::lyricsTimedFollowsTheParser()
+{
+    m_controller->setLyricsEnabledForTests(true);
+    m_player->playQueue(MusicPlayback::toMaps({track("l2", "alL", 1)}), 0);
+    QTRY_VERIFY(m_controller->lyricsAvailable());
+    // An untimed first line does not make the whole sidecar untimed.
+    QVERIFY(m_controller->lyricsTimed());
+    const QVariantList lines = m_controller->lyrics();
+    QCOMPARE(lines.size(), 3);
+    QCOMPARE(lines.at(0).toMap().value(QStringLiteral("text")).toString(), QStringLiteral("Harbour Song"));
+    QCOMPARE(lines.at(1).toMap().value(QStringLiteral("text")).toString(), QStringLiteral("Ropes on the deck"));
+    QCOMPARE(lines.at(2).toMap().value(QStringLiteral("text")).toString(), QStringLiteral("Bells at the quay"));
+
+    // The playhead finds the right line in the sorted order.
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(1000);
+    QTRY_COMPARE(m_controller->currentLyricRow(), 0);
+    m_backend->simulatePosition(4000);
+    QTRY_COMPARE(m_controller->currentLyricRow(), 1);
+    m_backend->simulatePosition(9000);
+    QTRY_COMPARE(m_controller->currentLyricRow(), 2);
 }
 
 QTEST_GUILESS_MAIN(NowPlayingMusicTest)

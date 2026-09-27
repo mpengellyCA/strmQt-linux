@@ -57,7 +57,11 @@ music::Playlist parsePlaylist(const QJsonObject &json);
 QList<music::Playlist> parsePlaylists(const QJsonArray &json);
 
 // A lyrics sidecar as Emby serves it: its subtitle JSON ({"TrackEvents":[…]})
-// or the {"Lyrics":[{Start,Text}]} shape. Untimed when no line has a time.
+// or the {"Lyrics":[{Start,Text}]} shape. Untimed when no line has a time,
+// and then every line's timeMs is -1. Timed otherwise, and then every line
+// has a time (an untimed one takes its predecessor's, or 0) and the lines are
+// stably sorted by it — all-or-nothing, so a caller may read the verdict off
+// any line.
 // V4 (verifications file): an untimed sidecar sometimes arrives as a single
 // TrackEvent whose Text joins the real lines with "; " — that case is split
 // back into separate lines, keeping empty segments as stanza breaks.

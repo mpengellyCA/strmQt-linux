@@ -588,7 +588,23 @@ QList<LyricLine> parseLyrics(const QJsonDocument &doc)
     if (!timed) {
         for (LyricLine &line : lines)
             line.timeMs = -1;
+        return lines;
     }
+
+    // Timed: every line gets a time, and the lines run in time order. A line
+    // the sidecar left untimed (a title or credit ahead of the first stamp)
+    // keeps its place by taking the time of the line before it, or 0 at the
+    // top; then a stable sort by time, because the player looks the current
+    // line up by binary search and a file written out of order would
+    // otherwise highlight the wrong line (or none).
+    qint64 previous = 0;
+    for (LyricLine &line : lines) {
+        if (line.timeMs < 0)
+            line.timeMs = previous;
+        previous = line.timeMs;
+    }
+    std::stable_sort(lines.begin(), lines.end(),
+                     [](const LyricLine &a, const LyricLine &b) { return a.timeMs < b.timeMs; });
     return lines;
 }
 

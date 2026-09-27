@@ -547,6 +547,39 @@ void MusicMapperTest::parsesLyricsInBothShapes()
     QCOMPARE(joined[1].text, QStringLiteral("Two"));
     QCOMPARE(joined[2].text, QString());
     QCOMPARE(joined[3].text, QStringLiteral("Three"));
+
+    // Written out of order: sorted by time, and stably — two lines stamped
+    // alike keep the order the file gave them.
+    const auto shuffled = emby::parseLyrics(QJsonDocument::fromJson(
+        R"({"TrackEvents":[{"StartPositionTicks":90000000,"Text":"Third"},
+                           {"StartPositionTicks":10000000,"Text":"First"},
+                           {"StartPositionTicks":50000000,"Text":"Second a"},
+                           {"StartPositionTicks":50000000,"Text":"Second b"}]})"));
+    QCOMPARE(shuffled.size(), 4);
+    QCOMPARE(shuffled[0].text, QStringLiteral("First"));
+    QCOMPARE(shuffled[1].text, QStringLiteral("Second a"));
+    QCOMPARE(shuffled[2].text, QStringLiteral("Second b"));
+    QCOMPARE(shuffled[3].text, QStringLiteral("Third"));
+    QCOMPARE(shuffled[3].timeMs, 9000);
+
+    // First line untimed (a title ahead of the first stamp), the rest timed:
+    // still timed, and the verdict holds on every line — the untimed title
+    // takes 0, an untimed line mid-file takes its predecessor's time.
+    const auto headed = emby::parseLyrics(QJsonDocument::fromJson(
+        R"({"Lyrics":[{"Text":"Title"},
+                      {"Start":80000000,"Text":"Later"},
+                      {"Start":20000000,"Text":"Early"},
+                      {"Text":"Chorus"}]})"));
+    QCOMPARE(headed.size(), 4);
+    for (const auto &line : headed)
+        QVERIFY(line.timeMs >= 0);
+    QCOMPARE(headed[0].text, QStringLiteral("Title"));
+    QCOMPARE(headed[0].timeMs, 0);
+    QCOMPARE(headed[1].text, QStringLiteral("Early"));
+    QCOMPARE(headed[1].timeMs, 2000);
+    QCOMPARE(headed[2].text, QStringLiteral("Chorus"));
+    QCOMPARE(headed[2].timeMs, 2000);
+    QCOMPARE(headed[3].text, QStringLiteral("Later"));
 }
 
 QTEST_GUILESS_MAIN(MusicMapperTest)
