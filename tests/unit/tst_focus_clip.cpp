@@ -1,9 +1,12 @@
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QImage>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
+#include <QRegularExpression>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -26,7 +29,12 @@ import StrmQt
 Item {
     id: root
     width: 1000
-    height: 1400
+    height: 1800
+
+    // TV density raises every size and the ring with it; the room left for
+    // the ring has to follow.
+    function setDensity(mode: string) { Theme.densityMode = mode }
+    function density(): string { return Theme.densityMode }
 
     ListModel {
         id: rows
@@ -131,6 +139,50 @@ Item {
         model: rows
         delegate: ListRow {}
     }
+
+    // The genre grid as MusicBrowsePage builds it: record bins, whose tile is
+    // a short stack with two caption lines under it, sized by a metrics tile.
+    component Bin: GenreBinTile {
+        property var model: null
+        property int index: -1
+        size: Theme.crateSleeveSize
+        name: model && model.name !== undefined ? String(model.name) : ""
+        subtitle: "12 records"
+    }
+    StrmGrid {
+        id: bins
+        objectName: "bins"
+        y: 1180
+        width: 480
+        height: 560
+        gridModel: rows
+        customCardWidth: Theme.crateSleeveSize
+        customCardHeight: binMetrics.implicitHeight
+        GenreBinTile {
+            id: binMetrics
+            visible: false
+            enabled: false
+            size: Theme.crateSleeveSize
+            name: "M"
+            subtitle: "M"
+        }
+        cardComponent: Component { Bin {} }
+    }
+
+    // The same bins declared square, as the page used to: the tile is taller
+    // than its cell, so the ring overruns the room the grid left for it.
+    StrmGrid {
+        id: squareBins
+        objectName: "squareBins"
+        x: 500
+        y: 1180
+        width: 480
+        height: 560
+        gridModel: rows
+        customCardWidth: Theme.crateSleeveSize
+        customCardHeight: Theme.crateSleeveSize
+        cardComponent: Component { Bin {} }
+    }
 }
 )QML";
 
@@ -198,6 +250,20 @@ QStringList clippedRings(QQuickItem *root, QQuickItem *scope)
     return cut;
 }
 
+// Scene rectangles of every visible active stroke under scope, in tree order.
+QList<QRectF> ringRects(QQuickItem *scope)
+{
+    QList<QQuickItem *> rings;
+    collectRings(scope, rings);
+    QList<QRectF> out;
+    for (QQuickItem *ring : std::as_const(rings)) {
+        QQuickItem *stroke = ring->childItems().constFirst();
+        if (ring->property("active").toBool() && effectivelyVisible(stroke))
+            out << stroke->mapRectToScene(stroke->boundingRect());
+    }
+    return out;
+}
+
 int activeRings(QQuickItem *scope)
 {
     QList<QQuickItem *> rings;
@@ -226,9 +292,15 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         QStringLiteral("NavigationColumn.qml"), QStringLiteral("StrmRail.qml"),
         QStringLiteral("StrmGrid.qml"),
     };
-    for (const QString &name : moduleFiles) {
+    const QStringList musicFiles = {
+        QStringLiteral("GenreBinTile.qml"), QStringLiteral("CrateHeading.qml"),
+        QStringLiteral("CrateKicker.qml"),
+    };
+    for (const QString &name : moduleFiles + musicFiles) {
         const QString sourceRoot = name == QStringLiteral("Theme.qml")
                                        ? QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/")
+                                   : musicFiles.contains(name)
+                                       ? QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/music/")
                                        : QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/controls/");
         if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
             return nullptr;
@@ -250,7 +322,10 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "StrmScrollBar 1.0 StrmScrollBar.qml\n"
                  "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
                  "StrmRail 1.0 StrmRail.qml\n"
-                 "StrmGrid 1.0 StrmGrid.qml\n");
+                 "StrmGrid 1.0 StrmGrid.qml\n"
+                 "GenreBinTile 1.0 GenreBinTile.qml\n"
+                 "CrateHeading 1.0 CrateHeading.qml\n"
+                 "CrateKicker 1.0 CrateKicker.qml\n");
     qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));
@@ -263,7 +338,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
     view.setSource(QUrl::fromLocalFile(probe.fileName()));
     if (view.status() != QQuickView::Ready)
         return nullptr;
-    view.resize(1000, 1400);
+    view.resize(1000, 1800);
     view.show();
     if (!QTest::qWaitForWindowExposed(&view))
         return nullptr;
@@ -284,12 +359,17 @@ private slots:
     void listFirstRowRingIsWhole();
     void auditSeesARingCutByItsOwnView();
     void clipKeepsTheViewGeometry();
+    void genreBinTopRowRingIsWhole();
+    void auditSeesASquareGenreCellCut();
+    void nothingAnchorsToAViewAFocusClipTookOver();
+    void tvDensityRingsAreWhole();
 
 private:
     QTemporaryDir m_dir;
     QQuickView m_view;
     QQuickItem *m_root = nullptr;
     void focusAndSettle(QQuickItem *item);
+    void settle();
     void saveShot(const QString &name);
 };
 
@@ -301,12 +381,28 @@ void FocusClipTest::initTestCase()
 }
 
 // Focus moves the ring in at Theme.animFastMs and raises the card over the
-// same time; the audit has to see where they end up, not where they start.
+// same time, and a grid may scroll its highlight into range: the audit has to
+// see where they end up, not where they start.
 void FocusClipTest::focusAndSettle(QQuickItem *item)
 {
     item->forceActiveFocus();
     QTRY_VERIFY(activeRings(m_root) > 0);
-    QTest::qWait(400);
+    settle();
+}
+
+// Settled means three samples in a row, a QTRY step (50 ms) apart, see every
+// ring in the same place: longer than any of those animations stands still.
+void FocusClipTest::settle()
+{
+    QList<QRectF> last;
+    int same = 0;
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+                                 const QList<QRectF> now = ringRects(m_root);
+                                 same = (!now.isEmpty() && now == last) ? same + 1 : 0;
+                                 last = now;
+                                 return same >= 2;
+                             }()),
+                             5000);
 }
 
 // Set STRMQT_FOCUS_SHOTS to a directory to keep what the audit looked at.
@@ -343,7 +439,7 @@ void FocusClipTest::gridTopRowRingIsWholeAfterScrollingBack()
     QTRY_VERIFY(grid->property("currentIndex").toInt() > 0);
     QTest::keyClick(&m_view, Qt::Key_Home);
     QTRY_COMPARE(grid->property("currentIndex").toInt(), 0);
-    QTest::qWait(400);
+    settle();
     const QStringList cut = clippedRings(m_root, grid);
     QVERIFY2(cut.isEmpty(), qPrintable(cut.join(QLatin1Char('\n'))));
 }
@@ -392,6 +488,116 @@ void FocusClipTest::clipKeepsTheViewGeometry()
     const QRectF r = list->mapRectToScene(list->boundingRect());
     QCOMPARE(r, QRectF(60, 720, 400, 200));
     QVERIFY(!list->clip());
+}
+
+// The genre grid's bins, sized from a metrics tile as MusicBrowsePage does.
+void FocusClipTest::genreBinTopRowRingIsWhole()
+{
+    QQuickItem *grid = findItem(m_root, QStringLiteral("bins"));
+    QVERIFY(grid);
+    QTRY_VERIFY(grid->property("count").toInt() > 0);
+    focusAndSettle(grid);
+    QCOMPARE(grid->property("currentIndex").toInt(), 0);
+    saveShot(QStringLiteral("genre-bins"));
+    const QStringList cut = clippedRings(m_root, grid);
+    QVERIFY2(cut.isEmpty(), qPrintable(cut.join(QLatin1Char('\n'))));
+}
+
+// A card taller than the height its grid was told defeats the room the grid
+// leaves: this is the square declaration the genre grid used to make, and the
+// reason it now measures its tile.
+void FocusClipTest::auditSeesASquareGenreCellCut()
+{
+    QQuickItem *grid = findItem(m_root, QStringLiteral("squareBins"));
+    QVERIFY(grid);
+    QTRY_VERIFY(grid->property("count").toInt() > 0);
+    focusAndSettle(grid);
+    QVERIFY(!clippedRings(m_root, grid).isEmpty());
+}
+
+// A view handed to a FocusClip through `parent:` is no longer its old
+// siblings' sibling. An anchor to it from one of them still resolves, but in
+// the view's own coordinates, and Qt 6.11 does not warn: SeriesPage's empty
+// state drew at the page's top-left that way. Siblings must anchor to the
+// clip. Lines nested deeper than the view's own properties are its children,
+// which may anchor to it.
+void FocusClipTest::nothingAnchorsToAViewAFocusClipTookOver()
+{
+    static const QRegularExpression reparent(QStringLiteral(R"(^(\s*)parent:\s*\w+\.contentItem\b)"));
+    static const QRegularExpression idLine(QStringLiteral(R"(^(\s*)id:\s*(\w+)\s*$)"));
+    static const QRegularExpression firstVisible(QStringLiteral(R"(\S)"));
+    QStringList offenders;
+    int views = 0;
+    QDirIterator it(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui"), {QStringLiteral("*.qml")},
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(path));
+        const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+        for (qsizetype i = 0; i < lines.size(); ++i) {
+            const QRegularExpressionMatch m = reparent.match(lines.at(i));
+            if (!m.hasMatch())
+                continue;
+            const qsizetype indent = m.capturedLength(1);
+            // The view's id: above `parent:` in the same object.
+            QString id;
+            for (qsizetype j = i - 1; j >= 0; --j) {
+                const QString &line = lines.at(j);
+                if (line.trimmed().isEmpty())
+                    continue;
+                const QRegularExpressionMatch im = idLine.match(line);
+                if (im.hasMatch() && im.capturedLength(1) == indent) {
+                    id = im.captured(2);
+                    break;
+                }
+                // Past the object's opening line: this view has no id.
+                if (line.indexOf(firstVisible) < indent)
+                    break;
+            }
+            if (id.isEmpty())
+                continue;
+            ++views;
+            const QRegularExpression ref(
+                QStringLiteral(R"(^(\s*)anchors\.\w+\s*:.*\b%1\b)").arg(id));
+            for (qsizetype k = 0; k < lines.size(); ++k) {
+                const QRegularExpressionMatch rm = ref.match(lines.at(k));
+                if (rm.hasMatch() && rm.capturedLength(1) <= indent)
+                    offenders << QStringLiteral("%1:%2: %3")
+                                     .arg(QDir(QStringLiteral(STRMQT_SOURCE_DIR)).relativeFilePath(path))
+                                     .arg(k + 1)
+                                     .arg(lines.at(k).trimmed());
+            }
+        }
+    }
+    // Every FocusClip in src/ui that takes a view over by `parent:`.
+    QVERIFY2(views >= 10, qPrintable(QString::number(views)));
+    QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QLatin1Char('\n'))));
+}
+
+// Last, because it changes Theme for everything after it.
+void FocusClipTest::tvDensityRingsAreWhole()
+{
+    QMetaObject::invokeMethod(m_root, "setDensity", Q_ARG(QString, QStringLiteral("tv")));
+    const auto restore = qScopeGuard([this] {
+        QMetaObject::invokeMethod(m_root, "setDensity",
+                                  Q_ARG(QString, QStringLiteral("comfortable")));
+    });
+    QString mode;
+    QMetaObject::invokeMethod(m_root, "density", Q_RETURN_ARG(QString, mode));
+    QCOMPARE(mode, QStringLiteral("tv"));
+
+    QStringList cut;
+    for (const char *name : {"grid", "gutterless", "list", "bins"}) {
+        QQuickItem *item = findItem(m_root, QLatin1String(name));
+        QVERIFY(item);
+        item->setProperty("currentIndex", 0);
+        focusAndSettle(item);
+        saveShot(QStringLiteral("tv-%1").arg(QLatin1String(name)));
+        for (const QString &c : clippedRings(m_root, item))
+            cut << QStringLiteral("%1: %2").arg(QLatin1String(name), c);
+    }
+    QVERIFY2(cut.isEmpty(), qPrintable(cut.join(QLatin1Char('\n'))));
 }
 
 QTEST_MAIN(FocusClipTest)
