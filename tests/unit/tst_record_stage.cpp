@@ -7,6 +7,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include "QmlShimStaging.h"
+
 namespace {
 
 const char *kProbe = R"QML(
@@ -72,6 +74,8 @@ void TestRecordStage::initTestCase()
     QVERIFY(copySource(QStringLiteral("/src/ui/Theme.qml"), modulePath, QStringLiteral("Theme.qml")));
     QVERIFY(copySource(QStringLiteral("/src/ui/controls/StrmImage.qml"), modulePath, QStringLiteral("StrmImage.qml")));
     QVERIFY(copySource(QStringLiteral("/src/ui/music/RecordStage.qml"), modulePath, QStringLiteral("RecordStage.qml")));
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    QVERIFY(!shimLines.isEmpty());
 
     QFile qmldir(modulePath + QStringLiteral("/qmldir"));
     QVERIFY(qmldir.open(QIODevice::WriteOnly));
@@ -79,6 +83,7 @@ void TestRecordStage::initTestCase()
                  "singleton Theme 1.0 Theme.qml\n"
                  "StrmImage 1.0 StrmImage.qml\n"
                  "RecordStage 1.0 RecordStage.qml\n");
+    qmldir.write(shimLines);
     qmldir.close();
 
     QFile probe(m_dir.filePath(QStringLiteral("Probe.qml")));

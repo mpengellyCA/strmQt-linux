@@ -4,7 +4,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Effects
 import QtQuick.Window
 import StrmQt
 
@@ -185,15 +184,11 @@ Item {
             layer.enabled: true
         }
 
-        MultiEffect {
+        StrmShadow {
             anchors.fill: parent
             source: shadowCaster
-            autoPaddingEnabled: true
-            shadowEnabled: true
+            elevation: Theme.crateSleeveElevation
             shadowColor: Theme.shadowColor
-            shadowBlur: Theme.crateSleeveElevation.blur
-            shadowVerticalOffset: Theme.crateSleeveElevation.y
-            shadowOpacity: Theme.crateSleeveElevation.opacity
         }
     }
 
@@ -291,13 +286,10 @@ Item {
                 layer.smooth: true
             }
 
-            MultiEffect {
+            StrmMask {
                 anchors.fill: parent
                 source: labelArt
-                maskEnabled: true
                 maskSource: labelMask
-                maskThresholdMin: 0.5
-                maskSpreadAtMin: 1.0
             }
 
             // Spindle hole.

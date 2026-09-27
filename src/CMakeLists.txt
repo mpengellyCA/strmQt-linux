@@ -187,6 +187,9 @@ qt_add_qml_module(strmqt
         ui/pages/MusicBrowsePage.qml
 )
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/ui/shims/Shims.cmake)
+target_compile_definitions(strmqt PRIVATE STRMQT_QML_TIER="${STRMQT_QML_TIER_RESOLVED}")
+
 # Shared control library (ARCHITECTURE.md). Owned as its own CMake fragment so the
 # component set can grow without touching this file.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ui/controls/Controls.cmake)

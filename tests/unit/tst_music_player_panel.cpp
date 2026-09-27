@@ -27,6 +27,8 @@
 #include <QTest>
 #include <QVariantList>
 
+#include "QmlShimStaging.h"
+
 namespace {
 
 const char *kProbe = R"QML(
@@ -197,6 +199,10 @@ void TestMusicPlayerPanel::initTestCase()
     };
     for (const QString &file : music)
         QVERIFY2(stage(musicDir, file, modulePath, qmldir), qPrintable(file));
+
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    QVERIFY(!shimLines.isEmpty());
+    qmldir += shimLines;
 
     QFile qmldirFile(modulePath + QStringLiteral("/qmldir"));
     QVERIFY(qmldirFile.open(QIODevice::WriteOnly));

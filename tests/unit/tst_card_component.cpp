@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "QmlShimStaging.h"
+
 namespace {
 
 const char *kProbe = R"QML(
@@ -140,6 +142,9 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
             return nullptr;
     }
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    if (shimLines.isEmpty())
+        return nullptr;
     QFile qmldir(modulePath + QStringLiteral("/qmldir"));
     if (!qmldir.open(QIODevice::WriteOnly))
         return nullptr;
@@ -158,6 +163,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
                  "StrmRail 1.0 StrmRail.qml\n"
                  "StrmGrid 1.0 StrmGrid.qml\n");
+    qmldir.write(shimLines);
     qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));

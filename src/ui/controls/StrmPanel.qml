@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import StrmQt
 
 // StrmPanel — the elevated surface behind OSD panels, dialogs and settings
@@ -15,7 +14,7 @@ import StrmQt
 //   }
 //
 // The shadow comes from the background's own layer.effect, not from a sibling
-// MultiEffect over it. A sibling effect draws its SOURCE as well as the shadow,
+// StrmShadow over it. A sibling effect draws its SOURCE as well as the shadow,
 // and autoPadding lands that copy offset from the original — a second rounded
 // border, inset from the real one, cutting across the panel's content. It read
 // as a broken layout in the OSD's settings sheet, which is where a translucent
@@ -51,13 +50,9 @@ Item {
         border.color: Theme.hairline
 
         layer.enabled: true
-        layer.effect: MultiEffect {
-            autoPaddingEnabled: true
-            shadowEnabled: true
+        layer.effect: StrmShadow {
+            elevation: panel._shadow
             shadowColor: Theme.shadowColor
-            shadowBlur: panel._shadow.blur
-            shadowVerticalOffset: panel._shadow.y
-            shadowOpacity: panel._shadow.opacity
         }
     }
 

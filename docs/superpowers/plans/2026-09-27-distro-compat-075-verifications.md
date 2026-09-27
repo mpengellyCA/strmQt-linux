@@ -124,3 +124,29 @@ Failures:
 Self-test (run on its own, because check.sh stops at ctest): on both images the Qt < 6.5 load path reaches
 `qrc:/qt/qml/StrmQt/ui/Main.qml` and fails at `Main.qml:1018:17: Type StrmIcon unavailable` / `StrmIcon.qml:2:1:
 module "QtQuick.Effects" is not installed`, with `selftest.sh: /build/strmqt exited 1` (Task 5).
+
+### Task 5: QML tier and effect shims
+
+Host gate H (NN=05, Qt 6.11.2, `STRMQT_QML_TIER` auto): configure logs `StrmQt QML tier: full (Qt 6.11.2)`; no build
+warnings; ctest `100% tests passed out of 74`; `selftest.sh: OK`, log line `QML tier: full on Qt 6.11.2`.
+qmllint: the only change is StrmPanel's three `panel._shadow.*` `[unqualified]` entries collapsing into one on the
+replacing line (`elevation: panel._shadow`), baseline updated under ruling R1 to 1334 warnings. No warning names a
+file under `src/ui/shims/`.
+
+Host gate HC (`-DSTRMQT_QML_TIER=compat`, Qt 6.11.2 with qt6-5compat): configure logs `StrmQt QML tier: compat
+(Qt 6.11.2)`; no build warnings; ctest `100% tests passed out of 74`; `selftest.sh: OK`, log line `QML tier: compat
+on Qt 6.11.2`. The self-test logs of the two tiers carry the same four warnings (all `not authenticated`).
+
+C(ubuntu-24.04) (Qt 6.4.2): configure logs `StrmQt QML tier: compat (Qt 6.4.2)`; qmlcachegen compiles the four
+compat shims; build exit 0. ctest `95% tests passed, 4 tests failed out of 74`. tst_card_component (no more
+SIGSEGV), tst_record_stage, tst_qml_accessibility and tst_navigation_history now pass. The failures left:
+
+- `Cannot assign to non-existent property "variableAxes"` / `"features"` (Task 6): tst_focus_clip and
+  tst_crate_controls (CrateHeading.qml:16), tst_music_player_panel (CrateKicker.qml:14).
+- tst_mpv_video_item `bundledScriptsAreNotLoaded` (lua/console), as before (Task 7).
+
+No line of the log mentions an effects module. Self-test run on its own: `QML tier: compat on Qt 6.4.2`, then
+`MiniPlayer.qml:315:14: Cannot assign to non-existent property "features"` and exit 1 (Task 6). StrmIcon no longer
+stops it.
+
+Visual check (full vs compat, both on Qt 6.11): pending the user.

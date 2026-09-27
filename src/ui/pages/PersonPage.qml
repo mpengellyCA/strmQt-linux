@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
-import QtQuick.Effects
 import StrmQt
 
 // Person page (ARCHITECTURE.md): headshot, name, birth facts, biography, and the
@@ -224,13 +223,7 @@ FocusScope {
         }
 
         layer.enabled: wash.visible
-        layer.effect: MultiEffect {
-            autoPaddingEnabled: false
-            blurEnabled: true
-            blur: 1.0
-            blurMax: 48
-            saturation: -0.55
-        }
+        layer.effect: StrmBackdropBlur {}
 
         StrmImage {
             anchors.fill: parent

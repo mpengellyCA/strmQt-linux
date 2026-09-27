@@ -5,6 +5,11 @@ function(strmqt_add_test name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE strmqt_app strmqt_core Qt6::Test)
     target_compile_definitions(${name} PRIVATE STRMQT_FIXTURES_DIR="${STRMQT_FIXTURES_DIR}")
+    # Tests that stage a copied StrmQt module copy the tier's shims too
+    # (tests/mocks/QmlShimStaging.h, spec 2026-09-27 §4.3).
+    target_compile_definitions(${name} PRIVATE
+        STRMQT_SHIMS_DIR="${CMAKE_SOURCE_DIR}/src/ui/shims/${STRMQT_QML_TIER_RESOLVED}")
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/mocks)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 

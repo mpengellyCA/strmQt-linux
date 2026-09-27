@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import StrmQt
 
 // An artist as a round portrait with the name under it. StrmAvatar supplies the
@@ -83,13 +82,10 @@ Item {
             layer.enabled: true
         }
 
-        MultiEffect {
+        StrmMask {
             anchors.fill: parent
             source: avatar
-            maskEnabled: true
             maskSource: circle
-            maskThresholdMin: 0.5
-            maskSpreadAtMin: 1.0
         }
 
         FocusRing {

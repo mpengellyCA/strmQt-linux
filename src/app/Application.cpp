@@ -284,6 +284,7 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     applyWheelScrollPolicy();
 
     qCInfo(logApp) << "StrmQt" << applicationVersion() << "starting, platform:" << platformName();
+    qCInfo(logApp) << "QML tier:" << STRMQT_QML_TIER << "on Qt" << qVersion();
 }
 
 // A desktop's wheel setting is written for text: three lines, and Qt scrolls a

@@ -10,6 +10,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include "QmlShimStaging.h"
+
 namespace {
 
 const char *kProbe = R"QML(
@@ -97,6 +99,8 @@ void TestQmlAccessibility::controlsExposeSemanticActionsAndValues()
     QVERIFY(copyControl(modulePath, QStringLiteral("StrmIcon.qml")));
     QVERIFY(copyControl(modulePath, QStringLiteral("StrmButton.qml")));
     QVERIFY(copyControl(modulePath, QStringLiteral("StrmSlider.qml")));
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    QVERIFY(!shimLines.isEmpty());
 
     QFile qmldir(modulePath + QStringLiteral("/qmldir"));
     QVERIFY(qmldir.open(QIODevice::WriteOnly));
@@ -106,6 +110,7 @@ void TestQmlAccessibility::controlsExposeSemanticActionsAndValues()
                  "StrmIcon 1.0 StrmIcon.qml\n"
                  "StrmButton 1.0 StrmButton.qml\n"
                  "StrmSlider 1.0 StrmSlider.qml\n");
+    qmldir.write(shimLines);
     qmldir.close();
 
     const QString probePath = dir.filePath(QStringLiteral("Probe.qml"));

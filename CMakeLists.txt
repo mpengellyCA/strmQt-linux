@@ -25,6 +25,7 @@ if(Qt6_VERSION VERSION_GREATER_EQUAL 6.8)
 else()
     qt_standard_project_setup()
 endif()
+include(${CMAKE_SOURCE_DIR}/cmake/StrmQtQmlTier.cmake)
 
 find_package(OpenSSL REQUIRED)
 

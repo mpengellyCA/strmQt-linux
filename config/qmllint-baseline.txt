@@ -161,9 +161,7 @@ src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	readonly pr
 src/ui/controls/PlaylistPicker.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/controls/StrmGrid.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	if (win && typeof win.focusNavigationRail === "function")
 src/ui/controls/StrmGrid.qml: Member "focusNavigationRail" not found on type "QQuickWindow" [missing-property]	return win.focusNavigationRail() === true
-src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowBlur: panel._shadow.blur
-src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowOpacity: panel._shadow.opacity
-src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	shadowVerticalOffset: panel._shadow.y
+src/ui/controls/StrmPanel.qml: Unqualified access [unqualified]	elevation: panel._shadow
 src/ui/music/CrateTrackTable.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/music/CrateTrackTable.qml: Unqualified access [unqualified]	const queue = PlayerCtl.queue
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	"enabled": NowPlayingMusicCtl.albumId.length > 0 },

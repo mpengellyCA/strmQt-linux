@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <memory>
 
+#include "QmlShimStaging.h"
+
 class NavigationHistoryTest : public QObject
 {
     Q_OBJECT
@@ -912,6 +914,9 @@ QString stagedModuleRoot()
             if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
                 return false;
         }
+        const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+        if (shimLines.isEmpty())
+            return false;
         QFile qmldir(modulePath + QStringLiteral("/qmldir"));
         if (!qmldir.open(QIODevice::WriteOnly))
             return false;
@@ -928,6 +933,7 @@ QString stagedModuleRoot()
                      "StrmGrid 1.0 StrmGrid.qml\n"
                      "StrmImage 1.0 StrmImage.qml\n"
                      "singleton NavigationColumn 1.0 NavigationColumn.qml\n");
+        qmldir.write(shimLines);
         qmldir.close();
         return true;
     }();

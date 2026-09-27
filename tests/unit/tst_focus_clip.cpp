@@ -13,6 +13,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "QmlShimStaging.h"
+
 // The first row's focus ring is drawn whole.
 //
 // FocusRing draws outside the item it frames, and a focused card is raised by
@@ -310,6 +312,9 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
             return nullptr;
     }
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    if (shimLines.isEmpty())
+        return nullptr;
     QFile qmldir(modulePath + QStringLiteral("/qmldir"));
     if (!qmldir.open(QIODevice::WriteOnly))
         return nullptr;
@@ -331,6 +336,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "GenreBinTile 1.0 GenreBinTile.qml\n"
                  "CrateHeading 1.0 CrateHeading.qml\n"
                  "CrateKicker 1.0 CrateKicker.qml\n");
+    qmldir.write(shimLines);
     qmldir.close();
 
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));

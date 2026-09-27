@@ -7,6 +7,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "QmlShimStaging.h"
+
 namespace {
 
 // Deviation from the brief: its ShelfError probe text reads "Couldn.t load"
@@ -285,6 +287,10 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         if (!stage(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/music/"), type, modulePath, qmldir))
             return nullptr;
     }
+    const QByteArray shimLines = strmqt::test::stageShims(modulePath);
+    if (shimLines.isEmpty())
+        return nullptr;
+    qmldir += shimLines;
     QFile qmldirFile(modulePath + QStringLiteral("/qmldir"));
     if (!qmldirFile.open(QIODevice::WriteOnly))
         return nullptr;

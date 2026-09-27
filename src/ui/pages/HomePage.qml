@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Effects
 import StrmQt
 
 // Home: vertical stack of rails (Continue Watching → Next Up → Libraries →
@@ -229,7 +228,7 @@ FocusScope {
         clip: true
         // 0.18 was the hardcoded default and stays the shipped one (ARCHITECTURE.md
         // §2.8: a wash, not a wallpaper). Turning it off must also stop the
-        // work, not just hide it — a blurred MultiEffect layer at opacity 0 is
+        // work, not just hide it — a blurred layer at opacity 0 is
         // still a full offscreen render every frame.
         visible: Prefs.backdropEnabled && wash.opacity > 0.001
         opacity: Prefs.backdropEnabled ? Prefs.backdropOpacity / 100 : 0
@@ -280,13 +279,7 @@ FocusScope {
                 // disabling backdrops or finishing a fade releases the layer.
                 layer.enabled: wash.visible
                                && (washLayer.shown || washLayer.opacity > 0.001)
-                layer.effect: MultiEffect {
-                    autoPaddingEnabled: false
-                    blurEnabled: true
-                    blur: 1.0
-                    blurMax: 48
-                    saturation: -0.55
-                }
+                layer.effect: StrmBackdropBlur {}
             }
         }
 
