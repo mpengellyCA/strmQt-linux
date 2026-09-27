@@ -110,10 +110,15 @@ bool MpvPlayer::ensureInitialized()
     // youtube-dl). load-scripts only covers the script directories; every
     // built-in has its own switch. All must be set before mpv_initialize, and an
     // older libmpv that lacks one just rejects that option.
-    for (const char *option : {"load-scripts", "ytdl", "load-stats-overlay", "load-console",
+    for (const char *option : {"load-scripts", "ytdl", "load-stats-overlay",
                                "load-auto-profiles", "load-select", "load-positioning",
                                "load-commands", "load-context-menu"})
         mpv_set_option_string(m_mpv, option, "no");
+    // mpv before 0.40 (Ubuntu 24.04 ships 0.37) spells the console's switch
+    // load-osd-console; 0.40 keeps that name only as a deprecated alias, so it is
+    // the fallback when load-console is rejected.
+    if (mpv_set_option_string(m_mpv, "load-console", "no") < 0)
+        mpv_set_option_string(m_mpv, "load-osd-console", "no");
     // Network resilience basics; the full ladder/watchdog sits above (PlayerController).
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "256MiB");
