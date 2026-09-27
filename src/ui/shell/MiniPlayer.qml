@@ -96,8 +96,16 @@ FocusScope {
     // circle that only shows up on someone else's display scale.
     readonly property int scrubberHeight: Theme.scale(16)
     readonly property int contentHeight: Theme.scale(52)
-    readonly property int barHeight: 1 + mini.scrubberHeight + mini.contentHeight
-                                     + Theme.spacingTight
+    // The audio bar (Crate spec §7.1): a 2 px playhead over a 72 px cover and
+    // nothing else, so the square reaches both the left and the bottom edge.
+    readonly property int audioCoverSize: Theme.scale(72)
+    readonly property int playheadHeight: Theme.scale(2)
+    // How far the record slice shows past the cover while playing.
+    readonly property int recordSliceOut: Theme.scale(10)
+    readonly property int barHeight: mini.isAudio ? mini.playheadHeight + mini.audioCoverSize
+                                                  : 1 + mini.scrubberHeight + mini.contentHeight
+                                                    + Theme.spacingTight
+    readonly property bool recordOut: mini.isAudio && NowPlayingMusicCtl.recordState === "playing"
     // Animated, so the page area follows the bar rather than snapping once it
     // has arrived.
     readonly property int reservedHeight: Math.round(mini.barHeight * mini.slide)
@@ -121,8 +129,10 @@ FocusScope {
 
     implicitHeight: mini.barHeight
     // The bar slides out through the bottom edge; without this it would still
-    // be painted over the page while off its own bounds.
-    clip: true
+    // be painted over the page while off its own bounds. Only while it slides:
+    // at rest the bar fills this item exactly, and a standing clip cut off the
+    // focus rings that sit just outside their control (MiniLink's outset).
+    clip: mini.slide < 1
     visible: mini.slide > 0.001
     enabled: mini.shown
     // The single tab stop. Tab lands on the scope, the scope hands the keyboard
@@ -290,6 +300,10 @@ FocusScope {
         const shape = mini.formatTime(Math.max(mini.durationMs,
                                                 NowPlayingInfo.positionSeconds * 1000))
                           .replace(/[0-9]/g, "0");
+        // Audio draws NowPlayingMusicCtl.timeText, "elapsed / total", whose
+        // right-hand side is "--:--" until the duration is known.
+        if (mini.isAudio)
+            return shape + " / " + (mini.durationMs > 0 ? shape : "--:--");
         return shape + "  /  " + (mini.seekable ? "−" + shape : mini.remainingText);
     }
 
@@ -329,6 +343,16 @@ FocusScope {
     }
 
     readonly property real artRadius: artFrame.radius
+
+    // A control that disables while it holds the keyboard (⏭ on the last
+    // track, ⏮ after a restart) must not strand focus on the bare scope, where
+    // no ring shows. Qt clears the item's active focus BEFORE `enabledChanged`
+    // fires (measured, Qt 6.11), so the loss of focus is where this is caught:
+    // `enabled` already reads false there, and the scope still holds the keyboard.
+    function rescueFocusFrom(control: Item): void {
+        if (mini.shown && mini.activeFocus && !control.enabled && !control.activeFocus)
+            playPause.forceActiveFocus(Qt.OtherFocusReason);
+    }
 
     // The owner's way in. Nothing in this file calls it by itself.
     function focusTransport(): void {
@@ -489,7 +513,8 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 1
+            height: mini.isAudio ? 0 : 1
+            visible: !mini.isAudio
             color: Theme.hairline
         }
 
@@ -502,8 +527,10 @@ FocusScope {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: edge.bottom
-            height: mini.scrubberHeight
-            enabled: mini.seekable
+            // Video only; the audio bar's playhead is the 2 px line below.
+            height: mini.isAudio ? 0 : mini.scrubberHeight
+            visible: !mini.isAudio
+            enabled: mini.seekable && !mini.isAudio
             activeFocusOnTab: false
             from: 0
             to: Math.max(1, mini.durationMs)
@@ -528,27 +555,25 @@ FocusScope {
 
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: scrubber.bottom
+            anchors.top: mini.isAudio ? parent.top : scrubber.bottom
+            anchors.topMargin: mini.isAudio ? mini.playheadHeight : 0
             // Flush left in audio mode: the sleeve runs into the edge of the
             // bar. The margin the identity block loses is given back to the
             // labels, so only the square moves.
             anchors.leftMargin: mini.isAudio ? 0 : Theme.spacingValue
             anchors.rightMargin: Theme.spacingValue
-            // Audio takes every row the bar has left under the playhead, so the
-            // square reaches the bottom edge as well as the left one; video
-            // keeps the breathing space it has always had beneath the strip.
-            // Either way this is the height the bar already reserved — the bar
-            // is never grown to fit the sleeve.
-            height: mini.isAudio ? mini.barHeight - 1 - mini.scrubberHeight
-                                 : mini.contentHeight
+            // Audio is exactly the cover under the playhead, so the square
+            // reaches the bottom edge as well as the left one; video keeps the
+            // breathing space it has always had beneath the strip.
+            height: mini.isAudio ? mini.audioCoverSize : mini.contentHeight
 
             // ── Left: art + what is playing ─────────────────────────────────
-            // The art and the title are the "go back into the player" target
-            // for the pointer; the keyboard uses the explicit button on the
-            // right rather than a second stop that does the same thing. The
-            // subline is NOT part of that target — in audio mode it carries two
-            // links of its own and a tap there means "go to the record", not
-            // "open the player".
+            // The art (and, for video, the title) is the "go back into the
+            // player" target for the pointer; an audio title opens its record.
+            // The keyboard uses the explicit button on the right rather than a
+            // second stop that does the same thing. The subline is NOT part of
+            // that target — in audio mode it carries two links of its own and
+            // a tap there means "go to the record", not "open the player".
             Item {
                 id: identity
 
@@ -560,6 +585,43 @@ FocusScope {
                 // by its parent cannot also size it.
                 width: Math.max(0, transport.x - Theme.spacingTight)
 
+                // A slice of record past the cover's right edge while music
+                // plays (Crate spec §7.1); it retracts on pause. Hidden while the
+                // sleeve is in the air, like the square it sits behind.
+                Rectangle {
+                    id: recordSlice
+
+                    property real out: mini.recordOut ? mini.recordSliceOut : 0
+
+                    visible: mini.isAudio && !mini.sleeveInFlight
+                    width: Math.round(artFrame.height * 0.9)
+                    height: recordSlice.width
+                    radius: recordSlice.width / 2
+                    x: artFrame.x + artFrame.width - recordSlice.width + recordSlice.out
+                    anchors.verticalCenter: artFrame.verticalCenter
+                    color: Theme.ground
+                    border.width: 1
+                    border.color: Theme.hairline
+
+                    Behavior on out {
+                        NumberAnimation {
+                            duration: Theme.animNormalMs
+                            easing.type: Theme.easeStandard
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: Math.round(parent.width * 0.7)
+                        height: width
+                        radius: width / 2
+                        color: "transparent"
+                        border.width: 1
+                        border.color: Theme.hairline
+                        opacity: 0.6
+                    }
+                }
+
                 Rectangle {
                     id: artFrame
 
@@ -567,7 +629,7 @@ FocusScope {
                     anchors.verticalCenter: parent.verticalCenter
                     // Full bar height and square for a record; the smaller
                     // inset frame the video bar has always drawn otherwise.
-                    height: mini.isAudio ? parent.height : Theme.scale(44)
+                    height: mini.isAudio ? mini.audioCoverSize : Theme.scale(44)
                     width: mini.isAudio ? height
                          : mini.artIsWide ? Math.round(height * 16 / 9)
                                           : Math.round(height * 2 / 3)
@@ -605,7 +667,9 @@ FocusScope {
                     id: labels
 
                     anchors.left: artFrame.right
-                    anchors.leftMargin: Theme.spacingValue
+                    // Clear of the record slice at its widest, so the labels
+                    // never move when it slides.
+                    anchors.leftMargin: Theme.spacingValue + (mini.isAudio ? mini.recordSliceOut : 0)
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Theme.scale(2)
@@ -617,8 +681,19 @@ FocusScope {
                         height: titleText.implicitHeight
 
                         Accessible.role: Accessible.Button
-                        Accessible.name: qsTr("Open player: %1").arg(mini.trackTitle)
-                        Accessible.onPressAction: mini.expandRequested()
+                        Accessible.name: mini.isAudio && mini.albumId.length > 0
+                                         ? qsTr("Open album: %1").arg(mini.albumText)
+                                         : qsTr("Open player: %1").arg(mini.trackTitle)
+                        Accessible.onPressAction: titleLine.activate()
+
+                        // Audio: the title links to its record (spec §7.1); the
+                        // cover and the expand button open the player.
+                        function activate(): void {
+                            if (mini.isAudio && mini.albumId.length > 0)
+                                mini.openAlbum();
+                            else
+                                mini.expandRequested();
+                        }
 
                         Text {
                             id: titleText
@@ -651,7 +726,7 @@ FocusScope {
                             gesturePolicy: TapHandler.ReleaseWithinBounds
                             onTapped: {
                                 Input.noteInput("mouse");
-                                mini.expandRequested();
+                                titleLine.activate();
                             }
                         }
                     }
@@ -708,7 +783,7 @@ FocusScope {
                             onActivated: mini.openAlbum()
 
                             KeyNavigation.left: artistLink
-                            KeyNavigation.right: prevButton
+                            KeyNavigation.right: shuffleButton
                             KeyNavigation.up: scrubber
                         }
                     }
@@ -737,6 +812,27 @@ FocusScope {
                 spacing: Theme.spacingTight
 
                 StrmIconButton {
+                    id: shuffleButton
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: Theme.scale(34)
+                    visible: mini.isAudio && !mini.compactWidth
+                    activeFocusOnTab: false
+                    iconName: "shuffle"
+                    tooltip: mini.shuffled ? qsTr("Shuffle on") : qsTr("Shuffle off")
+                    checked: mini.shuffled
+                    enabled: mini.queueModel !== null
+
+                    onClicked: mini.toggleShuffle()
+
+                    onActiveFocusChanged: mini.rescueFocusFrom(shuffleButton)
+
+                    KeyNavigation.left: albumLink
+                    KeyNavigation.right: prevButton
+                    KeyNavigation.up: scrubber
+                }
+
+                StrmIconButton {
                     id: prevButton
 
                     anchors.verticalCenter: parent.verticalCenter
@@ -748,7 +844,9 @@ FocusScope {
 
                     onClicked: PlayerCtl.playPrevious()
 
-                    KeyNavigation.left: albumLink
+                    onActiveFocusChanged: mini.rescueFocusFrom(prevButton)
+
+                    KeyNavigation.left: shuffleButton
                     KeyNavigation.right: playPause
                     KeyNavigation.up: scrubber
                 }
@@ -784,34 +882,9 @@ FocusScope {
 
                     onClicked: PlayerCtl.playNext()
 
+                    onActiveFocusChanged: mini.rescueFocusFrom(nextButton)
+
                     KeyNavigation.left: playPause
-                    KeyNavigation.right: shuffleButton
-                    KeyNavigation.up: scrubber
-                }
-
-                // Queue state is not transport, and the gap says so.
-                Item {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: mini.isAudio && !mini.compactWidth
-                    width: Theme.spacingValue
-                    height: 1
-                }
-
-                StrmIconButton {
-                    id: shuffleButton
-
-                    anchors.verticalCenter: parent.verticalCenter
-                    size: Theme.scale(34)
-                    visible: mini.isAudio && !mini.compactWidth
-                    activeFocusOnTab: false
-                    iconName: "shuffle"
-                    tooltip: mini.shuffled ? qsTr("Shuffle on") : qsTr("Shuffle off")
-                    checked: mini.shuffled
-                    enabled: mini.queueModel !== null
-
-                    onClicked: mini.toggleShuffle()
-
-                    KeyNavigation.left: nextButton
                     KeyNavigation.right: repeatButton
                     KeyNavigation.up: scrubber
                 }
@@ -832,18 +905,22 @@ FocusScope {
 
                     onClicked: mini.cycleRepeat()
 
-                    KeyNavigation.left: shuffleButton
+                    onActiveFocusChanged: mini.rescueFocusFrom(repeatButton)
+
+                    KeyNavigation.left: nextButton
                     KeyNavigation.right: stopButton
                     KeyNavigation.up: scrubber
                 }
 
-                // Stop in both modes: a paused session still holds the bar,
-                // and ending it should not mean opening the full player first.
+                // Stop in the transport for video; the audio bar keeps it on
+                // the right, after the queue peek (spec §7.1). Either way a
+                // paused session can be ended without opening the full player.
                 StrmIconButton {
                     id: stopButton
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
+                    visible: !mini.isAudio
                     activeFocusOnTab: false
                     iconName: "stop"
                     tooltip: qsTr("Stop")
@@ -868,7 +945,7 @@ FocusScope {
                     anchors.verticalCenter: parent.verticalCenter
                     width: timeMetrics.width
                     horizontalAlignment: Text.AlignRight
-                    text: mini.timeText
+                    text: mini.isAudio ? NowPlayingMusicCtl.timeText : mini.timeText
                     visible: !mini.compactWidth
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
@@ -894,6 +971,8 @@ FocusScope {
 
                     onClicked: mini.toggleFavorite()
 
+                    onActiveFocusChanged: mini.rescueFocusFrom(favoriteButton)
+
                     KeyNavigation.left: stopButton
                     KeyNavigation.right: queueButton
                     KeyNavigation.up: scrubber
@@ -918,6 +997,23 @@ FocusScope {
                     }
 
                     KeyNavigation.left: favoriteButton
+                    KeyNavigation.right: audioStopButton
+                    KeyNavigation.up: scrubber
+                }
+
+                StrmIconButton {
+                    id: audioStopButton
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: Theme.scale(34)
+                    visible: mini.isAudio
+                    activeFocusOnTab: false
+                    iconName: "stop"
+                    tooltip: qsTr("Stop")
+
+                    onClicked: PlayerCtl.stop()
+
+                    KeyNavigation.left: queueButton
                     KeyNavigation.right: expandButton
                     KeyNavigation.up: scrubber
                 }
@@ -933,9 +1029,74 @@ FocusScope {
 
                     onClicked: mini.expandRequested()
 
-                    KeyNavigation.left: queueButton
+                    KeyNavigation.left: audioStopButton
                     KeyNavigation.up: scrubber
                 }
+            }
+        }
+
+        // ── Audio playhead ──────────────────────────────────────────────
+        // A 2 px amber line on the top edge (Crate spec §7.1). Seekable with
+        // the pointer through a 10 px zone; the keyboard seeks through the
+        // player's own actions and the full player's scrubber.
+        Item {
+            id: playhead
+
+            property real dragFraction: -1
+            readonly property real fraction: playhead.dragFraction >= 0 ? playhead.dragFraction
+                                           : mini.durationMs > 0 ? Math.min(1, mini.positionMs / mini.durationMs)
+                                           : 0
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: mini.playheadHeight
+            visible: mini.isAudio
+
+            Accessible.role: Accessible.ProgressBar
+            Accessible.name: qsTr("Playback position")
+            Accessible.description: NowPlayingMusicCtl.timeText
+
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.hairline
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: Math.round(parent.width * playhead.fraction)
+                color: Theme.accentColor
+            }
+
+            MouseArea {
+                id: seekZone
+
+                function fractionAt(x: real): real {
+                    return Math.max(0, Math.min(1, x / Math.max(1, width)));
+                }
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: Theme.scale(10)
+                enabled: mini.isAudio && mini.seekable
+                cursorShape: Qt.PointingHandCursor
+
+                onPressed: mouse => {
+                    Input.noteInput("mouse");
+                    playhead.dragFraction = seekZone.fractionAt(mouse.x);
+                }
+                onPositionChanged: mouse => {
+                    if (pressed)
+                        playhead.dragFraction = seekZone.fractionAt(mouse.x);
+                }
+                onReleased: mouse => {
+                    PlayerCtl.seekTo(Math.round(seekZone.fractionAt(mouse.x) * mini.durationMs));
+                    playhead.dragFraction = -1;
+                }
+                onCanceled: playhead.dragFraction = -1
             }
         }
     }

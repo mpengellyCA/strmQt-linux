@@ -25,6 +25,8 @@ target_link_libraries(tst_home_rails PRIVATE Qt6::Gui Qt6::Quick)
 set_tests_properties(tst_home_rails PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 strmqt_add_test(tst_playback_ticket unit/tst_playback_ticket.cpp)
 strmqt_add_test(tst_media_source unit/tst_media_source.cpp)
+strmqt_add_test(tst_mini_player_sources unit/tst_mini_player_sources.cpp)
+target_compile_definitions(tst_mini_player_sources PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
 # The action handler contract is also exercised against a QML-declared handler.
 target_link_libraries(tst_input_map PRIVATE Qt6::Qml)
