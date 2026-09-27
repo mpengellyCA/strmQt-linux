@@ -1,0 +1,8 @@
+# One image per target: the distro plus exactly what deps.sh installs. The
+# build context is a scratch directory local.sh assembles, laid out like the
+# repository, so deps.sh finds its files relative to itself.
+ARG BASE
+FROM ${BASE}
+ARG TARGET
+COPY . /opt/strmqt-ci/
+RUN /opt/strmqt-ci/scripts/ci/deps.sh "${TARGET}"
