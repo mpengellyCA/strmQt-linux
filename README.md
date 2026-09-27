@@ -61,6 +61,11 @@ A full MPRIS2 interface, so KDE Connect and the Plasma media applet control it w
 setup. Another Emby client — the phone app, Emby Web — can also drive this one as a
 playback target.
 
+There is also a built-in Web Remote: switch it on in Settings (or accept the one-time
+offer after signing in) and open the address it shows in your phone's browser. It is
+served over HTTPS on your local network only, and a PIN keeps other devices on the
+network from taking over playback.
+
 ### Your credentials stay yours
 
 Sign-in tokens go to KWallet, scoped per profile, and there is no compiled-in server
@@ -159,7 +164,9 @@ keys for itself they arrive as MPRIS Next/Previous: a skip still works, the hold
 
 A button that does nothing can be identified: run with
 `QT_LOGGING_RULES="strmqt.input.keys.debug=true"` and every key the window receives is
-logged with its Qt key, scan code and keysym.
+logged with its Qt key, scan code and keysym (keys that type a character are logged
+without them, so a password never reaches the log). For the Flatpak, pass it with
+`flatpak run --env=QT_LOGGING_RULES="strmqt.input.keys.debug=true" ca.mikesdev.StrmQt`.
 
 ## Where it stands
 
