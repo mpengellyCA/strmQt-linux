@@ -432,13 +432,12 @@ FocusScope {
                         elide: Text.ElideRight
                     }
 
-                    Text {
+                    TabularText {
                         width: parent.width
                         text: NowPlayingMusicCtl.albumSummary
                         color: Theme.textTertiary
                         font.family: Theme.fontMono
                         font.pixelSize: Theme.fontCaption
-                        font.features: ({ "tnum": 1 })
                         elide: Text.ElideRight
                     }
                 }

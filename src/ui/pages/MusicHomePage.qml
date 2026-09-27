@@ -687,13 +687,12 @@ FocusScope {
                                 text: page.hasHero ? String(page.hero.title) : ""
                             }
 
-                            Text {
+                            TabularText {
                                 width: parent.width
                                 text: page.hasHero ? String(page.hero.summary) : ""
                                 color: Theme.textSecondaryColor
                                 font.family: Theme.fontMono
                                 font.pixelSize: Theme.fontSmall
-                                font.features: ({ "tnum": 1 })
                                 textFormat: Text.PlainText
                                 elide: Text.ElideRight
                             }

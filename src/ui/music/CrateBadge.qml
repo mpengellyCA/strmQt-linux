@@ -24,7 +24,7 @@ Rectangle {
     Accessible.role: Accessible.StaticText
     Accessible.name: badge.text
 
-    Text {
+    TabularText {
         id: label
 
         anchors.centerIn: parent
@@ -33,7 +33,6 @@ Rectangle {
         font.family: Theme.fontMono
         font.pixelSize: Theme.crateBadgeSize
         font.capitalization: Font.AllUppercase
-        font.features: ({ "tnum": 1 })
         textFormat: Text.PlainText
     }
 }

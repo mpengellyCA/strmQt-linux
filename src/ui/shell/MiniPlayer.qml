@@ -307,12 +307,11 @@ FocusScope {
         return shape + "  /  " + (mini.seekable ? "−" + shape : mini.remainingText);
     }
 
-    TextMetrics {
+    TabularMetrics {
         id: timeMetrics
 
         font.family: Theme.fontMono
         font.pixelSize: Theme.fontCaption
-        font.features: ({ "tnum": 1 })
         text: mini.timeTemplate
     }
 
@@ -941,7 +940,10 @@ FocusScope {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingTight
 
-                Text {
+                // Tabular figures. IBM Plex Mono gives them anyway, but a
+                // theme that swaps the mono face for a proportional one
+                // must not take the alignment with it.
+                TabularText {
                     anchors.verticalCenter: parent.verticalCenter
                     width: timeMetrics.width
                     horizontalAlignment: Text.AlignRight
@@ -950,10 +952,6 @@ FocusScope {
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontCaption
-                    // Tabular figures. IBM Plex Mono gives them anyway, but a
-                    // theme that swaps the mono face for a proportional one
-                    // must not take the alignment with it.
-                    font.features: ({ "tnum": 1 })
                 }
 
                 StrmIconButton {

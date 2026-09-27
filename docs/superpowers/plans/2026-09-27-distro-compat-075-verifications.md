@@ -150,3 +150,37 @@ No line of the log mentions an effects module. Self-test run on its own: `QML ti
 stops it.
 
 Visual check (full vs compat, both on Qt 6.11): pending the user.
+
+## Task 6: first full 6.4 run
+
+Host gate H (NN=06, Qt 6.11.2, tier auto): configure logs `StrmQt QML tier: full (Qt 6.11.2)`; build exit 0 with
+`STRMQT_WERROR=ON`; ctest `100% tests passed out of 74`; qmllint `baseline matches (1334 warnings)`, unchanged, and
+no warning names a file under `src/ui/shims/`; `selftest.sh: OK`, `QML tier: full on Qt 6.11.2`, `15/15 pages
+constructed`.
+
+Host gate HC (`-DSTRMQT_QML_TIER=compat`, Qt 6.11.2): configure logs `StrmQt QML tier: compat (Qt 6.11.2)`; build
+exit 0; ctest `100% tests passed out of 74` (tst_focus_clip passes, so Step 5's QSKIP is not needed);
+`selftest.sh: OK`, `QML tier: compat on Qt 6.11.2`. Both tiers' self-test logs carry the same warnings (all
+`not authenticated`). Running the H and HC ctests at the same time collides on fixed ports (tst_web_remote_*,
+tst_image_cache); run serially, both are green.
+
+C(ubuntu-24.04) (Qt 6.4.2): configure logs `StrmQt QML tier: compat (Qt 6.4.2)`; qmlcachegen compiles the three
+new compat shims; build exit 0. ctest `99% tests passed, 1 tests failed out of 74`. No font.features/variableAxes
+failure is left. The one failure (Task 7):
+
+- tst_mpv_video_item `bundledScriptsAreNotLoaded`: `'luaThreads.isEmpty()' returned FALSE. (lua/console)`.
+
+Self-test run on its own (`selftest.sh /build/strmqt /build/selftest.log`): `QML tier: compat on Qt 6.4.2`,
+`selftest: 15/15 pages constructed`, `selftest.sh: OK`. The log carries warnings the host tiers do not (Task 7):
+
+- `ui/shell/LoadingState.qml: Cannot instantiate bound component outside its creation context` (9 times), and once
+  `ui/pages/MusicBrowsePage.qml` with the same message; both files use `pragma ComponentBehavior: Bound`.
+- `QQmlComponent: Component is not ready` (7 times, right after the LoadingState warnings).
+- `ReferenceError: Overlay is not defined` at `ui/pages/PlaylistPage.qml:1152` and `:1215`, and
+  `ui/pages/MusicPlaylistPage.qml:737` and `:809` (`parent: Overlay.overlay`).
+- `tls: cannot open certificate: "/root/.local/share/StrmQt/strmqt/webremote/cert.pem"` (fresh container home).
+
+C(debian-12) was not run in this task (the dispatch named only ubuntu-24.04).
+
+Visual check (full vs compat on Qt 6.11: Music home crate headings, section strip, badges, mini-player time
+readout): pending the user.

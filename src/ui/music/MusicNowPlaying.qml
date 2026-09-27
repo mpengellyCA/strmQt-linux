@@ -425,7 +425,7 @@ FocusScope {
                     }
                 }
 
-                Text {
+                TabularText {
                     id: timeLabel
 
                     anchors.right: parent.right
@@ -434,7 +434,6 @@ FocusScope {
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontCaption
-                    font.features: ({ "tnum": 1 })
                 }
             }
 
