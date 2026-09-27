@@ -194,7 +194,9 @@ bundled typefaces (Archivo display, Public Sans body, IBM Plex Mono data), spaci
 radii, motion durations and easings, and a **density multiplier** (compact /
 comfortable / TV) that scales the whole interface. Fonts and icons are compiled
 into the binary, so a sandboxed artifact renders identically to a native build
-without depending on the host's font set.
+without depending on the host's font set. [`docs/BRANDING.md`](docs/BRANDING.md)
+covers the brand mark and verifies every token, weight and colour it documents
+against this file.
 
 ### Hover is not focus
 
