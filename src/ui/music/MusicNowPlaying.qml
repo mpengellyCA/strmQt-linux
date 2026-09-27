@@ -31,6 +31,9 @@ FocusScope {
     readonly property bool shuffled: view.queue !== null && view.queue.shuffled === true
     readonly property int repeatMode: view.queue !== null ? Number(view.queue.repeatMode) : 0
     readonly property bool animateRecord: typeof Prefs !== "undefined" ? Prefs.animateRecord : true
+    readonly property string volumeIcon: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
+                                         ? "volume-mute"
+                                         : PlayerCtl.volume < 40 ? "volume-low" : "volume-high"
 
     // The transition's large endpoint, in `target`'s coordinates.
     function sleeveRect(target: Item): rect {
@@ -45,6 +48,18 @@ FocusScope {
 
     function focusScrubber(): void {
         scrubber.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    // A control that disables while it holds the keyboard (⏮ on the first
+    // track once the restart window closes, ⏭ on the last, ♡ and ＋ between
+    // tracks, the scrubber before a duration is known) must not strand focus
+    // on the bare scope, where no ring shows. Qt clears the item's active focus
+    // BEFORE `enabledChanged` fires (measured, Qt 6.11 — MiniPlayer's
+    // rescueFocusFrom), so the loss of focus is where this is caught: `enabled`
+    // already reads false there, and the scope still holds the keyboard.
+    function rescueFocusFrom(control: Item): void {
+        if (view.visible && view.enabled && view.activeFocus && !control.enabled && !control.activeFocus)
+            playPause.forceActiveFocus(Qt.OtherFocusReason);
     }
 
     function runMenu(key: string): void {
@@ -130,7 +145,7 @@ FocusScope {
             // Everything in the column except the record, so the record takes
             // what height is left and never pushes the transport off screen.
             readonly property real reserved: kicker.height + titleText.height + credits.height
-                                             + transport.height + scrubberRow.height + readout.height
+                                             + transport.height + scrubberRow.height + footer.height
                                              + 6 * stageColumn.spacing + 2 * Theme.spacingLoose
 
             anchors.centerIn: parent
@@ -208,6 +223,10 @@ FocusScope {
 
                 spacing: Theme.spacingTight
 
+                // The top row: Up has nowhere to go, and letting it through
+                // would hand the keyboard to the page, which draws no ring.
+                Keys.onUpPressed: event => event.accepted = true
+
                 StrmIconButton {
                     id: shuffleButton
 
@@ -219,6 +238,8 @@ FocusScope {
                     checked: view.shuffled
                     enabled: view.queue !== null
                     onClicked: view.queue.shuffled = !view.queue.shuffled
+
+                    onActiveFocusChanged: view.rescueFocusFrom(shuffleButton)
 
                     KeyNavigation.right: prevButton
                     KeyNavigation.down: scrubber
@@ -236,6 +257,8 @@ FocusScope {
                     // five seconds, so it is live whenever it can do something.
                     enabled: PlayerCtl.hasPrevious === true || PlayerCtl.positionMs >= 5000
                     onClicked: PlayerCtl.playPrevious()
+
+                    onActiveFocusChanged: view.rescueFocusFrom(prevButton)
 
                     KeyNavigation.left: shuffleButton
                     KeyNavigation.right: playPause
@@ -270,6 +293,8 @@ FocusScope {
                     enabled: PlayerCtl.hasNext === true
                     onClicked: PlayerCtl.playNext()
 
+                    onActiveFocusChanged: view.rescueFocusFrom(nextButton)
+
                     KeyNavigation.left: playPause
                     KeyNavigation.right: repeatButton
                     KeyNavigation.down: scrubber
@@ -289,6 +314,8 @@ FocusScope {
                     enabled: view.queue !== null
                     onClicked: view.queue.cycleRepeatMode()
 
+                    onActiveFocusChanged: view.rescueFocusFrom(repeatButton)
+
                     KeyNavigation.left: nextButton
                     KeyNavigation.right: favouriteButton
                     KeyNavigation.down: scrubber
@@ -307,6 +334,8 @@ FocusScope {
                     enabled: NowPlayingMusicCtl.trackId.length > 0
                     onClicked: NowPlayingMusicCtl.toggleFavourite()
 
+                    onActiveFocusChanged: view.rescueFocusFrom(favouriteButton)
+
                     KeyNavigation.left: repeatButton
                     KeyNavigation.right: addButton
                     KeyNavigation.down: scrubber
@@ -322,6 +351,8 @@ FocusScope {
                     tooltip: qsTr("Add to playlist")
                     enabled: NowPlayingMusicCtl.trackId.length > 0
                     onClicked: playlistPicker.show(NowPlayingMusicCtl.title, [NowPlayingMusicCtl.trackId])
+
+                    onActiveFocusChanged: view.rescueFocusFrom(addButton)
 
                     KeyNavigation.left: favouriteButton
                     KeyNavigation.right: moreButton
@@ -377,6 +408,17 @@ FocusScope {
                     onCommitted: v => PlayerCtl.seekTo(Math.round(v))
 
                     KeyNavigation.up: playPause
+                    KeyNavigation.down: muteButton
+                }
+
+                // StrmSlider has an activeFocus handler of its own (the
+                // disarm), so the rescue connects rather than declaring one.
+                Connections {
+                    target: scrubber
+
+                    function onActiveFocusChanged() {
+                        view.rescueFocusFrom(scrubber);
+                    }
                 }
 
                 Text {
@@ -392,32 +434,101 @@ FocusScope {
                 }
             }
 
-            Text {
-                id: readout
+            // The readout, and the volume beside it (mute, then level).
+            Item {
+                id: footer
 
                 width: parent.width
-                text: view.buffering ? qsTr("Buffering") : NowPlayingMusicCtl.readout
-                color: Theme.textTertiary
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: Theme.fontCaption * Theme.crateKickerTracking
-                elide: Text.ElideRight
+                height: Math.max(readout.implicitHeight, volumeGroup.height)
 
-                SequentialAnimation on opacity {
-                    running: view.buffering && !Theme.reducedMotion
-                    loops: Animation.Infinite
-                    alwaysRunToEnd: true
+                // The bottom row: Down stays put rather than falling through to
+                // the page, which would send the keyboard back up to ⏯.
+                Keys.onDownPressed: event => event.accepted = true
 
-                    NumberAnimation {
-                        to: 0.35
-                        duration: Theme.animAmbient / 2
-                        easing.type: Easing.InOutSine
+                Text {
+                    id: readout
+
+                    anchors.left: parent.left
+                    anchors.right: volumeGroup.left
+                    anchors.rightMargin: Theme.spacingValue
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: view.buffering ? qsTr("Buffering") : NowPlayingMusicCtl.readout
+                    color: Theme.textTertiary
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontCaption
+                    font.capitalization: Font.AllUppercase
+                    font.letterSpacing: Theme.fontCaption * Theme.crateKickerTracking
+                    elide: Text.ElideRight
+
+                    SequentialAnimation on opacity {
+                        running: view.buffering && !Theme.reducedMotion
+                        loops: Animation.Infinite
+                        alwaysRunToEnd: true
+
+                        NumberAnimation {
+                            to: 0.35
+                            duration: Theme.animAmbient / 2
+                            easing.type: Easing.InOutSine
+                        }
+                        NumberAnimation {
+                            to: 1.0
+                            duration: Theme.animAmbient / 2
+                            easing.type: Easing.InOutSine
+                        }
                     }
-                    NumberAnimation {
-                        to: 1.0
-                        duration: Theme.animAmbient / 2
-                        easing.type: Easing.InOutSine
+                }
+
+                Row {
+                    id: volumeGroup
+
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spacingTight
+
+                    StrmIconButton {
+                        id: muteButton
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: Theme.scale(40)
+                        activeFocusOnTab: false
+                        iconName: view.volumeIcon
+                        tooltip: PlayerCtl.muted === true ? qsTr("Unmute") : qsTr("Mute")
+                        checked: PlayerCtl.muted === true
+                        onClicked: PlayerCtl.toggleMute()
+
+                        // First in its row: Left stays here rather than reaching
+                        // the page, where it would seek.
+                        Keys.onLeftPressed: event => event.accepted = true
+
+                        KeyNavigation.right: volumeSlider
+                        KeyNavigation.up: scrubber
+                    }
+
+                    // In the chain, last in its row: once focused, Left/Right
+                    // are the level (StrmSlider owns them, and a volume step is
+                    // harmless where a seek is not, so it is not armToScrub),
+                    // and Up leaves.
+                    StrmSlider {
+                        id: volumeSlider
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Theme.scale(120)
+                        activeFocusOnTab: false
+                        showKnobOnHoverOnly: false
+                        from: 0
+                        to: PlayerCtl.maxVolume
+                        stepSize: 5
+                        value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume
+                        accessibleName: qsTr("Volume")
+                        accessibleDescription: qsTr("%1 percent").arg(Math.round(value))
+
+                        onMoved: value => {
+                            PlayerCtl.setMuted(false);
+                            PlayerCtl.setVolume(Math.round(value));
+                        }
+                        onCommitted: value => PlayerCtl.setVolume(Math.round(value))
+
+                        KeyNavigation.up: scrubber
                     }
                 }
             }

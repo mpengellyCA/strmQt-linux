@@ -22,6 +22,7 @@ class MiniPlayerSourcesTest : public QObject
 private slots:
     void audioBarIsTheCrateBar();
     void videoBarIsUnchanged();
+    void audioBarMutes();
 };
 
 void MiniPlayerSourcesTest::audioBarIsTheCrateBar()
@@ -50,6 +51,25 @@ void MiniPlayerSourcesTest::videoBarIsUnchanged()
     QVERIFY(mini.contains("visible: !mini.isAudio"));
     QVERIFY(mini.contains("Actions.openArtist(mini.artistId, mini.artistText)"));
     QVERIFY(mini.contains("Actions.openAlbum(mini.albumId, mini.albumText)"));
+}
+
+void MiniPlayerSourcesTest::audioBarMutes()
+{
+    const QByteArray mini = sourceFor(QStringLiteral("src/ui/shell/MiniPlayer.qml"));
+    const qsizetype at = mini.indexOf("id: muteButton");
+    QVERIFY(at >= 0);
+    const QByteArray button = mini.mid(at, mini.indexOf("StrmIconButton {", at) - at);
+    QVERIFY(button.contains("visible: mini.isAudio"));
+    QVERIFY(button.contains("onClicked: PlayerCtl.toggleMute()"));
+    // The muted state shows: the checked fill and the struck-out speaker.
+    QVERIFY(button.contains("checked: PlayerCtl.muted === true"));
+    QVERIFY(button.contains("\"volume-mute\""));
+    QVERIFY(button.contains("onActiveFocusChanged: mini.rescueFocusFrom(muteButton)"));
+    // In the chain between ♡ and the queue, both ways.
+    QVERIFY(button.contains("KeyNavigation.left: favoriteButton"));
+    QVERIFY(button.contains("KeyNavigation.right: queueButton"));
+    QVERIFY(mini.contains("KeyNavigation.right: muteButton"));
+    QVERIFY(mini.contains("KeyNavigation.left: muteButton"));
 }
 
 QTEST_GUILESS_MAIN(MiniPlayerSourcesTest)

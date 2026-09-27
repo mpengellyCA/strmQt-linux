@@ -169,6 +169,7 @@ src/ui/music/CrateTrackTable.qml: Unqualified access [unqualified]	const queue =
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	"enabled": NowPlayingMusicCtl.albumId.length > 0 },
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	"enabled": NowPlayingMusicCtl.artistId.length > 0 },
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	"enabled": NowPlayingMusicCtl.trackId.length > 0 },
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	: PlayerCtl.volume < 40 ? "volume-low" : "volume-high"
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	Actions.openAlbum(NowPlayingMusicCtl.albumId, NowPlayingMusicCtl.album);
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	Actions.openAlbum(NowPlayingMusicCtl.albumId, NowPlayingMusicCtl.album);
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	Actions.openAlbum(NowPlayingMusicCtl.albumId, NowPlayingMusicCtl.album);
@@ -179,10 +180,13 @@ src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	Input.noteInp
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	MusicPlay.radio(NowPlayingMusicCtl.trackId, NowPlayingMusicCtl.title);
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	MusicPlay.radio(NowPlayingMusicCtl.trackId, NowPlayingMusicCtl.title);
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	MusicPlay.radio(NowPlayingMusicCtl.trackId, NowPlayingMusicCtl.title);
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	PlayerCtl.setMuted(false);
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	PlayerCtl.setVolume(Math.round(value));
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	PlayerCtl.stop(); // Main pops the page on stopped()
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	accessibleDescription: NowPlayingMusicCtl.timeText
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	buffered: PlayerCtl.bufferedEndMs
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	checked: NowPlayingMusicCtl.favourite
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	checked: PlayerCtl.muted === true
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	const q = PlayerCtl.queue;
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	coverUrl: NowPlayingMusicCtl.coverUrl
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	enabled: NowPlayingMusicCtl.trackId.length > 0
@@ -204,12 +208,16 @@ src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onActivated: 
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: NowPlayingMusicCtl.toggleFavourite()
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.playNext()
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.playPrevious()
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.toggleMute()
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.togglePause()
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: playlistPicker.show(NowPlayingMusicCtl.title, [NowPlayingMusicCtl.trackId])
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onClicked: playlistPicker.show(NowPlayingMusicCtl.title, [NowPlayingMusicCtl.trackId])
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onCommitted: v => PlayerCtl.seekTo(Math.round(v))
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	onCommitted: value => PlayerCtl.setVolume(Math.round(value))
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	readonly property bool animateRecord: typeof Prefs !== "undefined" ? Prefs.animateRecord : true
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	readonly property bool buffering: NowPlayingMusicCtl.recordState === "buffering"
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	readonly property string volumeIcon: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	readonly property string volumeIcon: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	record.changeAlbum(NowPlayingMusicCtl.coverUrl);
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	recordState: NowPlayingMusicCtl.recordState
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	source: NowPlayingMusicCtl.coverUrl
@@ -222,8 +230,12 @@ src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	text: NowPlay
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	text: NowPlayingMusicCtl.title
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	text: view.buffering ? qsTr("Buffering") : NowPlayingMusicCtl.readout
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	to: Math.max(1, PlayerCtl.durationMs)
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	to: PlayerCtl.maxVolume
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	tooltip: NowPlayingMusicCtl.favourite ? qsTr("Remove from favourites")
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	tooltip: PlayerCtl.muted === true ? qsTr("Unmute") : qsTr("Mute")
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	tooltip: PlayerCtl.paused === true ? qsTr("Play") : qsTr("Pause")
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume
+src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume
 src/ui/music/MusicNowPlaying.qml: Unqualified access [unqualified]	value: PlayerCtl.positionMs
 src/ui/music/MusicPlayerPanel.qml: Unqualified access [unqualified]	&& lyricLine.index === NowPlayingMusicCtl.currentLyricRow
 src/ui/music/MusicPlayerPanel.qml: Unqualified access [unqualified]	Input.noteInput("mouse");
@@ -1272,6 +1284,7 @@ src/ui/shell/CommandPalette.qml: Unqualified access [unqualified]	if (SearchCtl.
 src/ui/shell/CommandPalette.qml: Unqualified access [unqualified]	if (needle.length > 0 && SearchCtl.model) {
 src/ui/shell/CommandPalette.qml: Unqualified access [unqualified]	model: HomeCtl.libraries
 src/ui/shell/CommandPalette.qml: Unqualified access [unqualified]	target: SearchCtl.model
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	: PlayerCtl.volume < 40 ? "volume-low" : "volume-high"
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Accessible.description: NowPlayingMusicCtl.timeText
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Actions.openAlbum(mini.albumId, mini.albumText);
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Actions.openArtist(mini.artistId, mini.artistText);
@@ -1281,13 +1294,17 @@ src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Input.noteInput("m
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Input.noteInput("mouse");
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	Input.noteInput("mouse");
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	PlayerCtl.seekTo(Math.round(seekZone.fractionAt(mouse.x) * mini.durationMs));
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	checked: PlayerCtl.muted === true
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	enabled: PlayerCtl.hasNext === true
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	enabled: PlayerCtl.hasPrevious === true
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	iconName: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	iconName: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	iconName: PlayerCtl.paused === true ? "play" : "pause"
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.playNext()
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.playPrevious()
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.stop()
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.stop()
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.toggleMute()
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.togglePause()
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	onCommitted: v => PlayerCtl.seekTo(Math.round(v))
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	readonly property bool active: PlayerCtl.active === true
@@ -1296,6 +1313,7 @@ src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	readonly property 
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	target: Actions
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	target: Session
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	text: mini.isAudio ? NowPlayingMusicCtl.timeText : mini.timeText
+src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	tooltip: PlayerCtl.muted === true ? qsTr("Unmute") : qsTr("Mute")
 src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	tooltip: PlayerCtl.paused === true ? qsTr("Play") : qsTr("Pause")
 src/ui/shell/NavRail.qml: Unqualified access [unqualified]	model: HomeCtl.libraries
 src/ui/shell/NavRail.qml: Unqualified access [unqualified]	readonly property var inputRevision: Input.actions

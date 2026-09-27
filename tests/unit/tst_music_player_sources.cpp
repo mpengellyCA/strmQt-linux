@@ -25,6 +25,8 @@ private slots:
     void nowPlayingViewDrivesTheRecord();
     void nowPlayingPanelIsGone();
     void panelListsLeaveLeftForTheStage();
+    void nowPlayingKeepsTheKeyboardOnARing();
+    void nowPlayingHasVolumeAndMute();
 };
 
 void MusicPlayerSourcesTest::playerPageUsesTheCrateView()
@@ -74,6 +76,45 @@ void MusicPlayerSourcesTest::panelListsLeaveLeftForTheStage()
         QVERIFY2(at >= 0, list);
         QVERIFY2(panel.indexOf("Keys.onLeftPressed", at) > at, list);
     }
+}
+
+void MusicPlayerSourcesTest::nowPlayingKeepsTheKeyboardOnARing()
+{
+    const QByteArray view = sourceFor(QStringLiteral("src/ui/music/MusicNowPlaying.qml"));
+    QVERIFY(view.contains("function rescueFocusFrom(control: Item): void"));
+    for (const char *id : {"shuffleButton", "prevButton", "nextButton", "repeatButton",
+                           "favouriteButton", "addButton"}) {
+        const QByteArray row = QByteArray("onActiveFocusChanged: view.rescueFocusFrom(") + id + ")";
+        QVERIFY2(view.contains(row), id);
+    }
+    QVERIFY(view.contains("view.rescueFocusFrom(scrubber);"));
+    // Up off the transport stays on it rather than reaching the ringless page;
+    // Down off the bottom row likewise.
+    QVERIFY(view.contains("Keys.onUpPressed: event => event.accepted = true"));
+    QVERIFY(view.contains("Keys.onDownPressed: event => event.accepted = true"));
+
+    const QByteArray page = sourceFor(QStringLiteral("src/ui/pages/PlayerPage.qml"));
+    QVERIFY(page.contains("function settleAudioFocus(): void"));
+    QVERIFY(page.contains("page.Window.activeFocusItem === page"));
+    QVERIFY(page.contains("Window.onActiveFocusItemChanged: Qt.callLater(page.settleAudioFocus)"));
+}
+
+void MusicPlayerSourcesTest::nowPlayingHasVolumeAndMute()
+{
+    const QByteArray view = sourceFor(QStringLiteral("src/ui/music/MusicNowPlaying.qml"));
+    QVERIFY(view.contains("id: muteButton"));
+    QVERIFY(view.contains("onClicked: PlayerCtl.toggleMute()"));
+    QVERIFY(view.contains("checked: PlayerCtl.muted === true"));
+    QVERIFY(view.contains("iconName: view.volumeIcon"));
+    QVERIFY(view.contains("? \"volume-mute\""));
+    QVERIFY(view.contains("id: volumeSlider"));
+    QVERIFY(view.contains("to: PlayerCtl.maxVolume"));
+    QVERIFY(view.contains("value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume"));
+    QVERIFY(view.contains("PlayerCtl.setVolume(Math.round(value))"));
+    // Reachable: scrubber → mute → level, and back up.
+    QVERIFY(view.contains("KeyNavigation.down: muteButton"));
+    QVERIFY(view.contains("KeyNavigation.right: volumeSlider"));
+    QVERIFY(view.contains("KeyNavigation.up: scrubber"));
 }
 
 QTEST_GUILESS_MAIN(MusicPlayerSourcesTest)

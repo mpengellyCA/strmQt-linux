@@ -974,6 +974,31 @@ FocusScope {
                     onActiveFocusChanged: mini.rescueFocusFrom(favoriteButton)
 
                     KeyNavigation.left: stopButton
+                    KeyNavigation.right: muteButton
+                    KeyNavigation.up: scrubber
+                }
+
+                // Mute only: the level lives in the full player (and the
+                // player.volumeUp/volumeDown bindings), but silencing a
+                // record should not need the page opened.
+                StrmIconButton {
+                    id: muteButton
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: Theme.scale(34)
+                    visible: mini.isAudio
+                    activeFocusOnTab: false
+                    iconName: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
+                              ? "volume-mute"
+                              : PlayerCtl.volume < 40 ? "volume-low" : "volume-high"
+                    tooltip: PlayerCtl.muted === true ? qsTr("Unmute") : qsTr("Mute")
+                    checked: PlayerCtl.muted === true
+
+                    onClicked: PlayerCtl.toggleMute()
+
+                    onActiveFocusChanged: mini.rescueFocusFrom(muteButton)
+
+                    KeyNavigation.left: favoriteButton
                     KeyNavigation.right: queueButton
                     KeyNavigation.up: scrubber
                 }
@@ -996,7 +1021,7 @@ FocusScope {
                             queuePeek.open();
                     }
 
-                    KeyNavigation.left: favoriteButton
+                    KeyNavigation.left: muteButton
                     KeyNavigation.right: audioStopButton
                     KeyNavigation.up: scrubber
                 }

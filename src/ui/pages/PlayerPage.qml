@@ -105,7 +105,22 @@ FocusScope {
         osd.closePanel();
         osd.wake();
         page.forceActiveFocus(Qt.OtherFocusReason);
+        Qt.callLater(page.settleAudioFocus);
     }
+
+    // Audio mode has no resting place on the page itself: the page draws no
+    // ring, and a keyboard parked on it looks like no focus at all. So whenever
+    // the page would hold the keyboard on a record — the player opening, the
+    // queue crossing from a film into a track, anything handing focus back to
+    // the page — the record's ⏯ takes it. Later rather than inside the focus
+    // change, so it never fights the change still being delivered, and so
+    // MusicNowPlaying is already enabled when it runs.
+    function settleAudioFocus(): void {
+        if (page.audioMode && page.visible && page.Window.activeFocusItem === page)
+            nowPlaying.focusTransport();
+    }
+
+    Window.onActiveFocusItemChanged: Qt.callLater(page.settleAudioFocus)
 
     // Actions InputMap does not define yet carry the default this wave ships
     // with and pick up a real binding the moment the catalogue grows one —
