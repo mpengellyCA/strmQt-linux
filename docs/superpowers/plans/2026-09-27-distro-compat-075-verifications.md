@@ -94,3 +94,33 @@ QVariant invokeAction(QVariant,QVariant) # function invokeAction(actionId, autoR
 
 Host gate H (NN=04, Qt 6.11.2): no build warnings; ctest `100% tests passed out
 of 74`; qmllint `baseline matches (1336 warnings)`; `selftest.sh: OK`.
+
+### Task 4 follow-up: QtQml.Models in the apt images
+
+I compared the imports in src/ and tests/ (`QtQml`, `QtQuick`, `QtQuick.Controls.Basic`, `QtQuick.Effects`, `QtQuick.Window`)
+with the installed modules. For each apt image, every module that an installed module's qmldir `import`/`depends` line names,
+but that is not itself installed:
+
+| Image | Missing |
+|---|---|
+| ubuntu-24.04, debian-12 (6.4.2) | `QtQml.Models`, plus the Controls platform styles for Windows/iOS/macOS (optional, non-Linux) |
+| debian-13 (6.8.2), ubuntu-26.04 (6.10.2) | only the Controls platform styles (with FluentWinUI3); `QtQml.Models` is already pulled in |
+
+`qml6-module-qtqml-models` exists on all four (6.4.2+dfsg-4build3, 6.4.2+dfsg-1, 6.8.2+dfsg-7, 6.10.2+dfsg-3), so it
+goes in `apt_common`. `QtQuick.Effects` is still missing on 6.4, where it does not exist; Task 5 handles that.
+
+C(ubuntu-24.04) and C(debian-12) on the rebuilt images (`...-356a6f99c6ad`): `tst_input_map` `Passed`. ctest
+`89% tests passed, 8 tests failed out of 74` (ubuntu-24.04) and `91% tests passed, 7 tests failed out of 74` (debian-12).
+Failures:
+
+- `module "QtQuick.Effects" is not installed` (Task 5): tst_qml_accessibility, tst_navigation_history, tst_record_stage,
+  tst_focus_clip, tst_card_component (then SIGSEGV at address 0x8 in `menuKeyAsksForTheCurrentCard`, after `m_root` failed
+  to load). tst_music_player_panel also hits it.
+- `Cannot assign to non-existent property "features"` / `"variableAxes"` (Task 6): tst_music_player_panel (CrateKicker.qml:14),
+  tst_crate_controls (CrateHeading.qml:16).
+- ubuntu-24.04 only, not QML: tst_mpv_video_item `bundledScriptsAreNotLoaded` `'luaThreads.isEmpty()' returned FALSE. (lua/console)`.
+  Ubuntu 24.04's libmpv starts its console script thread anyway. For Task 7.
+
+Self-test (run on its own, because check.sh stops at ctest): on both images the Qt < 6.5 load path reaches
+`qrc:/qt/qml/StrmQt/ui/Main.qml` and fails at `Main.qml:1018:17: Type StrmIcon unavailable` / `StrmIcon.qml:2:1:
+module "QtQuick.Effects" is not installed`, with `selftest.sh: /build/strmqt exited 1` (Task 5).

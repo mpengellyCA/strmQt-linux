@@ -40,6 +40,7 @@ apt_common=(
     qt6-websockets-dev qt6-svg-dev qt6-wayland qt6-qpa-plugins
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates
     qml6-module-qtquick-window qml6-module-qtqml-workerscript qml6-module-qtqml
+    qml6-module-qtqml-models
     libmpv-dev libvlc-dev vlc-plugin-base vlc-plugin-video-output libssl-dev
     ffmpeg libgl1-mesa-dri
 )
