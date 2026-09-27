@@ -28,4 +28,5 @@ qt_target_qml_sources(strmqt
 qt_target_qml_sources(strmqt QML_FILES
     ui/music/RecordStage.qml
     ui/music/MusicPlayerPanel.qml
+    ui/music/MusicNowPlaying.qml
 )

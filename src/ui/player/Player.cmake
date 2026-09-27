@@ -9,5 +9,4 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/player/StatsOverlay.qml
     ui/player/OsdButtonRow.qml
     ui/player/PlaybackSettingsPanel.qml
-    ui/player/NowPlayingPanel.qml
 )

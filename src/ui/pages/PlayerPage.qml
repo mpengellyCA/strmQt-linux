@@ -28,7 +28,7 @@ import StrmQt
 // Everything above describes a page built around a picture. For music every
 // one of those decisions inverts: there is nothing to look at, so the chrome
 // must not fade, and the content worth showing is the artwork, the track and
-// what is next. `audioMode` below swaps the video surface for NowPlayingPanel
+// what is next. `audioMode` below swaps the video surface for MusicNowPlaying
 // and stands the OSD down for the duration. The video path is untouched:
 // `audioMode` is false for every non-audio item and for a page with no session,
 // which is exactly the state every existing binding here was written against.
@@ -47,8 +47,8 @@ FocusScope {
     // navigation reseats it earlier than this; this is the backstop.
     signal videoSlotReleasing
 
-    // The shared sleeve is in the air (MUSIC.md §4). Passed through to the
-    // now-playing panel, which owns the square this hides.
+    // The shared sleeve is in the air (MUSIC.md §4). Passed through to
+    // MusicNowPlaying, whose record stage owns the square this hides.
     property bool sleeveInFlight: false
 
     // The transition's large endpoint, in `target`'s coordinates; an empty rect
@@ -58,10 +58,10 @@ FocusScope {
     function sleeveRect(target: Item): rect {
         if (!page.audioMode)
             return Qt.rect(0, 0, 0, 0);
-        return nowPlaying.heroArtRect(target);
+        return nowPlaying.sleeveRect(target);
     }
 
-    readonly property real sleeveRadius: nowPlaying.heroArtRadius
+    readonly property real sleeveRadius: nowPlaying.sleeveRadius
 
     objectName: "playerPage" // Main.qml tests this to hide the chrome and to pop on stopped()
 
@@ -226,20 +226,24 @@ FocusScope {
     // press first; everything it does not claim — the artwork, the margins —
     // still falls through to videoArea, which is why click-to-pause, the volume
     // wheel and double-click-fullscreen keep working on a record too.
-    NowPlayingPanel {
+    MusicNowPlaying {
         id: nowPlaying
 
         anchors.fill: parent
         visible: page.audioMode
         enabled: page.audioMode
         sleeveInFlight: page.sleeveInFlight
+        // The record turns only while this page is the one on screen.
+        live: page.visible && page.audioMode
         onLeaveRequested: page.minimizeRequested()
     }
 
     // ── Loading / buffering ─────────────────────────────────────────────────
+    // Video only: MusicNowPlaying's readout pulses "Buffering" for a record,
+    // and this line would land on top of the record stage.
     Text {
         anchors.centerIn: parent
-        visible: PlayerCtl.busy || PlayerCtl.buffering
+        visible: !page.audioMode && (PlayerCtl.busy || PlayerCtl.buffering)
         text: PlayerCtl.busy ? qsTr("Loading…") : qsTr("Buffering…")
         color: Theme.textPrimaryColor
         font.family: Theme.fontBody
@@ -258,9 +262,9 @@ FocusScope {
         // is no film to get out of the way of, so a fading scrubber would be
         // the only thing on screen disappearing for no gain — the requirement
         // that it "must not auto-hide" met by removing the reason it hides at
-        // all. NowPlayingPanel is the permanent control surface instead, and it
-        // carries the scrubber, the transport, shuffle/repeat, volume and the
-        // queue that the OSD would have owned.
+        // all. MusicNowPlaying is the permanent control surface instead, and it
+        // carries the scrubber, the transport, shuffle/repeat and the queue
+        // that the OSD would have owned.
         visible: !page.audioMode
 
         onFullscreenRequested: page.toggleFullscreen()
@@ -469,7 +473,7 @@ FocusScope {
     // for the same reason StrmTabBar owns Left/Right itself.
     Keys.onDownPressed: event => {
         if (page.audioMode)
-            nowPlaying.focusScrubber();
+            nowPlaying.focusTransport(); // the transport sits above the scrubber
         else
             osd.focusScrubber();
         event.accepted = true;

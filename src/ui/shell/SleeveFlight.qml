@@ -192,7 +192,7 @@ Item {
     // re-rendered on every frame of a resize, which is the exact cost the
     // control library already refuses per item (see StrmCard).
     //
-    // NowPlayingPanel's hero casts its shadow from a separate flat rectangle
+    // RecordStage's sleeve casts its shadow from a separate flat rectangle
     // behind the frame for the same reasons. Here there is nothing to cast
     // onto: the square travels flat, and the shadow belongs to the endpoint it
     // lands on — which reads as the sleeve settling onto the surface, and that

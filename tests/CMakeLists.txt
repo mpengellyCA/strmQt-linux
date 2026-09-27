@@ -55,6 +55,9 @@ target_link_libraries(tst_record_stage PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_record_stage PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_record_stage PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+strmqt_add_test(tst_music_player_sources unit/tst_music_player_sources.cpp)
+target_compile_definitions(tst_music_player_sources PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp
