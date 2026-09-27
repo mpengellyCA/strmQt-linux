@@ -37,6 +37,9 @@ constexpr qint64 kFastForwardSeekIntervalMs = 500;
 // Seeking stops this far short of the end, so a hold does not overshoot into
 // the auto-advance; the engine's own speed still runs the last few seconds.
 constexpr qint64 kFastForwardEndGuardMs = 5'000;
+// Watchdog ticks (2 s each) the watchdog sits out after a hold: long enough to
+// cover the last jump landing, short enough that a real stall is still caught.
+constexpr int kFastForwardWatchdogGraceTicks = 2;
 // Chapter/up-next bookkeeping is controller state, not animation. Sampling it
 // at four times a second keeps it responsive without making every video frame
 // walk the controller's derived state.
@@ -112,8 +115,11 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             if (m_expectedLoadId != 0 && m_active)
                 emit trackChanged(description);
         });
+        // Not while a fast-forward hold drives the engine: its speed then is
+        // the hold's, not a setting (playbackSpeed() keeps the user's, and
+        // endFastForward() announces the restore).
         connect(m_backend, &PlayerBackend::playbackSpeedChanged, this, [this] {
-            if (m_expectedLoadId != 0 && m_active)
+            if (m_expectedLoadId != 0 && m_active && !m_fastForwarding)
                 emit playbackSpeedChanged();
         });
         connect(m_backend, &PlayerBackend::audioDelayChanged, this, [this] {
@@ -841,6 +847,17 @@ void PlayerController::onWatchdogTick()
         m_stallTicks = 0;
         return;
     }
+    // A fast-forward hold moves the playhead by seeking, and an engine landing
+    // a seek can sit on one position without calling it buffering. Escalating
+    // then — nudge, reload, demote — would tear the stream down under a user
+    // who is only holding a button. The same for a moment after the hold.
+    if (m_fastForwarding || m_watchdogGraceTicks > 0) {
+        if (!m_fastForwarding)
+            --m_watchdogGraceTicks;
+        m_stallTicks = 0;
+        m_watchdogLastPos = m_backend->positionMs();
+        return;
+    }
 
     const qint64 pos = m_backend->positionMs();
     if (pos != m_watchdogLastPos) {
@@ -1163,20 +1180,41 @@ void PlayerController::onSkipHoldTick()
     }
     const qint64 now = skipHoldNow();
     if (m_ramp.update(now)) {
-        if (!m_fastForwarding)
-            beginFastForward(now);
+        if (!m_fastForwarding && !beginFastForward(now))
+            return;
         applyFastForwardRate();
     }
     if (m_fastForwarding)
         stepFastForward(now);
 }
 
-void PlayerController::beginFastForward(qint64 nowMs)
+bool PlayerController::fastForwardMaySeek() const
 {
-    m_fastForwarding = true;
+    // A seek on a transcode far outside what the server has produced makes
+    // Emby kill and restart its ffmpeg job; twice a second, that is a
+    // fast-forward made of restarts. Speed alone is honest there: the server
+    // either keeps up with 4× or the engine buffers, and nothing is torn down.
+    // Stepping less often with bigger jumps would still restart the job on
+    // every step — just with a longer spinner each time.
+    if (streamMethod() == QLatin1String("Transcode"))
+        return false;
+    // Without a length there is no end to stop short of, and a live stream
+    // has nothing ahead of "now" to seek to.
+    return durationMs() > 0;
+}
+
+bool PlayerController::beginFastForward(qint64 nowMs)
+{
     // Whatever the user had — 1×, or the 1.25× they watch lectures at — is
     // what the release comes back to.
-    m_speedBeforeFastForward = m_backend->playbackSpeed();
+    const qreal userSpeed = m_backend->playbackSpeed();
+    // Nothing a hold could do faster: no seeking allowed here and an engine
+    // already at (or without) its top speed. Then the hold is inert — no
+    // silence, no speed change — and its release is still not a skip.
+    if (!fastForwardMaySeek() && m_backend->maximumPlaybackSpeed() <= userSpeed)
+        return false;
+    m_fastForwarding = true;
+    m_speedBeforeFastForward = userSpeed;
     m_fastForwardEngineSpeed = m_speedBeforeFastForward;
     m_lastFastForwardStepMs = nowMs;
     m_fastForwardTargetMs = m_lastPositionMs;
@@ -1185,18 +1223,23 @@ void PlayerController::beginFastForward(qint64 nowMs)
     // nor disturbed.
     m_fastForwardMuted = true;
     applyVolume();
+    return true;
 }
 
 void PlayerController::applyFastForwardRate()
 {
-    const qreal rate = m_ramp.rate();
     const qreal ceiling = m_backend->maximumPlaybackSpeed();
+    // Never slower than the user already watches at.
+    const qreal wanted = qMax(m_ramp.rate(), m_speedBeforeFastForward);
     if (ceiling > 1.0) {
         // Smooth, real playback as far as the engine goes (mpv: 4×); seeking
         // makes up the rest.
-        m_fastForwardEngineSpeed = qMin(rate, ceiling);
+        m_fastForwardEngineSpeed = qMin(wanted, ceiling);
         m_backend->setPlaybackSpeed(m_fastForwardEngineSpeed);
     }
+    // Where seeking is off, the engine's speed is all there is, and the rate
+    // published is the one actually happening.
+    const qreal rate = fastForwardMaySeek() ? wanted : m_fastForwardEngineSpeed;
     if (!qFuzzyCompare(rate, m_fastForwardRate)) {
         m_fastForwardRate = rate;
         emit fastForwardRateChanged();
@@ -1205,6 +1248,8 @@ void PlayerController::applyFastForwardRate()
 
 void PlayerController::stepFastForward(qint64 nowMs)
 {
+    if (!fastForwardMaySeek())
+        return;
     const qint64 elapsed = nowMs - m_lastFastForwardStepMs;
     if (elapsed < kFastForwardSeekIntervalMs)
         return;
@@ -1236,10 +1281,16 @@ void PlayerController::endFastForward(bool reportPosition)
     m_fastForwardMuted = false;
     applyVolume();
     m_fastForwardTargetMs = -1;
+    m_stallTicks = 0;
+    m_watchdogGraceTicks = kFastForwardWatchdogGraceTicks;
     if (m_fastForwardRate != 0.0) {
         m_fastForwardRate = 0.0;
         emit fastForwardRateChanged();
     }
+    // Readouts were held on the user's speed for the hold; say so once now
+    // that the engine is back on it too.
+    if (m_active)
+        emit playbackSpeedChanged();
     if (reportPosition && m_reporting && m_started)
         reportProgress();
 }

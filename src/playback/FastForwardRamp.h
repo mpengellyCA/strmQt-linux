@@ -35,6 +35,13 @@ public:
     static constexpr qint64 kHoldThresholdMs = 400;
     static constexpr qint64 kStepMs = 1000;
     static constexpr std::array<qreal, 5> kRates{2.0, 4.0, 8.0, 16.0, 32.0};
+    // Some remotes do not hold a key down: held, they send a fresh press and
+    // release every few tens of milliseconds. Each pair would be a tap, and a
+    // tap is a chapter — so a held button raced through the film. A press this
+    // soon after the last release is taken as that stutter and ignored: such a
+    // remote gets one skip per hold, never a burst. 150 ms is several times
+    // those remotes' repeat period and well under how fast a person taps.
+    static constexpr qint64 kDebounceMs = 150;
 
     enum class Release {
         Ignored, // no press to end (a release after cancel(), or a stray one)
@@ -53,11 +60,14 @@ public:
         return kRates[static_cast<std::size_t>(step < last ? step : last)];
     }
 
-    // False when already down: a second press before a release (an
-    // auto-repeat that slipped through) must not restart the ramp.
+    // False when already down — a second press before a release (an
+    // auto-repeat that slipped through) must not restart the ramp — and when
+    // it follows the last release within kDebounceMs.
     bool press(qint64 nowMs)
     {
         if (m_down)
+            return false;
+        if (m_released && nowMs - m_lastReleaseMs < kDebounceMs)
             return false;
         m_down = true;
         m_pressedAtMs = nowMs;
@@ -80,6 +90,10 @@ public:
 
     Release release(qint64 nowMs)
     {
+        // Every release restarts the debounce window, an ignored one included:
+        // a stuttering remote's later pairs must keep falling inside it.
+        m_released = true;
+        m_lastReleaseMs = nowMs;
         if (!m_down)
             return Release::Ignored;
         // Judged on the time held as well as on update(): a timer that had not
@@ -106,6 +120,8 @@ private:
     }
 
     bool m_down = false;
+    bool m_released = false;
+    qint64 m_lastReleaseMs = 0;
     qint64 m_pressedAtMs = 0;
     qreal m_rate = 0.0;
 };

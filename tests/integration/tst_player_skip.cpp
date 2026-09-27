@@ -75,6 +75,13 @@ private slots:
     void aHoldUsesTheEnginesSpeedFirst();
     void theUsersMuteSurvivesAHold();
     void aHoldEndsWithTheSession();
+    // Fixes after review.
+    void aHoldDoesNotTripTheStallWatchdog();
+    void aTranscodeHoldNeverSeeks();
+    void aTranscodeHoldWithoutSpeedControlIsInert();
+    void unknownLengthNeverSeeks();
+    void speedReadoutsKeepTheUsersSpeed();
+    void aStutteringRemoteSkipsOnce();
 
 private:
     // Presses ⏭, then ticks the hold's timer at each of `ticks` (ms since the
@@ -426,6 +433,7 @@ void PlayerSkipTest::theUsersMuteSurvivesAHold()
     QCOMPARE(m_backend->muteRequests.constLast(), true);
 
     m_controller->setMuted(false);
+    m_now += 1'000; // a fresh press, well clear of the release debounce
     hold({400});
     emit m_backend->mutedChanged(true);
     QCOMPARE(m_controller->muted(), false);
@@ -449,6 +457,131 @@ void PlayerSkipTest::aHoldEndsWithTheSession()
     const qsizetype loads = m_backend->loadedUrls.size();
     m_controller->skipForwardReleased();
     QCOMPARE(m_backend->loadedUrls.size(), loads);
+}
+
+// The watchdog ticks every 20 ms here and escalates after two still ticks
+// (setTimingForTests). A hold whose seeks leave the position frozen must not
+// be read as a stall — no nudge-seek, no reload, no demotion — and once the
+// hold (and its grace) is over, a real freeze still is.
+void PlayerSkipTest::aHoldDoesNotTripTheStallWatchdog()
+{
+    start({itemMap(QStringLiteral("301001"))}, 0, 0);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(1'000);
+    hold({400});
+    QCOMPARE(m_controller->fastForwardRate(), 2.0);
+    const qsizetype seeks = m_backend->seeks.size();
+    const qsizetype loads = m_backend->loadedUrls.size();
+    const QString method = m_controller->streamMethod();
+
+    QTest::qWait(300); // fifteen watchdog ticks, position never moves
+    QCOMPARE(m_backend->seeks.size(), seeks);
+    QCOMPARE(m_backend->loadedUrls.size(), loads);
+    QCOMPARE(m_controller->streamMethod(), method);
+    QVERIFY(m_controller->active());
+
+    // The control: the same freeze after the hold does escalate.
+    m_now += 100;
+    m_controller->skipForwardReleased();
+    QTRY_VERIFY(m_backend->seeks.size() > seeks || m_backend->loadedUrls.size() > loads);
+}
+
+void PlayerSkipTest::aTranscodeHoldNeverSeeks()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/301005/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_transcode_only.json"))));
+    m_backend->maxSpeed = 4.0;
+    start({itemMap(QStringLiteral("301005"))}, 0, 0);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(1'000);
+    const qsizetype seeks = m_backend->seeks.size();
+
+    hold({400, 900, 1'400, 2'400, 3'400, 4'400, 4'900});
+    // Capped at what the engine plays; the ramp's 32× is not claimed.
+    QCOMPARE(m_backend->speedRequests.constLast(), 4.0);
+    QCOMPARE(m_controller->fastForwardRate(), 4.0);
+    QCOMPARE(m_backend->seeks.size(), seeks);
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->speedRequests.constLast(), 1.0);
+}
+
+void PlayerSkipTest::aTranscodeHoldWithoutSpeedControlIsInert()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/301005/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_transcode_only.json"))));
+    start({itemMap(QStringLiteral("301005"))}, 0, 0);
+    const qsizetype seeks = m_backend->seeks.size();
+    const qsizetype volumes = m_backend->volumeRequests.size();
+
+    hold({400, 1'400, 2'400});
+    // Nothing it could do faster: no silence, no rate, no seek…
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    QCOMPARE(m_backend->volumeRequests.size(), volumes);
+    QCOMPARE(m_backend->seeks.size(), seeks);
+    // …and letting go is still not a skip.
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->seeks.size(), seeks);
+}
+
+// A raw URL (no ticket, no length reported): nothing to seek ahead into.
+void PlayerSkipTest::unknownLengthNeverSeeks()
+{
+    m_backend->maxSpeed = 4.0;
+    m_controller->playUrl(QUrl(QStringLiteral("http://127.0.0.1:1/live.ts")),
+                          QStringLiteral("Live"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QTRY_VERIFY(m_controller->active());
+    QVERIFY(m_controller->durationMs() <= 0);
+    m_backend->simulatePosition(1'000);
+    const qsizetype seeks = m_backend->seeks.size();
+
+    hold({400, 1'400, 2'400, 2'900});
+    QCOMPARE(m_controller->fastForwardRate(), 4.0);
+    QCOMPARE(m_backend->seeks.size(), seeks);
+    m_controller->skipForwardReleased();
+}
+
+// MPRIS Rate, the web remote and the playback-settings panel read
+// playbackSpeed / playbackSpeedChanged; a hold is not a speed setting.
+void PlayerSkipTest::speedReadoutsKeepTheUsersSpeed()
+{
+    m_backend->maxSpeed = 4.0;
+    start({itemMap(QStringLiteral("301001"))}, 0, 0);
+    m_controller->setPlaybackSpeed(1.25);
+    QCOMPARE(m_controller->playbackSpeed(), 1.25);
+    QSignalSpy speed(m_controller, &PlayerController::playbackSpeedChanged);
+
+    hold({400, 1'400});
+    QCOMPARE(m_backend->playbackSpeed(), 4.0);
+    QCOMPARE(m_controller->playbackSpeed(), 1.25);
+    QCOMPARE(speed.count(), 0);
+
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_controller->playbackSpeed(), 1.25);
+    QVERIFY(speed.count() >= 1);
+}
+
+// A remote that sends press/release pairs every 40 ms while ⏭ is held gives
+// one chapter, not one per pair.
+void PlayerSkipTest::aStutteringRemoteSkipsOnce()
+{
+    addChapters(QStringLiteral("301001"));
+    start({itemMap(QStringLiteral("301001"))}, 0, 3);
+    m_backend->simulatePosition(1'000);
+    const qsizetype seeks = m_backend->seeks.size();
+
+    for (qint64 t = 0; t < 1'000; t += 80) {
+        m_now = t;
+        m_controller->skipForwardPressed();
+        m_now = t + 40;
+        m_controller->skipForwardReleased();
+    }
+    QCOMPARE(m_backend->seeks.size(), seeks + 1);
+    QCOMPARE(m_controller->currentChapter(), 1);
 }
 
 QTEST_GUILESS_MAIN(PlayerSkipTest)

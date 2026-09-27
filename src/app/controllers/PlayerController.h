@@ -190,6 +190,13 @@ public:
     // entirely by seeking. Audio is silenced for the duration — at these rates
     // it is noise — without touching the user's mute, and progress is reported
     // once at the end rather than on every step.
+    //
+    // No seeking where a seek is expensive or meaningless: a Transcode rung
+    // (every far seek makes the server kill and restart its ffmpeg job), and an
+    // item of unknown length (live). There the hold runs at the engine's own
+    // ceiling, and does nothing at all on an engine without speed control.
+    // playbackSpeed keeps reporting the user's speed throughout, and the stall
+    // watchdog stands down while a hold runs and for a moment after it.
     Q_INVOKABLE void skipForwardPressed();
     Q_INVOKABLE void skipForwardReleased();
     // The release will not come (the window lost focus): end any hold without
@@ -280,7 +287,15 @@ public:
     QVariantList backendSubtitleTracks() const;
 
     int volume() const { return m_volume; }
-    qreal playbackSpeed() const { return m_backend ? m_backend->playbackSpeed() : 1.0; }
+    // The user's speed. During a fast-forward hold the engine runs faster, but
+    // that is not a setting, and the speed readouts (MPRIS Rate, the web
+    // remote, the playback-settings panel) must not show it as one.
+    qreal playbackSpeed() const
+    {
+        if (m_fastForwarding)
+            return m_speedBeforeFastForward;
+        return m_backend ? m_backend->playbackSpeed() : 1.0;
+    }
     int audioDelayMs() const { return m_backend ? m_backend->audioDelayMs() : 0; }
     int subtitleDelayMs() const { return m_backend ? m_backend->subtitleDelayMs() : 0; }
     bool muted() const { return m_muted; }
@@ -452,7 +467,10 @@ private:
     // Hold-to-fast-forward (skipForwardPressed).
     qint64 skipHoldNow() const;
     void onSkipHoldTick();
-    void beginFastForward(qint64 nowMs);
+    // False when a hold could not go any faster than playback already does.
+    bool beginFastForward(qint64 nowMs);
+    // Whether a hold may seek ahead: not on a transcode, not without a length.
+    bool fastForwardMaySeek() const;
     void applyFastForwardRate();
     void stepFastForward(qint64 nowMs);
     // `reportPosition` is false when the session is ending anyway.
@@ -596,6 +614,10 @@ private:
     // a seek landed for a moment afterwards, and stepping from those would
     // give back ground already covered.
     qint64 m_fastForwardTargetMs = -1;
+    // Watchdog ticks still to skip after a hold ends: the last jump and the
+    // drop back to normal speed can leave the position still for a moment,
+    // which is a refill, not a stall.
+    int m_watchdogGraceTicks = 0;
 };
 
 } // namespace strmqt

@@ -78,6 +78,25 @@ private slots:
         QVERIFY(ramp.update(400)); // measured from the first press
     }
 
+    // A remote that sends press/release pairs while held: one tap, then
+    // nothing for as long as the pairs keep coming inside the window.
+    void aStutteringHoldIsOneTap()
+    {
+        FastForwardRamp ramp;
+        QVERIFY(ramp.press(0));
+        QCOMPARE(ramp.release(40), Release::Tap);
+        for (qint64 t = 80; t < 2000; t += 80) {
+            QVERIFY(!ramp.press(t));
+            QCOMPARE(ramp.release(t + 40), Release::Ignored);
+        }
+        // A real second tap, later, counts…
+        QVERIFY(ramp.press(2500));
+        QCOMPARE(ramp.release(2600), Release::Tap);
+        // …and so does a brisk double-tap at human speed.
+        QVERIFY(ramp.press(2800));
+        QCOMPARE(ramp.release(2900), Release::Tap);
+    }
+
     void cancelSpendsTheRelease()
     {
         FastForwardRamp ramp;
