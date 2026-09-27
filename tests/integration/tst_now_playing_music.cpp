@@ -105,6 +105,7 @@ private slots:
     void recordStateFollowsThePlayer();
     void albumChangingOnlyWhenTheAlbumChanges();
     void albumTracksComeFromTheRepositoryCache();
+    void albumTabNeverShowsThePreviousAlbum();
     void readoutFromTicketAndMethod();
     void timeTextFormatsBothClocks();
     void favouriteToggles();
@@ -326,6 +327,38 @@ void NowPlayingMusicTest::albumTracksComeFromTheRepositoryCache()
 
     m_controller->playAlbumFrom(7); // out of range: ignored
     QCOMPARE(m_controller->trackId(), QStringLiteral("a1"));
+}
+
+void NowPlayingMusicTest::albumTabNeverShowsThePreviousAlbum()
+{
+    m_player->playQueue(MusicPlayback::toMaps({track("a1", "alA", 1), track("b1", "alB", 1)}), 0);
+    QTRY_COMPARE(m_controller->trackId(), QStringLiteral("a1"));
+    QTRY_COMPARE(m_controller->trackModel()->rowCount(), 3);
+    QVERIFY(!m_controller->albumSummary().isEmpty());
+
+    // alB's tracklist is slow to arrive. Until it does, the Album tab shows
+    // nothing rather than alA's rows under alB's header, and a row cannot be
+    // played from it.
+    m_mock->setRouteDelay(QStringLiteral("GET"), itemsPath(), 400);
+    m_player->playNext();
+    QTRY_COMPARE(m_controller->trackId(), QStringLiteral("b1"));
+    QCOMPARE(m_controller->albumId(), QStringLiteral("alB"));
+    QCOMPARE(m_controller->trackModel()->rowCount(), 0);
+    QCOMPARE(m_controller->albumSummary(), QString());
+    QCOMPARE(m_controller->currentAlbumRow(), -1);
+
+    const int queued = queue()->rowCount();
+    m_controller->playAlbumFrom(0);
+    QTest::qWait(20);
+    QCOMPARE(m_controller->trackId(), QStringLiteral("b1"));
+    QCOMPARE(queue()->rowCount(), queued);
+
+    // Once they land, they are alB's own and playable.
+    QTRY_COMPARE(m_controller->trackModel()->rowCount(), 2);
+    QTRY_COMPARE(m_controller->currentAlbumRow(), 0);
+    m_controller->playAlbumFrom(1);
+    QTRY_COMPARE(m_controller->trackId(), QStringLiteral("b2"));
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("Album alB"));
 }
 
 void NowPlayingMusicTest::readoutFromTicketAndMethod()

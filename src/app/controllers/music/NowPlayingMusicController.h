@@ -143,7 +143,8 @@ private:
     QString m_recordState = QStringLiteral("stopped");
     QString m_timeText;
 
-    QString m_tracksAlbumId;
+    QString m_tracksAlbumId;   // the album asked for
+    QString m_loadedAlbumId;   // the album m_tracks actually holds; empty while loading
     quint64 m_albumGeneration = 0;
     int m_currentAlbumRow = -1;
     QString m_albumSummary;

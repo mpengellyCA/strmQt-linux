@@ -265,12 +265,19 @@ void NowPlayingMusicController::loadAlbumTracks(const QString &albumId)
 {
     m_tracksAlbumId = albumId;
     const quint64 generation = ++m_albumGeneration;
-    if (albumId.isEmpty()) {
-        m_tracks->clear();
+    // The rows on hand belong to the album being left. Blank them now rather
+    // than when the new ones land: until then the Album tab would list the
+    // previous record under the new one's header, and playAlbumFrom() would
+    // play it (it is guarded on m_loadedAlbumId as well).
+    if (m_loadedAlbumId != albumId) {
+        m_loadedAlbumId.clear();
+        if (m_tracks->rowCount() > 0)
+            m_tracks->clear();
         setAlbumSummary(QString());
         refreshCurrentAlbumRow();
-        return;
     }
+    if (albumId.isEmpty())
+        return;
     m_repository->albumTracks(albumId).then(this, [this, generation](Result<QList<Track>> result) {
         if (generation != m_albumGeneration)
             return;
@@ -288,6 +295,7 @@ void NowPlayingMusicController::loadAlbumTracks(const QString &albumId)
         const QString count = formatTrackCount(static_cast<int>(result.value.size()));
         const QString runtime = formatRuntime(runtimeMs);
         m_tracks->setItems(result.value);
+        m_loadedAlbumId = m_tracksAlbumId;
         setAlbumSummary(runtime.isEmpty() ? count : count + QStringLiteral(" · ") + runtime);
         refreshCurrentAlbumRow();
     });
@@ -295,7 +303,10 @@ void NowPlayingMusicController::loadAlbumTracks(const QString &albumId)
 
 void NowPlayingMusicController::playAlbumFrom(int row)
 {
-    if (!m_playback || row < 0 || row >= m_tracks->rowCount())
+    // Only once the rows are the playing album's own: while the next album
+    // is still loading, a row index would pick from the wrong record.
+    if (!m_playback || m_loadedAlbumId.isEmpty() || m_loadedAlbumId != m_albumId || row < 0
+        || row >= m_tracks->rowCount())
         return;
     m_playback->playTracks(m_tracks->items(), row, m_album);
 }
