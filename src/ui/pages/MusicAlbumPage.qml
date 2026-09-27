@@ -608,7 +608,13 @@ FocusScope {
             onMenuRequested: (index, mx, my) =>
                 trackMenu.popupForItemNoDetails(trackTable.rowAt(index), mx, my)
 
-            footer: Column {
+            // Through BoundViewSlot: Qt 6.4's ListView cannot create a footer
+            // declared in this bound file itself.
+            readonly property BoundViewSlot footerSlot: BoundViewSlot {
+                sourceComponent: trackTable.footerContent
+            }
+            footer: trackTable.footerSlot.component
+            property Component footerContent: Column {
                 id: footerColumn
 
                 // The footer outlives every model reset, but not the page: a

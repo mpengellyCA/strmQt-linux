@@ -10,7 +10,10 @@
 
 namespace {
 
+// Bound like every page that hands a rail or grid its card: Qt 6.4's Loader
+// could not create a card declared under this pragma (BoundLoader, spec §4.3).
 const char *kProbe = R"QML(
+pragma ComponentBehavior: Bound
 import QtQuick
 import StrmQt
 
@@ -103,6 +106,29 @@ Item {
             Tile { objectName: "grid-tile-" + (model ? model.itemId : "") }
         }
         onItemActivated: index => root.gridActivated = index
+    }
+
+    // A footer declared in this bound file, as the album page's More-by shelf
+    // is: Qt 6.4's ListView could not create one (BoundViewSlot, spec §4.3).
+    ListView {
+        id: slotted
+        objectName: "slotted"
+        y: 760
+        width: 100
+        height: 100
+        model: 2
+        delegate: Item {
+            width: 100
+            height: 10
+        }
+        readonly property BoundViewSlot footerSlot: BoundViewSlot {
+            sourceComponent: Item {
+                objectName: "slot-footer"
+                width: 100
+                height: 30
+            }
+        }
+        footer: slotted.footerSlot.component
     }
 }
 )QML";
@@ -198,6 +224,7 @@ private slots:
     void gridLoadsTheCustomCard();
     void stockRailIsUnchanged();
     void railChevronsAreNotTabStops();
+    void viewCreatesAFooterFromABoundFile();
 
 private:
     QTemporaryDir m_dir;
@@ -230,6 +257,18 @@ void CardComponentTest::railChevronsAreNotTabStops()
     QQuickItem *left = findItem(rail, QStringLiteral("railChevronLeft"));
     QVERIFY(left);
     QVERIFY(!left->activeFocusOnTab());
+}
+
+void CardComponentTest::viewCreatesAFooterFromABoundFile()
+{
+    ensureProbe();
+    QQuickItem *view = findItem(m_root, QStringLiteral("slotted"));
+    QVERIFY(view);
+    auto *footer = view->property("footerItem").value<QQuickItem *>();
+    QVERIFY(footer);
+    QQuickItem *content = findItem(footer, QStringLiteral("slot-footer"));
+    QVERIFY(content);
+    QCOMPARE(qRound(footer->height()), 30);
 }
 
 void CardComponentTest::railLoadsTheCustomCardWithItsRow()

@@ -33,7 +33,7 @@ Item {
     visible: loading.active
     clip: true
 
-    Loader {
+    BoundLoader {
         anchors.fill: parent
         anchors.margins: loading.margins
         active: loading.active

@@ -518,7 +518,7 @@ Item {
         // ── Panels ──────────────────────────────────────────────────────────
         // Loaded on demand: four list views that are never opened are four
         // list views not built. The Loader gives its item the size below.
-        Loader {
+        BoundLoader {
             id: panelLoader
 
             anchors.right: parent.right

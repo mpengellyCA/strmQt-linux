@@ -18,7 +18,11 @@ if [ "$status" -ne 0 ]; then
     echo "selftest.sh: $bin exited $status" >&2
     exit 1
 fi
-if grep -E 'Unsupported image format|is not installed|Cannot assign to non-existent property|is not a type' "$log" >&2; then
+# "Cannot instantiate bound component" and "Component is not ready" are how Qt
+# 6.4's Loader and ListView footer refuse a component declared under `pragma
+# ComponentBehavior: Bound` (BoundLoader, BoundViewSlot): the page builds, but
+# without that part.
+if grep -E 'Unsupported image format|is not installed|Cannot assign to non-existent property|is not a type|Cannot instantiate bound component|Component is not ready' "$log" >&2; then
     echo "selftest.sh: the log shows a missing runtime dependency or a QML tier mismatch" >&2
     exit 1
 fi

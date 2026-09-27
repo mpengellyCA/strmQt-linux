@@ -1281,7 +1281,7 @@ FocusScope {
         }
     }
 
-    Loader {
+    BoundLoader {
         id: viewLoader
 
         anchors.top: page.songsShown ? songSelection.bottom : pillBar.bottom

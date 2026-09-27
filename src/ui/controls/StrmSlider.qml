@@ -226,7 +226,7 @@ Item {
         }
     }
 
-    Loader {
+    BoundLoader {
         id: preview
 
         active: slider.previewComponent !== null

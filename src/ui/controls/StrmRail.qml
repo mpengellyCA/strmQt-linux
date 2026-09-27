@@ -426,7 +426,7 @@ FocusScope {
                 onHoveredChanged: cell.setHovered(cellHover.hovered)
             }
 
-            Loader {
+            BoundLoader {
                 id: cardLoader
                 anchors.centerIn: parent
                 active: rail.customCards
