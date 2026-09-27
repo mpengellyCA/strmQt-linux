@@ -874,6 +874,66 @@ Item {
 }
 )QML";
 
+// The StrmQt module is staged ONCE per run, in a directory that outlives every
+// test. Qt 6.8's type loader remembers where it first resolved a module URI
+// across engines, so a per-test copy in a per-test QTemporaryDir left later
+// tests resolving StrmGrid against a deleted directory: "Type StrmGrid
+// unavailable", 11 of 29 on 6.8.2, each passing alone (spec 2026-09-27 §9.1).
+// Qt 6.11 does not keep that state; staging once is right on both.
+QString stagedModuleRoot()
+{
+    static QTemporaryDir root;
+    static const bool staged = [] {
+        if (!root.isValid())
+            return false;
+        const QString modulePath = root.filePath(QStringLiteral("StrmQt"));
+        if (!QDir().mkpath(modulePath))
+            return false;
+        const QStringList moduleFiles = {
+            QStringLiteral("Theme.qml"),          QStringLiteral("FocusRing.qml"),
+            QStringLiteral("StrmIcon.qml"),       QStringLiteral("StrmTooltip.qml"),
+            QStringLiteral("StrmIconButton.qml"), QStringLiteral("StrmCard.qml"),
+            QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
+            QStringLiteral("StrmGrid.qml"),       QStringLiteral("StrmImage.qml"),
+            // StrmGrid publishes the focused column through this singleton on a
+            // vertical step. It resolves without being staged — the engine finds it
+            // on the ambient import path — so this is not fixing a failure; it is
+            // removing the reliance on that accident. The module is written out
+            // file by file precisely so it is self-contained, and a member that
+            // reaches outside it only shows up as "Type StrmGrid unavailable" on
+            // whichever machine happens not to have the real module in reach.
+            QStringLiteral("NavigationColumn.qml"),
+            QStringLiteral("FocusClip.qml"),
+        };
+        for (const QString &name : moduleFiles) {
+            const QString sourceRoot = name == QStringLiteral("Theme.qml")
+                                           ? QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/")
+                                           : QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/controls/");
+            if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
+                return false;
+        }
+        QFile qmldir(modulePath + QStringLiteral("/qmldir"));
+        if (!qmldir.open(QIODevice::WriteOnly))
+            return false;
+        qmldir.write("module StrmQt\n"
+                     "singleton Theme 1.0 Theme.qml\n"
+                     "FocusRing 1.0 FocusRing.qml\n"
+                     "FocusClip 1.0 FocusClip.qml\n"
+                     "StrmIcon 1.0 StrmIcon.qml\n"
+                     "StrmTooltip 1.0 StrmTooltip.qml\n"
+                     "StrmIconButton 1.0 StrmIconButton.qml\n"
+                     "StrmCard 1.0 StrmCard.qml\n"
+                     "StrmScrollBar 1.0 StrmScrollBar.qml\n"
+                     "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
+                     "StrmGrid 1.0 StrmGrid.qml\n"
+                     "StrmImage 1.0 StrmImage.qml\n"
+                     "singleton NavigationColumn 1.0 NavigationColumn.qml\n");
+        qmldir.close();
+        return true;
+    }();
+    return staged ? root.path() : QString();
+}
+
 QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
 {
     const QString helperSource =
@@ -882,57 +942,16 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
     if (!QFile::copy(helperSource, helperTarget))
         return nullptr;
 
-    const QString modulePath = dir.filePath(QStringLiteral("StrmQt"));
-    if (!QDir().mkpath(modulePath))
-        return nullptr;
-    const QStringList moduleFiles = {
-        QStringLiteral("Theme.qml"),          QStringLiteral("FocusRing.qml"),
-        QStringLiteral("StrmIcon.qml"),       QStringLiteral("StrmTooltip.qml"),
-        QStringLiteral("StrmIconButton.qml"), QStringLiteral("StrmCard.qml"),
-        QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
-        QStringLiteral("StrmGrid.qml"),       QStringLiteral("StrmImage.qml"),
-        // StrmGrid publishes the focused column through this singleton on a
-        // vertical step. It resolves without being staged — the engine finds it
-        // on the ambient import path — so this is not fixing a failure; it is
-        // removing the reliance on that accident. The module is written out
-        // file by file precisely so it is self-contained, and a member that
-        // reaches outside it only shows up as "Type StrmGrid unavailable" on
-        // whichever machine happens not to have the real module in reach.
-        QStringLiteral("NavigationColumn.qml"),
-        QStringLiteral("FocusClip.qml"),
-    };
-    for (const QString &name : moduleFiles) {
-        const QString sourceRoot = name == QStringLiteral("Theme.qml")
-                                       ? QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/")
-                                       : QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/controls/");
-        if (!QFile::copy(sourceRoot + name, modulePath + QLatin1Char('/') + name))
-            return nullptr;
-    }
-    QFile qmldir(modulePath + QStringLiteral("/qmldir"));
-    if (!qmldir.open(QIODevice::WriteOnly))
-        return nullptr;
-    qmldir.write("module StrmQt\n"
-                 "singleton Theme 1.0 Theme.qml\n"
-                 "FocusRing 1.0 FocusRing.qml\n"
-                 "FocusClip 1.0 FocusClip.qml\n"
-                 "StrmIcon 1.0 StrmIcon.qml\n"
-                 "StrmTooltip 1.0 StrmTooltip.qml\n"
-                 "StrmIconButton 1.0 StrmIconButton.qml\n"
-                 "StrmCard 1.0 StrmCard.qml\n"
-                 "StrmScrollBar 1.0 StrmScrollBar.qml\n"
-                 "NavigationFocusRestorer 1.0 NavigationFocusRestorer.qml\n"
-                 "StrmGrid 1.0 StrmGrid.qml\n"
-                 "StrmImage 1.0 StrmImage.qml\n"
-                 "singleton NavigationColumn 1.0 NavigationColumn.qml\n");
-    qmldir.close();
-
     QFile probe(dir.filePath(QStringLiteral("Probe.qml")));
     if (!probe.open(QIODevice::WriteOnly))
         return nullptr;
     probe.write(kProbe);
     probe.close();
 
-    view.engine()->addImportPath(dir.path());
+    const QString moduleRoot = stagedModuleRoot();
+    if (moduleRoot.isEmpty())
+        return nullptr;
+    view.engine()->addImportPath(moduleRoot);
     view.setResizeMode(QQuickView::SizeRootObjectToView);
     view.setSource(QUrl::fromLocalFile(probe.fileName()));
     if (view.status() != QQuickView::Ready)
