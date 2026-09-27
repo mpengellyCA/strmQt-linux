@@ -634,7 +634,36 @@ const QList<InputMap::ActionDef> &catalogue()
          {QStringLiteral("R")},
          QString()},
     };
-    return defs;
+    // ── Number keys: a remote's number pad ────────────────────────────────
+    // 1–9 open the libraries in the order the menu lists them, 0 opens
+    // Favorites (Main.qml openLibraryAt / openFavorites). Browse context, so
+    // they are never live in the player, where a stray press must not leave the
+    // film. Typable, so they stand down inside a text field and a search still
+    // takes digits (MappedShortcut). Keypad digits match too: QShortcutMap
+    // retries a keypad key without Qt::KeypadModifier.
+    //
+    // A category of their own keeps them together at the end of the shortcut
+    // sheet and out of the command palette, which lists only Application and
+    // Library verbs — "Library 3 in the menu" means nothing typed as a command.
+    static const QList<InputMap::ActionDef> all = [] {
+        QList<InputMap::ActionDef> out = defs;
+        for (int n = 1; n <= 9; ++n) {
+            out.append({QStringLiteral("library.open%1").arg(n),
+                        QObject::tr("Library %1 in the menu").arg(n),
+                        QStringLiteral("Number keys"),
+                        QString::fromLatin1(InputMap::kContextBrowse),
+                        {QString::number(n)},
+                        QString()});
+        }
+        out.append({QStringLiteral("library.favorites"),
+                    QObject::tr("Favorites"),
+                    QStringLiteral("Number keys"),
+                    QString::fromLatin1(InputMap::kContextBrowse),
+                    {QStringLiteral("0")},
+                    QString()});
+        return out;
+    }();
+    return all;
 }
 
 bool isKnownDevice(const QString &device)

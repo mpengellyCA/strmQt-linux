@@ -56,6 +56,7 @@ Item {
     property int shortcutFired: 0
     property int chordFired: 0
     property int homeFired: 0
+    property int digitFired: 0
     property int plainItemSpaces: 0
     property int claimerSpaces: 0
 
@@ -75,6 +76,7 @@ Item {
         root.shortcutFired = 0
         root.chordFired = 0
         root.homeFired = 0
+        root.digitFired = 0
         root.plainItemSpaces = 0
         root.claimerSpaces = 0
     }
@@ -123,6 +125,12 @@ Item {
         sequence: "Home Page"
         onActivated: root.homeFired = root.homeFired + 1
     }
+
+    // library.open1, as InputMap spells it: a bare digit.
+    Shortcut {
+        sequence: "1"
+        onActivated: root.digitFired = root.digitFired + 1
+    }
 }
 )QML";
 
@@ -141,6 +149,8 @@ private slots:
     void aNonTextFocusItemLosesItToTheShortcut();
     void shortcutOverrideGetsTheKeyBack();
     void aRemotesHomeKeyReachesItsShortcut();
+    void aKeypadDigitReachesABareDigitShortcut();
+    void aFocusedFieldKeepsItsDigits();
 
 private:
     QTemporaryDir m_dir;
@@ -236,6 +246,28 @@ void TestShortcutTyping::aRemotesHomeKeyReachesItsShortcut()
     // Keyboard Home is a different key and fires nothing.
     QTest::keyClick(&m_view, Qt::Key_Home);
     QCOMPARE(m_root->property("homeFired").toInt(), 2);
+}
+
+// A remote's number pad sends keypad digits (Qt::KeypadModifier). QShortcutMap
+// retries a keypad key without the modifier, so the bare "1" of
+// library.open1 answers both the top row and the pad.
+void TestShortcutTyping::aKeypadDigitReachesABareDigitShortcut()
+{
+    QMetaObject::invokeMethod(m_root, "focusPlainItem");
+    QTest::keyClick(&m_view, Qt::Key_1);
+    QTRY_COMPARE(m_root->property("digitFired").toInt(), 1);
+    QTest::keyClick(&m_view, Qt::Key_1, Qt::KeypadModifier);
+    QTRY_COMPARE(m_root->property("digitFired").toInt(), 2);
+}
+
+// …and a search box still types them, from either row.
+void TestShortcutTyping::aFocusedFieldKeepsItsDigits()
+{
+    QMetaObject::invokeMethod(m_root, "focusField");
+    QTest::keyClick(&m_view, Qt::Key_1);
+    QTest::keyClick(&m_view, Qt::Key_1, Qt::KeypadModifier);
+    QTRY_COMPARE(m_root->property("fieldText").toString(), QStringLiteral("11"));
+    QCOMPARE(m_root->property("digitFired").toInt(), 0);
 }
 
 QTEST_MAIN(TestShortcutTyping)

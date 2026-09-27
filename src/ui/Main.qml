@@ -1402,6 +1402,86 @@ ApplicationWindow {
             root.openLibrary(keys[index], names[index], types[index]);
     }
 
+    // ── Number keys (a remote's number pad) ─────────────────────────────────
+    // 1–9 are the libraries in the order the rail lists them — the rail's own
+    // model, HomeCtl.libraries — and 0 is Favorites. A digit past the last
+    // library does nothing. Browse and music only: in the player a stray digit
+    // must not leave the film, and in an overlay it is being typed.
+    function openLibraryAt(index: int): void {
+        const libraries = HomeCtl.libraries;
+        if (libraries === undefined || libraries === null || index < 0
+                || index >= libraries.length)
+            return;
+        const library = libraries[index];
+        root.openLibrary(library.libraryId, library.name, library.collectionType);
+    }
+
+    // Nine literal instances rather than a Repeater: a delegate reaching `root`
+    // is exactly the unqualified access the lint baseline exists to keep out.
+    readonly property bool numberKeysLive: root.interactionContext === "browse"
+                                           || root.interactionContext === "music"
+
+    MappedShortcut {
+        actionId: "library.open1"
+        fallback: ["1"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(0)
+    }
+    MappedShortcut {
+        actionId: "library.open2"
+        fallback: ["2"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(1)
+    }
+    MappedShortcut {
+        actionId: "library.open3"
+        fallback: ["3"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(2)
+    }
+    MappedShortcut {
+        actionId: "library.open4"
+        fallback: ["4"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(3)
+    }
+    MappedShortcut {
+        actionId: "library.open5"
+        fallback: ["5"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(4)
+    }
+    MappedShortcut {
+        actionId: "library.open6"
+        fallback: ["6"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(5)
+    }
+    MappedShortcut {
+        actionId: "library.open7"
+        fallback: ["7"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(6)
+    }
+    MappedShortcut {
+        actionId: "library.open8"
+        fallback: ["8"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(7)
+    }
+    MappedShortcut {
+        actionId: "library.open9"
+        fallback: ["9"]
+        active: root.numberKeysLive
+        onActivated: root.openLibraryAt(8)
+    }
+    MappedShortcut {
+        actionId: "library.favorites"
+        fallback: ["0"]
+        active: root.numberKeysLive
+        onActivated: root.openFavorites()
+    }
+
     // The shoulders change what SECTION is on screen. A page with a tab bar of
     // its own — the music tabs, a season, a settings section — owns them by
     // exposing cycleTab(step); everything else falls through to the library

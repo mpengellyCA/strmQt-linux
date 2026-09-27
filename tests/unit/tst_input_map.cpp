@@ -41,6 +41,7 @@ private slots:
     void navigationActionsAreTheFocusRelativeOnes();
     void aRemotesHomeButtonGoesHome();
     void aRemotesTransportKeysResolve();
+    void numberKeysOpenLibraries();
 
 private:
     QString ini() const { return m_dir->filePath(QStringLiteral("input.ini")); }
@@ -788,6 +789,32 @@ void InputMapTest::aRemotesTransportKeysResolve()
     QCOMPARE(m_map->keyFor(QStringLiteral("player.skipBack")), int(Qt::Key_MediaPrevious));
     // Winding is the player's: in the library ⏩ means nothing.
     QVERIFY(m_map->actionForKey(Qt::Key_AudioForward, 0, QStringLiteral("browse")).isEmpty());
+}
+
+// A remote's number pad: 1–9 the libraries in menu order, 0 Favorites. Browse
+// only, typable (so a search box keeps its digits), and the keypad's digits are
+// the same keys.
+void InputMapTest::numberKeysOpenLibraries()
+{
+    for (int n = 1; n <= 9; ++n) {
+        const QString id = QStringLiteral("library.open%1").arg(n);
+        QCOMPARE(m_map->bindings(id), QStringList{QString::number(n)});
+        QCOMPARE(m_map->context(id), QStringLiteral("browse"));
+        QVERIFY(m_map->isTypableSequence(m_map->binding(id)));
+        QCOMPARE(m_map->actionForKey(Qt::Key_0 + n, Qt::KeypadModifier, QStringLiteral("browse")),
+                 id);
+    }
+    QCOMPARE(m_map->bindings(QStringLiteral("library.favorites")),
+             QStringList{QStringLiteral("0")});
+    QCOMPARE(m_map->actionForKey(Qt::Key_0, 0, QStringLiteral("browse")),
+             QStringLiteral("library.favorites"));
+    // Never in the player: a stray digit must not leave the film.
+    for (int key = Qt::Key_0; key <= Qt::Key_9; ++key)
+        QVERIFY(m_map->actionForKey(key, 0, QStringLiteral("player")).isEmpty());
+
+    // Grouped on their own, and out of the palette's Application/Library rows.
+    QCOMPARE(m_map->actionsForCategory(QStringLiteral("Number keys")).size(), 10);
+    QCOMPARE(m_map->category(QStringLiteral("library.open1")), QStringLiteral("Number keys"));
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)
