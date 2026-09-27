@@ -543,14 +543,18 @@ FocusScope {
             event.accepted = true;
         }
 
-        Item {
+        // A pill grows on focus, so the first one's ring used to be cut at the
+        // clip's left edge (FocusClip). The page margin has room to spare on
+        // the left; on the right, the gap before the cluster has half of it.
+        FocusClip {
             id: pillClip
 
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: Math.max(0, parent.width - rightCluster.width - Theme.spacingValue)
-            clip: true
+            leftOutset: Theme.spacingValue
+            rightOutset: Theme.spacingValue / 2
 
             Row {
                 id: pillRow
@@ -1022,13 +1026,27 @@ FocusScope {
             navigationFocusRefillActive: MusicBrowseCtl.genresLane.loading
             gridModel: MusicBrowseCtl.genres
             customCardWidth: Theme.crateSleeveSize
-            customCardHeight: Theme.crateSleeveSize
+            // The tile's real height, caption included. A bin is a short stack
+            // with two lines under it, not a square, and declaring it square
+            // centred a taller tile in a shorter cell: the top row's focus ring
+            // then sat above the grid's clip.
+            customCardHeight: binMetrics.implicitHeight
             emptyText: ""
             prefetchThreshold: 24
             focus: genresGrid.count > 0
             KeyNavigation.up: pillBar.entryItem
             onNearEnd: MusicBrowseCtl.loadMore()
             onItemActivated: index => page.openItem(index)
+
+            // Metrics only, the way StrmRail and StrmGrid size their own cards.
+            GenreBinTile {
+                id: binMetrics
+                visible: false
+                enabled: false
+                size: Theme.crateSleeveSize
+                name: "M"
+                subtitle: "M"
+            }
 
             cardComponent: Component {
                 GenreBinTile {

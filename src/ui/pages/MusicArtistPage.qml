@@ -332,7 +332,7 @@ FocusScope {
 
             readonly property int stackBottom: releasesColumn.visible
                 ? releasesColumn.y + releasesColumn.height
-                : (side.visible ? side.y + side.height : page.heroHeight)
+                : (sideClip.visible ? sideClip.y + sideClip.height : page.heroHeight)
 
             // Nothing inside reads this, so the sum is not circular: every
             // child's height comes from the hero constant, its own content, or
@@ -511,8 +511,12 @@ FocusScope {
             // an ordinary laptop. The intent behind the sentence is that Similar
             // is secondary, and stacking it below Most played on a page that
             // already scrolls honours that at no cost.
-            Flickable {
-                id: side
+            // The column's clip (FocusClip). The similar-artist portraits sit
+            // flush on its left edge and grow on focus, so the first one's ring
+            // was cut there; nothing scrolls sideways, so the room is a whole
+            // raise. Geometry lives here; `side` fills it.
+            FocusClip {
+                id: sideClip
 
                 x: page.sideAlone ? Theme.pageMarginValue
                                   : page.width - Theme.pageMarginValue - page.sideWidth
@@ -520,11 +524,19 @@ FocusScope {
                 width: page.sideAlone ? Math.max(0, page.width - Theme.pageMarginValue * 2)
                                       : page.sideWidth
                 height: page.narrow ? sideColumn.implicitHeight
-                                    : Math.max(0, pageScroll.height - side.y)
+                                    : Math.max(0, pageScroll.height - sideClip.y)
                 visible: page.mine && (page.hasTopTracks || page.hasSimilar)
+                leftOutset: Theme.focusHeadroom(Theme.cratePortraitSize)
+                rightOutset: Theme.focusHeadroom(Theme.cratePortraitSize)
+            }
+
+            Flickable {
+                id: side
+
+                parent: sideClip.contentItem
+                anchors.fill: parent
                 contentHeight: sideColumn.implicitHeight + Theme.spacingLoose
                 interactive: !page.narrow
-                clip: true
                 boundsBehavior: Flickable.StopAtBounds
 
                 onVisibleChanged: Qt.callLater(page.recoverIfStranded)
@@ -750,11 +762,11 @@ FocusScope {
                 // width. The tab bar is the one child that needs the gutter
                 // drawn by hand, and it sets its own leftMargin below.
                 x: 0
-                y: page.narrow && side.visible ? side.y + side.height + Theme.spacingLoose
+                y: page.narrow && sideClip.visible ? sideClip.y + sideClip.height + Theme.spacingLoose
                                                : hero.y + hero.height + Theme.spacingValue
-                width: page.narrow || !side.visible
+                width: page.narrow || !sideClip.visible
                        ? page.width
-                       : Math.max(0, side.x - Theme.spacingLoose * 2)
+                       : Math.max(0, sideClip.x - Theme.spacingLoose * 2)
                 // Narrow, the grid gets its whole content and the page scrolls.
                 // Wide, it gets the rest of the viewport and scrolls itself.
                 height: page.narrow

@@ -650,8 +650,11 @@ FocusScope {
     }
 
     // ── Section content ────────────────────────────────────────────────────
-    Flickable {
-        id: contentFlick
+    // The pane's clip (FocusClip). Buttons and selects sit flush on the pane's
+    // edges and grow on focus, so it keeps room for a raised control's ring:
+    // generous sideways, where nothing scrolls, and a raised row vertically.
+    FocusClip {
+        id: contentFlickClip
 
         anchors.top: sectionList.top
         anchors.left: sectionList.right
@@ -660,10 +663,20 @@ FocusScope {
         anchors.rightMargin: Theme.pageMarginValue
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Theme.pageMarginValue
+        leftOutset: Theme.spacingValue
+        rightOutset: Theme.spacingValue
+        topOutset: Theme.focusHeadroom(Theme.controlHeightLarge)
+        bottomOutset: Theme.focusHeadroom(Theme.controlHeightLarge)
+    }
+
+    Flickable {
+        id: contentFlick
+
+        parent: contentFlickClip.contentItem
+        anchors.fill: parent
 
         contentWidth: width
         contentHeight: contentColumn.implicitHeight
-        clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ScrollBar.vertical: StrmScrollBar {}

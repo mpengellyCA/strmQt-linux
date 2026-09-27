@@ -242,17 +242,25 @@ FocusScope {
             KeyNavigation.down: browseList
         }
 
-        // Never every playlist at once: this is a view over an index array, so
-        // 1,564 names cost 1,564 small JS records and a dozen live delegates.
-        ListView {
-            id: browseList
+        // The list's clip, with room for a row's ring, which sits a pixel
+        // outside the row and was cut off the first row and down the left.
+        FocusClip {
+            id: browseListClip
 
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: filterField.bottom
             anchors.bottom: parent.bottom
             anchors.topMargin: Theme.spacingTight
-            clip: true
+        }
+
+        // Never every playlist at once: this is a view over an index array, so
+        // 1,564 names cost 1,564 small JS records and a dozen live delegates.
+        ListView {
+            id: browseList
+
+            parent: browseListClip.contentItem
+            anchors.fill: parent
             // The page's way in, and only while there is something to land on:
             // an empty view cannot hold focus and would hand the page back with
             // nothing focused.
