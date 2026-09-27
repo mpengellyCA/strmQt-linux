@@ -23,7 +23,13 @@ namespace {
 template<class T>
 QFuture<Result<T>> ready(Result<T> result)
 {
+    // makeReadyValueFuture is Qt 6.6; makeReadyFuture (6.0) is deprecated from
+    // 6.6 on, so each Qt gets the spelling it does not warn about (spec §4.2).
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     return QtFuture::makeReadyValueFuture(std::move(result));
+#else
+    return QtFuture::makeReadyFuture(std::move(result));
+#endif
 }
 
 template<class T>

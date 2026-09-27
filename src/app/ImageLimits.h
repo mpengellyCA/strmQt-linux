@@ -1,8 +1,8 @@
 #pragma once
 
 #include <QSize>
+#include <QtGlobal>
 #include <QtMath>
-#include <QtTypes>
 
 namespace strmqt::imagelimits {
 

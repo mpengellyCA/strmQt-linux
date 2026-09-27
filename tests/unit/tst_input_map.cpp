@@ -38,6 +38,7 @@ private slots:
     void triggerSkipsGoneAndMalformedHandlers();
     void triggerRefusesUnknownActions();
     void triggerReachesAQmlHandler();
+    void triggerReachesAnUntypedQmlHandler();
     void navigationActionsAreTheFocusRelativeOnes();
     void aRemotesHomeButtonGoesHome();
     void aRemotesTransportKeysResolve();
@@ -726,6 +727,36 @@ void InputMapTest::triggerReachesAQmlHandler()
     QVERIFY(m_map->trigger(QStringLiteral("app.fullscreen"), true));
     QCOMPARE(handler->property("last").toString(), QStringLiteral("app.fullscreen"));
     QCOMPARE(handler->property("repeat").toBool(), true);
+    QVERIFY(!m_map->trigger(QStringLiteral("app.settings")));
+}
+
+// A QML handler without type annotations presents (QVariant, QVariant) ->
+// QVariant to the meta-object on every Qt, and before Qt 6.7 an annotated one
+// may too. trigger() must shape the call from what the meta-object reports
+// (spec 2026-09-27 §4.2), not assume (QString, bool) -> bool.
+void InputMapTest::triggerReachesAnUntypedQmlHandler()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQml
+        QtObject {
+            property string last: ""
+            function invokeAction(actionId, autoRepeat) {
+                if (actionId !== "app.fullscreen")
+                    return false
+                last = actionId
+                return autoRepeat === true
+            }
+        })", QUrl());
+    std::unique_ptr<QObject> handler(component.create());
+    QVERIFY2(handler, qPrintable(component.errorString()));
+    m_map->registerHandler(handler.get());
+
+    QVERIFY(m_map->trigger(QStringLiteral("app.fullscreen"), true));
+    QCOMPARE(handler->property("last").toString(), QStringLiteral("app.fullscreen"));
+    // The handler's own answer comes back, not merely "the call succeeded".
+    QVERIFY(!m_map->trigger(QStringLiteral("app.fullscreen"), false));
     QVERIFY(!m_map->trigger(QStringLiteral("app.settings")));
 }
 

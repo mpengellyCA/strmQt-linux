@@ -192,7 +192,14 @@ void EmbyWebSocket::openSocket()
     m_socket->setMaxAllowedIncomingMessageSize(kMaxIncomingMessageBytes);
     connect(m_socket, &QWebSocket::connected, this, &EmbyWebSocket::onConnected);
     connect(m_socket, &QWebSocket::disconnected, this, &EmbyWebSocket::onDisconnected);
+    // QWebSocket::errorOccurred is Qt 6.5; 6.4 names the same signal
+    // error(QAbstractSocket::SocketError), overloaded with the error() getter.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(m_socket, &QWebSocket::errorOccurred, this, &EmbyWebSocket::onError);
+#else
+    connect(m_socket, qOverload<QAbstractSocket::SocketError>(&QWebSocket::error), this,
+            &EmbyWebSocket::onError);
+#endif
     connect(m_socket, &QWebSocket::textMessageReceived, this,
             &EmbyWebSocket::handleTextMessage);
     connect(m_socket, &QWebSocket::pong, this, [this](quint64, const QByteArray &) {

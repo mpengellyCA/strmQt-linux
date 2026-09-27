@@ -46,3 +46,51 @@ could hide further errors until it is fixed.
 Host gate H (Qt 6.11): no build warnings; ctest `100% tests passed out of 74`;
 qmllint `baseline matches (1336 warnings)`; self-test 15/15, `selftest.sh: OK`;
 `strings -el /tmp/w03a/strmqt | grep -m1 'qt/qml/StrmQt'` prints `/qt/qml/StrmQt/ui/Main.qml`.
+
+## Task 4: the C++ on Qt 6.4
+
+Host (Qt 6.11.2), before the fix, the new untyped-handler test fails as predicted:
+
+```
+QMetaObject::invokeMethod: No such method QObject_QML_0::invokeAction(QString,bool)
+Candidates are:
+    invokeAction(QVariant,QVariant)
+FAIL!  : InputMapTest::triggerReachesAnUntypedQmlHandler() 'm_map->trigger(QStringLiteral("app.fullscreen"), true)' returned FALSE.
+```
+
+Four C++ sites ported: `InputMap::trigger` (signature-shaped call, `qReturnArg`
+6.5+ / `QArgument` below), `MusicRepository.cpp` `ready()` (`makeReadyFuture`
+below 6.6), `EmbyWebSocket.cpp` (`errorOccurred` 6.5+ /
+`qOverload<QAbstractSocket::SocketError>(&QWebSocket::error)` below), and
+`ImageLimits.h` (`<QtTypes>` -> `<QtGlobal>`). Fixing `<QtTypes>` unmasked no
+further C++ errors.
+
+ubuntu-24.04 (Qt 6.4.2, GCC 13.2), plan's Step 6 command: no `error:` or
+`FAILED` lines, `[build exit 0]`. A clean rebuild logs 0 `warning:` lines and
+links `/build/strmqt`. No qmlcachegen failure either: the QML effect and font
+features sites (Tasks 5, 6) do not fail the 6.4 build; they are runtime
+matters. debian-12 (Qt 6.4.2, GCC 12): same, `[build exit 0]`, 0
+`error:|FAILED|warning:` lines.
+
+Tests on 6.4.2 as the plan runs them: `tst_music_repository` `Totals: 31
+passed, 0 failed`; `tst_emby_websocket` `Totals: 13 passed, 0 failed` (both
+images). `tst_input_map` `Totals: 28 passed, 2 failed` on both images:
+`triggerReachesAQmlHandler` and `triggerReachesAnUntypedQmlHandler` fail at
+`component.create()` with `module "QtQml.Models" is not installed`. `import
+QtQml` pulls `QtQml.Models` on 6.4, and `deps.sh` does not install
+`qml6-module-qtqml-models`. With that package installed in a throwaway
+container (`apt-get install qml6-module-qtqml-models`, image unchanged),
+ubuntu-24.04 gives `tst_input_map` `Totals: 30 passed, 0 failed`, including
+`triggerReachesAQmlHandler`, `triggerReachesAnUntypedQmlHandler`,
+`triggerAsksTheNewestLiveHandler` and `triggerSkipsGoneAndMalformedHandlers`.
+That closes the study's risk 3, pending the package being added to `deps.sh`.
+
+Signatures the Qt 6.4.2 meta-object reports for a QML `invokeAction`:
+
+```
+bool invokeAction(QString,bool)          # function invokeAction(actionId: string, autoRepeat: bool): bool
+QVariant invokeAction(QVariant,QVariant) # function invokeAction(actionId, autoRepeat)
+```
+
+Host gate H (NN=04, Qt 6.11.2): no build warnings; ctest `100% tests passed out
+of 74`; qmllint `baseline matches (1336 warnings)`; `selftest.sh: OK`.

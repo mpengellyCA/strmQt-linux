@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 
+#include <QMetaMethod>
 #include <QVariantMap>
 
 #include <algorithm>
@@ -1048,6 +1049,64 @@ void InputMap::unregisterHandler(QObject *handler)
     m_handlers.removeAll(handler);
 }
 
+namespace {
+
+// One typed invoke, spelled for the Qt at hand: the variadic qReturnArg form
+// is Qt 6.5+, and QArgument/QReturnArgument (what Q_ARG expands to) are what
+// 6.4 has.
+template<class R, class A, class B>
+bool invokeShaped(const QMetaMethod &method, QObject *target, R &result, const A &a, const B &b)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return method.invoke(target, Qt::DirectConnection, qReturnArg(result), a, b);
+#else
+    return method.invoke(target, Qt::DirectConnection,
+                         QReturnArgument<R>(QMetaType::fromType<R>().name(), result),
+                         QArgument<A>(QMetaType::fromType<A>().name(), a),
+                         QArgument<B>(QMetaType::fromType<B>().name(), b));
+#endif
+}
+
+// Asks one handler to run an action. A handler is C++ (Q_INVOKABLE bool
+// invokeAction(const QString &, bool)) or QML (`function invokeAction(actionId:
+// string, autoRepeat: bool): bool`). A QML function reaches the meta-object as
+// (QString, bool) -> bool, as (QVariant, QVariant) -> QVariant, or as a mix,
+// depending on its annotations and on the Qt version. So the call is shaped by
+// what the meta-object reports rather than assumed (spec 2026-09-27 §4.2).
+// False when there is no two-argument invokeAction or the call fails.
+bool callInvokeAction(QObject *handler, const QString &actionId, bool autoRepeat, bool *handled)
+{
+    const QMetaObject *meta = handler->metaObject();
+    for (int i = meta->methodCount() - 1; i >= 0; --i) {
+        const QMetaMethod method = meta->method(i);
+        if (method.name() != QByteArrayLiteral("invokeAction") || method.parameterCount() != 2)
+            continue;
+        const bool typedId = method.parameterMetaType(0) == QMetaType::fromType<QString>();
+        const bool typedRepeat = method.parameterMetaType(1) == QMetaType::fromType<bool>();
+        const bool typedResult = method.returnMetaType() == QMetaType::fromType<bool>();
+        const QVariant idArg = actionId;
+        const QVariant repeatArg = autoRepeat;
+
+        auto withResult = [&](auto &result) {
+            auto withId = [&](const auto &id) {
+                return typedRepeat ? invokeShaped(method, handler, result, id, autoRepeat)
+                                   : invokeShaped(method, handler, result, id, repeatArg);
+            };
+            return typedId ? withId(actionId) : withId(idArg);
+        };
+
+        bool boolResult = false;
+        QVariant variantResult;
+        if (!(typedResult ? withResult(boolResult) : withResult(variantResult)))
+            return false;
+        *handled = typedResult ? boolResult : variantResult.toBool();
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
 bool InputMap::trigger(const QString &actionId, bool autoRepeat)
 {
     if (!hasAction(actionId)) {
@@ -1062,8 +1121,7 @@ bool InputMap::trigger(const QString &actionId, bool autoRepeat)
         if (!handler)
             continue;
         bool handled = false;
-        if (!QMetaObject::invokeMethod(handler, "invokeAction", Qt::DirectConnection,
-                                       qReturnArg(handled), actionId, autoRepeat)) {
+        if (!callInvokeAction(handler, actionId, autoRepeat, &handled)) {
             qCWarning(logApp) << "input map: handler" << handler
                               << "has no invokeAction(QString, bool)";
             continue;
