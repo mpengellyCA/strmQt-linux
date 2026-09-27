@@ -42,6 +42,7 @@
 #include "controllers/music/ArtistController.h"
 #include "controllers/music/MusicBrowseController.h"
 #include "controllers/music/MusicHomeController.h"
+#include "controllers/music/NowPlayingMusicController.h"
 #include "music/MusicPlayback.h"
 #include "music/MusicRepository.h"
 #include "music/MusicUserDataRelay.h"
@@ -151,6 +152,12 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_musicRelay = new music::MusicUserDataRelay(m_musicRepository, this);
     m_musicRelay->bind(m_actions, m_live);
     m_musicPlayback = new music::MusicPlayback(m_musicRepository, m_actions, this);
+    // What the music player and the docked audio bar show (Crate spec §7).
+    // bind() hands it the player and the favourite source MusicPlayback keeps
+    // to itself; its album track list takes user-data patches like any page's.
+    m_nowPlayingMusic = new music::NowPlayingMusicController(m_musicRepository, m_musicPlayback, this);
+    m_nowPlayingMusic->bind(m_player, m_actions);
+    m_musicRelay->addModel(m_nowPlayingMusic->trackModel());
     // A canonical album play (▸ on an album card anywhere) is a semantic verb
     // ItemActions owns, but the ordered expansion is the music repository's
     // album query. The signal carries only an id, so the queue falls back to

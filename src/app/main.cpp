@@ -5,6 +5,7 @@
 #include "controllers/music/ArtistController.h"
 #include "controllers/music/MusicBrowseController.h"
 #include "controllers/music/MusicHomeController.h"
+#include "controllers/music/NowPlayingMusicController.h"
 #include "controllers/RemoteControlService.h"
 #include "CoverTintService.h"
 #include "EmbyImageProvider.h"
@@ -65,6 +66,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("PlaylistCtl"), app.playlists());
     // Every music play verb (Crate spec §3.6): album, shuffle, radio, stations.
     engine.rootContext()->setContextProperty(QStringLiteral("MusicPlay"), app.musicPlayback());
+    // The music player's display values: record state, readout, album, lyrics.
+    engine.rootContext()->setContextProperty(QStringLiteral("NowPlayingMusicCtl"), app.nowPlayingMusic());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicHomeCtl"), app.musicHome());
     engine.rootContext()->setContextProperty(QStringLiteral("MusicBrowseCtl"), app.musicBrowse());
     engine.rootContext()->setContextProperty(QStringLiteral("AlbumCtl"), app.albumController());
@@ -115,6 +118,7 @@ int main(int argc, char *argv[])
         };
         requireContextObject("AlbumCtl");
         requireContextObject("ArtistCtl");
+        requireContextObject("NowPlayingMusicCtl");
 
         // Qt::UniqueConnection answers "is this exact connection already there?"
         // without disturbing it: connect() returns an invalid handle when it is.

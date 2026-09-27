@@ -39,6 +39,7 @@ class ArtistController;
 class MusicPlayback;
 class MusicRepository;
 class MusicUserDataRelay;
+class NowPlayingMusicController;
 } // namespace music
 
 // Owns the application object graph (settings, secrets, Emby client, controllers).
@@ -74,6 +75,7 @@ public:
     music::MusicRepository *musicRepository() const { return m_musicRepository; }
     music::MusicUserDataRelay *musicRelay() const { return m_musicRelay; }
     music::MusicPlayback *musicPlayback() const { return m_musicPlayback; }
+    music::NowPlayingMusicController *nowPlayingMusic() const { return m_nowPlayingMusic; }
     music::MusicHomeController *musicHome() const { return m_musicHome; }
     music::MusicBrowseController *musicBrowse() const { return m_musicBrowse; }
     music::AlbumController *albumController() const { return m_albumCtl; }
@@ -126,6 +128,7 @@ private:
     music::MusicRepository *m_musicRepository = nullptr;
     music::MusicUserDataRelay *m_musicRelay = nullptr;
     music::MusicPlayback *m_musicPlayback = nullptr;
+    music::NowPlayingMusicController *m_nowPlayingMusic = nullptr;
     music::MusicHomeController *m_musicHome = nullptr;
     music::MusicBrowseController *m_musicBrowse = nullptr;
     music::AlbumController *m_albumCtl = nullptr;
