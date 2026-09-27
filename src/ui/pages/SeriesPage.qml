@@ -1182,8 +1182,8 @@ FocusScope {
     }
 
     EmptyState {
-        anchors.horizontalCenter: episodeGrid.horizontalCenter
-        anchors.verticalCenter: episodeGrid.verticalCenter
+        anchors.horizontalCenter: episodeGridClip.horizontalCenter
+        anchors.verticalCenter: episodeGridClip.verticalCenter
         visible: !SeriesCtl.loading && episodeGrid.count === 0
         iconName: "list"
         headline: qsTr("No episodes here")
