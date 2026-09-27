@@ -805,6 +805,21 @@ FocusScope {
                         }
                     }
 
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Animate record")
+                        hint: page.prefsAvailable
+                              ? qsTr("The record spins while music plays. Off shows it still, out of its sleeve.")
+                              : page.unavailableHint
+
+                        StrmSwitch {
+                            enabled: page.prefsAvailable
+                            checked: page.prefsAvailable && Prefs.animateRecord
+                            // Owner-controlled, like every switch on this page.
+                            onToggled: Prefs.animateRecord = !Prefs.animateRecord
+                        }
+                    }
+
                     // Backdrop art (ARCHITECTURE.md) lands here — an on/off and an
                     // opacity — as soon as strmqt::Settings carries the two
                     // preferences behind it. Faking it with a QML-only property

@@ -26,6 +26,7 @@ const auto kToneMappingKey = QStringLiteral("playback/toneMapping");
 const auto kDensityKey = QStringLiteral("appearance/density");
 const auto kThemeAccentKey = QStringLiteral("appearance/accent");
 const auto kReducedMotionKey = QStringLiteral("appearance/reducedMotion");
+const auto kAnimateRecordKey = QStringLiteral("appearance/animateRecord");
 const auto kVolumeKey = QStringLiteral("playback/volume");
 const auto kMutedKey = QStringLiteral("playback/muted");
 const auto kReplayGainKey = QStringLiteral("playback/replayGain");
@@ -404,6 +405,19 @@ void Settings::setReducedMotion(bool reduced)
         return;
     m_store.setValue(kReducedMotionKey, reduced);
     emit reducedMotionChanged();
+}
+
+bool Settings::animateRecord() const
+{
+    return m_store.value(kAnimateRecordKey, true).toBool();
+}
+
+void Settings::setAnimateRecord(bool animate)
+{
+    if (animate == animateRecord())
+        return;
+    m_store.setValue(kAnimateRecordKey, animate);
+    emit animateRecordChanged();
 }
 
 int Settings::volume() const

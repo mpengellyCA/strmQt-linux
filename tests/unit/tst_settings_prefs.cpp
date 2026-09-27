@@ -20,6 +20,7 @@ private slots:
     void densityDefaultsAndValidation();
     void themeAccentDefaultsAndValidation();
     void reducedMotionDefaultsAndPersists();
+    void animateRecordDefaultsOnAndPersists();
     void volumeClampsAndPersists();
     void replayGainDefaultsOffAndValidates();
     void mutePersists();
@@ -98,6 +99,20 @@ void SettingsPrefsTest::reducedMotionDefaultsAndPersists()
     settings.setReducedMotion(true);
     QCOMPARE(spy.count(), 1);
     QVERIFY(Settings(ini).reducedMotion());
+}
+
+void SettingsPrefsTest::animateRecordDefaultsOnAndPersists()
+{
+    QTemporaryDir dir;
+    const QString ini = dir.filePath(QStringLiteral("record.ini"));
+    Settings settings(ini);
+    // Crate spec §7.2: the record spins by default; off gives a static record.
+    QVERIFY(settings.animateRecord());
+    QSignalSpy spy(&settings, &Settings::animateRecordChanged);
+    settings.setAnimateRecord(false);
+    settings.setAnimateRecord(false);
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!Settings(ini).animateRecord());
 }
 
 void SettingsPrefsTest::volumeClampsAndPersists()

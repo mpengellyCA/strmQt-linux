@@ -30,6 +30,8 @@ class Settings : public QObject
         QString themeAccent READ themeAccent WRITE setThemeAccent NOTIFY themeAccentChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY
                    reducedMotionChanged)
+    Q_PROPERTY(bool animateRecord READ animateRecord WRITE setAnimateRecord NOTIFY
+                   animateRecordChanged)
     Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
     Q_PROPERTY(bool liveUpdatesEnabled READ liveUpdatesEnabled WRITE setLiveUpdatesEnabled NOTIFY
@@ -242,6 +244,11 @@ public:
     bool reducedMotion() const;
     void setReducedMotion(bool reduced);
 
+    // The spinning record on the music player (Crate spec §7.2). Off draws the
+    // record still and slid out; Theme.reducedMotion also stills it.
+    bool animateRecord() const;
+    void setAnimateRecord(bool animate);
+
     // ── Playback volume (ARCHITECTURE.md) ────────────────────────────────────
     // 0–130, matching PlayerBackend::setVolume()'s contract; values outside the
     // range are clamped on the way in and on the way out.
@@ -291,6 +298,7 @@ signals:
     void densityModeChanged();
     void themeAccentChanged();
     void reducedMotionChanged();
+    void animateRecordChanged();
     void volumeChanged();
     void mutedChanged();
     void liveUpdatesEnabledChanged();
