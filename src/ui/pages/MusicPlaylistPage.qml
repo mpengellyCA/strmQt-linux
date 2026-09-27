@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Templates as T
 import StrmQt
 
 // MusicPlaylistPage — an audio playlist as a Crate record (spec §6.3).
@@ -734,7 +735,7 @@ FocusScope {
 
         property string seed: ""
 
-        parent: Overlay.overlay
+        parent: T.Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(Theme.scale(460), page.width - Theme.spacingLoose * 2)
         visible: false
@@ -806,7 +807,7 @@ FocusScope {
     StrmPanel {
         id: confirmDelete
 
-        parent: Overlay.overlay
+        parent: T.Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(Theme.scale(440), page.width - Theme.spacingLoose * 2)
         visible: false

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Templates as T
 import StrmQt
 
 // Playlists (ARCHITECTURE.md): browse them, open one, play it, add to it, remove
@@ -1149,7 +1150,7 @@ FocusScope {
 
         property string seed: ""
 
-        parent: Overlay.overlay
+        parent: T.Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(Theme.scale(460), page.width - Theme.spacingLoose * 2)
         visible: false
@@ -1212,7 +1213,7 @@ FocusScope {
     StrmPanel {
         id: confirmDelete
 
-        parent: Overlay.overlay
+        parent: T.Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(Theme.scale(440), page.width - Theme.spacingLoose * 2)
         visible: false
