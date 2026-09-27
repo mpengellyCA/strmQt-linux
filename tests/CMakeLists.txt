@@ -159,6 +159,13 @@ target_include_directories(tst_remote_ok_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_remote_ok_key PRIVATE Qt6::Quick)
 set_tests_properties(tst_remote_ok_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# A TV remote's Back (Qt::Key_Back) reaching every Esc handler as Esc
+# (src/input/RemoteBackKeyFilter.h), following nav.back's bindings.
+strmqt_add_test(tst_remote_back_key unit/tst_remote_back_key.cpp)
+target_include_directories(tst_remote_back_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_remote_back_key PRIVATE Qt6::Quick)
+set_tests_properties(tst_remote_back_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # NavigationKeyHandler posts to a window, so it is QtGui and lives in the
 # executable; it is compiled straight into the test with the focus keeper that
 # lets its keys land while the app is in the background.

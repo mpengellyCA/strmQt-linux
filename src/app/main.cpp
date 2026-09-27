@@ -22,6 +22,7 @@
 #include "remote/WebRemoteController.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
+#include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
 
 #include <QDebug>
@@ -95,10 +96,12 @@ int main(int argc, char *argv[])
     // The remote and the gamepad drive this window while another one is
     // active; it has to keep its focused item for their keys to land.
     const QList<QObject *> roots = engine.rootObjects();
-    // A Bluetooth remote's OK button arrives as Select or XF86OK, not Return.
+    // A Bluetooth remote's OK button arrives as Select or XF86OK, not Return,
+    // and its Back as Qt::Key_Back, which only the page history listened for.
     if (auto *window = qobject_cast<QWindow *>(roots.value(0))) {
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
+        window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
     }
 
     // Named wiring guard (P4-R11). No test constructs strmqt::Application, so

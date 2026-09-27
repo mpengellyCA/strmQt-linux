@@ -288,12 +288,16 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("Return"), QStringLiteral("Enter"), QStringLiteral("Space")},
          QObject::tr("A")},
-        // Main.qml Keys.onEscapePressed / Keys.onBackPressed.
+        // Main.qml's StackView Keys.onPressed and every Keys.onEscapePressed.
+        // "Back" is a TV remote's Back button (KEY_BACK → XF86Back →
+        // Qt::Key_Back). No page answers Key_Back itself: RemoteBackKeyFilter
+        // turns it into the primary binding (Esc) at the window, so it closes
+        // the menus, panels and dialogs Esc does, not just the page history.
         {QStringLiteral("nav.back"),
          QObject::tr("Back"),
          QStringLiteral("Navigation"),
          QString::fromLatin1(InputMap::kContextBrowse),
-         {QStringLiteral("Esc"), QStringLiteral("Backspace")},
+         {QStringLiteral("Esc"), QStringLiteral("Backspace"), QStringLiteral("Back")},
          QObject::tr("B")},
 
         // Library — Main.qml Shortcut { sequence: "/" }.

@@ -71,8 +71,11 @@ void InputMapTest::defaultsMatchTodaysBindings()
     QCOMPARE(m_map->bindings(QStringLiteral("app.settings")), QStringList{QStringLiteral("F2")});
     QCOMPARE(m_map->bindings(QStringLiteral("app.fullscreen")),
              (QStringList{QStringLiteral("F11"), QStringLiteral("F")}));
+    // A TV remote's Back button (Qt::Key_Back) sits beside Esc, and leaves
+    // Esc primary: it is what the pad's B and RemoteBackKeyFilter deliver.
     QCOMPARE(m_map->bindings(QStringLiteral("nav.back")),
-             (QStringList{QStringLiteral("Esc"), QStringLiteral("Backspace")}));
+             (QStringList{QStringLiteral("Esc"), QStringLiteral("Backspace"),
+                          QStringLiteral("Back")}));
 
     // PlayerPage.qml
     QCOMPARE(m_map->bindings(QStringLiteral("player.togglePause")),
