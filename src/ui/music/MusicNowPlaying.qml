@@ -241,6 +241,10 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(shuffleButton)
 
+                    // First in its row: Left stays here rather than reaching
+                    // the page, where it would seek.
+                    Keys.onLeftPressed: event => event.accepted = true
+
                     KeyNavigation.right: prevButton
                     KeyNavigation.down: scrubber
                 }
