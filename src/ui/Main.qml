@@ -1292,6 +1292,18 @@ ApplicationWindow {
         onActivated: root.openSettings()
     }
 
+    // A TV remote's Home button (Qt::Key_HomePage). The rail's Home entry,
+    // from anywhere a page or the player is on top — goHome() already knows
+    // to take the player down first. Not while an overlay owns the keyboard:
+    // Home is not how a dialog is answered.
+    MappedShortcut {
+        actionId: "app.home"
+        fallback: ["Home Page"]
+        active: root.interactionContext === "browse" || root.interactionContext === "music"
+                || root.interactionContext === "player"
+        onActivated: root.goHome()
+    }
+
     MappedShortcut {
         actionId: "app.fullscreen"
         fallback: ["F11", "F"]

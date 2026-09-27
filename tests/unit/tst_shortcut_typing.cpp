@@ -55,6 +55,7 @@ Item {
 
     property int shortcutFired: 0
     property int chordFired: 0
+    property int homeFired: 0
     property int plainItemSpaces: 0
     property int claimerSpaces: 0
 
@@ -73,6 +74,7 @@ Item {
         area.text = ""
         root.shortcutFired = 0
         root.chordFired = 0
+        root.homeFired = 0
         root.plainItemSpaces = 0
         root.claimerSpaces = 0
     }
@@ -115,6 +117,12 @@ Item {
         sequence: "Ctrl+K"
         onActivated: root.chordFired = root.chordFired + 1
     }
+
+    // A TV remote's Home, in the spelling InputMap hands app.home to QML.
+    Shortcut {
+        sequence: "Home Page"
+        onActivated: root.homeFired = root.homeFired + 1
+    }
 }
 )QML";
 
@@ -132,6 +140,7 @@ private slots:
     void aFocusedTextItemKeepsATypableKey();
     void aNonTextFocusItemLosesItToTheShortcut();
     void shortcutOverrideGetsTheKeyBack();
+    void aRemotesHomeKeyReachesItsShortcut();
 
 private:
     QTemporaryDir m_dir;
@@ -211,6 +220,22 @@ void TestShortcutTyping::shortcutOverrideGetsTheKeyBack()
     QTest::keyClick(&m_view, Qt::Key_Space);
     QTRY_COMPARE(m_root->property("claimerSpaces").toInt(), 1);
     QCOMPARE(m_root->property("shortcutFired").toInt(), 0);
+}
+
+// "Home Page" parses to Qt::Key_HomePage, and it is not a key a text field
+// types, so the remote's Home works from inside the search box too.
+void TestShortcutTyping::aRemotesHomeKeyReachesItsShortcut()
+{
+    QMetaObject::invokeMethod(m_root, "focusPlainItem");
+    QTest::keyClick(&m_view, Qt::Key_HomePage);
+    QTRY_COMPARE(m_root->property("homeFired").toInt(), 1);
+
+    QMetaObject::invokeMethod(m_root, "focusField");
+    QTest::keyClick(&m_view, Qt::Key_HomePage);
+    QTRY_COMPARE(m_root->property("homeFired").toInt(), 2);
+    // Keyboard Home is a different key and fires nothing.
+    QTest::keyClick(&m_view, Qt::Key_Home);
+    QCOMPARE(m_root->property("homeFired").toInt(), 2);
 }
 
 QTEST_MAIN(TestShortcutTyping)

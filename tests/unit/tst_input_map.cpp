@@ -39,6 +39,7 @@ private slots:
     void triggerRefusesUnknownActions();
     void triggerReachesAQmlHandler();
     void navigationActionsAreTheFocusRelativeOnes();
+    void aRemotesHomeButtonGoesHome();
 
 private:
     QString ini() const { return m_dir->filePath(QStringLiteral("input.ini")); }
@@ -736,6 +737,23 @@ void InputMapTest::navigationActionsAreTheFocusRelativeOnes()
     for (const char *id : {"nav.nextTab", "nav.previousLetter", "app.fullscreen",
                            "player.stop", "music.playPause"})
         QVERIFY2(!InputMap::isNavigationAction(QString::fromLatin1(id)), id);
+}
+
+// A TV remote's Home sends KEY_HOMEPAGE, which Qt names Qt::Key_HomePage and
+// QKeySequence spells "Home Page". Keyboard Home keeps its list meaning.
+void InputMapTest::aRemotesHomeButtonGoesHome()
+{
+    QCOMPARE(m_map->bindings(QStringLiteral("app.home")), QStringList{QStringLiteral("Home Page")});
+    QCOMPARE(m_map->context(QStringLiteral("app.home")), QStringLiteral("global"));
+    QCOMPARE(m_map->keyFor(QStringLiteral("app.home")), int(Qt::Key_HomePage));
+    QCOMPARE(m_map->normalizeSequence(QStringLiteral("home page")), QStringLiteral("Home Page"));
+    QCOMPARE(m_map->normalizeSequence(QStringLiteral("HomePage")), QStringLiteral("Home Page"));
+    QCOMPARE(m_map->sequenceForKey(Qt::Key_HomePage), QStringLiteral("Home Page"));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Home Page")));
+    for (const char *context : {"browse", "music", "player"})
+        QCOMPARE(m_map->actionForKey(Qt::Key_HomePage, 0, QString::fromLatin1(context)),
+                 QStringLiteral("app.home"));
+    QVERIFY(m_map->actionForKey(Qt::Key_Home).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)

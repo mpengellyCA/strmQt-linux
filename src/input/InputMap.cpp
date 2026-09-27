@@ -62,6 +62,11 @@ const KeyName kNamedKeys[] = {
     // here so nav.contextMenu round-trips through the remap UI like any other
     // binding; QKeySequence::fromString() spells it the same way.
     {"Menu", Qt::Key_Menu},
+    // A TV remote's Home button: KEY_HOMEPAGE → XF86HomePage. Spelled with the
+    // space because that is QKeySequence's name for Qt::Key_HomePage, measured
+    // on Qt 6.11; keyboard Home (Qt::Key_Home) is the entry above and stays the
+    // list's first-item key.
+    {"Home Page", Qt::Key_HomePage},
 };
 
 // Aliases accepted on input but never emitted (canonical spelling wins).
@@ -69,7 +74,7 @@ const KeyName kKeyAliases[] = {
     {"Escape", Qt::Key_Escape},  {"Insert", Qt::Key_Insert},     {"Delete", Qt::Key_Delete},
     {"PageUp", Qt::Key_PageUp},  {"PageDown", Qt::Key_PageDown}, {"PgDn", Qt::Key_PageDown},
     {"Plus", Qt::Key_Plus},      {"Minus", Qt::Key_Minus},       {"Slash", Qt::Key_Slash},
-    {"Spacebar", Qt::Key_Space},
+    {"Spacebar", Qt::Key_Space},  {"HomePage", Qt::Key_HomePage},
 };
 
 struct ParsedSequence
@@ -367,6 +372,16 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextGlobal),
          {QStringLiteral("M")},
          QObject::tr("Menu")},
+        // A remote's Home button. Global, because it is also the way out of
+        // the player to Home — exactly what the rail's Home entry does
+        // (Main.qml goHome()). Keyboard Home is not bound: in a list it means
+        // "first item", and nothing here should take that away.
+        {QStringLiteral("app.home"),
+         QObject::tr("Go to Home"),
+         QStringLiteral("Application"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Home Page")},
+         QString()},
         {QStringLiteral("library.search"),
          QObject::tr("Search"),
          QStringLiteral("Library"),
