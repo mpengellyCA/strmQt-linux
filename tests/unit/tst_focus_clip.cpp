@@ -172,8 +172,10 @@ Item {
         cardComponent: Component { Bin {} }
     }
 
-    // The same bins declared square, as the page used to: the tile is taller
-    // than its cell, so the ring overruns the room the grid left for it.
+    // The same bins in a cell declared shorter than the tile, as the page's
+    // square declaration used to be: the ring overruns the room the grid left
+    // for it. The page's own shortfall was a couple of pixels, which rounds
+    // differently between hosts, so the probe makes it unmistakable.
     StrmGrid {
         id: squareBins
         objectName: "squareBins"
@@ -183,7 +185,7 @@ Item {
         height: 560
         gridModel: rows
         customCardWidth: Theme.crateSleeveSize
-        customCardHeight: Theme.crateSleeveSize
+        customCardHeight: Theme.crateSleeveSize - Theme.scale(60)
         cardComponent: Component { Bin {} }
     }
 }
