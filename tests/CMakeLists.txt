@@ -50,6 +50,11 @@ target_link_libraries(tst_navigation_history PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_navigation_history PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_navigation_history PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+strmqt_add_test(tst_record_stage unit/tst_record_stage.cpp)
+target_link_libraries(tst_record_stage PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_record_stage PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_record_stage PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp

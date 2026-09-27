@@ -23,3 +23,6 @@ qt_target_qml_sources(strmqt
         ui/music/LinerNotes.qml
         ui/music/CrateTrackTable.qml
 )
+
+# Phase 5: the player
+qt_target_qml_sources(strmqt QML_FILES ui/music/RecordStage.qml)
