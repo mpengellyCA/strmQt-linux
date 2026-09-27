@@ -43,6 +43,11 @@ private slots:
         // Control characters stay on one line.
         const QKeyEvent ret(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
         QVERIFY(strmqt::KeyEventLogger::describe(&ret).contains(QLatin1String("text=\"\\u000d\"")));
+        // A typed character may be part of a password or PIN: nothing names it.
+        const QKeyEvent typed(QEvent::KeyPress, Qt::Key_S, Qt::ShiftModifier, 39, 0x53, 0,
+                              QStringLiteral("S"));
+        const QString redacted = strmqt::KeyEventLogger::describe(&typed);
+        QCOMPARE(redacted, QStringLiteral("press   (typed character) mods=0x2000000"));
     }
 
     void logsEveryPressAndReleaseAtTheWindow()

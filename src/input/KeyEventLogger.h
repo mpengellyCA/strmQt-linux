@@ -24,7 +24,8 @@
 //   press /  the key event as the window received it.
 //   release
 //
-// Each carries the Qt key (hex, and QKeySequence's name when it has one), the
+// Keys that type a character are logged redacted (see describe()).
+// Every other line carries the Qt key (hex, and QKeySequence's name when it has one), the
 // modifiers, the native scan code (the kernel keycode + 8 under X11/Wayland)
 // and the native keysym (the XKB name a remote's button maps to).
 namespace strmqt {
@@ -39,6 +40,17 @@ public:
         const char *kind = event->type() == QEvent::ShortcutOverride ? "check  "
                            : event->type() == QEvent::KeyPress        ? "press  "
                                                                       : "release";
+        const QString repeat = event->isAutoRepeat() ? QStringLiteral(" repeat") : QString();
+        // A key that types a character says nothing about a remote and may be
+        // part of a password or PIN, so it is logged without anything that
+        // names the character: no key, no text, no scan code or keysym.
+        for (const QChar c : event->text()) {
+            if (c.isPrint())
+                return QStringLiteral("%1 (typed character) mods=0x%2%3")
+                    .arg(QLatin1String(kind))
+                    .arg(uint(event->modifiers()), 0, 16)
+                    .arg(repeat);
+        }
         const QString name = event->key() == 0 || event->key() == Qt::Key_unknown
                                  ? QStringLiteral("(no Qt key)")
                                  : QKeySequence(event->key()).toString(QKeySequence::PortableText);
@@ -55,7 +67,7 @@ public:
             .arg(event->nativeScanCode())
             .arg(event->nativeVirtualKey(), 0, 16)
             .arg(text)
-            .arg(event->isAutoRepeat() ? QStringLiteral(" repeat") : QString());
+            .arg(repeat);
     }
 
 protected:
