@@ -283,21 +283,39 @@ FocusScope {
     }
 
     // ── The shelf ──────────────────────────────────────────────────────────
-    ListView {
-        id: list
+    // The shelf's clip (FocusClip). rowPadding already gives a raised card its
+    // headroom above and below; the gutter gives it room at the ends, except
+    // on a shelf whose gutter is smaller than a focused card's raise and ring
+    // (`gutter: 0`), where the first card's ring would be cut at the list's
+    // edge. The clip reaches past the rail by the difference instead, so the
+    // card itself still sits exactly on the rule.
+    readonly property int _ringRoomX: Math.max(0, Theme.focusHeadroom(rail.cardWidth) - rail.gutter)
+
+    FocusClip {
+        id: listClip
 
         anchors.top: headingRow.bottom
         anchors.topMargin: rail.showHeading ? Theme.spacingValue : 0
         anchors.left: parent.left
         anchors.right: parent.right
         height: rail.cardHeight + rail.rowPadding * 2
+        leftOutset: rail._ringRoomX
+        rightOutset: rail._ringRoomX
+        topOutset: 0
+        bottomOutset: 0
+    }
+
+    ListView {
+        id: list
+
+        parent: listClip.contentItem
+        anchors.fill: parent
 
         orientation: ListView.Horizontal
         spacing: Theme.spacingValue
         leftMargin: rail.gutter
         rightMargin: rail.gutter
         focus: true
-        clip: true
         model: rail.railModel
         boundsBehavior: Flickable.StopAtBounds
 
@@ -525,7 +543,7 @@ FocusScope {
     // the ListView's horizontal WheelHandler (true horizontal wheel) and then
     // past the non-vertically-flickable ListView to the page.
     MouseArea {
-        anchors.fill: list
+        anchors.fill: listClip
         z: 1
         acceptedButtons: Qt.NoButton   // presses pass straight through to the cards
         hoverEnabled: false            // so does hover
@@ -541,11 +559,13 @@ FocusScope {
 
     // ── Edge fades (ARCHITECTURE.md) ────────────────────────────────────────
     // The shelf reads as continuing into the page margin rather than being
-    // guillotined by the clip rectangle.
+    // guillotined by the clip rectangle. Each fade starts where the clip does,
+    // which on a gutterless shelf is past the list's own edge.
     Rectangle {
-        anchors.left: list.left
-        anchors.top: list.top
-        anchors.bottom: list.bottom
+        anchors.left: listClip.left
+        anchors.leftMargin: -listClip.leftOutset
+        anchors.top: listClip.top
+        anchors.bottom: listClip.bottom
         width: Theme.pageMarginValue
         z: 2
         visible: !list.atXBeginning
@@ -557,9 +577,10 @@ FocusScope {
     }
 
     Rectangle {
-        anchors.right: list.right
-        anchors.top: list.top
-        anchors.bottom: list.bottom
+        anchors.right: listClip.right
+        anchors.rightMargin: -listClip.rightOutset
+        anchors.top: listClip.top
+        anchors.bottom: listClip.bottom
         width: Theme.pageMarginValue
         z: 2
         visible: !list.atXEnd
@@ -577,9 +598,9 @@ FocusScope {
         // Mouse affordance only: the spec gives a shelf exactly one Tab stop,
         // and a hovered rail must not slip its chevrons into the Tab chain.
         activeFocusOnTab: false
-        anchors.left: list.left
+        anchors.left: listClip.left
         anchors.leftMargin: Theme.spacingTight
-        anchors.verticalCenter: list.verticalCenter
+        anchors.verticalCenter: listClip.verticalCenter
         z: 3
         iconName: "chevron-left"
         round: true
@@ -598,9 +619,9 @@ FocusScope {
         id: rightChevron
         objectName: "railChevronRight"
         activeFocusOnTab: false
-        anchors.right: list.right
+        anchors.right: listClip.right
         anchors.rightMargin: Theme.spacingTight
-        anchors.verticalCenter: list.verticalCenter
+        anchors.verticalCenter: listClip.verticalCenter
         z: 3
         iconName: "chevron-right"
         round: true
@@ -617,7 +638,7 @@ FocusScope {
 
     // ── Empty state ────────────────────────────────────────────────────────
     Text {
-        anchors.centerIn: list
+        anchors.centerIn: listClip
         visible: list.count === 0 && rail.emptyText.length > 0
         text: rail.emptyText
         color: Theme.textTertiary

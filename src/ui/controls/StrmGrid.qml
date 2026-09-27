@@ -326,14 +326,38 @@ FocusScope {
         }
     }
 
-    GridView {
-        id: view
+    // The grid's clip, with room for the top row's ring (FocusClip). A card is
+    // centred in its cell, so the room it needs past the view's edge is its
+    // focus raise and ring less the half-gap the cell already leaves; across
+    // the scroll axis nothing scrolls into the page margin, so the side room
+    // is the whole headroom. List rows keep their ring inside the cell.
+    readonly property int _ringRoomY: grid.listMode
+        ? Theme.focusRingOutset
+        : Math.max(Theme.focusRingOutset,
+                   Theme.focusHeadroom(grid.cardHeight)
+                   - Math.floor((view.cellHeight - grid.cardHeight) / 2))
+    readonly property int _ringRoomX: grid.listMode
+        ? Theme.focusRingOutset
+        : Theme.focusHeadroom(grid.cardWidth)
+
+    FocusClip {
+        id: viewClip
 
         anchors.fill: parent
         anchors.leftMargin: Theme.pageMarginValue
         anchors.rightMargin: Theme.pageMarginValue
+        leftOutset: grid._ringRoomX
+        rightOutset: grid._ringRoomX
+        topOutset: grid._ringRoomY
+        bottomOutset: grid._ringRoomY
+    }
+
+    GridView {
+        id: view
+
+        parent: viewClip.contentItem
+        anchors.fill: parent
         focus: true
-        clip: true
         model: grid.gridModel
 
         cellWidth: grid.listMode

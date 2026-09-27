@@ -899,6 +899,7 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
         // reaches outside it only shows up as "Type StrmGrid unavailable" on
         // whichever machine happens not to have the real module in reach.
         QStringLiteral("NavigationColumn.qml"),
+        QStringLiteral("FocusClip.qml"),
     };
     for (const QString &name : moduleFiles) {
         const QString sourceRoot = name == QStringLiteral("Theme.qml")
@@ -913,6 +914,7 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
     qmldir.write("module StrmQt\n"
                  "singleton Theme 1.0 Theme.qml\n"
                  "FocusRing 1.0 FocusRing.qml\n"
+                 "FocusClip 1.0 FocusClip.qml\n"
                  "StrmIcon 1.0 StrmIcon.qml\n"
                  "StrmTooltip 1.0 StrmTooltip.qml\n"
                  "StrmIconButton 1.0 StrmIconButton.qml\n"

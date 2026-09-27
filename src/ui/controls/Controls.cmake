@@ -9,6 +9,7 @@ set_source_files_properties(ui/controls/NavigationColumn.qml
 qt_target_qml_sources(strmqt QML_FILES
     ui/controls/NavigationColumn.qml
     ui/controls/FocusRing.qml
+    ui/controls/FocusClip.qml
     ui/controls/StrmIcon.qml
     ui/controls/StrmButton.qml
     ui/controls/StrmIconButton.qml
