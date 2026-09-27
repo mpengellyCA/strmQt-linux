@@ -186,9 +186,10 @@ queue holds.
 ### Skip and fast-forward
 
 Next and previous follow one rule, owned by `PlayerController::skipForward` /
-`skipBack` and shared by the remote's ⏭/⏮, the pad, the web remote and MPRIS: a
-video with chapters steps by chapter, then through the queue; music and chapterless
-video step by queue entry. Holding ⏭ fast-forwards. Tap-or-hold is a pure state
+`skipBack` and shared by the remote's ⏭/⏮, the pad and MPRIS: a video with chapters
+steps by chapter, then through the queue; music and chapterless video step by queue
+entry. The web remote's Next / Previous still call `playNext` / `playPrevious` and step
+by queue entry only. Holding ⏭ fast-forwards. Tap-or-hold is a pure state
 machine (`playback/FastForwardRamp.h`): past 400 ms a press is a hold, at 2× doubling
 each second to 32×; a tap skips on its release, a hold's release does not, and a
 press within 150 ms of the last release is a stuttering remote and ignored. The
