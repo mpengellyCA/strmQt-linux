@@ -43,8 +43,16 @@ Item {
     property string letterChosenValue: ""
     property var genresChosenIds: []
     property int genreDismissed: 0
+    property int digitShortcutFired: 0
 
     Keys.onUpPressed: root.upEscaped = true
+
+    // The number keys' shape in Main.qml (library.open1): a bare-digit window
+    // Shortcut, which a focused CrateDividers must still win against.
+    Shortcut {
+        sequence: "1"
+        onActivated: root.digitShortcutFired++
+    }
     readonly property color hiResTone: Theme.crateBadgeHiRes
     readonly property color accentTone: Theme.accentColor
     readonly property string displayFamily: Theme.fontDisplay
@@ -340,6 +348,7 @@ private slots:
     void crateDividersLettersAreNotTabStops();
     void crateDividersShowsItsFocusRing();
     void crateDividersChoosesWithTheKeyboard();
+    void crateDividersKeepsTypedDigitsFromTheNumberKeys();
     void genrePickerRowHoverPreviewsWithoutStealingFocus();
     void genrePickerOpenShowsFocusOnTheSearchField();
     void genrePickerHiddenButtonsAreNotTabStops();
@@ -752,6 +761,28 @@ void CrateControlsTest::crateDividersChoosesWithTheKeyboard()
     QCOMPARE(dividers->property("cursor").toInt(), 2);
     QTest::keyClick(&m_view, Qt::Key_Return);
     QCOMPARE(m_root->property("letterChosenValue").toString(), QStringLiteral("B"));
+}
+
+// A typed digit chooses "#" while the dividers hold focus, even though a bare
+// digit is also a window Shortcut (the number keys open libraries).
+void CrateControlsTest::crateDividersKeepsTypedDigitsFromTheNumberKeys()
+{
+    QQuickItem *dividers = item("dividers");
+    QVERIFY(dividers);
+    m_root->setProperty("letterChosenValue", QString());
+    m_root->setProperty("digitShortcutFired", 0);
+    dividers->forceActiveFocus();
+    QTRY_VERIFY(dividers->hasActiveFocus());
+
+    QTest::keyClick(&m_view, Qt::Key_1);
+    QCOMPARE(m_root->property("letterChosenValue").toString(), QStringLiteral("#"));
+    QCOMPARE(m_root->property("digitShortcutFired").toInt(), 0);
+
+    // Anywhere else, the digit is the shortcut's again.
+    m_root->forceActiveFocus();
+    QTRY_VERIFY(!dividers->hasActiveFocus());
+    QTest::keyClick(&m_view, Qt::Key_1);
+    QTRY_COMPARE(m_root->property("digitShortcutFired").toInt(), 1);
 }
 
 // Ruling P3-R2, point 1: a row previews on hover only (a hovered row must not

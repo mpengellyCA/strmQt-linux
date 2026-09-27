@@ -634,6 +634,18 @@ FocusScope {
             event.accepted = true;
         }
 
+        // A digit here jumps to "#" (letterIndexFor), but a bare digit is also
+        // a window Shortcut — the number keys open libraries (InputMap
+        // library.open1..9 / library.favorites) — and the shortcut map runs
+        // before Keys.onPressed. Claiming the override keeps the strip's own
+        // meaning while it holds focus, as TrackTable does for typed letters.
+        Keys.onShortcutOverride: event => {
+            if (alphaStrip.activeFocus && event.key >= Qt.Key_0 && event.key <= Qt.Key_9
+                    && (event.modifiers & (Qt.ControlModifier | Qt.AltModifier
+                                           | Qt.MetaModifier)) === 0)
+                event.accepted = true;
+        }
+
         KeyNavigation.up: sortSelect
         KeyNavigation.down: bar.downTarget
 
