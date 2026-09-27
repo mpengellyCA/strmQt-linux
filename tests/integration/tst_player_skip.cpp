@@ -82,6 +82,7 @@ private slots:
     void unknownLengthNeverSeeks();
     void speedReadoutsKeepTheUsersSpeed();
     void aStutteringRemoteSkipsOnce();
+    void aHoldCutShortLendsTheNextItemNoGrace();
 
 private:
     // Presses ⏭, then ticks the hold's timer at each of `ticks` (ms since the
@@ -582,6 +583,30 @@ void PlayerSkipTest::aStutteringRemoteSkipsOnce()
     }
     QCOMPARE(m_backend->seeks.size(), seeks + 1);
     QCOMPARE(m_controller->currentChapter(), 1);
+}
+
+// A hold cut short by an item change leaves nothing behind: the next item's
+// watchdog still escalates a frozen position. (The grace is two 20 ms ticks,
+// so this pins the behaviour, not the exact tick count.)
+void PlayerSkipTest::aHoldCutShortLendsTheNextItemNoGrace()
+{
+    start({itemMap(QStringLiteral("301001")), itemMap(QStringLiteral("301002"))}, 0, 0);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(1'000);
+    hold({400});
+    QCOMPARE(m_controller->fastForwardRate(), 2.0);
+
+    const qsizetype loads = m_backend->loadedUrls.size();
+    m_controller->skipForward(); // the next item, mid-hold
+    QTRY_VERIFY(m_backend->loadedUrls.size() > loads);
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(5'000);
+
+    const qsizetype seeks = m_backend->seeks.size();
+    const qsizetype reloads = m_backend->loadedUrls.size();
+    QTRY_VERIFY(m_backend->seeks.size() > seeks || m_backend->loadedUrls.size() > reloads);
 }
 
 QTEST_GUILESS_MAIN(PlayerSkipTest)

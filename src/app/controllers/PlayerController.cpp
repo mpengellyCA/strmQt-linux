@@ -773,6 +773,9 @@ void PlayerController::startAttempt(qint64 startMs)
     m_pendingSubtitleTrack.reset();
     m_watchdogLastPos = -1;
     m_stallTicks = 0;
+    // A hold cancelled by this item change must not lend its grace to the new
+    // item's watchdog.
+    m_watchdogGraceTicks = 0;
     // m_stallStep intentionally survives watchdog-triggered reloads: the
     // escalation ladder must keep climbing, not restart at "nudge".
     setBusy(true);

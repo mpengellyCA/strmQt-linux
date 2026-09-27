@@ -166,7 +166,8 @@ FocusScope {
     // keeps choosing "#" while the dividers hold focus.
     Keys.onShortcutOverride: event => {
         if (dividers.activeFocus && event.key >= Qt.Key_0 && event.key <= Qt.Key_9
-                && (event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) === 0)
+                && (event.modifiers & (Qt.ControlModifier | Qt.AltModifier
+                                       | Qt.MetaModifier)) === 0)
             event.accepted = true;
     }
     // A typed letter chooses directly, as FilterBar's strip does. "#" is
