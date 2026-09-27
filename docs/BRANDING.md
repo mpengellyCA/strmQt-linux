@@ -124,18 +124,24 @@ StrmQt ships with 3 server-matching alternates configurable in Settings:
 All typefaces are bundled inside the binary (`assets/fonts` -> `qrc:/fonts`) so sandboxed Flatpaks and AppImages render with 100% fidelity on any Linux distribution without depending on host font caches.
 
 ```
-       Display: Archivo (DemiBold, Wide)
+       Display: Archivo (DemiBold; Crate music: wdth 120 / wght 820)
        Body:    Public Sans (Medium, Regular)
        Data:    IBM Plex Mono (Regular, Tabular)
 ```
 
 1. **Display & Headings: Archivo**
    * *Role*: Section headers, hero titles, marquee titles, shelf titles.
-   * *Characteristics*: Wide, heavyweight, high legibility across a living room at 10 feet.
-   * *Weights*: DemiBold (`600`) is the only weight `Theme.fontDisplay` is ever set to —
-     checked every call site, including the Music/Album/Artist hero titles. The variable
-     font (`Archivo[wdth,wght].ttf`) supports a wider weight range, but nothing in the
-     codebase requests Bold or a heavier cut.
+   * *Characteristics*: High legibility across a living room at 10 feet. Wide is a Crate
+     (music) trait, not a whole-app one — see below.
+   * *Weights*: DemiBold (`600`) is what every non-music `Theme.fontDisplay` call site
+     sets — checked all of them. **Crate (music) is the exception**: its display type
+     (`Theme.crateDisplayAxes`/`crateDisplayWeight`, `Theme.qml`) pushes the same variable
+     font to width axis `120` and weight axis `820` — genuinely Heavy, not DemiBold — and
+     that combination is requested nowhere else. `CrateHeading.qml` is the single place
+     that sets it, and every Crate hero title (Home, Album, Artist, Playlist), shelf
+     heading, section strip and genre bin goes through it, in uppercase with tightened
+     (`-0.02em`) tracking. Outside Crate, Archivo never has its width axis touched at all
+     — `font.variableAxes` is set nowhere else in `src/ui`.
 
 2. **Body & Controls: Public Sans**
    * *Role*: Card titles, navigation buttons, descriptions, settings controls, toasts.
@@ -151,6 +157,14 @@ All typefaces are bundled inside the binary (`assets/fonts` -> `qrc:/fonts`) so 
      `Theme.qml` exposes no `fontMonoMedium`/`fontMonoSemiBold` token for them; the two
      places in `SettingsPage.qml` that set `font.weight` on mono text are keybinding
      labels, not part of this role.
+
+4. **Crate: Music's typographic dialect**
+   * Music (the Home/Browse/Album/Artist/Playlist "Crate" pages, `src/ui/music/`,
+     `src/ui/pages/Music*Page.qml`) reuses the same three typefaces, ground and accent as
+     the rest of the app — no new colours, per `Theme.qml`'s own comment — but sets
+     Archivo louder for anything that speaks as a heading: `Theme.crateDisplayWeight`
+     (`820`) and `Theme.crateDisplayAxes` (`{ wdth: 120, wght: 820 }`), applied through
+     `CrateHeading.qml` alone. Data stays in Plex Mono, unchanged from the rest of the app.
 
 ---
 
