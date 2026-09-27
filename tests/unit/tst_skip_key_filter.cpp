@@ -42,7 +42,10 @@ private slots:
         m_filter = new strmqt::SkipKeyFilter(
             m_input,
             {[this] { return m_live; }, [this] { m_calls << QStringLiteral("forward"); },
-             [this] { m_calls << QStringLiteral("back"); }});
+             [this] { m_calls << QStringLiteral("back"); },
+             [this] { m_calls << QStringLiteral("forward-down"); },
+             [this] { m_calls << QStringLiteral("forward-up"); },
+             [this] { m_calls << QStringLiteral("forward-cancel"); }});
         m_window = new QQuickWindow;
         m_window->installEventFilter(m_filter);
         m_item = new KeyRecorder;
@@ -62,23 +65,33 @@ private slots:
         m_input = nullptr;
     }
 
-    void mediaKeysSkipAndNeverReachThePage()
+    // ⏭ is reported as its press and its release (the player tells a tap from
+    // a hold); ⏮ skips on its press.
+    void mediaKeysReachThePlayerAndNeverThePage()
     {
         press(Qt::Key_MediaNext);
         release(Qt::Key_MediaNext);
         press(Qt::Key_MediaPrevious);
         release(Qt::Key_MediaPrevious);
-        QCOMPARE(m_calls, (QStringList{QStringLiteral("forward"), QStringLiteral("back")}));
+        QCOMPARE(m_calls, (QStringList{QStringLiteral("forward-down"),
+                                       QStringLiteral("forward-up"), QStringLiteral("back")}));
         QVERIFY(m_item->pressed.isEmpty());
     }
 
-    void autoRepeatDoesNotRaceThroughChapters()
+    // Auto-repeat comes as press/release pairs flagged as repeats. None of
+    // them may end the hold early or skip again.
+    void autoRepeatIsNotAReleaseOrAPress()
     {
         press(Qt::Key_MediaNext);
-        press(Qt::Key_MediaNext, true);
-        press(Qt::Key_MediaNext, true);
+        for (int i = 0; i < 3; ++i) {
+            release(Qt::Key_MediaNext, true);
+            press(Qt::Key_MediaNext, true);
+        }
         release(Qt::Key_MediaNext);
-        QCOMPARE(m_calls, QStringList{QStringLiteral("forward")});
+        press(Qt::Key_MediaPrevious);
+        press(Qt::Key_MediaPrevious, true);
+        QCOMPARE(m_calls, (QStringList{QStringLiteral("forward-down"),
+                                       QStringLiteral("forward-up"), QStringLiteral("back")}));
         QVERIFY(m_item->pressed.isEmpty());
     }
 
@@ -88,6 +101,30 @@ private slots:
         press(Qt::Key_MediaNext);
         QVERIFY(m_calls.isEmpty());
         QCOMPARE(m_item->pressed, QList<int>{Qt::Key_MediaNext});
+    }
+
+    // Playback ended mid-hold: the release is still owed, or the hold would
+    // never be told to stop.
+    void aReleaseIsDeliveredEvenAfterPlaybackEnded()
+    {
+        press(Qt::Key_MediaNext);
+        m_live = false;
+        release(Qt::Key_MediaNext);
+        QCOMPARE(m_calls,
+                 (QStringList{QStringLiteral("forward-down"), QStringLiteral("forward-up")}));
+    }
+
+    // The window lost focus with ⏭ down: its release will go elsewhere.
+    void losingFocusCancelsAHeldKey()
+    {
+        press(Qt::Key_MediaNext);
+        QFocusEvent out(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+        QCoreApplication::sendEvent(m_window, &out);
+        QCOMPARE(m_calls, (QStringList{QStringLiteral("forward-down"),
+                                       QStringLiteral("forward-cancel")}));
+        // A stray release afterwards is nobody's.
+        release(Qt::Key_MediaNext);
+        QCOMPARE(m_calls.size(), 2);
     }
 
     void otherKeysPassThrough()
@@ -103,7 +140,7 @@ private slots:
         QVERIFY(m_input->setBinding(QStringLiteral("player.skipForward"), QStringLiteral("F8")));
         press(Qt::Key_MediaNext);
         press(Qt::Key_F8);
-        QCOMPARE(m_calls, QStringList{QStringLiteral("forward")});
+        QCOMPARE(m_calls, QStringList{QStringLiteral("forward-down")});
         QCOMPARE(m_item->pressed, QList<int>{Qt::Key_MediaNext});
     }
 

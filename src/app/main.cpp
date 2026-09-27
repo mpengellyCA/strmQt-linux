@@ -104,12 +104,15 @@ int main(int argc, char *argv[])
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
         window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
         // ⏭ / ⏮: chapter first, then the queue — the same rule MPRIS
-        // Next/Previous run (Application::wirePlaybackIntegrations).
+        // Next/Previous run (Application::wirePlaybackIntegrations) — and ⏭
+        // held fast-forwards.
         strmqt::PlayerController *player = app.player();
         auto *skipKeys = new strmqt::SkipKeyFilter(
             app.input(),
             {[player] { return player->active(); }, [player] { player->skipForward(); },
-             [player] { player->skipBack(); }},
+             [player] { player->skipBack(); }, [player] { player->skipForwardPressed(); },
+             [player] { player->skipForwardReleased(); },
+             [player] { player->cancelSkipForwardHold(); }},
             window);
         window->installEventFilter(skipKeys);
         app.input()->registerHandler(skipKeys);

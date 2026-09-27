@@ -28,6 +28,7 @@ qt_add_library(strmqt_core STATIC
     platform/PowerInhibit.h platform/PowerInhibit.cpp
     platform/SecretsStore.h platform/SecretsStore.cpp
     playback/PlayerBackend.h playback/PlayerBackend.cpp
+    playback/FastForwardRamp.h
 )
 target_include_directories(strmqt_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(strmqt_core PUBLIC Qt6::Core Qt6::Network Qt6::DBus Qt6::WebSockets)

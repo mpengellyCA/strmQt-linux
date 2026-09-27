@@ -69,7 +69,19 @@ private slots:
     void musicStepsByTrackEvenWithChapters();
     void skipStateFollowsTheChapterUnderThePlayhead();
 
+    // ⏭ held: tap on release, hold to fast-forward.
+    void aTapSkipsOnTheRelease();
+    void aHoldSeeksWhereTheEngineHasNoSpeed();
+    void aHoldUsesTheEnginesSpeedFirst();
+    void theUsersMuteSurvivesAHold();
+    void aHoldEndsWithTheSession();
+
 private:
+    // Presses ⏭, then ticks the hold's timer at each of `ticks` (ms since the
+    // press).
+    void hold(const QList<qint64> &ticks);
+    int progressReports() const;
+
     void addChapters(const QString &id, const QString &type = QStringLiteral("Episode"));
     // Starts the queue at `index` and waits for the item to be playing with its
     // chapters (when it has any) in place.
@@ -81,6 +93,7 @@ private:
     QTemporaryDir *m_dir = nullptr;
     Settings *m_settings = nullptr;
     PlayerController *m_controller = nullptr;
+    qint64 m_now = 0;
 };
 
 void PlayerSkipTest::init()
@@ -109,6 +122,8 @@ void PlayerSkipTest::init()
     m_settings = new Settings(m_dir->filePath(QStringLiteral("settings.ini")), this);
     m_controller = new PlayerController(m_client, m_backend, m_settings, this);
     m_controller->setTimingForTests(20, 2, 10);
+    m_now = 0;
+    m_controller->setSkipHoldClockForTests([this] { return m_now; });
 }
 
 void PlayerSkipTest::cleanup()
@@ -272,6 +287,168 @@ void PlayerSkipTest::skipStateFollowsTheChapterUnderThePlayhead()
     m_controller->stop();
     QVERIFY(!m_controller->canSkipForward());
     QVERIFY(!m_controller->canSkipBack());
+}
+
+void PlayerSkipTest::hold(const QList<qint64> &ticks)
+{
+    const qint64 pressedAt = m_now;
+    m_controller->skipForwardPressed();
+    QVERIFY(m_controller->skipHoldTimerActiveForTests());
+    for (const qint64 tick : ticks) {
+        m_now = pressedAt + tick;
+        m_controller->tickSkipHoldForTests();
+    }
+}
+
+int PlayerSkipTest::progressReports() const
+{
+    int count = 0;
+    for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests()) {
+        if (request.method == QLatin1String("POST")
+            && request.path == QLatin1String("/Sessions/Playing/Progress"))
+            ++count;
+    }
+    return count;
+}
+
+void PlayerSkipTest::aTapSkipsOnTheRelease()
+{
+    addChapters(QStringLiteral("301001"));
+    start({itemMap(QStringLiteral("301001"))}, 0, 3);
+    m_backend->simulatePosition(1'000);
+
+    const qsizetype seeks = m_backend->seeks.size();
+    hold({100, 200, 300});
+    // Nothing yet: until the release it may still be a hold.
+    QCOMPARE(m_backend->seeks.size(), seeks);
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    m_now += 50;
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(10'000));
+    QVERIFY(!m_controller->skipHoldTimerActiveForTests());
+    QVERIFY(m_backend->speedRequests.isEmpty());
+}
+
+// VLC and Qt Multimedia have no speed control: the whole rate is seeking.
+void PlayerSkipTest::aHoldSeeksWhereTheEngineHasNoSpeed()
+{
+    addChapters(QStringLiteral("301001"));
+    start({itemMap(QStringLiteral("301001"))}, 0, 3);
+    m_backend->simulateDuration(600'000);
+    // An ordinary seek reports at once — the baseline the hold is held to.
+    m_controller->seekTo(1'000);
+    QTRY_VERIFY(progressReports() > 0);
+    const int reportsBefore = progressReports();
+    const qsizetype seeksBefore = m_backend->seeks.size();
+    QSignalSpy rate(m_controller, &PlayerController::fastForwardRateChanged);
+
+    hold({100, 200, 300, 400});
+    QCOMPARE(m_controller->fastForwardRate(), 2.0);
+    QCOMPARE(rate.count(), 1);
+    // Silenced by volume, since this engine has no mute of its own.
+    QCOMPARE(m_backend->volumeRequests.constLast(), 0);
+    QCOMPARE(m_controller->muted(), false);
+
+    hold({}); // a second press while held changes nothing
+    m_now = 900;
+    m_controller->tickSkipHoldForTests();
+    // 500 ms at 2×, of which the engine played 1×: a 500 ms jump.
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(1'500));
+    m_now = 1'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_controller->fastForwardRate(), 4.0);
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(3'000)); // +3 × 500
+    m_now = 4'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_controller->fastForwardRate(), 32.0);
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(3'000 + 31 * 3'000));
+    // Seeks while held are not each reported.
+    QCOMPARE(progressReports(), reportsBefore);
+
+    m_now = 4'500;
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    QCOMPARE(m_backend->volumeRequests.constLast(), m_controller->volume());
+    QVERIFY(m_backend->speedRequests.isEmpty());
+    // No chapter skip on the release of a hold — the last seek is the hold's.
+    QCOMPARE(m_backend->seeks.size(), seeksBefore + 3);
+    QCOMPARE(m_controller->queue()->currentIndex(), 0);
+    // One report, with the position the hold reached.
+    QTRY_COMPARE(progressReports(), reportsBefore + 1);
+}
+
+// mpv: real playback at up to 4×, seeking only for what is beyond it, and the
+// speed the user had comes back on release.
+void PlayerSkipTest::aHoldUsesTheEnginesSpeedFirst()
+{
+    m_backend->maxSpeed = 4.0;
+    m_backend->muteSupported = true;
+    start({itemMap(QStringLiteral("301001"))}, 0, 0);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulatePosition(1'000);
+    m_controller->setPlaybackSpeed(1.5);
+
+    hold({400});
+    QCOMPARE(m_backend->speedRequests.constLast(), 2.0);
+    QCOMPARE(m_backend->muteRequests.constLast(), true);
+    const qsizetype seeks = m_backend->seeks.size();
+    m_now = 900;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_backend->seeks.size(), seeks); // the engine is doing all of 2×
+    m_now = 1'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_backend->speedRequests.constLast(), 4.0);
+    m_now = 2'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_controller->fastForwardRate(), 8.0);
+    QCOMPARE(m_backend->speedRequests.constLast(), 4.0); // the engine's ceiling
+    // 8× for 1000 ms since the last step, the engine covering 4×.
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(1'000 + 4 * 1'000));
+
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->speedRequests.constLast(), 1.5);
+    QCOMPARE(m_backend->muteRequests.constLast(), false);
+    QCOMPARE(m_controller->muted(), false);
+}
+
+void PlayerSkipTest::theUsersMuteSurvivesAHold()
+{
+    m_backend->muteSupported = true;
+    start({itemMap(QStringLiteral("301001"))}, 0, 0);
+    m_controller->setMuted(true);
+
+    hold({400});
+    // The engine's echo of the hold's own mute is not adopted as the user's…
+    emit m_backend->mutedChanged(true);
+    m_controller->skipForwardReleased();
+    // …and the release puts back the user's mute, not "unmuted".
+    QCOMPARE(m_controller->muted(), true);
+    QCOMPARE(m_backend->muteRequests.constLast(), true);
+
+    m_controller->setMuted(false);
+    hold({400});
+    emit m_backend->mutedChanged(true);
+    QCOMPARE(m_controller->muted(), false);
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->muteRequests.constLast(), false);
+}
+
+void PlayerSkipTest::aHoldEndsWithTheSession()
+{
+    m_backend->maxSpeed = 4.0;
+    start({itemMap(QStringLiteral("301001")), itemMap(QStringLiteral("301002"))}, 0, 0);
+    hold({400, 1'400});
+    QCOMPARE(m_controller->fastForwardRate(), 4.0);
+
+    m_controller->stop();
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    QCOMPARE(m_backend->speedRequests.constLast(), 1.0);
+    QVERIFY(!m_controller->skipHoldTimerActiveForTests());
+
+    // The key's release, arriving after, is nobody's: no skip, no restart.
+    const qsizetype loads = m_backend->loadedUrls.size();
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->loadedUrls.size(), loads);
 }
 
 QTEST_GUILESS_MAIN(PlayerSkipTest)

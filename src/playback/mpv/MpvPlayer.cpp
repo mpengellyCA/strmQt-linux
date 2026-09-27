@@ -477,6 +477,11 @@ void MpvPlayer::setPlaybackSpeed(qreal speed)
     mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &value);
 }
 
+qreal MpvPlayer::maximumPlaybackSpeed() const
+{
+    return kMaxSpeed;
+}
+
 void MpvPlayer::setSubtitleStyle(const QString &font, int scale, const QString &color,
                                  int background, int position)
 {

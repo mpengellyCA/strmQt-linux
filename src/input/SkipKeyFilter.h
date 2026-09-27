@@ -12,7 +12,8 @@ namespace strmqt {
 class InputMap;
 
 // A remote's ⏭ / ⏮ (player.skipForward / player.skipBack), caught at the
-// window.
+// window. ⏭ is reported as press and release — PlayerController tells a tap
+// (skip) from a hold (fast-forward) — and ⏮ is a skip on its press.
 //
 // Not a Shortcut, for two reasons. A Shortcut sees a press and never a release,
 // and ⏭ means one thing tapped and another held (PlayerController's hold to
@@ -37,8 +38,13 @@ public:
     struct Target
     {
         std::function<bool()> live;
-        std::function<void()> skipForward; // a tap of ⏭
-        std::function<void()> skipBack;    // a tap of ⏮
+        std::function<void()> skipForward; // a tap of ⏭ (the action id)
+        std::function<void()> skipBack;    // ⏮, key or action id
+        // ⏭ as a key: its press and its release, and a press whose release
+        // will never arrive because the window lost focus in between.
+        std::function<void()> forwardPressed;
+        std::function<void()> forwardReleased;
+        std::function<void()> forwardCancelled;
     };
 
     SkipKeyFilter(InputMap *input, Target target, QObject *parent = nullptr);
@@ -56,8 +62,17 @@ private:
     // The skip action this key event is bound to, or empty.
     QString actionFor(const QKeyEvent *event) const;
 
+    static void call(const std::function<void()> &fn)
+    {
+        if (fn)
+            fn();
+    }
+
     QPointer<InputMap> m_input;
     Target m_target;
+    // ⏭ is down: its release is owed to the target even if playback stopped
+    // in between, so the hold is never left running.
+    bool m_forwardDown = false;
 };
 
 } // namespace strmqt

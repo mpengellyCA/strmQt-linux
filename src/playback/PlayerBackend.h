@@ -118,6 +118,10 @@ public:
     virtual qint64 bufferedMs() const { return 0; }
     virtual qreal playbackSpeed() const { return 1.0; }
     virtual void setPlaybackSpeed(qreal speed) { Q_UNUSED(speed); }
+    // The fastest setPlaybackSpeed() honours. 1.0 means the engine has no speed
+    // control at all, and a caller that wants faster has to seek its way there
+    // (PlayerController's hold-to-fast-forward does).
+    virtual qreal maximumPlaybackSpeed() const { return 1.0; }
     virtual int audioDelayMs() const { return 0; }
     virtual void setAudioDelayMs(int ms) { Q_UNUSED(ms); }
     virtual int subtitleDelayMs() const { return 0; }

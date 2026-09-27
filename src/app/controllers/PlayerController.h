@@ -2,9 +2,11 @@
 
 #include "app/PlayQueue.h"
 #include "core/Result.h"
+#include "playback/FastForwardRamp.h"
 #include "playback/PlayerBackend.h"
 #include "server/dto/PlaybackTicket.h"
 
+#include <QElapsedTimer>
 #include <QFuture>
 #include <QObject>
 #include <QString>
@@ -13,7 +15,9 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <functional>
 #include <optional>
+#include <utility>
 
 namespace strmqt {
 
@@ -98,6 +102,9 @@ class PlayerController : public QObject
     // skippable even as the only thing queued.
     Q_PROPERTY(bool canSkipForward READ canSkipForward NOTIFY skipStateChanged)
     Q_PROPERTY(bool canSkipBack READ canSkipBack NOTIFY skipStateChanged)
+    // While ⏭ is held: the rate the picture is moving at (2, 4, 8, 16, 32).
+    // 0 otherwise. For an OSD badge; nothing needs it to work.
+    Q_PROPERTY(qreal fastForwardRate READ fastForwardRate NOTIFY fastForwardRateChanged)
 
 public:
     PlayerController(emby::EmbyClient *client, PlayerBackend *backend, Settings *settings = nullptr,
@@ -170,6 +177,25 @@ public:
     Q_INVOKABLE void skipBack();
     bool canSkipForward() const;
     bool canSkipBack() const;
+
+    // ⏭ as a key, which has a release: a tap is skipForward() — on the
+    // release, since until then it may be a hold — and a hold fast-forwards,
+    // ramping 2× → 32× (FastForwardRamp), until released. Letting go puts the
+    // speed back to what it was before the hold and does not also skip. The
+    // input layer only reports press and release; the timing lives here.
+    //
+    // How: the engine's own speed up to what it supports (mpv: 4×), and the
+    // rest by seeking ahead every half second, so 32× works on every engine
+    // and VLC / Qt Multimedia, which have no speed control, fast-forward
+    // entirely by seeking. Audio is silenced for the duration — at these rates
+    // it is noise — without touching the user's mute, and progress is reported
+    // once at the end rather than on every step.
+    Q_INVOKABLE void skipForwardPressed();
+    Q_INVOKABLE void skipForwardReleased();
+    // The release will not come (the window lost focus): end any hold without
+    // a skip.
+    Q_INVOKABLE void cancelSkipForwardHold();
+    qreal fastForwardRate() const { return m_fastForwardRate; }
 
     // `preferredSourceIndex` < 0 means "let the ticket decide" (server order).
     // `itemType` is the server's item type ("Audio", "Movie", ...) when the
@@ -280,6 +306,14 @@ public:
     {
         m_screenshotDirectoryOverride = directory;
     }
+    // The hold's clock and its timer, driven by hand: `clock` replaces the
+    // monotonic clock, and tickSkipHoldForTests() is one timer tick.
+    void setSkipHoldClockForTests(std::function<qint64()> clock)
+    {
+        m_skipHoldClockOverride = std::move(clock);
+    }
+    void tickSkipHoldForTests() { onSkipHoldTick(); }
+    bool skipHoldTimerActiveForTests() const { return m_skipHoldTimer.isActive(); }
 
 signals:
     void activeChanged();
@@ -319,6 +353,7 @@ signals:
     // canSkipForward / canSkipBack may have changed: the queue, the chapters,
     // the chapter under the playhead or the kind of media moved.
     void skipStateChanged();
+    void fastForwardRateChanged();
     void upNextChanged();
     // OSD toast for track switches ("Audio: eng — DTS 5.1").
     void trackChanged(const QString &description);
@@ -414,6 +449,14 @@ private:
     void updateCurrentChapter(qint64 positionMs);
     // ⏭ / ⏮ move by chapter: a live video session whose item has chapters.
     bool skipsByChapter() const;
+    // Hold-to-fast-forward (skipForwardPressed).
+    qint64 skipHoldNow() const;
+    void onSkipHoldTick();
+    void beginFastForward(qint64 nowMs);
+    void applyFastForwardRate();
+    void stepFastForward(qint64 nowMs);
+    // `reportPosition` is false when the session is ending anyway.
+    void endFastForward(bool reportPosition);
     void updatePositionSnapshots(qint64 positionMs, bool forceInternal = false);
     void updateBufferedEnd(qint64 positionMs);
     // Continue a series when nothing else is queued. Returns true when it took
@@ -535,6 +578,24 @@ private:
     bool m_restoringTracks = false;
     std::optional<int> m_pendingAudioTrack;
     std::optional<int> m_pendingSubtitleTrack;
+
+    // Hold-to-fast-forward. m_fastForwarding spans from the moment a press
+    // became a hold to its release; the speed and the mute it overrode are put
+    // back from here.
+    FastForwardRamp m_ramp;
+    QTimer m_skipHoldTimer;
+    QElapsedTimer m_skipHoldClock;
+    std::function<qint64()> m_skipHoldClockOverride;
+    bool m_fastForwarding = false;
+    bool m_fastForwardMuted = false;
+    qreal m_fastForwardRate = 0.0;
+    qreal m_speedBeforeFastForward = 1.0;
+    qreal m_fastForwardEngineSpeed = 1.0;
+    qint64 m_lastFastForwardStepMs = 0;
+    // Where the last step seeked to. The engine reports positions from before
+    // a seek landed for a moment afterwards, and stepping from those would
+    // give back ground already covered.
+    qint64 m_fastForwardTargetMs = -1;
 };
 
 } // namespace strmqt
