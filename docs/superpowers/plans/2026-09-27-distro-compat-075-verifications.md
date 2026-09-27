@@ -184,3 +184,58 @@ C(debian-12) was not run in this task (the dispatch named only ubuntu-24.04).
 
 Visual check (full vs compat on Qt 6.11: Music home crate headings, section strip, badges, mini-player time
 readout): pending the user.
+
+## Task 7: Qt 6.4 behaviour sweep
+
+C(debian-12) on the tree as Task 6 left it (`d90c250`), first run: `100% tests passed, 0 tests failed out of
+74`, `selftest.sh: OK`, `check.sh: OK (compat)`. tst_mpv_video_item passes there (libmpv 0.35). Its self-test log
+carries the same 6.4-only warnings as ubuntu-24.04 (9x LoadingState and 1x MusicBrowsePage "Cannot instantiate
+bound component outside its creation context", 7x "Component is not ready", the four `Overlay` ReferenceErrors,
+the TLS warning). No debian-12-only finding.
+
+Step 1, KeyNavigation (ubuntu-24.04, `qt6-declarative-private-dev` in a throwaway container):
+`/usr/include/x86_64-linux-gnu/qt6/QtQuick/6.4.2/QtQuick/private/qquickitem_p.h:731-736` declares `left`, `right`,
+`up`, `down`, `tab`, `backtab` as `QPointer<QQuickItem>`, as 6.11 does. No change to `MusicAlbumPage.qml`.
+
+Findings and resolutions:
+
+| Where | Cause | Class | Resolution |
+|---|---|---|---|
+| tst_mpv_video_item `bundledScriptsAreNotLoaded` (ubuntu-24.04: `lua/console`) | libmpv 0.37 knows the console switch only as `load-osd-console` (renamed `load-console` in mpv 0.40, `options.c`), so the console's Lua VM ran in the app | app bug on 6.4 hosts | `8c7787d`: `load-osd-console` is the fallback when `load-console` is rejected. ubuntu-24.04 `Totals: 14 passed, 0 failed, 2 skipped` |
+| Self-test: LoadingState (9x), MusicBrowsePage (1x) "Cannot instantiate bound component outside its creation context" | Qt 6.4's `QQuickLoader` creates its item in `new QQmlContext(creationContext)`; the object creator refuses a `ComponentBehavior: Bound` component whose parent context is not its creation context. 6.5 passes the creation context for bound components (`qquickloader.cpp`, 6.4.2 vs 6.5.0) | app bug on 6.4 (feature loss) | `3025ac1`: `BoundLoader` tier shim (full: `Loader`; compat: `createObject()` host with Loader's sizing and focus scope) at all six Loaders that load bound components. Nothing loaded on 6.4 before: Music browse sections, every custom rail/grid card (Music home shelves, artist, album, browse), the player OSD's track/chapter/queue/settings panels and scrub preview, loading skeletons |
+| Self-test: 7x "QQmlComponent: Component is not ready" (album page) | Same Qt 6.4 pattern in `QQuickItemViewPrivate::createComponentItem` (header/footer); the backtrace (`QT_MESSAGE_PATTERN` `%{backtrace}`) ends in `QQuickItemView::componentComplete`. The album page's `footer:` is its only bound header/footer | app bug on 6.4 (More-by shelf missing) | `3025ac1`: `BoundViewSlot` tier shim (full: the component; compat: an unbound host that creates it); `MusicAlbumPage` footer goes through it |
+| Self-test: `ReferenceError: Overlay is not defined` PlaylistPage.qml:1152/:1215, MusicPlaylistPage.qml:737/:809 | `QtQuick.Controls.Basic` registers `Overlay` only from 6.5 (6.11's `plugins.qmltypes` lists `QtQuick.Controls.Basic/Overlay`); on 6.4 it is in `QtQuick.Templates` only. The rename/delete sheets stayed inside the page | app bug on 6.4 (degraded) | `b08fd7b`: `import QtQuick.Templates as T`, `T.Overlay.overlay` |
+| Self-test: `tls: cannot open certificate: .../webremote/cert.pem` | `WebRemoteController::updateFingerprint` reads the certificate at start-up; a fresh home has none until the web remote is first enabled (`TlsCertificateGenerator::ensureCertificate`). Any Qt, any fresh profile | benign, not 6.4 | none |
+| Qt 6.4.2 `qmlcachegen` segfaults on `const x = item; x.width = loader.width` in a QML function | qmlcachegen bug, met while writing the compat `BoundLoader` | tooling | written through the property instead; commented in the shim |
+
+Red/green on ubuntu-24.04: the bound card probe (`tst_card_component`, now `pragma ComponentBehavior: Bound` like
+its real callers) failed 5 functions with the stock Loader in StrmRail/StrmGrid (the `3025ac1` message says 6;
+it is 5: railLoads, currentFollows, cardSignals, hoverIsNotFocus, gridLoads) and passes with BoundLoader; the new
+`viewCreatesAFooterFromABoundFile` fails with the full-tier BoundViewSlot staged and passes with the compat one.
+`selftest.sh` now fails on "Cannot instantiate bound component" and "Component is not ready".
+
+Compat shims on Qt 6.11 (instead of HC, see below): a bound probe run with `qml` over the compat `BoundLoader` and
+`BoundViewSlot` prints exactly what the same probe prints with Qt's `Loader` (explicitly sized loader resizes its
+item, 200x100 then 150; natural loader follows its item, 70x40 then 33; inactive null then created; source switch
+reloads, `loaded` twice; footer created, height 25).
+
+The spec §4.4 families (focus-chain clearing, Tab skipping invisible items, XF86OK, ShortcutOverride, pixel
+measurements, untyped-annotation coercion) produced no failure: ctest is green on 6.4.2 without a version-gated
+expectation.
+
+Gates after the fixes:
+
+- C(ubuntu-24.04): `100% tests passed, 0 tests failed out of 74`, `selftest.sh: OK`; self-test warnings now only
+  the host's four `not authenticated` plus the benign TLS line. check.sh then stopped at its install step:
+  `"/build/stage/usr/bin/strmqt": No space left on device` (/tmp full, below). The same install check run inside
+  the container on its own filesystem (`DESTDIR=/stage cmake --install /build` plus check.sh's `find`): no
+  unexpected files, tier `compat`.
+- H (NN=07): build 0 warnings (`STRMQT_WERROR=ON`), ctest `100% tests passed out of 74`, qmllint `baseline matches
+  (1334 warnings)`, `selftest.sh: OK` (log at `/tmp/w07a/selftest.log`: 3x `home refresh error: "not
+  authenticated"`, 1x `playlist: "not authenticated"`).
+- HC: not run. C(debian-12) after the fixes: not completed, GCC `error writing to /build/tmp/cc*.s: No space left
+  on device`. /tmp (16 GB tmpfs) was full: `/tmp/w06a`, `/tmp/w06b` (2.5 GB each, left alone), `/tmp/w07a`,
+  `/tmp/w07a-ubuntu-24.04`, `/tmp/w07a-debian-12` (about 3 GB each) and 1.5 GB of editor `preamble-*.pch`.
+
+For Task 19/20: two new tier shims, `BoundLoader` and `BoundViewSlot` (spec §4.3 list). No cosmetic 6.4
+degradation is left open from this sweep.
