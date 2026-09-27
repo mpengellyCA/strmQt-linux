@@ -54,6 +54,19 @@ Four rules hold this together:
    introducing a substantive service interface and adapting the controllers;
    it is not a drop-in backend addition.
 
+Music has a domain layer of its own between the client and the pages. Emby's
+item payloads are reshaped once, in C++, into music value types (`src/server/dto/music/`:
+`Track`, `Album`, `AlbumSleeve`, `ArtistProfile`, `GenreBin`, `Station`, …) by
+`EmbyMusicMapper`, which derives the format badge, featured artists and release type.
+`MusicRepository` (`src/app/music/`) is the only music unit that holds an `EmbyClient`:
+it composes several requests into one answer (a sleeve is the album and its tracks,
+fetched in parallel, then more by the artist), degrades a failed *secondary* request
+to an empty part, and caches per account in memory. Typed list models and one controller per
+surface sit above it, so a music page binds display-ready roles ("48 min",
+"FLAC 24/96", "12 records") and never reshapes data itself. `MusicPlayback` owns every
+music play verb and hands `ItemActions` ordinary queue maps, so the queue and the
+verbs never learn about music types.
+
 ### Threading and async
 
 Application and controller state is affine to the Qt event-loop thread. Work
@@ -118,13 +131,13 @@ codebase look the way they do.
 | **InstantMix rows are not distinct** | 500 asked for came back as 493 unique ids. `PlayQueue` keys entries rather than ids, so the repeats would survive to the queue panel; callers de-duplicate. |
 | `AudioCodecs` filters tracks, but on `MusicAlbum` it drops every album (4.9.5) | `AudioCodecs=flac` leaves 55,400 of 56,283 tracks and 0 of 5,037 albums. The Format filter applies to Songs only; `MusicQueryTranslator` never sends `AudioCodecs` for albums. |
 | No bit-depth or sample-rate filter exists | `MinBitDepth`, `MinAudioBitDepth`, `MinSampleRate` and five similar names are all ignored while hi-res tracks exist. "Hi-res only" is not offered. |
-| `Years` takes a comma-separated decade | `Years=1970,…,1979` is one request, so the Decade pill needs no premiere-date range. |
+| `Years` takes a comma-separated decade | `Years=1970,…,1979` is one request, so the Decade pill needs no premiere-date range. "Earlier" is the exception: a single `MaxPremiereDate` bound at the end of 1949. |
 | Nothing on the wire says EP, single or compilation | No `AlbumType`/`ReleaseType`, and album tags are empty. The release type is classified client-side. |
 | **Lyrics are an embedded text subtitle stream, not a lyrics endpoint** | `/Audio/{id}/Lyrics` is a 500 and `/Items/{id}/Lyrics` a 404. A track with lyrics has a `Subtitle` stream titled `Lyrics`; `/Items/{id}/{mediaSourceId}/Subtitles/{index}/Stream.js` returns `TrackEvents[].Text`, untimed in every sample. |
 | `/Artists/{id}/Similar` returns similar artists | The artist page's Similar row is one request. |
 | `MinDateCreated` filters albums | "N added this week" is one `Limit=0` request. |
 | **Albums keep no play data** | An album whose tracks were just played still reports `PlayCount: 0`, `Played: false` and no `LastPlayedDate`, so `SortBy=PlayCount`/`DatePlayed` on `MusicAlbum` is meaningless. Album play history is derived from tracks. |
-| `/MusicGenres` returns no item counts | `Fields=ItemCounts` adds nothing; a genre's size needs its own query. |
+| `/MusicGenres` returns no item counts | `Fields=ItemCounts` adds nothing. A genre bin's record count is derived client-side by walking the library's albums and counting their genres. |
 | **List queries hide track play counts and last-played dates** | An `Audio` list sorted by `DatePlayed` is correctly ordered, but each row reports `PlayCount: 0` and no `LastPlayedDate`. `Fields=UserDataPlayCount,UserDataLastPlayedDate` makes the list carry the real values. |
 | Audio lists carry `MediaStreams` and album lists carry `RunTimeTicks` | Format badges and album runtimes need no per-item fetch. |
 | `GenreItems[].Id` is a JSON number | Artist ids on the same item are strings. Id parsing accepts both. |
@@ -160,6 +173,15 @@ Auto-advance has a precedence rule:
   manual add). Its end is a deliberate end.
 - A single-item queue means one thing was played directly. If it was an episode
   and the preference is on, the series continues.
+
+A queue also remembers **where it came from**: `PlayQueue::sourceLabel` ("Sunburned
+Almanac", "Station · Heavy rotation", "Radio · Björk") is set by the play verb that
+filled it and shown as "Playing from" in the music player. Remembering is only safe
+because it is forgotten eagerly: replacing or clearing the queue, or adding anything
+to it, drops the label, while reordering and removing keep it, and a film that
+interrupts a record gives it back with the rest of the snapshot. Where no verb named
+the source, the player falls back to `contextLabel`, which is derived from what the
+queue holds.
 
 ### Engines
 
@@ -197,6 +219,11 @@ into the binary, so a sandboxed artifact renders identically to a native build
 without depending on the host's font set. [`docs/BRANDING.md`](docs/BRANDING.md)
 covers the brand mark and verifies every token, weight and colour it documents
 against this file.
+
+Music speaks a dialect of it called *Crate*: the same ground, accent and typefaces,
+set louder. Archivo is pushed wide and heavy for headings and hero titles, data sits
+in Plex Mono, and an album is a square sleeve with a deep shadow and no card behind
+it. Crate adds tokens (`Theme.crate*`) and no colours; the cover wash keeps its clamp.
 
 ### Hover is not focus
 
@@ -268,13 +295,21 @@ loaded item by stable identity after Back/Forward; if that item is absent when
 the controller's bounded refill finishes, it uses the nearest eligible row (or
 the page's normal empty-state focus) without fetching extra pages.
 
-Pages: Login · Home · Library · Details · Series · Person · Playlist · Music ·
-Album · Artist · Search · Settings · Player.
+Pages: Login · Home · Library · Details · Series · Person · Playlist · Search ·
+Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·
+Music Playlist.
 
-`MusicPage` is four readings of one library — Albums, Artists, Songs, Playlists
-— sharing one filter set and keeping a sort per tab. Its Playlists tab is the
-user's *audio* playlists; the nav rail's Playlists destination is still all of
-them, because a picker raised from a film has to keep offering film lists.
+A music library opens on **Music Home**, a page of independently loading shelves
+(pick up where you left off, recently played, new in the crate, stations, genre
+bins, artists you play, forgotten favourites, pull one out). Each shelf is its own
+lane: it has its own skeleton, hides when empty and collapses to one Retry line when
+it fails, while the others stay live. **Music Browse** is the same library read
+five ways (Albums · Artists · Songs · Genres · Playlists) under a section strip,
+sharing one set of filter pills and keeping a sort per section. Its A–Z crate
+dividers send a letter as a `NameStartsWithOrGreater`/`NameLessThan` pair, and
+choosing a genre bin is a filter, not a page. Its Playlists section is the user's
+*audio* playlists; the nav rail's Playlists destination is still all of them,
+because a picker raised from a film has to keep offering film lists.
 
 ---
 
@@ -312,7 +347,7 @@ volume there — the one player control a pad cannot reach by focus.
 
 **While browsing, the shoulders and the triggers divide the work of moving
 about.** The shoulders change what *section* is on screen: the page's own tab bar
-where it has one — the four music tabs, a season, a settings section — and the
+where it has one — the music section strip, a season, a settings section — and the
 previous/next library where it has not. The triggers move *through* the list on
 it: a letter on the alphabet strip where the page has one, which is the only sane
 way across a 1300-item library from a pad, and a screenful of whatever holds the
@@ -331,8 +366,8 @@ it subtle is an ordering — a release arriving after the hold has already fired
 must not *also* select — and orderings are what a device cannot be made to
 reproduce on demand.
 
-**There are three contexts, not two.** Browse, player, and *music* — the music
-library, an album and an artist page. Two actions only conflict when their
+**There are three contexts, not two.** Browse, player, and *music* — Music Home,
+Music Browse, an album, an artist and an audio playlist page. Two actions only conflict when their
 contexts overlap, and that is the whole reason music has one: Space, `S` and `L`
 are each already bound in browse or in player, and only a non-overlapping
 context lets a music page mean play/pause, shuffle-this-library and favourite by
@@ -378,7 +413,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 33 suites
+ctest --preset dev                     # 74 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
