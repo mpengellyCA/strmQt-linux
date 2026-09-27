@@ -6,14 +6,14 @@
       <stop offset="100%" stop-color="#0C0B0A"/>
     </linearGradient>
     <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FFBE53"/>
-      <stop offset="60%" stop-color="#F0A02A"/>
-      <stop offset="100%" stop-color="#C87A10"/>
+      <stop offset="0%" stop-color="#6FD866"/>
+      <stop offset="60%" stop-color="#52B54B"/>
+      <stop offset="100%" stop-color="#3B8E35"/>
     </linearGradient>
     <radialGradient id="projectorGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#F0A02A" stop-opacity="0.26"/>
-      <stop offset="65%" stop-color="#F0A02A" stop-opacity="0.06"/>
-      <stop offset="100%" stop-color="#F0A02A" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#52B54B" stop-opacity="0.26"/>
+      <stop offset="65%" stop-color="#52B54B" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#52B54B" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <!-- Ground Squircle -->
