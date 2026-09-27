@@ -7,6 +7,10 @@ Q_DECLARE_LOGGING_CATEGORY(logApp)
 Q_DECLARE_LOGGING_CATEGORY(logCore)
 Q_DECLARE_LOGGING_CATEGORY(logServer)
 Q_DECLARE_LOGGING_CATEGORY(logPlayback)
+// Every key the window receives, with its native codes: how an unknown remote
+// button is identified. Off unless asked for (debug is below its default
+// threshold): QT_LOGGING_RULES="strmqt.input.keys.debug=true".
+Q_DECLARE_LOGGING_CATEGORY(logKeys)
 
 namespace strmqt {
 

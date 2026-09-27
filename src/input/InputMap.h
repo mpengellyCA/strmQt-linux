@@ -22,9 +22,11 @@ namespace strmqt {
 // Qt::Key / Qt::KeyboardModifier are QtCore, so key-code lookups are available
 // for `Keys.onPressed` handlers that switch on event.key.
 //
-// Media keys (PLAN §3.7 "Space / Media", "S / Media") are deliberately absent:
-// on the target platform they arrive through MPRIS, which Application already
-// wires to PlayerController, not through the Qt shortcut system.
+// Media keys (PLAN §3.7 "Space / Media", "S / Media") mostly arrive through
+// MPRIS, which Application wires to PlayerController: Plasma grabs them for its
+// media controller. The exceptions are a TV remote's transport keys when that
+// grab is released or absent — ⏭/⏮ (player.skipForward / skipBack, caught at
+// the window by SkipKeyFilter) and ⏩/⏪ (player.seekForward / seekBackward).
 class InputMap : public QObject
 {
     Q_OBJECT

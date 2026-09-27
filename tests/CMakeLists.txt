@@ -32,6 +32,7 @@ strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
 target_link_libraries(tst_input_map PRIVATE Qt6::Qml)
 strmqt_add_test(tst_stick_decision unit/tst_stick_decision.cpp)
 strmqt_add_test(tst_gamepad_decision unit/tst_gamepad_decision.cpp)
+strmqt_add_test(tst_fast_forward_ramp unit/tst_fast_forward_ramp.cpp)
 strmqt_add_test(tst_vlc_frame_buffers unit/tst_vlc_frame_buffers.cpp)
 target_link_libraries(tst_vlc_frame_buffers PRIVATE Qt6::Gui)
 strmqt_add_test(tst_application_policy unit/tst_application_policy.cpp)
@@ -164,6 +165,28 @@ target_include_directories(tst_remote_ok_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_remote_ok_key PRIVATE Qt6::Quick)
 set_tests_properties(tst_remote_ok_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# A TV remote's Back (Qt::Key_Back) reaching every Esc handler as Esc
+# (src/input/RemoteBackKeyFilter.h), following nav.back's bindings.
+strmqt_add_test(tst_remote_back_key unit/tst_remote_back_key.cpp)
+target_include_directories(tst_remote_back_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_remote_back_key PRIVATE Qt6::Quick)
+set_tests_properties(tst_remote_back_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# The key diagnostics (src/input/KeyEventLogger.h): how an unknown remote
+# button's native codes get into the log.
+strmqt_add_test(tst_key_event_logger unit/tst_key_event_logger.cpp)
+target_include_directories(tst_key_event_logger PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_key_event_logger PRIVATE Qt6::Quick)
+set_tests_properties(tst_key_event_logger PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# A remote's ⏭ / ⏮ caught at the window (src/input/SkipKeyFilter.cpp), which is
+# QtGui and so lives in the executable; compiled straight into the test.
+strmqt_add_test(tst_skip_key_filter unit/tst_skip_key_filter.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/SkipKeyFilter.cpp)
+target_include_directories(tst_skip_key_filter PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_skip_key_filter PRIVATE Qt6::Quick)
+set_tests_properties(tst_skip_key_filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # NavigationKeyHandler posts to a window, so it is QtGui and lives in the
 # executable; it is compiled straight into the test with the focus keeper that
 # lets its keys land while the app is in the background.
@@ -197,6 +220,14 @@ strmqt_add_test(tst_queue_playback
     mocks/FakePlayerBackend.h
 )
 target_include_directories(tst_queue_playback PRIVATE mocks)
+
+# A remote's ⏭ / ⏮ rule (chapters first, then the queue) and hold-to-fast-forward.
+strmqt_add_test(tst_player_skip
+    integration/tst_player_skip.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h
+)
+target_include_directories(tst_player_skip PRIVATE mocks)
 
 strmqt_add_test(tst_item_actions_queue
     integration/tst_item_actions_queue.cpp

@@ -50,7 +50,10 @@ public:
         simulatePosition(positionMs);
     }
 
-    void setVolume(int) override {}
+    void setVolume(int percent) override { volumeRequests.append(percent); }
+    bool supportsMute() const override { return muteSupported; }
+    void setMuted(bool muted) override { muteRequests.append(muted); }
+    qreal maximumPlaybackSpeed() const override { return maxSpeed; }
 
     // ── Track surface ─────────────────────────────────────────────────────────
     QVariantList audioTracks() const override { return m_audioTracks; }
@@ -238,6 +241,10 @@ public:
     QList<int> audioTrackRequests;
     QList<int> subtitleTrackRequests;
     QList<qreal> speedRequests;
+    QList<int> volumeRequests;
+    QList<bool> muteRequests;
+    bool muteSupported = false;
+    qreal maxSpeed = 1.0; // no speed control, like VLC and Qt Multimedia
     QList<int> audioDelayRequests;
     QList<int> subtitleDelayRequests;
     QStringList screenshots;

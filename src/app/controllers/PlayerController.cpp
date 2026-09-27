@@ -25,6 +25,21 @@ constexpr int kMaxRecoverRetries = 3;
 constexpr qint64 kUpNextWindowMs = 30'000;
 // Below this, "previous" means the previous item; above it, it means "restart".
 constexpr qint64 kRestartThresholdMs = 5'000;
+// The same rule for a chapter: within this of its start, "previous chapter"
+// steps back one; further in, it restarts the chapter.
+constexpr qint64 kChapterRestartWindowMs = 3'000;
+// Hold-to-fast-forward: how often the ramp is looked at (fine enough that the
+// 400 ms tap/hold line is met to within a tick) and how often it seeks ahead.
+// Half a second between seeks gives an engine time to land one and show a
+// frame before the next; any faster and a 4K stream shows nothing but seeks.
+constexpr int kSkipHoldTickMs = 100;
+constexpr qint64 kFastForwardSeekIntervalMs = 500;
+// Seeking stops this far short of the end, so a hold does not overshoot into
+// the auto-advance; the engine's own speed still runs the last few seconds.
+constexpr qint64 kFastForwardEndGuardMs = 5'000;
+// Watchdog ticks (2 s each) the watchdog sits out after a hold: long enough to
+// cover the last jump landing, short enough that a real stall is still caught.
+constexpr int kFastForwardWatchdogGraceTicks = 2;
 // Chapter/up-next bookkeeping is controller state, not animation. Sampling it
 // at four times a second keeps it responsive without making every video frame
 // walk the controller's derived state.
@@ -100,8 +115,11 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             if (m_expectedLoadId != 0 && m_active)
                 emit trackChanged(description);
         });
+        // Not while a fast-forward hold drives the engine: its speed then is
+        // the hold's, not a setting (playbackSpeed() keeps the user's, and
+        // endFastForward() announces the restore).
         connect(m_backend, &PlayerBackend::playbackSpeedChanged, this, [this] {
-            if (m_expectedLoadId != 0 && m_active)
+            if (m_expectedLoadId != 0 && m_active && !m_fastForwarding)
                 emit playbackSpeedChanged();
         });
         connect(m_backend, &PlayerBackend::audioDelayChanged, this, [this] {
@@ -136,6 +154,33 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(this, &PlayerController::sourceIndexChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::queueChanged, this, &PlayerController::updateIsAudio);
+
+    // canSkipForward/canSkipBack read all of these. Over-announcing is free:
+    // the MPRIS side drops a repeat of the answer it already published.
+    for (const auto signal : {&PlayerController::queueStateChanged,
+                              &PlayerController::chaptersChanged,
+                              &PlayerController::currentChapterChanged,
+                              &PlayerController::isAudioChanged,
+                              &PlayerController::activeChanged})
+        connect(this, signal, this, &PlayerController::skipStateChanged);
+
+    // A hold outlives neither its session nor its item: the release of a key
+    // held across an auto-advance must not fast-forward — or skip — the next
+    // one.
+    m_skipHoldClock.start();
+    m_skipHoldTimer.setInterval(kSkipHoldTickMs);
+    connect(&m_skipHoldTimer, &QTimer::timeout, this, &PlayerController::onSkipHoldTick);
+    connect(this, &PlayerController::activeChanged, this, [this] {
+        if (!m_active && (m_ramp.isDown() || m_fastForwarding)) {
+            m_ramp.cancel();
+            m_skipHoldTimer.stop();
+            endFastForward(false);
+        }
+    });
+    connect(m_queue, &PlayQueue::currentChanged, this, [this] {
+        if (m_ramp.isDown() || m_fastForwarding)
+            cancelSkipForwardHold();
+    });
 
     connect(m_backend, &PlayerBackend::stateChanged, this, &PlayerController::onBackendState);
     connect(m_backend, &PlayerBackend::errorOccurred, this, &PlayerController::onBackendError);
@@ -184,8 +229,11 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
 
     // Something other than us can move the engine's volume — an mpv config
     // binding, a script, the OSD. Adopt it rather than fighting it.
+    // Neither adopts anything while a fast-forward holds the engine silent:
+    // that silence is ours, and the user's level and mute are what it put
+    // aside, not what it should overwrite.
     connect(m_backend, &PlayerBackend::volumeChanged, this, [this](int percent) {
-        if (m_applyingVolume)
+        if (m_applyingVolume || m_fastForwardMuted)
             return;
         const int clamped = qBound(0, percent, kMaxVolume);
         if (clamped == m_volume)
@@ -196,7 +244,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
         emit volumeChanged();
     });
     connect(m_backend, &PlayerBackend::mutedChanged, this, [this](bool muted) {
-        if (m_applyingVolume || muted == m_muted)
+        if (m_applyingVolume || m_fastForwardMuted || muted == m_muted)
             return;
         m_muted = muted;
         if (m_settings)
@@ -211,13 +259,14 @@ void PlayerController::applyVolume()
     // back, and without it the adopt-external-change path above would re-enter
     // on our own writes.
     m_applyingVolume = true;
+    const bool muted = m_muted || m_fastForwardMuted;
     if (m_backend->supportsMute()) {
         m_backend->setVolume(m_volume);
-        m_backend->setMuted(m_muted);
+        m_backend->setMuted(muted);
     } else {
         // No engine-side mute: emulate it, keeping m_volume as the level to
         // come back to.
-        m_backend->setVolume(m_muted ? 0 : m_volume);
+        m_backend->setVolume(muted ? 0 : m_volume);
     }
     m_applyingVolume = false;
 }
@@ -724,6 +773,9 @@ void PlayerController::startAttempt(qint64 startMs)
     m_pendingSubtitleTrack.reset();
     m_watchdogLastPos = -1;
     m_stallTicks = 0;
+    // A hold cancelled by this item change must not lend its grace to the new
+    // item's watchdog.
+    m_watchdogGraceTicks = 0;
     // m_stallStep intentionally survives watchdog-triggered reloads: the
     // escalation ladder must keep climbing, not restart at "nudge".
     setBusy(true);
@@ -796,6 +848,17 @@ void PlayerController::onWatchdogTick()
     if (paused() || m_backend->buffering()) {
         // Legitimate non-progress; do not count as a stall.
         m_stallTicks = 0;
+        return;
+    }
+    // A fast-forward hold moves the playhead by seeking, and an engine landing
+    // a seek can sit on one position without calling it buffering. Escalating
+    // then — nudge, reload, demote — would tear the stream down under a user
+    // who is only holding a button. The same for a moment after the hold.
+    if (m_fastForwarding || m_watchdogGraceTicks > 0) {
+        if (!m_fastForwarding)
+            --m_watchdogGraceTicks;
+        m_stallTicks = 0;
+        m_watchdogLastPos = m_backend->positionMs();
         return;
     }
 
@@ -1019,9 +1082,220 @@ void PlayerController::previousChapter()
     const int current = currentChapter();
     if (current < 0)
         return;
-    constexpr qint64 kRestartWindowMs = 3000;
     const qint64 start = m_chapterStarts.at(current);
-    seekToChapter(positionMs() - start > kRestartWindowMs ? current : qMax(0, current - 1));
+    seekToChapter(positionMs() - start > kChapterRestartWindowMs ? current : qMax(0, current - 1));
+}
+
+bool PlayerController::skipsByChapter() const
+{
+    return m_active && !m_isAudio && !m_chapterStarts.isEmpty();
+}
+
+bool PlayerController::canSkipForward() const
+{
+    if (skipsByChapter() && m_currentChapter + 1 < m_chapterStarts.size())
+        return true;
+    return hasNext();
+}
+
+bool PlayerController::canSkipBack() const
+{
+    return skipsByChapter() || hasPrevious();
+}
+
+void PlayerController::skipForward()
+{
+    // m_currentChapter is -1 before the first chapter's start, which makes the
+    // first chapter the next one — right for a film whose chapter 1 is not at 0.
+    if (skipsByChapter() && m_currentChapter + 1 < m_chapterStarts.size()) {
+        seekToChapter(m_currentChapter + 1);
+        return;
+    }
+    // Past the last chapter, or no chapters to step by: the next queue entry,
+    // and nothing at all at the end of the queue — ⏭ must never stop a film.
+    if (hasNext())
+        playNext();
+}
+
+void PlayerController::skipBack()
+{
+    if (skipsByChapter() && m_currentChapter >= 0) {
+        // m_lastPositionMs rather than the engine's position: seekTo() adopts
+        // its target at once, so a second press straight after a restart sees
+        // the chapter's start and steps back, instead of restarting it again
+        // off the position the engine has not reported yet.
+        const qint64 into = m_lastPositionMs - m_chapterStarts.at(m_currentChapter);
+        if (into > kChapterRestartWindowMs) {
+            seekToChapter(m_currentChapter);
+            return;
+        }
+        if (m_currentChapter > 0) {
+            seekToChapter(m_currentChapter - 1);
+            return;
+        }
+        // At the very start of the first chapter: nothing earlier in this
+        // item, so the queue's rule decides (previous entry, or restart).
+    }
+    playPrevious();
+}
+
+qint64 PlayerController::skipHoldNow() const
+{
+    return m_skipHoldClockOverride ? m_skipHoldClockOverride() : m_skipHoldClock.elapsed();
+}
+
+void PlayerController::skipForwardPressed()
+{
+    if (!m_active)
+        return;
+    if (m_ramp.press(skipHoldNow()))
+        m_skipHoldTimer.start();
+}
+
+void PlayerController::skipForwardReleased()
+{
+    const FastForwardRamp::Release release = m_ramp.release(skipHoldNow());
+    m_skipHoldTimer.stop();
+    switch (release) {
+    case FastForwardRamp::Release::Tap:
+        skipForward();
+        break;
+    case FastForwardRamp::Release::HoldEnded:
+        endFastForward(true);
+        break;
+    case FastForwardRamp::Release::Ignored:
+        break;
+    }
+}
+
+void PlayerController::cancelSkipForwardHold()
+{
+    m_ramp.cancel();
+    m_skipHoldTimer.stop();
+    endFastForward(false);
+}
+
+void PlayerController::onSkipHoldTick()
+{
+    if (!m_ramp.isDown()) {
+        m_skipHoldTimer.stop();
+        return;
+    }
+    const qint64 now = skipHoldNow();
+    if (m_ramp.update(now)) {
+        if (!m_fastForwarding && !beginFastForward(now))
+            return;
+        applyFastForwardRate();
+    }
+    if (m_fastForwarding)
+        stepFastForward(now);
+}
+
+bool PlayerController::fastForwardMaySeek() const
+{
+    // A seek on a transcode far outside what the server has produced makes
+    // Emby kill and restart its ffmpeg job; twice a second, that is a
+    // fast-forward made of restarts. Speed alone is honest there: the server
+    // either keeps up with 4× or the engine buffers, and nothing is torn down.
+    // Stepping less often with bigger jumps would still restart the job on
+    // every step — just with a longer spinner each time.
+    if (streamMethod() == QLatin1String("Transcode"))
+        return false;
+    // Without a length there is no end to stop short of, and a live stream
+    // has nothing ahead of "now" to seek to.
+    return durationMs() > 0;
+}
+
+bool PlayerController::beginFastForward(qint64 nowMs)
+{
+    // Whatever the user had — 1×, or the 1.25× they watch lectures at — is
+    // what the release comes back to.
+    const qreal userSpeed = m_backend->playbackSpeed();
+    // Nothing a hold could do faster: no seeking allowed here and an engine
+    // already at (or without) its top speed. Then the hold is inert — no
+    // silence, no speed change — and its release is still not a skip.
+    if (!fastForwardMaySeek() && m_backend->maximumPlaybackSpeed() <= userSpeed)
+        return false;
+    m_fastForwarding = true;
+    m_speedBeforeFastForward = userSpeed;
+    m_fastForwardEngineSpeed = m_speedBeforeFastForward;
+    m_lastFastForwardStepMs = nowMs;
+    m_fastForwardTargetMs = m_lastPositionMs;
+    // Pitch-corrected speech at 2–4× is chatter, and between seeks it is
+    // fragments. A separate flag, so the user's own mute is neither needed
+    // nor disturbed.
+    m_fastForwardMuted = true;
+    applyVolume();
+    return true;
+}
+
+void PlayerController::applyFastForwardRate()
+{
+    const qreal ceiling = m_backend->maximumPlaybackSpeed();
+    // Never slower than the user already watches at.
+    const qreal wanted = qMax(m_ramp.rate(), m_speedBeforeFastForward);
+    if (ceiling > 1.0) {
+        // Smooth, real playback as far as the engine goes (mpv: 4×); seeking
+        // makes up the rest.
+        m_fastForwardEngineSpeed = qMin(wanted, ceiling);
+        m_backend->setPlaybackSpeed(m_fastForwardEngineSpeed);
+    }
+    // Where seeking is off, the engine's speed is all there is, and the rate
+    // published is the one actually happening.
+    const qreal rate = fastForwardMaySeek() ? wanted : m_fastForwardEngineSpeed;
+    if (!qFuzzyCompare(rate, m_fastForwardRate)) {
+        m_fastForwardRate = rate;
+        emit fastForwardRateChanged();
+    }
+}
+
+void PlayerController::stepFastForward(qint64 nowMs)
+{
+    if (!fastForwardMaySeek())
+        return;
+    const qint64 elapsed = nowMs - m_lastFastForwardStepMs;
+    if (elapsed < kFastForwardSeekIntervalMs)
+        return;
+    m_lastFastForwardStepMs = nowMs;
+    // What the engine covered by playing is not ours to add again: a paused
+    // engine covers nothing, so the seeks carry the whole rate.
+    const qreal engine = paused() ? 0.0 : m_fastForwardEngineSpeed;
+    const qreal extra = m_fastForwardRate - engine;
+    if (extra <= 0.0)
+        return;
+    const qint64 base = qMax(m_lastPositionMs, m_fastForwardTargetMs);
+    qint64 target = base + qRound64(extra * static_cast<qreal>(elapsed));
+    const qint64 duration = durationMs();
+    if (duration > 0)
+        target = qMin(target, duration - kFastForwardEndGuardMs);
+    if (target <= base)
+        return;
+    m_fastForwardTargetMs = target;
+    seekTo(target);
+}
+
+void PlayerController::endFastForward(bool reportPosition)
+{
+    if (!m_fastForwarding)
+        return;
+    m_fastForwarding = false;
+    if (m_backend->maximumPlaybackSpeed() > 1.0)
+        m_backend->setPlaybackSpeed(m_speedBeforeFastForward);
+    m_fastForwardMuted = false;
+    applyVolume();
+    m_fastForwardTargetMs = -1;
+    m_stallTicks = 0;
+    m_watchdogGraceTicks = kFastForwardWatchdogGraceTicks;
+    if (m_fastForwardRate != 0.0) {
+        m_fastForwardRate = 0.0;
+        emit fastForwardRateChanged();
+    }
+    // Readouts were held on the user's speed for the hold; say so once now
+    // that the engine is back on it too.
+    if (m_active)
+        emit playbackSpeedChanged();
+    if (reportPosition && m_reporting && m_started)
+        reportProgress();
 }
 
 void PlayerController::onBackendError(const QString &message, PlayerBackend::LoadId loadId)
@@ -1383,7 +1657,8 @@ void PlayerController::seekTo(qint64 positionMs)
     // moving the playhead — the scrubber, a skip binding, a chapter jump, a
     // remote SetPosition — reaches a listening MPRIS client as one Seeked.
     emit seeked(target);
-    if (m_reporting && m_started)
+    // A fast-forward seeks twice a second; it reports once, when it ends.
+    if (m_reporting && m_started && !m_fastForwarding)
         reportProgress();
 }
 

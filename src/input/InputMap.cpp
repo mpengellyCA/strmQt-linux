@@ -62,6 +62,18 @@ const KeyName kNamedKeys[] = {
     // here so nav.contextMenu round-trips through the remap UI like any other
     // binding; QKeySequence::fromString() spells it the same way.
     {"Menu", Qt::Key_Menu},
+    // A TV remote's Home button: KEY_HOMEPAGE → XF86HomePage. Spelled with the
+    // space because that is QKeySequence's name for Qt::Key_HomePage, measured
+    // on Qt 6.11; keyboard Home (Qt::Key_Home) is the entry above and stays the
+    // list's first-item key.
+    {"Home Page", Qt::Key_HomePage},
+    // A remote's transport keys, again in QKeySequence's spelling: ⏭/⏮ are
+    // KEY_NEXTSONG/KEY_PREVIOUSSONG (XF86AudioNext/Prev), ⏩/⏪ are
+    // KEY_FASTFORWARD/KEY_REWIND (XF86AudioForward/Rewind).
+    {"Media Next", Qt::Key_MediaNext},
+    {"Media Previous", Qt::Key_MediaPrevious},
+    {"Media Fast Forward", Qt::Key_AudioForward},
+    {"Media Rewind", Qt::Key_AudioRewind},
 };
 
 // Aliases accepted on input but never emitted (canonical spelling wins).
@@ -69,7 +81,7 @@ const KeyName kKeyAliases[] = {
     {"Escape", Qt::Key_Escape},  {"Insert", Qt::Key_Insert},     {"Delete", Qt::Key_Delete},
     {"PageUp", Qt::Key_PageUp},  {"PageDown", Qt::Key_PageDown}, {"PgDn", Qt::Key_PageDown},
     {"Plus", Qt::Key_Plus},      {"Minus", Qt::Key_Minus},       {"Slash", Qt::Key_Slash},
-    {"Spacebar", Qt::Key_Space},
+    {"Spacebar", Qt::Key_Space},  {"HomePage", Qt::Key_HomePage},
 };
 
 struct ParsedSequence
@@ -288,12 +300,16 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextBrowse),
          {QStringLiteral("Return"), QStringLiteral("Enter"), QStringLiteral("Space")},
          QObject::tr("A")},
-        // Main.qml Keys.onEscapePressed / Keys.onBackPressed.
+        // Main.qml's StackView Keys.onPressed and every Keys.onEscapePressed.
+        // "Back" is a TV remote's Back button (KEY_BACK → XF86Back →
+        // Qt::Key_Back). No page answers Key_Back itself: RemoteBackKeyFilter
+        // turns it into the primary binding (Esc) at the window, so it closes
+        // the menus, panels and dialogs Esc does, not just the page history.
         {QStringLiteral("nav.back"),
          QObject::tr("Back"),
          QStringLiteral("Navigation"),
          QString::fromLatin1(InputMap::kContextBrowse),
-         {QStringLiteral("Esc"), QStringLiteral("Backspace")},
+         {QStringLiteral("Esc"), QStringLiteral("Backspace"), QStringLiteral("Back")},
          QObject::tr("B")},
 
         // Library — Main.qml Shortcut { sequence: "/" }.
@@ -363,6 +379,16 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextGlobal),
          {QStringLiteral("M")},
          QObject::tr("Menu")},
+        // A remote's Home button. Global, because it is also the way out of
+        // the player to Home — exactly what the rail's Home entry does
+        // (Main.qml goHome()). Keyboard Home is not bound: in a list it means
+        // "first item", and nothing here should take that away.
+        {QStringLiteral("app.home"),
+         QObject::tr("Go to Home"),
+         QStringLiteral("Application"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Home Page")},
+         QString()},
         {QStringLiteral("library.search"),
          QObject::tr("Search"),
          QStringLiteral("Library"),
@@ -412,17 +438,21 @@ const QList<InputMap::ActionDef> &catalogue()
         // yet is how a film jumped while the user was still finding the
         // controls. J/L — the convention every video site teaches — are the
         // discrete jumps, and LT/RT resolve through them.
+        //
+        // A remote's ⏪/⏩ are these too. They are not ⏮/⏭ — a remote that has
+        // both pairs means "wind", not "next" — and a held key repeats the jump
+        // exactly as a held J/L does (PlayerPage's repeatable actions).
         {QStringLiteral("player.seekBackward"),
          QObject::tr("Seek back 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("J")},
+         {QStringLiteral("J"), QStringLiteral("Media Rewind")},
          QObject::tr("LT")},
         {QStringLiteral("player.seekForward"),
          QObject::tr("Seek forward 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("L")},
+         {QStringLiteral("L"), QStringLiteral("Media Fast Forward")},
          QObject::tr("RT")},
         // GamepadManager maps LB→PgDown and RB→PgUp, i.e. the 60 s jumps.
         {QStringLiteral("player.seekBackwardLong"),
@@ -514,6 +544,30 @@ const QList<InputMap::ActionDef> &catalogue()
          {QStringLiteral("-")},
          QObject::tr("Right Stick Down")},
 
+        // ── A remote's ⏭ / ⏮ ──────────────────────────────────────────────
+        // Chapter first, then the queue: PlayerController::skipForward /
+        // skipBack own the rule, and MPRIS Next/Previous run the same one.
+        // Global, because a record playing under the library skips too; live
+        // only while something plays. The keys are caught at the window
+        // (SkipKeyFilter) rather than by a Shortcut, because a Shortcut sees
+        // a press and never a release.
+        //
+        // Plasma normally grabs the media keys for its media controller and
+        // hands them to the active MPRIS player instead — which arrives as
+        // Next/Previous and takes the same rule.
+        {QStringLiteral("player.skipForward"),
+         QObject::tr("Next chapter, or next item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Media Next")},
+         QString()},
+        {QStringLiteral("player.skipBack"),
+         QObject::tr("Previous chapter, or previous item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Media Previous")},
+         QString()},
+
         // ── The docked bar, from the keyboard and from a pad ──────────────
         // MiniPlayer::focusTransport() has existed since the bar did and
         // nothing called it: the strip could be reached by Tab or by clicking
@@ -580,7 +634,36 @@ const QList<InputMap::ActionDef> &catalogue()
          {QStringLiteral("R")},
          QString()},
     };
-    return defs;
+    // ── Number keys: a remote's number pad ────────────────────────────────
+    // 1–9 open the libraries in the order the menu lists them, 0 opens
+    // Favorites (Main.qml openLibraryAt / openFavorites). Browse context, so
+    // they are never live in the player, where a stray press must not leave the
+    // film. Typable, so they stand down inside a text field and a search still
+    // takes digits (MappedShortcut). Keypad digits match too: QShortcutMap
+    // retries a keypad key without Qt::KeypadModifier.
+    //
+    // A category of their own keeps them together at the end of the shortcut
+    // sheet and out of the command palette, which lists only Application and
+    // Library verbs — "Library 3 in the menu" means nothing typed as a command.
+    static const QList<InputMap::ActionDef> all = [] {
+        QList<InputMap::ActionDef> out = defs;
+        for (int n = 1; n <= 9; ++n) {
+            out.append({QStringLiteral("library.open%1").arg(n),
+                        QObject::tr("Library %1 in the menu").arg(n),
+                        QStringLiteral("Number keys"),
+                        QString::fromLatin1(InputMap::kContextBrowse),
+                        {QString::number(n)},
+                        QString()});
+        }
+        out.append({QStringLiteral("library.favorites"),
+                    QObject::tr("Favorites"),
+                    QStringLiteral("Number keys"),
+                    QString::fromLatin1(InputMap::kContextBrowse),
+                    {QStringLiteral("0")},
+                    QString()});
+        return out;
+    }();
+    return all;
 }
 
 bool isKnownDevice(const QString &device)

@@ -39,6 +39,9 @@ private slots:
     void triggerRefusesUnknownActions();
     void triggerReachesAQmlHandler();
     void navigationActionsAreTheFocusRelativeOnes();
+    void aRemotesHomeButtonGoesHome();
+    void aRemotesTransportKeysResolve();
+    void numberKeysOpenLibraries();
 
 private:
     QString ini() const { return m_dir->filePath(QStringLiteral("input.ini")); }
@@ -71,16 +74,20 @@ void InputMapTest::defaultsMatchTodaysBindings()
     QCOMPARE(m_map->bindings(QStringLiteral("app.settings")), QStringList{QStringLiteral("F2")});
     QCOMPARE(m_map->bindings(QStringLiteral("app.fullscreen")),
              (QStringList{QStringLiteral("F11"), QStringLiteral("F")}));
+    // A TV remote's Back button (Qt::Key_Back) sits beside Esc, and leaves
+    // Esc primary: it is what the pad's B and RemoteBackKeyFilter deliver.
     QCOMPARE(m_map->bindings(QStringLiteral("nav.back")),
-             (QStringList{QStringLiteral("Esc"), QStringLiteral("Backspace")}));
+             (QStringList{QStringLiteral("Esc"), QStringLiteral("Backspace"),
+                          QStringLiteral("Back")}));
 
     // PlayerPage.qml
     QCOMPARE(m_map->bindings(QStringLiteral("player.togglePause")),
              (QStringList{QStringLiteral("Space"), QStringLiteral("K")}));
+    // …and a remote's ⏪/⏩ (Qt::Key_AudioRewind / Key_AudioForward).
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackward")),
-             QStringList{QStringLiteral("J")});
+             (QStringList{QStringLiteral("J"), QStringLiteral("Media Rewind")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekForward")),
-             QStringList{QStringLiteral("L")});
+             (QStringList{QStringLiteral("L"), QStringLiteral("Media Fast Forward")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.markLoop")),
              QStringList{QStringLiteral("B")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackwardLong")),
@@ -733,6 +740,81 @@ void InputMapTest::navigationActionsAreTheFocusRelativeOnes()
     for (const char *id : {"nav.nextTab", "nav.previousLetter", "app.fullscreen",
                            "player.stop", "music.playPause"})
         QVERIFY2(!InputMap::isNavigationAction(QString::fromLatin1(id)), id);
+}
+
+// A TV remote's Home sends KEY_HOMEPAGE, which Qt names Qt::Key_HomePage and
+// QKeySequence spells "Home Page". Keyboard Home keeps its list meaning.
+void InputMapTest::aRemotesHomeButtonGoesHome()
+{
+    QCOMPARE(m_map->bindings(QStringLiteral("app.home")), QStringList{QStringLiteral("Home Page")});
+    QCOMPARE(m_map->context(QStringLiteral("app.home")), QStringLiteral("global"));
+    QCOMPARE(m_map->keyFor(QStringLiteral("app.home")), int(Qt::Key_HomePage));
+    QCOMPARE(m_map->normalizeSequence(QStringLiteral("home page")), QStringLiteral("Home Page"));
+    QCOMPARE(m_map->normalizeSequence(QStringLiteral("HomePage")), QStringLiteral("Home Page"));
+    QCOMPARE(m_map->sequenceForKey(Qt::Key_HomePage), QStringLiteral("Home Page"));
+    QVERIFY(!m_map->isTypableSequence(QStringLiteral("Home Page")));
+    for (const char *context : {"browse", "music", "player"})
+        QCOMPARE(m_map->actionForKey(Qt::Key_HomePage, 0, QString::fromLatin1(context)),
+                 QStringLiteral("app.home"));
+    QVERIFY(m_map->actionForKey(Qt::Key_Home).isEmpty());
+}
+
+// ⏭/⏮ skip (chapter first) from anywhere something plays; ⏩/⏪ wind in the
+// player. Every name is QKeySequence's own, so each reaches QML intact.
+void InputMapTest::aRemotesTransportKeysResolve()
+{
+    const struct
+    {
+        int key;
+        const char *name;
+        const char *context;
+        const char *action;
+    } rows[] = {
+        {Qt::Key_MediaNext, "Media Next", "browse", "player.skipForward"},
+        {Qt::Key_MediaNext, "Media Next", "player", "player.skipForward"},
+        {Qt::Key_MediaPrevious, "Media Previous", "music", "player.skipBack"},
+        {Qt::Key_AudioForward, "Media Fast Forward", "player", "player.seekForward"},
+        {Qt::Key_AudioRewind, "Media Rewind", "player", "player.seekBackward"},
+    };
+    for (const auto &row : rows) {
+        const QString name = QString::fromLatin1(row.name);
+        QCOMPARE(m_map->sequenceForKey(row.key), name);
+        QCOMPARE(m_map->normalizeSequence(name.toLower()), name);
+        QVERIFY2(!m_map->isTypableSequence(name), row.name);
+        QCOMPARE(m_map->actionForKey(row.key, 0, QString::fromLatin1(row.context)),
+                 QString::fromLatin1(row.action));
+    }
+    QCOMPARE(m_map->context(QStringLiteral("player.skipForward")), QStringLiteral("global"));
+    QCOMPARE(m_map->keyFor(QStringLiteral("player.skipForward")), int(Qt::Key_MediaNext));
+    QCOMPARE(m_map->keyFor(QStringLiteral("player.skipBack")), int(Qt::Key_MediaPrevious));
+    // Winding is the player's: in the library ⏩ means nothing.
+    QVERIFY(m_map->actionForKey(Qt::Key_AudioForward, 0, QStringLiteral("browse")).isEmpty());
+}
+
+// A remote's number pad: 1–9 the libraries in menu order, 0 Favorites. Browse
+// only, typable (so a search box keeps its digits), and the keypad's digits are
+// the same keys.
+void InputMapTest::numberKeysOpenLibraries()
+{
+    for (int n = 1; n <= 9; ++n) {
+        const QString id = QStringLiteral("library.open%1").arg(n);
+        QCOMPARE(m_map->bindings(id), QStringList{QString::number(n)});
+        QCOMPARE(m_map->context(id), QStringLiteral("browse"));
+        QVERIFY(m_map->isTypableSequence(m_map->binding(id)));
+        QCOMPARE(m_map->actionForKey(Qt::Key_0 + n, Qt::KeypadModifier, QStringLiteral("browse")),
+                 id);
+    }
+    QCOMPARE(m_map->bindings(QStringLiteral("library.favorites")),
+             QStringList{QStringLiteral("0")});
+    QCOMPARE(m_map->actionForKey(Qt::Key_0, 0, QStringLiteral("browse")),
+             QStringLiteral("library.favorites"));
+    // Never in the player: a stray digit must not leave the film.
+    for (int key = Qt::Key_0; key <= Qt::Key_9; ++key)
+        QVERIFY(m_map->actionForKey(key, 0, QStringLiteral("player")).isEmpty());
+
+    // Grouped on their own, and out of the palette's Application/Library rows.
+    QCOMPARE(m_map->actionsForCategory(QStringLiteral("Number keys")).size(), 10);
+    QCOMPARE(m_map->category(QStringLiteral("library.open1")), QStringLiteral("Number keys"));
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)

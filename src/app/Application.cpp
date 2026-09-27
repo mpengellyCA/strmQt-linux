@@ -503,11 +503,13 @@ void Application::wirePlaybackIntegrations()
     connect(m_player, &PlayerController::positionChanged, this,
             [this] { m_mpris->setPositionMs(m_player->positionMs()); });
     // CanGoNext / CanGoPrevious have to be re-announced, not just answered: an
-    // applet reads the property when the player appears and never again.
-    connect(m_player, &PlayerController::queueStateChanged, this, [this] {
-        m_mpris->setQueueState(m_player->hasNext(), m_player->hasPrevious());
+    // applet reads the property when the player appears and never again. They
+    // are the ⏭/⏮ answers, not the queue's: a film's chapters are skippable
+    // with nothing else queued.
+    connect(m_player, &PlayerController::skipStateChanged, this, [this] {
+        m_mpris->setQueueState(m_player->canSkipForward(), m_player->canSkipBack());
     });
-    m_mpris->setQueueState(m_player->hasNext(), m_player->hasPrevious());
+    m_mpris->setQueueState(m_player->canSkipForward(), m_player->canSkipBack());
     // The sleeve arrives long after the rest of the track. Anything but the
     // export we are currently waiting on belongs to a superseded item.
     connect(m_imageFetcher, &EmbyImageFetcher::fileExported, this,
@@ -536,8 +538,11 @@ void Application::wirePlaybackIntegrations()
     connect(m_mpris, &MprisPlayer::playRequested, m_player, [this] { m_player->setPaused(false); });
     connect(m_mpris, &MprisPlayer::pauseRequested, m_player, [this] { m_player->setPaused(true); });
     connect(m_mpris, &MprisPlayer::stopRequested, m_player, &PlayerController::stop);
-    connect(m_mpris, &MprisPlayer::nextRequested, m_player, &PlayerController::playNext);
-    connect(m_mpris, &MprisPlayer::previousRequested, m_player, &PlayerController::playPrevious);
+    // Next/Previous are how a remote's ⏭/⏮ arrive while Plasma's media
+    // controller holds the media keys, so they take the remote's rule:
+    // chapters first (PlayerController::skipForward/skipBack).
+    connect(m_mpris, &MprisPlayer::nextRequested, m_player, &PlayerController::skipForward);
+    connect(m_mpris, &MprisPlayer::previousRequested, m_player, &PlayerController::skipBack);
     connect(m_mpris, &MprisPlayer::seekRequested, m_player, &PlayerController::seekRelative);
     connect(m_mpris, &MprisPlayer::setPositionRequested, m_player, &PlayerController::seekTo);
     // Seeked is the spec's answer to a client that extrapolates position between

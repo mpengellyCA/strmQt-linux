@@ -192,6 +192,7 @@ public:
     qint64 bufferedMs() const override;
     qreal playbackSpeed() const override { return m_speed; }
     void setPlaybackSpeed(qreal speed) override;
+    qreal maximumPlaybackSpeed() const override;
     int audioDelayMs() const override { return m_audioDelayMs; }
     void setAudioDelayMs(int ms) override;
     int subtitleDelayMs() const override { return m_subtitleDelayMs; }

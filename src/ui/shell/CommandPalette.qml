@@ -87,6 +87,7 @@ Item {
     // and "Show / hide the menu" were indistinguishable at a glance.
     function commandIcon(actionId): string {
         switch (actionId) {
+        case "app.home":            return "home";
         case "library.search":      return "search";
         case "app.settings":        return "settings";
         case "app.fullscreen":      return "fullscreen";
