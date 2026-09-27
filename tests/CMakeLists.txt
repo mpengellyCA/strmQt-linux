@@ -301,6 +301,11 @@ target_link_libraries(tst_card_component PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_card_component PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_card_component PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+strmqt_add_test(tst_focus_clip unit/tst_focus_clip.cpp)
+target_link_libraries(tst_focus_clip PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_focus_clip PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_focus_clip PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 strmqt_add_test(tst_crate_controls unit/tst_crate_controls.cpp)
 target_link_libraries(tst_crate_controls PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_crate_controls PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
