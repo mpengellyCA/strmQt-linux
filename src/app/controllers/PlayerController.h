@@ -176,6 +176,9 @@ public:
     Q_INVOKABLE void skipForward();
     Q_INVOKABLE void skipBack();
     bool canSkipForward() const;
+    // For music, also true with nothing earlier in the queue once the track
+    // is 5 s in, because ⏮ then restarts it (the rule the player's ⏮ button
+    // is enabled by).
     bool canSkipBack() const;
 
     // ⏭ as a key, which has a release: a tap is skipForward() — on the
@@ -537,6 +540,9 @@ private:
     qint64 m_positionSeconds = 0;
     qint64 m_bufferedEndMs = 0;
     qint64 m_lastInternalPositionMs = -1;
+    // The playhead is past ⏮'s restart threshold; kept so skipStateChanged
+    // fires when it crosses, not on every position tick.
+    bool m_pastRestartThreshold = false;
     int m_volume = 100;
     bool m_muted = false;
     bool m_applyingVolume = false; // guards the engine → controller echo

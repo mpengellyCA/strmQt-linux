@@ -1040,6 +1040,12 @@ void PlayerController::updatePositionSnapshots(qint64 positionMs, bool forceInte
         m_positionSeconds = seconds;
         emit positionSecondsChanged();
     }
+    // Same comparison as the audio player's ⏮ (PlayerCtl.positionMs >= 5000).
+    const bool pastRestart = positionMs >= kRestartThresholdMs;
+    if (pastRestart != m_pastRestartThreshold) {
+        m_pastRestartThreshold = pastRestart;
+        emit skipStateChanged();
+    }
 
     if (!forceInternal && m_lastInternalPositionMs >= 0 &&
         qAbs(positionMs - m_lastInternalPositionMs) < kInternalPositionEpsilonMs) {
@@ -1100,7 +1106,7 @@ bool PlayerController::canSkipForward() const
 
 bool PlayerController::canSkipBack() const
 {
-    return skipsByChapter() || hasPrevious();
+    return skipsByChapter() || hasPrevious() || (m_active && m_isAudio && m_pastRestartThreshold);
 }
 
 void PlayerController::skipForward()

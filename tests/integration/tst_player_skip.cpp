@@ -68,6 +68,7 @@ private slots:
     void videoWithoutChaptersStepsByItem();
     void musicStepsByTrackEvenWithChapters();
     void skipStateFollowsTheChapterUnderThePlayhead();
+    void musicCanSkipBackOnceARestartWouldHappen();
 
     // ⏭ held: tap on release, hold to fast-forward.
     void aTapSkipsOnTheRelease();
@@ -294,6 +295,34 @@ void PlayerSkipTest::skipStateFollowsTheChapterUnderThePlayhead()
 
     m_controller->stop();
     QVERIFY(!m_controller->canSkipForward());
+    QVERIFY(!m_controller->canSkipBack());
+}
+
+void PlayerSkipTest::musicCanSkipBackOnceARestartWouldHappen()
+{
+    const QString audio = QStringLiteral("Audio");
+    start({itemMap(QStringLiteral("301001"), audio)}, 0, 0);
+    QVERIFY(m_controller->isAudio());
+    QVERIFY(!m_controller->hasPrevious());
+    m_backend->simulatePosition(1'000);
+    // The first track, just started: ⏮ has nothing to do.
+    QVERIFY(!m_controller->canSkipBack());
+
+    // 5 s in, ⏮ restarts the track — MPRIS CanGoPrevious must say so, and
+    // hear about it when the threshold is crossed.
+    QSignalSpy skipState(m_controller, &PlayerController::skipStateChanged);
+    m_backend->simulatePosition(5'000);
+    QVERIFY(m_controller->canSkipBack());
+    QCOMPARE(skipState.count(), 1);
+    m_backend->simulatePosition(6'000);
+    QCOMPARE(skipState.count(), 1); // not on every tick
+
+    m_controller->skipBack();
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(0));
+    QVERIFY(!m_controller->canSkipBack());
+    QCOMPARE(skipState.count(), 2);
+
+    m_controller->stop();
     QVERIFY(!m_controller->canSkipBack());
 }
 
