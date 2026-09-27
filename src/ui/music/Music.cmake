@@ -25,4 +25,7 @@ qt_target_qml_sources(strmqt
 )
 
 # Phase 5: the player
-qt_target_qml_sources(strmqt QML_FILES ui/music/RecordStage.qml)
+qt_target_qml_sources(strmqt QML_FILES
+    ui/music/RecordStage.qml
+    ui/music/MusicPlayerPanel.qml
+)
