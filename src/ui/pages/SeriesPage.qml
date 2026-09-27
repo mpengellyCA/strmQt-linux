@@ -736,10 +736,11 @@ FocusScope {
     }
 
     // ── Season bar ─────────────────────────────────────────────────────────
-    // Flickable so a 20-season show is still reachable with a mouse; the bar
-    // itself is one tab stop and owns Left/Right.
-    Flickable {
-        id: seasonScroll
+    // The strip's clip (FocusClip). StrmTabBar draws its ring half a
+    // spacingTight outside the current tab, so on the first season it reached
+    // past the strip's left edge and was cut; the clip keeps that much more.
+    FocusClip {
+        id: seasonScrollClip
 
         anchors.top: heroBox.bottom
         anchors.left: parent.left
@@ -749,7 +750,17 @@ FocusScope {
         anchors.rightMargin: Theme.pageMarginValue
         height: seasonBar.implicitHeight
         visible: page.seasonTabs.length > 0
-        clip: true
+        leftOutset: Theme.spacingTight / 2 + Theme.focusRingOutset
+        rightOutset: Theme.spacingTight / 2 + Theme.focusRingOutset
+    }
+
+    // Flickable so a 20-season show is still reachable with a mouse; the bar
+    // itself is one tab stop and owns Left/Right.
+    Flickable {
+        id: seasonScroll
+
+        parent: seasonScrollClip.contentItem
+        anchors.fill: parent
 
         contentWidth: seasonBar.implicitWidth
         contentHeight: seasonScroll.height
@@ -796,6 +807,28 @@ FocusScope {
     }
 
     // ── Episodes ───────────────────────────────────────────────────────────
+    // The grid's clip, with room for a focused card's raise and ring, which on
+    // the first row and column reached past the grid's own edge (FocusClip;
+    // StrmGrid does the same). Across the scroll axis the page margin has room
+    // to spare; along it, only what the cell's gap does not already cover.
+    FocusClip {
+        id: episodeGridClip
+
+        anchors.top: seasonScrollClip.visible ? seasonScrollClip.bottom : heroBox.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: Theme.spacingValue
+        anchors.leftMargin: Theme.pageMarginValue
+        anchors.rightMargin: Theme.pageMarginValue
+        leftOutset: Theme.focusHeadroom(page.cardWidth)
+        rightOutset: Theme.focusHeadroom(page.cardWidth)
+        topOutset: Math.max(Theme.focusRingOutset,
+                            Theme.focusHeadroom(page.cardHeight)
+                            - Math.floor((episodeGrid.cellHeight - page.cardHeight) / 2))
+        bottomOutset: episodeGridClip.topOutset
+    }
+
     GridView {
         id: episodeGrid
 
@@ -868,13 +901,8 @@ FocusScope {
             function onCountChanged() { episodeNavigationFocus.retry() }
         }
 
-        anchors.top: seasonScroll.visible ? seasonScroll.bottom : heroBox.bottom
-        anchors.bottom: parent.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.topMargin: Theme.spacingValue
-        anchors.leftMargin: Theme.pageMarginValue
-        anchors.rightMargin: Theme.pageMarginValue
+        parent: episodeGridClip.contentItem
+        anchors.fill: parent
         // The page's single `focus: true`, and deliberately so: Main.qml focuses
         // a page by focusing its root FocusScope, which delegates to whatever
         // one thing claimed it. Two claimants would make "where does the page
@@ -882,7 +910,6 @@ FocusScope {
         // and, because focusInitialEpisode() puts the cursor on the next
         // unwatched one, arriving and pressing Return plays the right episode.
         focus: true
-        clip: true
         model: SeriesCtl.episodes
 
         // Opacity, not visibility: an invisible view loses active focus and does
@@ -1142,21 +1169,21 @@ FocusScope {
 
     // Swallows clicks aimed at the previous season's cards underneath.
     MouseArea {
-        anchors.fill: episodeGrid
+        anchors.fill: episodeGridClip
         visible: SeriesCtl.loading
         acceptedButtons: Qt.AllButtons
     }
 
     LoadingState {
-        anchors.fill: episodeGrid
+        anchors.fill: episodeGridClip
         shape: "grid"
         active: SeriesCtl.loading
         margins: 0
     }
 
     EmptyState {
-        anchors.horizontalCenter: episodeGrid.horizontalCenter
-        anchors.verticalCenter: episodeGrid.verticalCenter
+        anchors.horizontalCenter: episodeGridClip.horizontalCenter
+        anchors.verticalCenter: episodeGridClip.verticalCenter
         visible: !SeriesCtl.loading && episodeGrid.count === 0
         iconName: "list"
         headline: qsTr("No episodes here")

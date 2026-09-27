@@ -226,6 +226,7 @@ const QStringList kControls = {
     QStringLiteral("StrmAvatar"),     QStringLiteral("StrmCard"),    QStringLiteral("StrmScrollBar"),
     QStringLiteral("NavigationFocusRestorer"), QStringLiteral("NavigationColumn"),
     QStringLiteral("StrmRail"),       QStringLiteral("StrmSkeleton"), QStringLiteral("StrmSearchField"),
+    QStringLiteral("FocusClip"),
 };
 
 const QStringList kMusic = {

@@ -131,6 +131,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
         QStringLiteral("StrmScrollBar.qml"),  QStringLiteral("NavigationFocusRestorer.qml"),
         QStringLiteral("NavigationColumn.qml"), QStringLiteral("StrmRail.qml"),
         QStringLiteral("StrmGrid.qml"),
+        QStringLiteral("FocusClip.qml"),
     };
     for (const QString &name : moduleFiles) {
         const QString sourceRoot = name == QStringLiteral("Theme.qml")
@@ -146,6 +147,7 @@ QQuickItem *createProbe(QTemporaryDir &dir, QQuickView &view)
                  "singleton Theme 1.0 Theme.qml\n"
                  "singleton NavigationColumn 1.0 NavigationColumn.qml\n"
                  "FocusRing 1.0 FocusRing.qml\n"
+                 "FocusClip 1.0 FocusClip.qml\n"
                  "StrmIcon 1.0 StrmIcon.qml\n"
                  "StrmTooltip 1.0 StrmTooltip.qml\n"
                  "StrmIconButton 1.0 StrmIconButton.qml\n"

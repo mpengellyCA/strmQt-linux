@@ -261,8 +261,11 @@ FocusScope {
     }
 
     // ── Left column: the sleeve and its notes ──────────────────────────────
-    Flickable {
-        id: sleeveColumn
+    // The liner notes' link chips sit flush on the column's left edge and grow
+    // on focus, so the column clips with room for them (FocusClip). Nothing
+    // scrolls sideways into that room, so it can take a whole raise.
+    FocusClip {
+        id: sleeveColumnClip
 
         anchors.left: parent.left
         anchors.top: parent.top
@@ -271,8 +274,16 @@ FocusScope {
         anchors.topMargin: Theme.spacingLoose
         width: page.narrow ? 0 : page.sleeveSize
         visible: !page.narrow
+        leftOutset: Theme.focusHeadroom(page.sleeveSize)
+        rightOutset: Theme.focusHeadroom(page.sleeveSize)
+    }
+
+    Flickable {
+        id: sleeveColumn
+
+        parent: sleeveColumnClip.contentItem
+        anchors.fill: parent
         contentHeight: sleeveStack.implicitHeight + Theme.spacingLoose
-        clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         Column {
@@ -305,7 +316,7 @@ FocusScope {
     Item {
         id: mainColumn
 
-        anchors.left: page.narrow ? parent.left : sleeveColumn.right
+        anchors.left: page.narrow ? parent.left : sleeveColumnClip.right
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -532,6 +543,21 @@ FocusScope {
         // Configured, never re-delegated: CrateTrackTable's Crate row is the
         // whole point of the type, and a `delegate:` declared here would
         // replace it silently.
+        // The table's clip (FocusClip). Its rows keep their ring inside, but the
+        // More-by shelf in its footer is gutterless, and its first sleeve's
+        // ring reaches past the table's left edge by a whole focus raise.
+        FocusClip {
+            id: trackTableClip
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: selectionBar.bottom
+            anchors.bottom: parent.bottom
+            anchors.topMargin: Theme.spacingTight
+            leftOutset: Theme.focusHeadroom(Theme.crateSleeveSize)
+            rightOutset: Theme.focusHeadroom(Theme.crateSleeveSize)
+        }
+
         CrateTrackTable {
             id: trackTable
 
@@ -539,12 +565,10 @@ FocusScope {
             navigationFocusFallbackItem: playButton
             navigationFocusRefillActive: AlbumCtl.loading
 
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: selectionBar.bottom
-            anchors.bottom: parent.bottom
-            anchors.topMargin: Theme.spacingTight
-            clip: true
+            parent: trackTableClip.contentItem
+            anchors.fill: parent
+            // TrackTable clips itself; FocusClip above is the clip now.
+            clip: false
             focus: page.hasTracks
             visible: page.hasTracks
             // A list is one tab stop (ARCHITECTURE.md §4), and tied to

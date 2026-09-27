@@ -199,6 +199,21 @@ QtObject {
     readonly property real focusScale: 1.05
     readonly property real pressScale: 0.97
     readonly property int focusRingWidth: 3
+    // How far past its own bounds an active FocusRing may draw: the widest
+    // outset any control gives its ring (scale(3), which is focusRingWidth at
+    // the default density) plus a pixel for the stroke's antialiased edge. A
+    // view that clips has to leave at least this much room past every edge its
+    // focusable content can touch, or the ring on the first row or the first
+    // column is sliced off — see FocusClip.
+    readonly property int focusRingOutset: Math.max(theme.focusRingWidth, theme.scale(3)) + 1
+
+    // The room a focused item `extent` px across needs past its own edge: half
+    // of its focusScale raise, plus the ring, which is drawn on the raised item
+    // and grows with it.
+    function focusHeadroom(extent: real): int {
+        return Math.ceil(extent * (theme.focusScale - 1) / 2
+                         + theme.focusRingOutset * theme.focusScale)
+    }
     readonly property int controlHeight: scale(38)
     readonly property int controlHeightLarge: scale(46)
     readonly property int iconSize: scale(19)

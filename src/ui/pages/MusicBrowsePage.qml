@@ -543,29 +543,46 @@ FocusScope {
             event.accepted = true;
         }
 
-        Item {
+        // A pill grows on focus, so the first one's ring used to be cut at the
+        // clip's left edge (FocusClip). The row scrolls sideways, so the side
+        // outsets are also how far scrolled pills bleed past the strip: they
+        // track the focused pill's raise and ring, not a spare margin. The
+        // right one stops at half the gap before the cluster.
+        FocusClip {
             id: pillClip
+
+            // The row's pill holding the keyboard, or null.
+            readonly property Item focusedPill: {
+                let focused = null;
+                for (let i = 0; i < pillBar.order.length; ++i) {
+                    if (pillBar.order[i].activeFocus && pillBar.order[i].parent === pillRow)
+                        focused = pillBar.order[i];
+                }
+                return focused;
+            }
+            readonly property int ringRoom: pillClip.focusedPill
+                                            ? Theme.focusHeadroom(pillClip.focusedPill.width)
+                                            : Theme.focusRingOutset
 
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: Math.max(0, parent.width - rightCluster.width - Theme.spacingValue)
-            clip: true
+            leftOutset: pillClip.ringRoom
+            rightOutset: Math.min(pillClip.ringRoom, Theme.spacingValue / 2)
 
             Row {
                 id: pillRow
 
                 anchors.verticalCenter: parent.verticalCenter
-                // Keep the focused pill on screen when the row is wider than its clip.
+                // Keep the focused pill on screen when the row is wider than its clip,
+                // with its ring clear of the right edge when the gap there is short.
                 x: {
-                    let focused = null;
-                    for (let i = 0; i < pillBar.order.length; ++i) {
-                        if (pillBar.order[i].activeFocus && pillBar.order[i].parent === pillRow)
-                            focused = pillBar.order[i];
-                    }
+                    const focused = pillClip.focusedPill;
                     if (!focused)
                         return 0;
-                    const overflow = focused.x + focused.width - pillClip.width;
+                    const ringShort = Math.max(0, pillClip.ringRoom - pillClip.rightOutset);
+                    const overflow = focused.x + focused.width + ringShort - pillClip.width;
                     return overflow > 0 ? -overflow : 0;
                 }
                 spacing: Theme.spacingTight
@@ -1022,13 +1039,27 @@ FocusScope {
             navigationFocusRefillActive: MusicBrowseCtl.genresLane.loading
             gridModel: MusicBrowseCtl.genres
             customCardWidth: Theme.crateSleeveSize
-            customCardHeight: Theme.crateSleeveSize
+            // The tile's real height, caption included. A bin is a short stack
+            // with two lines under it, not a square, and declaring it square
+            // centred a taller tile in a shorter cell: the top row's focus ring
+            // then sat above the grid's clip.
+            customCardHeight: binMetrics.implicitHeight
             emptyText: ""
             prefetchThreshold: 24
             focus: genresGrid.count > 0
             KeyNavigation.up: pillBar.entryItem
             onNearEnd: MusicBrowseCtl.loadMore()
             onItemActivated: index => page.openItem(index)
+
+            // Metrics only, the way StrmRail and StrmGrid size their own cards.
+            GenreBinTile {
+                id: binMetrics
+                visible: false
+                enabled: false
+                size: Theme.crateSleeveSize
+                name: "M"
+                subtitle: "M"
+            }
 
             cardComponent: Component {
                 GenreBinTile {

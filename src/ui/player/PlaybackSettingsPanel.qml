@@ -603,11 +603,26 @@ FocusScope {
                              panel.height - 2 * surface.padding - headerRow.height
                              - tabs.height - 2 * Theme.spacingTight)
 
+            // The sheet's clip, with room for a focused control's raise and
+            // ring (FocusClip): the speed steppers, the Reset button and the
+            // selects all sit flush on the content's edges, and their rings
+            // were cut there. Sideways it may use the surface's padding, since
+            // nothing scrolls into it; vertically, a raised control's height.
+            FocusClip {
+                id: scrollerClip
+
+                anchors.fill: parent
+                leftOutset: surface.padding
+                rightOutset: surface.padding
+                topOutset: Theme.focusHeadroom(Theme.controlHeightLarge)
+                bottomOutset: Theme.focusHeadroom(Theme.controlHeightLarge)
+            }
+
             Flickable {
                 id: scroller
 
+                parent: scrollerClip.contentItem
                 anchors.fill: parent
-                clip: true
                 contentWidth: scroller.width
                 contentHeight: content.implicitHeight
                 boundsBehavior: Flickable.StopAtBounds
