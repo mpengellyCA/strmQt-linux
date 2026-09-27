@@ -167,6 +167,13 @@ target_include_directories(tst_remote_back_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_remote_back_key PRIVATE Qt6::Quick)
 set_tests_properties(tst_remote_back_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# The key diagnostics (src/input/KeyEventLogger.h): how an unknown remote
+# button's native codes get into the log.
+strmqt_add_test(tst_key_event_logger unit/tst_key_event_logger.cpp)
+target_include_directories(tst_key_event_logger PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_key_event_logger PRIVATE Qt6::Quick)
+set_tests_properties(tst_key_event_logger PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # A remote's ⏭ / ⏮ caught at the window (src/input/SkipKeyFilter.cpp), which is
 # QtGui and so lives in the executable; compiled straight into the test.
 strmqt_add_test(tst_skip_key_filter unit/tst_skip_key_filter.cpp

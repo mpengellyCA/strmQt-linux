@@ -22,6 +22,7 @@
 #include "remote/WebRemoteController.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
+#include "input/KeyEventLogger.h"
 #include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
 #include "input/SkipKeyFilter.h"
@@ -42,6 +43,11 @@ int main(int argc, char *argv[])
         qputenv("QSG_RHI_BACKEND", "opengl");
 
     strmqt::Application app(argc, argv);
+    // QT_LOGGING_RULES="strmqt.input.keys.debug=true": every key, with its
+    // native codes, for identifying a remote's buttons. Installed only when
+    // asked for, so an ordinary run does not filter every event for nothing.
+    if (logKeys().isDebugEnabled())
+        app.installEventFilter(new strmqt::KeyEventLogger(&app));
     app.session()->restore();
 
     QQmlApplicationEngine engine;

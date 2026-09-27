@@ -102,6 +102,7 @@ qt_add_executable(strmqt
     input/KeyDelivery.h
     input/RemoteOkKeyFilter.h
     input/RemoteBackKeyFilter.h
+    input/KeyEventLogger.h
     input/NavigationKeyHandler.h input/NavigationKeyHandler.cpp
     input/SkipKeyFilter.h input/SkipKeyFilter.cpp
     # QtGui (QImage/QColor), so deliberately NOT in strmqt_app, which stays
