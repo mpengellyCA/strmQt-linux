@@ -201,6 +201,7 @@ journalctl --user -t strmqt -f
 [ARCHITECTURE.md](ARCHITECTURE.md) explains how the program is put together and, more
 usefully, why several parts of it look the way they do. [AGENTS.md](AGENTS.md) carries the
 conventions any contributor — human or otherwise — is expected to follow.
+[docs/BRANDING.md](docs/BRANDING.md) covers the brand mark, color tokens and typography.
 
 </details>
 
