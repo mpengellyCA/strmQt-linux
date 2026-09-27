@@ -1,7 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="100" fill="#0C0B0A"/>
-  <rect x="24" y="24" width="464" height="464" rx="80" fill="#161514" stroke="#F0A02A" stroke-width="8"/>
-  <!-- Play triangle with beam -->
-  <polygon points="190,140 370,256 190,372" fill="#F0A02A"/>
-  <circle cx="256" cy="256" r="180" fill="none" stroke="#F0A02A" stroke-width="12" stroke-opacity="0.3" stroke-dasharray="20 10"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="StrmQt">
+  <defs>
+    <linearGradient id="tileGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1D1A17"/>
+      <stop offset="100%" stop-color="#0C0B0A"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFBE53"/>
+      <stop offset="60%" stop-color="#F0A02A"/>
+      <stop offset="100%" stop-color="#C87A10"/>
+    </linearGradient>
+    <radialGradient id="projectorGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F0A02A" stop-opacity="0.26"/>
+      <stop offset="65%" stop-color="#F0A02A" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#F0A02A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Ground Squircle -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#tileGrad)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="110.5" ry="110.5" fill="none" stroke="#2E2A26" stroke-width="3" stroke-opacity="0.9"/>
+  <!-- Projector Beam Glow -->
+  <circle cx="256.0" cy="256.0" r="220" fill="url(#projectorGlow)"/>
+  <!-- Media Progress Track -->
+  <circle cx="256.0" cy="256.0" r="176.0" fill="none" stroke="#262220" stroke-width="18"/>
+  <!-- 270-degree Progress Sweep Arc (sweep length 830 of 1106) -->
+  <circle cx="256.0" cy="256.0" r="176.0" fill="none" stroke="url(#accentGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="829 277" transform="rotate(-90 256.0 256.0)"/>
+  <line x1="419.0" y1="256.0" x2="445.0" y2="256.0" stroke="#0C0B0A" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="256.0" y1="419.0" x2="256.0" y2="445.0" stroke="#0C0B0A" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="93.0" y1="256.0" x2="67.0" y2="256.0" stroke="#0C0B0A" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="256.0" y1="93.0" x2="256.0" y2="67.0" stroke="#0C0B0A" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Aperture Iris Blades -->
+  <g fill="url(#accentGrad)">
+    <path d="M 311.55 295.60 L 311.55 379.16 A 134.00 134.00 0 0 1 174.37 360.92 L 246.73 319.14 A 66.00 66.00 0 0 0 311.55 295.60 Z"/>
+    <path d="M 249.48 323.91 L 177.12 365.69 A 134.00 134.00 0 0 1 124.32 237.77 L 196.68 279.54 A 66.00 66.00 0 0 0 249.48 323.91 Z"/>
+    <path d="M 193.93 284.31 L 121.57 242.53 A 134.00 134.00 0 0 1 205.95 132.84 L 205.95 216.40 A 66.00 66.00 0 0 0 193.93 284.31 Z"/>
+    <path d="M 200.45 216.40 L 200.45 132.84 A 134.00 134.00 0 0 1 337.63 151.08 L 265.27 192.86 A 66.00 66.00 0 0 0 200.45 216.40 Z"/>
+    <path d="M 262.52 188.09 L 334.88 146.31 A 134.00 134.00 0 0 1 387.68 274.23 L 315.32 232.46 A 66.00 66.00 0 0 0 262.52 188.09 Z"/>
+    <path d="M 318.07 227.69 L 390.43 269.47 A 134.00 134.00 0 0 1 306.05 379.16 L 306.05 295.60 A 66.00 66.00 0 0 0 318.07 227.69 Z"/>
+    <!-- Q Tail -->
+    <path d="M 336.00 352.00 L 428.00 444.00 A 16 16 0 0 1 406.00 466.00 L 312.00 372.00 Z"/>
+  </g>
+  <!-- Center Play Glyph -->
+  <path d="M 230.0 208.0 L 230.0 304.0 L 298.0 256.0 Z" fill="url(#accentGrad)" stroke="url(#accentGrad)" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>
