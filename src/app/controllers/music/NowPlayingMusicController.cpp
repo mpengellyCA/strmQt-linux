@@ -145,8 +145,16 @@ void NowPlayingMusicController::refreshTrack()
     refreshRecordState();
     refreshReadout();
     refreshTime();
-    if (trackMoved)
-        loadLyrics();
+    // Deliberately NOT loadLyrics() here: PlayQueue's currentChanged/
+    // currentItemChanged fire on advance() before PlayerController::
+    // startQueueCurrent() resets the ticket (its comment says the ticket is
+    // still the OUTGOING item's at that point), so m_trackId would already be
+    // the new track while currentSource()/subtitleStreams() still answer for
+    // the old one — a lyrics request for the new track keyed by the old
+    // track's source/stream index. sourceIndexChanged is what tells the truth:
+    // PlayerController emits it once immediately when the ticket is reset (so
+    // loadLyrics() sees no source and clears) and again once the new ticket
+    // actually resolves (so it sees the right source and stream index).
 }
 
 void NowPlayingMusicController::refreshSourceLabel()
@@ -319,8 +327,15 @@ void NowPlayingMusicController::clearLyrics()
 
 void NowPlayingMusicController::loadLyrics()
 {
-    if (!m_lyricsEnabled || !m_active || !m_player)
+    // Every branch below that concludes "there is no lyrics identity to load
+    // for the current state" clears whatever is currently shown and bumps the
+    // generation, so a reply already in flight for a now-abandoned identity
+    // (a different track, or the same track's source switched to one with no
+    // lyrics stream) cannot land afterwards and display the wrong thing.
+    if (!m_lyricsEnabled || !m_active || !m_player) {
+        clearLyrics();
         return;
+    }
     const QString sourceId = m_player->currentSource().value(QStringLiteral("id")).toString();
     int streamIndex = -1;
     const QVariantList subtitles = m_player->subtitleStreams();
@@ -331,10 +346,17 @@ void NowPlayingMusicController::loadLyrics()
             break;
         }
     }
-    if (sourceId.isEmpty() || streamIndex < 0)
+    if (sourceId.isEmpty() || streamIndex < 0) {
+        clearLyrics();
         return;
+    }
     const QString key = m_trackId + QLatin1Char('|') + sourceId + QLatin1Char('|')
                         + QString::number(streamIndex);
+    // Identity unchanged from what is already loaded or already in flight:
+    // this is the normal no-op path (e.g. sourceIndexChanged firing again for
+    // a reason that did not change the chosen lyrics stream), not a stale
+    // reply to invalidate, so this one must NOT clear or bump the generation —
+    // doing so would orphan a legitimate in-flight request for this same key.
     if (key == m_lyricsKey)
         return;
     m_lyricsKey = key;

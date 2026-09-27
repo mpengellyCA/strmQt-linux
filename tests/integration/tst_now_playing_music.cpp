@@ -390,6 +390,16 @@ void NowPlayingMusicTest::lyricsBehindCaps()
     QTRY_COMPARE(m_controller->trackId(), QStringLiteral("a1"));
     QVERIFY(!m_controller->lyricsAvailable());
     QCOMPARE(m_controller->currentLyricRow(), -1);
+
+    // A skip to a new track must never request lyrics against the OUTGOING
+    // track's ticket: PlayQueue's currentChanged fires before PlayerController
+    // resets the ticket, so a naive "load on track move" reads l1's still-live
+    // source/stream index for a1's id. a1 has no sidecar at all, so nothing
+    // should ever be requested at l1's lyrics path with a1's id substituted in.
+    const QString a1LyricsPath = QStringLiteral("/Videos/a1/ms301004/Subtitles/1/Stream.js");
+    QTest::qWait(50);
+    QCOMPARE(requestsTo(QStringLiteral("GET"), a1LyricsPath), 0);
+    QVERIFY(m_controller->lyrics().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(NowPlayingMusicTest)
