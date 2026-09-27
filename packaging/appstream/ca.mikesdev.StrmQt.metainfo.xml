@@ -62,6 +62,20 @@
   </requires>
 
   <releases>
+    <release version="0.7.0" date="2026-09-27" type="development">
+      <description>
+        <p>
+          Music is redesigned around the record shop: a Music Home with shelves and
+          stations, a browse view with section strip, filter pills and A–Z crate
+          dividers, new album, artist and playlist pages, and a full player where the
+          record slides out of its sleeve and spins, with lyrics, volume and mute.
+          Bluetooth and TV remotes now work without setup: OK, Back and Home, track
+          and chapter skip, hold to fast-forward up to 32×, and number keys that open
+          your libraries. Also a new app icon, focus rings no longer cut off at the
+          edges, and an opt-in, PIN-protected phone remote.
+        </p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-09-16" type="development">
       <description>
         <p>
