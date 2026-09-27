@@ -305,3 +305,8 @@ strmqt_add_test(tst_crate_controls unit/tst_crate_controls.cpp)
 target_link_libraries(tst_crate_controls PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_crate_controls PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_crate_controls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+strmqt_add_test(tst_music_player_panel unit/tst_music_player_panel.cpp)
+target_link_libraries(tst_music_player_panel PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_music_player_panel PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_music_player_panel PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

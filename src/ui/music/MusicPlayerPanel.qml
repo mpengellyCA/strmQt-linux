@@ -27,7 +27,18 @@ FocusScope {
     readonly property bool lyricsAvailable: NowPlayingMusicCtl.lyricsAvailable === true
     readonly property var tabKeys: panel.lyricsAvailable ? ["upNext", "album", "lyrics"]
                                                          : ["upNext", "album"]
-    property string currentTab: "upNext"
+    // The user's own pick, kept even while it is not showable. Lyrics is
+    // cleared as soon as the queue moves — NowPlayingMusicController::
+    // clearLyrics() runs before the next track's lyrics, if any, arrive back
+    // over the network — so a straight `currentTab` write here would throw
+    // away "I am reading the lyrics" for every single track boundary, not
+    // just the tracks that truly have none.
+    property string _desiredTab: "upNext"
+    // The tab actually shown: the pick, unless it is not in `tabKeys` right
+    // now, in which case Up next stands in until the pick comes back (or the
+    // user picks something else, which overwrites `_desiredTab` too).
+    readonly property string currentTab: panel.tabKeys.indexOf(panel._desiredTab) >= 0
+                                         ? panel._desiredTab : "upNext"
 
     function tabLabel(key: string): string {
         if (key === "album")
@@ -41,7 +52,7 @@ FocusScope {
         const next = panel.tabKeys.indexOf(panel.currentTab) + step;
         if (next < 0 || next >= panel.tabKeys.length)
             return false;
-        panel.currentTab = panel.tabKeys[next];
+        panel._desiredTab = panel.tabKeys[next];
         return true;
     }
 
@@ -75,10 +86,31 @@ FocusScope {
         return true;
     }
 
-    // The Lyrics tab goes when a track without lyrics comes on.
-    onTabKeysChanged: {
-        if (panel.tabKeys.indexOf(panel.currentTab) < 0)
-            panel.currentTab = "upNext";
+    // What `currentTab` was the last time it changed, so the handler below
+    // can tell which content view just lost its tab.
+    property string _shownTab: "upNext"
+
+    function _contentListFor(tabKey: string): var {
+        if (tabKey === "album")
+            return albumList;
+        if (tabKey === "lyrics")
+            return lyricList;
+        return queueList;
+    }
+
+    // Measured on a real window: hiding the Item that wraps a focused list
+    // does NOT move active focus anywhere — Qt leaves it exactly where it
+    // was, on a now-invisible list with no ring drawn and no longer even the
+    // tab shown. Lyrics vanishing mid-read is the one case that can do this
+    // with no click or keypress of the user's own
+    // (NowPlayingMusicController::clearLyrics(), run from a track change).
+    // So this is not cleanup after Qt's own focus handling; it is the only
+    // thing that moves focus back to something visible at all.
+    onCurrentTabChanged: {
+        const previousTab = panel._shownTab;
+        panel._shownTab = panel.currentTab;
+        if (previousTab !== panel.currentTab && panel._contentListFor(previousTab).activeFocus)
+            panel.focusTabs();
     }
 
     // ── Surface ─────────────────────────────────────────────────────────────
@@ -107,6 +139,7 @@ FocusScope {
     // ── Tab strip ───────────────────────────────────────────────────────────
     Item {
         id: tabStrip
+        objectName: "tabStrip"
 
         anchors.left: parent.left
         anchors.right: parent.right
@@ -196,7 +229,7 @@ FocusScope {
                         gesturePolicy: TapHandler.ReleaseWithinBounds
                         onTapped: {
                             Input.noteInput("mouse");
-                            panel.currentTab = tab.modelData;
+                            panel._desiredTab = tab.modelData;
                         }
                     }
 
@@ -240,6 +273,7 @@ FocusScope {
 
             TrackTable {
                 id: queueList
+                objectName: "queueList"
 
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -251,10 +285,13 @@ FocusScope {
                 model: panel.queue
                 rowHeight: Theme.scale(58)
                 jumpRole: "label"
-                // Room for the first row's focus ring: a clipping ListView cuts
-                // the ring's stroke off flush against the viewport's top edge
-                // otherwise (an app-wide clipped-ring issue tracked elsewhere;
-                // kept local here rather than touching TrackTable itself).
+                // A small safety margin above row 0: TrackRow's own FocusRing
+                // already insets to 0 for this table's clip (a Rectangle's
+                // border draws inside its own bounds, so nothing is actually
+                // cropped there), but a clipping ListView cropping the very
+                // first row's ring is a known app-wide risk elsewhere in this
+                // app. Cheap headroom, kept local to this call site rather
+                // than touching TrackTable itself.
                 topMargin: Theme.focusRingWidth
 
                 onActivated: index => panel.jump(index)
@@ -404,6 +441,7 @@ FocusScope {
 
             TrackTable {
                 id: albumList
+                objectName: "albumList"
 
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -415,8 +453,7 @@ FocusScope {
                 model: NowPlayingMusicCtl.albumTracks
                 rowHeight: Theme.scale(44)
                 jumpRole: "displayTitle"
-                // See queueList: room for the first row's focus ring against
-                // this clipping view's top edge.
+                // See queueList: the same small safety margin above row 0.
                 topMargin: Theme.focusRingWidth
 
                 onActivated: index => NowPlayingMusicCtl.playAlbumFrom(index)
@@ -483,6 +520,7 @@ FocusScope {
 
             ListView {
                 id: lyricList
+                objectName: "lyricList"
 
                 readonly property bool timed: NowPlayingMusicCtl.lyricsTimed === true
                 readonly property int step: Theme.scale(48)
