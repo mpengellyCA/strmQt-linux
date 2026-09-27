@@ -1,6 +1,9 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFont>
+#include <QFontDatabase>
+#include <QGuiApplication>
 #include <QImage>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -376,6 +379,14 @@ private:
 void FocusClipTest::initTestCase()
 {
     QVERIFY(m_dir.isValid());
+    // The probe's Theme cannot reach the app's qrc fonts, and a tile's caption
+    // height is what makes it taller than its cell: register the bundled fonts
+    // and use them, so the geometry does not depend on the host's fonts (a
+    // bare CI container has none, and captions there measure zero).
+    const QDir fonts(QStringLiteral(STRMQT_SOURCE_DIR "/assets/fonts"));
+    for (const QString &file : fonts.entryList({QStringLiteral("*.ttf")}, QDir::Files))
+        QVERIFY2(QFontDatabase::addApplicationFont(fonts.filePath(file)) >= 0, qPrintable(file));
+    QGuiApplication::setFont(QFont(QStringLiteral("Public Sans")));
     m_root = createProbe(m_dir, m_view);
     QVERIFY(m_root);
 }
