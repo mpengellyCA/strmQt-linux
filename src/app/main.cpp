@@ -21,6 +21,7 @@
 #include "remote/WebRemoteController.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
+#include "input/RemoteOkKeyFilter.h"
 
 #include <QDebug>
 #include <QQmlApplicationEngine>
@@ -91,8 +92,11 @@ int main(int argc, char *argv[])
     // The remote and the gamepad drive this window while another one is
     // active; it has to keep its focused item for their keys to land.
     const QList<QObject *> roots = engine.rootObjects();
-    if (auto *window = qobject_cast<QWindow *>(roots.value(0)))
+    // A Bluetooth remote's OK button arrives as Select or XF86OK, not Return.
+    if (auto *window = qobject_cast<QWindow *>(roots.value(0))) {
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
+        window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
+    }
 
     // Named wiring guard (P4-R11). No test constructs strmqt::Application, so
     // deleting the album or artist context property above, or either

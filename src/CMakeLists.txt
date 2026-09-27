@@ -98,6 +98,7 @@ qt_add_executable(strmqt
     app/EmbyImageProvider.h app/EmbyImageProvider.cpp
     app/WindowFocusKeeper.h
     input/KeyDelivery.h
+    input/RemoteOkKeyFilter.h
     input/NavigationKeyHandler.h input/NavigationKeyHandler.cpp
     # QtGui (QImage/QColor), so deliberately NOT in strmqt_app, which stays
     # QtCore-only. tests/CMakeLists.txt compiles CoverTint.cpp into its own
