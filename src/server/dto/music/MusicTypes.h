@@ -77,6 +77,13 @@ struct Track
     bool differsFromAlbumArtist = false;
 };
 
+// One line of lyrics (Crate spec §7.2). timeMs is -1 for untimed lyrics.
+struct LyricLine
+{
+    qint64 timeMs = -1;
+    QString text;
+};
+
 struct Album
 {
     QString id;

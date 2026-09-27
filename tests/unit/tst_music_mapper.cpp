@@ -43,6 +43,7 @@ private slots:
     void classifyRelease();
     void discsGroupAndSum();
     void refineAlbumFromTracks();
+    void parsesLyricsInBothShapes();
 };
 
 void MusicMapperTest::trackConvertsToAudioMediaItem()
@@ -511,6 +512,41 @@ void MusicMapperTest::refineAlbumFromTracks()
     strmqt::emby::refineAlbumFromTracks(tagged, tracks);
     QCOMPARE(tagged.releaseType, ReleaseType::Compilation);
     QCOMPARE(dominantFormat({}), QString());
+}
+
+void MusicMapperTest::parsesLyricsInBothShapes()
+{
+    const auto timed = emby::parseLyrics(QJsonDocument::fromJson(
+        R"({"TrackEvents":[{"StartPositionTicks":0,"Text":"First light"},
+                           {"StartPositionTicks":125000000,"Text":"  Second  "},
+                           {"StartPositionTicks":180000000,"Text":""}]})"));
+    QCOMPARE(timed.size(), 3);
+    QCOMPARE(timed[0].timeMs, 0);
+    QCOMPARE(timed[1].timeMs, 12500);
+    QCOMPARE(timed[1].text, QStringLiteral("Second"));
+    QCOMPARE(timed[2].text, QString());
+
+    const auto plain = emby::parseLyrics(QJsonDocument::fromJson(
+        R"({"Lyrics":[{"Text":"One"},{"Start":0,"Text":"Two"}]})"));
+    QCOMPARE(plain.size(), 2);
+    QCOMPARE(plain[0].timeMs, -1);
+    QCOMPARE(plain[1].timeMs, -1);
+    QCOMPARE(plain[1].text, QStringLiteral("Two"));
+
+    QVERIFY(emby::parseLyrics(QJsonDocument::fromJson("[]")).isEmpty());
+    QVERIFY(emby::parseLyrics(QJsonDocument::fromJson(R"({"Lyrics":[{"Text":"  "}]})")).isEmpty());
+
+    // V4: a single untimed TrackEvent joins its lines with "; "; an empty
+    // segment is a stanza break, so it must round-trip as an empty line.
+    const auto joined = emby::parseLyrics(
+        QJsonDocument::fromJson(R"({"TrackEvents":[{"Text":"One; Two; ; Three"}]})"));
+    QCOMPARE(joined.size(), 4);
+    for (const auto &line : joined)
+        QCOMPARE(line.timeMs, -1);
+    QCOMPARE(joined[0].text, QStringLiteral("One"));
+    QCOMPARE(joined[1].text, QStringLiteral("Two"));
+    QCOMPARE(joined[2].text, QString());
+    QCOMPARE(joined[3].text, QStringLiteral("Three"));
 }
 
 QTEST_GUILESS_MAIN(MusicMapperTest)

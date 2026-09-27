@@ -47,6 +47,10 @@ QJsonArray itemsOf(const QJsonDocument &doc)
 const QString kAudio = QStringLiteral("Audio");
 const QString kAlbum = QStringLiteral("MusicAlbum");
 
+// V4 (verifications file). Emby serves an external .lrc/.txt next to a track as
+// a subtitle stream; its JSON rendition carries the lines and their ticks.
+const QString kLyricsStreamPath = QStringLiteral("/Videos/%1/%2/Subtitles/%3/Stream.js");
+
 template<class T>
 QList<T> orderedByIds(const QList<T> &items, const QStringList &ids)
 {
@@ -365,6 +369,18 @@ QFuture<Result<ArtistProfile>> MusicRepository::artistProfile(const QString &lib
     }
     fan->seal();
     return pending.future();
+}
+
+QFuture<Result<QList<LyricLine>>> MusicRepository::lyrics(const QString &itemId,
+                                                          const QString &mediaSourceId,
+                                                          int streamIndex)
+{
+    const QString path = kLyricsStreamPath.arg(itemId, mediaSourceId).arg(streamIndex);
+    return m_client->getJson(path, {}).then(this, [](Result<QJsonDocument> result) {
+        if (!result.ok())
+            return Result<QList<LyricLine>>::failure(result.error);
+        return Result<QList<LyricLine>>::success(emby::parseLyrics(result.value));
+    });
 }
 
 QFuture<Result<QList<Track>>> MusicRepository::artistTracks(const QString &artistId, int limit)

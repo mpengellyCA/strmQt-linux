@@ -121,6 +121,7 @@ private slots:
     void sampleTracksIsRandomAcrossTheFilteredScope();
     void userDataChangeDropsCachesHoldingTheItem();
     void artistTracksAreRandomAndScopedToTheArtist();
+    void lyricsReadTheSidecarStream();
 
 private:
     void routeAlbum(const QString &albumId, int trackCount);
@@ -770,6 +771,21 @@ void MusicRepositoryTest::artistTracksAreRandomAndScopedToTheArtist()
 
     const auto none = waitFor(m_repo->artistTracks(QString()));
     QVERIFY(!none.ok());
+}
+
+void MusicRepositoryTest::lyricsReadTheSidecarStream()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Videos/l1/ms1/Subtitles/2/Stream.js"), 200,
+                     R"({"TrackEvents":[{"StartPositionTicks":10000000,"Text":"Hello"}]})");
+
+    const auto result = waitFor(m_repo->lyrics(QStringLiteral("l1"), QStringLiteral("ms1"), 2));
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QCOMPARE(result.value.size(), 1);
+    QCOMPARE(result.value[0].timeMs, 1000);
+    QCOMPARE(result.value[0].text, QStringLiteral("Hello"));
+
+    const auto missing = waitFor(m_repo->lyrics(QStringLiteral("l2"), QStringLiteral("ms1"), 2));
+    QVERIFY(!missing.ok());
 }
 
 QTEST_MAIN(MusicRepositoryTest)

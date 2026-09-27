@@ -43,6 +43,10 @@ public:
     QFuture<Result<QList<Track>>> albumTracks(const QString &albumId);
     QFuture<Result<AlbumSleeve>> albumSleeve(const QString &albumId);
     QFuture<Result<ArtistProfile>> artistProfile(const QString &libraryId, const QString &artistId);
+    // The lyrics sidecar attached to a track (Crate spec §9 V4). Not cached:
+    // NowPlayingMusicController asks once per track and source.
+    QFuture<Result<QList<LyricLine>>> lyrics(const QString &itemId, const QString &mediaSourceId,
+                                             int streamIndex);
     // A random draw of the artist's tracks everywhere they perform (ArtistIds),
     // for ⇄ Shuffle artist. SortBy=Random cannot page, so this is one request,
     // and it is never cached: each press is a new draw.

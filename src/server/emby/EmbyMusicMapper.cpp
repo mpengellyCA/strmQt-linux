@@ -547,4 +547,49 @@ QList<Playlist> parsePlaylists(const QJsonArray &json)
     return list;
 }
 
+QList<LyricLine> parseLyrics(const QJsonDocument &doc)
+{
+    const QJsonObject root = doc.object();
+    QJsonArray entries = root.value(QStringLiteral("TrackEvents")).toArray();
+    QString timeKey = QStringLiteral("StartPositionTicks");
+    if (entries.isEmpty()) {
+        entries = root.value(QStringLiteral("Lyrics")).toArray();
+        timeKey = QStringLiteral("Start");
+    }
+
+    QList<LyricLine> lines;
+    bool timed = false;
+    for (const QJsonValue &value : std::as_const(entries)) {
+        const QJsonObject entry = value.toObject();
+        LyricLine line;
+        const QJsonValue time = entry.value(timeKey);
+        if (time.isDouble())
+            line.timeMs = static_cast<qint64>(time.toDouble()) / kTicksPerMs;
+        line.text = entry.value(QStringLiteral("Text")).toString().trimmed();
+        timed = timed || line.timeMs > 0;
+        lines.append(line);
+    }
+
+    // V4 (verifications file): an untimed sidecar sometimes arrives as a
+    // single TrackEvent whose Text joins the real lines with "; " (an empty
+    // line is "; ; "). Split it back into separate lines, keeping empty
+    // segments as stanza breaks.
+    if (!timed && lines.size() == 1) {
+        const QStringList parts = lines.first().text.split(QStringLiteral("; "));
+        lines.clear();
+        for (const QString &part : parts)
+            lines.append(LyricLine{-1, part.trimmed()});
+    }
+
+    const bool anyText = std::any_of(lines.cbegin(), lines.cend(),
+                                     [](const LyricLine &line) { return !line.text.isEmpty(); });
+    if (!anyText)
+        return {};
+    if (!timed) {
+        for (LyricLine &line : lines)
+            line.timeMs = -1;
+    }
+    return lines;
+}
+
 } // namespace strmqt::emby

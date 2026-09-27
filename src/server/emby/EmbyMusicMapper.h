@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -54,5 +55,12 @@ QList<music::Artist> parseArtists(const QJsonArray &json);
 music::GenreBin parseGenreBin(const QJsonObject &json);
 music::Playlist parsePlaylist(const QJsonObject &json);
 QList<music::Playlist> parsePlaylists(const QJsonArray &json);
+
+// A lyrics sidecar as Emby serves it: its subtitle JSON ({"TrackEvents":[…]})
+// or the {"Lyrics":[{Start,Text}]} shape. Untimed when no line has a time.
+// V4 (verifications file): an untimed sidecar sometimes arrives as a single
+// TrackEvent whose Text joins the real lines with "; " — that case is split
+// back into separate lines, keeping empty segments as stanza breaks.
+QList<music::LyricLine> parseLyrics(const QJsonDocument &doc);
 
 } // namespace strmqt::emby
