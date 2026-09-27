@@ -40,7 +40,8 @@ A music library opens on its own home: pick up where you left off, stations, gen
 bins, the artists you actually play, and a record pulled out at random. Browse it as
 albums, artists, songs, genres or playlists with filter pills (genre, decade, format,
 favourites, unplayed) and A–Z crate dividers. Albums show their liner notes, discs and
-format; the full player pulls the record out of the sleeve. ReplayGain volume
+format; the full player pulls the record out of the sleeve, with lyrics beside it when
+your files carry them and its own volume and mute. ReplayGain volume
 normalisation, instant mixes from anything, and multi-select for batch favouriting
 and queueing.
 
@@ -49,8 +50,10 @@ and queueing.
 Keyboard, mouse, an Xbox-style controller, or a remote. The controller is a first-class
 citizen, not an afterthought: the shoulders change section, the triggers jump by letter
 through a library too long to scroll, and holding **A** opens the same actions menu the
-right mouse button does. Every binding is remappable in Settings, and the on-screen
-shortcut sheet always shows the real one.
+right mouse button does. A Bluetooth or TV remote needs no setup: OK selects, Back
+goes back, Home goes Home, and the number pad opens your libraries. ⏮ and ⏭ step by
+chapter and then by track, and holding ⏭ fast-forwards. Every binding is remappable in
+Settings, and the on-screen shortcut sheet always shows the real one.
 
 ### Your phone is already the remote
 
@@ -124,6 +127,8 @@ Defaults — all of them remappable, and `?` shows the current set at any time.
 | Previous / next tab or library | Ctrl+Tab | **LB** / **RB** |
 | Jump a letter | `[` `]` | **LT** / **RT** |
 | Search | `/` | **Y** |
+| Home | Home Page (a remote's Home) | — |
+| Library 1–9 in the menu · Favorites | `1`–`9` · `0` | — |
 | Command palette | Ctrl+K | — |
 | Now-playing bar | `N` | **R3** |
 | Full player ↔ mini player | `V` | **L3** |
@@ -141,15 +146,32 @@ Defaults — all of them remappable, and `?` shows the current set at any time.
 | Volume | `+` · `-` | right stick |
 | Leave, keep playing | Esc · Backspace | **View** |
 | Stop | `S` | — |
+| Previous / next chapter, else item | Media Previous · Media Next | — |
+| Fast-forward 2× → 32× | hold Media Next | — |
+
+**With a remote.** OK is Select and Back is Back, anywhere — Back closes a menu or a
+panel as well as leaving a page. ⏭ and ⏮ act while anything plays, a record under the
+library included: with chapters they step by chapter first, then through the queue.
+Held, ⏭ fast-forwards, doubling every second from 2× to 32×, and letting go returns to
+the speed you were playing at. The number keys work while browsing only, never in the
+player, and a focused A–Z strip keeps them for jumping to `#`. If Plasma takes the media
+keys for itself they arrive as MPRIS Next/Previous: a skip still works, the hold does not.
+
+A button that does nothing can be identified: run with
+`QT_LOGGING_RULES="strmqt.input.keys.debug=true"` and every key the window receives is
+logged with its Qt key, scan code and keysym.
 
 ## Where it stands
 
-Version **0.4.2**. Everything above has been exercised against a live Emby 4.9 server:
-browsing, search, playback of video and audio, live updates over a WebSocket, playlists,
-favourites, resume and watch state reported back, remote control, and MPRIS2.
+Version **0.7.0**, a pre-release. It completes the Crate music redesign — Music Home,
+Browse, the album, artist and playlist pages, and the full player with lyrics, volume
+and mute — and adds support for Bluetooth and TV remotes. The core of it has been
+exercised against a live Emby 4.9 server: browsing, search, playback of video and audio,
+live updates over a WebSocket, playlists, favourites, resume and watch state reported
+back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 42/42, the reviewed qmllint warning
-baseline matches, and a page-construction self-test builds all 13 screens on every release.
+The build is clean under `-Werror`, `ctest` passes 74/74, the reviewed qmllint warning
+baseline matches, and a page-construction self-test builds all 15 screens on every release.
 
 Worth knowing before you rely on it:
 
@@ -165,6 +187,10 @@ Worth knowing before you rely on it:
 - True HDR passthrough is deferred. HDR content is tone-mapped instead, correctly, and
   verified against HDR10 HEVC.
 - No gapless audio advance yet, and chapter thumbnails are not implemented.
+- Music Home's *Forgotten favourites* shelf is not yet ordered by least recently
+  played: Emby keeps no play date on an album to order it by.
+- On a transcoded stream a held ⏭ fast-forwards no faster than the engine plays (4× in
+  mpv), because every seek ahead would restart the server's transcode.
 
 The full list, and the reasoning behind each, is in
 [ARCHITECTURE.md](ARCHITECTURE.md#10-known-limitations).

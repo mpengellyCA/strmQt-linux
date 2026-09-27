@@ -183,6 +183,22 @@ interrupts a record gives it back with the rest of the snapshot. Where no verb n
 the source, the player falls back to `contextLabel`, which is derived from what the
 queue holds.
 
+### Skip and fast-forward
+
+Next and previous follow one rule, owned by `PlayerController::skipForward` /
+`skipBack` and shared by the remote's ⏭/⏮, the pad, the web remote and MPRIS: a
+video with chapters steps by chapter, then through the queue; music and chapterless
+video step by queue entry. Holding ⏭ fast-forwards. Tap-or-hold is a pure state
+machine (`playback/FastForwardRamp.h`): past 400 ms a press is a hold, at 2× doubling
+each second to 32×; a tap skips on its release, a hold's release does not, and a
+press within 150 ms of the last release is a stuttering remote and ignored. The
+engine plays as fast as it can (mpv tops out at 4×, reported by
+`PlayerBackend::maximumPlaybackSpeed()`) and the rest is made up by seeking ahead.
+A Transcode stream never seeks ahead — each far seek restarts Emby's ffmpeg job — so
+there the hold is capped at the engine's own speed. The watchdog stands down during
+a hold, `playbackSpeed` keeps reporting the user's speed throughout, and the release
+restores it.
+
 ### Engines
 
 `MpvPlayer` uses the raw libmpv C API and the render API for embedding. Hardware
@@ -254,6 +270,12 @@ Two conventions worth knowing:
   pixels, so it is multiplied by `Screen.devicePixelRatio` and by the card's own
   scale. Without that, every card asks the server for a fraction of the pixels it
   then draws.
+- **A clipping view leaves room for the focus ring.** `FocusRing` draws outside the
+  item it frames, so a view with `clip: true` sliced the ring off whatever sat flush
+  against its edge — the first card, the top row. Such views stop clipping and sit in
+  a `FocusClip`, which keeps their geometry and clips `Theme.focusRingOutset` further
+  out (or `Theme.focusHeadroom()` for a raised card). Padding the content instead does
+  not work: `positionViewAtIndex()` ignores a view's margins.
 
 ### Moving about with a D-pad
 
@@ -383,6 +405,21 @@ shuffling the library — which is right, the user is typing. Space is exempt at
 the table until a word is already being typed, so play/pause still works from a
 track list.
 
+**A TV remote is a keyboard with odd keys, rewritten at the window.** Bluetooth
+remotes send keys no page answers, so three event filters on the window translate
+them before the focused item sees them. `RemoteOkKeyFilter` turns OK
+(`Qt::Key_Select`, or keysym XF86OK, which Qt 6.11 delivers with key 0) into Return.
+`RemoteBackKeyFilter` turns any non-typable key bound to `nav.back` — `Qt::Key_Back`
+by default — into its primary binding, Esc, because menus, panels and `Popup` answer
+Esc by name. `SkipKeyFilter` catches `player.skipForward` / `skipBack` while something
+plays, as a filter rather than a `Shortcut` because a `Shortcut` never sees the release
+that tells a tap from a hold. The rest are ordinary actions: `app.home` (Home Page) is
+global, and `library.open1`…`9` and `library.favorites` (the digits) are browse-only,
+so a stray digit cannot leave a film; a focused alphabet strip claims digits through
+`Keys.onShortcutOverride`, as `TrackTable` does for letters. For the next unfamiliar
+remote, `QT_LOGGING_RULES="strmqt.input.keys.debug=true"` installs `KeyEventLogger`
+on the application, which logs every key with its scan code and keysym.
+
 **The stick is one control, not two axes.** Only the dominant axis acts, and it
 must lead by a margin; a true diagonal moves nothing, because the user has not said
 which way they mean. Vertical starts at a higher threshold than horizontal, since a
@@ -495,6 +532,9 @@ assertion catches the rot.
   `RV32` chroma with no fallback.
 - **No gapless audio advance.** mpv gapless wants a playlist handed to the engine,
   not per-item loads.
+- **Forgotten favourites is not least-recently-played.** The Music Home shelf asks
+  for favourite albums sorted by `DatePlayed`, but Emby keeps no play date on an
+  album, so the order is not yet the one the shelf's name promises.
 - Chapter thumbnails, PiP and drag-to-reorder are unimplemented; each needs a verb or an
   id grammar the current interfaces do not have.
 - The AppImage's glibc floor is set by the bundled FFmpeg, not by this code. It runs
