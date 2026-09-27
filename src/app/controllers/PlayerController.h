@@ -93,6 +93,11 @@ class PlayerController : public QObject
     // extracted from it. Empty for items the server has no chapters for.
     Q_PROPERTY(QVariantList chapters READ chapters NOTIFY chaptersChanged)
     Q_PROPERTY(int currentChapter READ currentChapter NOTIFY currentChapterChanged)
+    // What ⏭ / ⏮ (skipForward / skipBack) would do something for right now —
+    // MPRIS CanGoNext / CanGoPrevious read these, so a film with chapters is
+    // skippable even as the only thing queued.
+    Q_PROPERTY(bool canSkipForward READ canSkipForward NOTIFY skipStateChanged)
+    Q_PROPERTY(bool canSkipBack READ canSkipBack NOTIFY skipStateChanged)
 
 public:
     PlayerController(emby::EmbyClient *client, PlayerBackend *backend, Settings *settings = nullptr,
@@ -150,6 +155,21 @@ public:
     // Mirrors every player's "previous" behaviour: within the first few seconds
     // of a chapter it steps back one, otherwise it restarts the current chapter.
     Q_INVOKABLE void previousChapter();
+
+    // ── The remote's ⏭ / ⏮ ──────────────────────────────────────────────────
+    // One rule for every way a "next"/"previous" button arrives — a remote's
+    // media keys, MPRIS Next/Previous (Plasma's media keys, KDE Connect, the
+    // applet) and the action ids. Chapters first: a video with chapters steps
+    // by chapter, and only past its last chapter does ⏭ move to the next queue
+    // entry. ⏮ restarts the chapter when a few seconds into it (the rule
+    // previousChapter() has always had), steps back a chapter otherwise, and
+    // from the start of the first chapter falls through to playPrevious().
+    // Music, and video without chapters, step by queue entry as
+    // playNext()/playPrevious() do — including ⏮'s restart past 5 s.
+    Q_INVOKABLE void skipForward();
+    Q_INVOKABLE void skipBack();
+    bool canSkipForward() const;
+    bool canSkipBack() const;
 
     // `preferredSourceIndex` < 0 means "let the ticket decide" (server order).
     // `itemType` is the server's item type ("Audio", "Movie", ...) when the
@@ -296,6 +316,9 @@ signals:
     void stopped();
     // Queue shape or cursor moved: hasNext / hasPrevious / nextItem.
     void queueStateChanged();
+    // canSkipForward / canSkipBack may have changed: the queue, the chapters,
+    // the chapter under the playhead or the kind of media moved.
+    void skipStateChanged();
     void upNextChanged();
     // OSD toast for track switches ("Audio: eng — DTS 5.1").
     void trackChanged(const QString &description);
@@ -389,6 +412,8 @@ private:
     void fetchChapters(const QString &itemId, int generation);
     void clearChapters();
     void updateCurrentChapter(qint64 positionMs);
+    // ⏭ / ⏮ move by chapter: a live video session whose item has chapters.
+    bool skipsByChapter() const;
     void updatePositionSnapshots(qint64 positionMs, bool forceInternal = false);
     void updateBufferedEnd(qint64 positionMs);
     // Continue a series when nothing else is queued. Returns true when it took

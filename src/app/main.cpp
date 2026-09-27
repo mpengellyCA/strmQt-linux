@@ -24,6 +24,7 @@
 #include "input/InputMap.h"
 #include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
+#include "input/SkipKeyFilter.h"
 
 #include <QDebug>
 #include <QQmlApplicationEngine>
@@ -102,6 +103,16 @@ int main(int argc, char *argv[])
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
         window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
+        // ⏭ / ⏮: chapter first, then the queue — the same rule MPRIS
+        // Next/Previous run (Application::wirePlaybackIntegrations).
+        strmqt::PlayerController *player = app.player();
+        auto *skipKeys = new strmqt::SkipKeyFilter(
+            app.input(),
+            {[player] { return player->active(); }, [player] { player->skipForward(); },
+             [player] { player->skipBack(); }},
+            window);
+        window->installEventFilter(skipKeys);
+        app.input()->registerHandler(skipKeys);
     }
 
     // Named wiring guard (P4-R11). No test constructs strmqt::Application, so

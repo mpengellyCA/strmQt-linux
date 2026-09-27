@@ -67,6 +67,13 @@ const KeyName kNamedKeys[] = {
     // on Qt 6.11; keyboard Home (Qt::Key_Home) is the entry above and stays the
     // list's first-item key.
     {"Home Page", Qt::Key_HomePage},
+    // A remote's transport keys, again in QKeySequence's spelling: ⏭/⏮ are
+    // KEY_NEXTSONG/KEY_PREVIOUSSONG (XF86AudioNext/Prev), ⏩/⏪ are
+    // KEY_FASTFORWARD/KEY_REWIND (XF86AudioForward/Rewind).
+    {"Media Next", Qt::Key_MediaNext},
+    {"Media Previous", Qt::Key_MediaPrevious},
+    {"Media Fast Forward", Qt::Key_AudioForward},
+    {"Media Rewind", Qt::Key_AudioRewind},
 };
 
 // Aliases accepted on input but never emitted (canonical spelling wins).
@@ -431,17 +438,21 @@ const QList<InputMap::ActionDef> &catalogue()
         // yet is how a film jumped while the user was still finding the
         // controls. J/L — the convention every video site teaches — are the
         // discrete jumps, and LT/RT resolve through them.
+        //
+        // A remote's ⏪/⏩ are these too. They are not ⏮/⏭ — a remote that has
+        // both pairs means "wind", not "next" — and a held key repeats the jump
+        // exactly as a held J/L does (PlayerPage's repeatable actions).
         {QStringLiteral("player.seekBackward"),
          QObject::tr("Seek back 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("J")},
+         {QStringLiteral("J"), QStringLiteral("Media Rewind")},
          QObject::tr("LT")},
         {QStringLiteral("player.seekForward"),
          QObject::tr("Seek forward 10 seconds"),
          QStringLiteral("Playback"),
          QString::fromLatin1(InputMap::kContextPlayer),
-         {QStringLiteral("L")},
+         {QStringLiteral("L"), QStringLiteral("Media Fast Forward")},
          QObject::tr("RT")},
         // GamepadManager maps LB→PgDown and RB→PgUp, i.e. the 60 s jumps.
         {QStringLiteral("player.seekBackwardLong"),
@@ -532,6 +543,30 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("-")},
          QObject::tr("Right Stick Down")},
+
+        // ── A remote's ⏭ / ⏮ ──────────────────────────────────────────────
+        // Chapter first, then the queue: PlayerController::skipForward /
+        // skipBack own the rule, and MPRIS Next/Previous run the same one.
+        // Global, because a record playing under the library skips too; live
+        // only while something plays. The keys are caught at the window
+        // (SkipKeyFilter) rather than by a Shortcut, because a Shortcut sees
+        // a press and never a release.
+        //
+        // Plasma normally grabs the media keys for its media controller and
+        // hands them to the active MPRIS player instead — which arrives as
+        // Next/Previous and takes the same rule.
+        {QStringLiteral("player.skipForward"),
+         QObject::tr("Next chapter, or next item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Media Next")},
+         QString()},
+        {QStringLiteral("player.skipBack"),
+         QObject::tr("Previous chapter, or previous item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextGlobal),
+         {QStringLiteral("Media Previous")},
+         QString()},
 
         // ── The docked bar, from the keyboard and from a pad ──────────────
         // MiniPlayer::focusTransport() has existed since the bar did and

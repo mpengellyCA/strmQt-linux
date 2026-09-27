@@ -40,6 +40,7 @@ private slots:
     void triggerReachesAQmlHandler();
     void navigationActionsAreTheFocusRelativeOnes();
     void aRemotesHomeButtonGoesHome();
+    void aRemotesTransportKeysResolve();
 
 private:
     QString ini() const { return m_dir->filePath(QStringLiteral("input.ini")); }
@@ -81,10 +82,11 @@ void InputMapTest::defaultsMatchTodaysBindings()
     // PlayerPage.qml
     QCOMPARE(m_map->bindings(QStringLiteral("player.togglePause")),
              (QStringList{QStringLiteral("Space"), QStringLiteral("K")}));
+    // …and a remote's ⏪/⏩ (Qt::Key_AudioRewind / Key_AudioForward).
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackward")),
-             QStringList{QStringLiteral("J")});
+             (QStringList{QStringLiteral("J"), QStringLiteral("Media Rewind")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekForward")),
-             QStringList{QStringLiteral("L")});
+             (QStringList{QStringLiteral("L"), QStringLiteral("Media Fast Forward")}));
     QCOMPARE(m_map->bindings(QStringLiteral("player.markLoop")),
              QStringList{QStringLiteral("B")});
     QCOMPARE(m_map->bindings(QStringLiteral("player.seekBackwardLong")),
@@ -754,6 +756,38 @@ void InputMapTest::aRemotesHomeButtonGoesHome()
         QCOMPARE(m_map->actionForKey(Qt::Key_HomePage, 0, QString::fromLatin1(context)),
                  QStringLiteral("app.home"));
     QVERIFY(m_map->actionForKey(Qt::Key_Home).isEmpty());
+}
+
+// ⏭/⏮ skip (chapter first) from anywhere something plays; ⏩/⏪ wind in the
+// player. Every name is QKeySequence's own, so each reaches QML intact.
+void InputMapTest::aRemotesTransportKeysResolve()
+{
+    const struct
+    {
+        int key;
+        const char *name;
+        const char *context;
+        const char *action;
+    } rows[] = {
+        {Qt::Key_MediaNext, "Media Next", "browse", "player.skipForward"},
+        {Qt::Key_MediaNext, "Media Next", "player", "player.skipForward"},
+        {Qt::Key_MediaPrevious, "Media Previous", "music", "player.skipBack"},
+        {Qt::Key_AudioForward, "Media Fast Forward", "player", "player.seekForward"},
+        {Qt::Key_AudioRewind, "Media Rewind", "player", "player.seekBackward"},
+    };
+    for (const auto &row : rows) {
+        const QString name = QString::fromLatin1(row.name);
+        QCOMPARE(m_map->sequenceForKey(row.key), name);
+        QCOMPARE(m_map->normalizeSequence(name.toLower()), name);
+        QVERIFY2(!m_map->isTypableSequence(name), row.name);
+        QCOMPARE(m_map->actionForKey(row.key, 0, QString::fromLatin1(row.context)),
+                 QString::fromLatin1(row.action));
+    }
+    QCOMPARE(m_map->context(QStringLiteral("player.skipForward")), QStringLiteral("global"));
+    QCOMPARE(m_map->keyFor(QStringLiteral("player.skipForward")), int(Qt::Key_MediaNext));
+    QCOMPARE(m_map->keyFor(QStringLiteral("player.skipBack")), int(Qt::Key_MediaPrevious));
+    // Winding is the player's: in the library ⏩ means nothing.
+    QVERIFY(m_map->actionForKey(Qt::Key_AudioForward, 0, QStringLiteral("browse")).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(InputMapTest)

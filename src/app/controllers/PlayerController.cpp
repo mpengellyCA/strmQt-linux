@@ -25,6 +25,9 @@ constexpr int kMaxRecoverRetries = 3;
 constexpr qint64 kUpNextWindowMs = 30'000;
 // Below this, "previous" means the previous item; above it, it means "restart".
 constexpr qint64 kRestartThresholdMs = 5'000;
+// The same rule for a chapter: within this of its start, "previous chapter"
+// steps back one; further in, it restarts the chapter.
+constexpr qint64 kChapterRestartWindowMs = 3'000;
 // Chapter/up-next bookkeeping is controller state, not animation. Sampling it
 // at four times a second keeps it responsive without making every video frame
 // walk the controller's derived state.
@@ -136,6 +139,15 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(this, &PlayerController::sourceIndexChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::queueChanged, this, &PlayerController::updateIsAudio);
+
+    // canSkipForward/canSkipBack read all of these. Over-announcing is free:
+    // the MPRIS side drops a repeat of the answer it already published.
+    for (const auto signal : {&PlayerController::queueStateChanged,
+                              &PlayerController::chaptersChanged,
+                              &PlayerController::currentChapterChanged,
+                              &PlayerController::isAudioChanged,
+                              &PlayerController::activeChanged})
+        connect(this, signal, this, &PlayerController::skipStateChanged);
 
     connect(m_backend, &PlayerBackend::stateChanged, this, &PlayerController::onBackendState);
     connect(m_backend, &PlayerBackend::errorOccurred, this, &PlayerController::onBackendError);
@@ -1019,9 +1031,61 @@ void PlayerController::previousChapter()
     const int current = currentChapter();
     if (current < 0)
         return;
-    constexpr qint64 kRestartWindowMs = 3000;
     const qint64 start = m_chapterStarts.at(current);
-    seekToChapter(positionMs() - start > kRestartWindowMs ? current : qMax(0, current - 1));
+    seekToChapter(positionMs() - start > kChapterRestartWindowMs ? current : qMax(0, current - 1));
+}
+
+bool PlayerController::skipsByChapter() const
+{
+    return m_active && !m_isAudio && !m_chapterStarts.isEmpty();
+}
+
+bool PlayerController::canSkipForward() const
+{
+    if (skipsByChapter() && m_currentChapter + 1 < m_chapterStarts.size())
+        return true;
+    return hasNext();
+}
+
+bool PlayerController::canSkipBack() const
+{
+    return skipsByChapter() || hasPrevious();
+}
+
+void PlayerController::skipForward()
+{
+    // m_currentChapter is -1 before the first chapter's start, which makes the
+    // first chapter the next one — right for a film whose chapter 1 is not at 0.
+    if (skipsByChapter() && m_currentChapter + 1 < m_chapterStarts.size()) {
+        seekToChapter(m_currentChapter + 1);
+        return;
+    }
+    // Past the last chapter, or no chapters to step by: the next queue entry,
+    // and nothing at all at the end of the queue — ⏭ must never stop a film.
+    if (hasNext())
+        playNext();
+}
+
+void PlayerController::skipBack()
+{
+    if (skipsByChapter() && m_currentChapter >= 0) {
+        // m_lastPositionMs rather than the engine's position: seekTo() adopts
+        // its target at once, so a second press straight after a restart sees
+        // the chapter's start and steps back, instead of restarting it again
+        // off the position the engine has not reported yet.
+        const qint64 into = m_lastPositionMs - m_chapterStarts.at(m_currentChapter);
+        if (into > kChapterRestartWindowMs) {
+            seekToChapter(m_currentChapter);
+            return;
+        }
+        if (m_currentChapter > 0) {
+            seekToChapter(m_currentChapter - 1);
+            return;
+        }
+        // At the very start of the first chapter: nothing earlier in this
+        // item, so the queue's rule decides (previous entry, or restart).
+    }
+    playPrevious();
 }
 
 void PlayerController::onBackendError(const QString &message, PlayerBackend::LoadId loadId)

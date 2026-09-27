@@ -166,6 +166,14 @@ target_include_directories(tst_remote_back_key PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_remote_back_key PRIVATE Qt6::Quick)
 set_tests_properties(tst_remote_back_key PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# A remote's ⏭ / ⏮ caught at the window (src/input/SkipKeyFilter.cpp), which is
+# QtGui and so lives in the executable; compiled straight into the test.
+strmqt_add_test(tst_skip_key_filter unit/tst_skip_key_filter.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/SkipKeyFilter.cpp)
+target_include_directories(tst_skip_key_filter PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_skip_key_filter PRIVATE Qt6::Quick)
+set_tests_properties(tst_skip_key_filter PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # NavigationKeyHandler posts to a window, so it is QtGui and lives in the
 # executable; it is compiled straight into the test with the focus keeper that
 # lets its keys land while the app is in the background.
@@ -199,6 +207,14 @@ strmqt_add_test(tst_queue_playback
     mocks/FakePlayerBackend.h
 )
 target_include_directories(tst_queue_playback PRIVATE mocks)
+
+# A remote's ⏭ / ⏮ rule (chapters first, then the queue) and hold-to-fast-forward.
+strmqt_add_test(tst_player_skip
+    integration/tst_player_skip.cpp
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h
+)
+target_include_directories(tst_player_skip PRIVATE mocks)
 
 strmqt_add_test(tst_item_actions_queue
     integration/tst_item_actions_queue.cpp
