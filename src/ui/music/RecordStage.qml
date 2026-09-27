@@ -77,7 +77,12 @@ Item {
     function swapCover(url: string): void {
         if (url === internal.shownCover)
             return;
-        internal.previousCover = internal.shownCover;
+        // A blank incoming cover (no art, or a change straight to nothing)
+        // has nothing to fade from underneath: keeping the old art around as
+        // `previousCover` would leave it showing forever, since nothing ever
+        // starts a load that could clear it. Only stash the outgoing cover
+        // when there is a new one to fade in over it.
+        internal.previousCover = url !== "" ? internal.shownCover : "";
         internal.shownCover = url;
     }
 
@@ -319,17 +324,41 @@ Item {
         opacity: stage.holdIn ? 0 : 1
 
         // The outgoing cover under the incoming one: StrmImage starts a new
-        // source at opacity 0 and fades in once it is Ready, which is the cross-fade.
+        // source at opacity 0 and fades in once it is Ready, which is the
+        // cross-fade. `previousCover` is cleared (never just hidden) once it
+        // is no longer needed — the incoming cover finished its fade, or
+        // failed outright — so a blank or broken cover never leaves stale
+        // art showing, and nothing stays decoded past its own cross-fade.
         StrmImage {
+            id: previousCoverImage
+            objectName: "previousCoverImage"
+
             anchors.fill: parent
             source: internal.previousCover
             fadeDuration: 0
         }
 
         StrmImage {
+            id: currentCoverImage
+            objectName: "currentCoverImage"
+
             anchors.fill: parent
             source: internal.shownCover
             fadeDuration: Theme.animSlow
+
+            onStatusChanged: {
+                if (currentCoverImage.status === Image.Ready)
+                    previousCoverClear.restart();
+                else if (currentCoverImage.status === Image.Error)
+                    internal.previousCover = "";
+            }
+        }
+
+        Timer {
+            id: previousCoverClear
+
+            interval: Theme.animSlow
+            onTriggered: internal.previousCover = ""
         }
     }
 }

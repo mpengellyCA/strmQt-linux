@@ -51,6 +51,7 @@ private slots:
     void albumChangeSlidesInSwapsAndSlidesOut();
     void changeWhileStoppedOrInFlightSwapsAtOnce();
     void sleeveRectMapsTheSleeve();
+    void changeToBlankCoverHidesThePreviousCover();
 
 private:
     QVariant call(const char *function, const QVariant &argument = QVariant());
@@ -229,6 +230,29 @@ void TestRecordStage::sleeveRectMapsTheSleeve()
     QCOMPARE(call("sleeveWidth").toReal(), 300.0);
     QCOMPARE(m_stage->property("implicitWidth").toReal(), 435.0);
     QCOMPARE(m_stage->property("implicitHeight").toReal(), 300.0);
+}
+
+void TestRecordStage::changeToBlankCoverHidesThePreviousCover()
+{
+    m_stage->setProperty("recordState", QStringLiteral("stopped"));
+
+    QQuickItem *previousImage = m_root->findChild<QQuickItem *>(QStringLiteral("previousCoverImage"));
+    QVERIFY(previousImage);
+
+    // Move to a second cover while stopped (an immediate swap), so the
+    // outgoing cover (coverA) becomes the underlay and has time to reach
+    // Ready underneath it.
+    call("change", m_coverB);
+    QCOMPARE(m_stage->property("shownCover").toString(), m_coverB);
+    QTRY_COMPARE(previousImage->property("source").toString(), m_coverA);
+    QTRY_COMPARE(previousImage->property("opacity").toReal(), 1.0);
+
+    // A later album has no art at all: nothing to fade to, so the old cover
+    // must not linger under a blank stage.
+    call("change", QString());
+    QCOMPARE(m_stage->property("shownCover").toString(), QString());
+    QVERIFY(previousImage->property("source").toString().isEmpty());
+    QTRY_COMPARE(previousImage->property("opacity").toReal(), 0.0);
 }
 
 QTEST_MAIN(TestRecordStage)
