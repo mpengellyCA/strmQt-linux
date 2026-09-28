@@ -771,6 +771,26 @@ ApplicationWindow {
                 stack.push(playerComponent);
                 const seatedOnPage = root.playerVideoSlot !== null
                                      && videoPlane.parent === root.playerVideoSlot;
+
+                // The OSD builds a panel only when it is first opened, so the
+                // page walk above never reaches one: open each, once. On the
+                // compat tier this is what proves they run on Qt 6.4.
+                const player = stack.currentItem as PlayerPage;
+                const unbuiltPanels = [];
+                const panelKeys = ["tracks", "chapters", "queue", "settings"];
+                for (let k = 0; player !== null && k < panelKeys.length; ++k) {
+                    player.osdOverlay.openPanel(panelKeys[k], null, 0);
+                    if (player.osdOverlay.panelItem === null)
+                        unbuiltPanels.push(panelKeys[k]);
+                    player.osdOverlay.closePanel();
+                }
+                if (player === null || unbuiltPanels.length > 0) {
+                    console.warn("selftest FAIL osd panels: "
+                                 + (player === null ? "no player page" : unbuiltPanels.join(", ")));
+                    ++failures;
+                } else {
+                    console.log("selftest ok   osd panels");
+                }
                 stack.pop();
                 const seatedInPip = videoPlane.parent === pipSlot;
                 if (!seatedOnPage || !seatedInPip) {

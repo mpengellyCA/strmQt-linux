@@ -63,6 +63,9 @@ FocusScope {
 
     readonly property real sleeveRadius: nowPlaying.sleeveRadius
 
+    // For the page self-test (Main.qml), which opens each OSD panel once.
+    readonly property PlayerOsd osdOverlay: osd
+
     objectName: "playerPage" // Main.qml tests this to hide the chrome and to pop on stopped()
 
     Component.onCompleted: page.videoSlotReady(videoSlot)

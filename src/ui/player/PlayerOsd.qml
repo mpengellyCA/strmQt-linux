@@ -50,6 +50,9 @@ Item {
     readonly property bool shown: osd.requested
     // Where focus goes when the open panel closes.
     property Item panelOrigin: null
+    // The open panel, once built; null while none is. The page self-test reads
+    // it (Main.qml), because nothing else builds a panel before a user asks.
+    readonly property Item panelItem: panelLoader.item as Item
 
     // ── Derived player state ────────────────────────────────────────────────
     // Every one of these guards `undefined`: three agents are extending
