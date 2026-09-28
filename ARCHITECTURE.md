@@ -89,6 +89,76 @@ shows results for a query the user has already replaced. Every controller that c
 be re-targeted (`Library`, `Search`, `Details`, `Series`, `Music`, `Playlist`,
 `Player`) does this.
 
+### Supported Qt versions and compatibility shims
+
+StrmQt builds on Qt 6.4 and up, in two tiers. **Full** (Qt 6.8+) is today's
+app, unchanged. **Compat** (Qt 6.4–6.7) keeps every feature and every page; it
+only changes how a few things look, because Qt 6.8 is where `MultiEffect` (the
+effect type the design language is built on) and a run of font APIs land. The
+switch is single, at 6.8, because no distro this release targets ships
+anything in 6.5–6.7 — a Qt in that gap is a developer's own upgrade, not a
+package. Condensed, what compat loses:
+
+| Surface | Full tier | Compat tier |
+|---|---|---|
+| Icon tint, shadows, masks, backdrop wash | `MultiEffect` | `Qt5Compat.GraphicalEffects` |
+| Tabular figures, Crate display width | `font.features`/`font.variableAxes` | not set — invisible on the bundled faces, or narrower headings |
+| `Loader`/list header-footer hosting a bound component | the real `Loader`/component | a `createObject()` host (6.4's object creator refuses a bound component outside its creation context) |
+| QML type annotations | enforced and coerced (6.7+) | ignored by the interpreter |
+
+**Choosing a tier is one build decision, never a runtime check.** The CMake
+cache variable `STRMQT_QML_TIER` (`auto`/`full`/`compat`, resolved by
+`cmake/StrmQtQmlTier.cmake`) picks `full` on Qt ≥ 6.8 and `compat` otherwise; an
+explicit `full` fails configure below Qt 6.7. `src/ui/shims/full` and
+`src/ui/shims/compat` hold the same file names — `StrmTint`, `StrmShadow`, `StrmMask`, `StrmBackdropBlur`,
+`BoundLoader`, `BoundViewSlot`, `TabularText`, `TabularMetrics`,
+`CrateDisplayText` — and only one directory joins the `StrmQt` module, so the
+type name (the file's basename) resolves identically everywhere. `BoundLoader`
+and `BoundViewSlot` exist because a `Loader` or a `ListView` header/footer that
+hosts a `pragma ComponentBehavior: Bound` component cannot be built directly on
+6.4; their compat versions `createObject()` it and reproduce the host's sizing
+and focus scope. No QML outside `src/ui/shims` imports `QtQuick.Effects` or
+`Qt5Compat.GraphicalEffects` — callers write `StrmTint { … }` and never see
+which module answered. The resolved tier is written to
+a build-directory file, `strmqt-qml-tier.txt`, which `packaging/debian/rules`
+reads to compute the effects-module dependency, and logged once at startup
+(`src/app/Application.cpp`, beside the version line).
+
+**Three C++ sites are guarded by `QT_VERSION_CHECK` rather than a compatibility
+header**, because each stands alone: `src/app/main.cpp` falls back from
+`QQmlApplicationEngine::loadFromModule` (Qt 6.5) to `addImportPath`/`load` on a
+fixed URL, which works on every Qt because `RESOURCE_PREFIX`
+(`src/CMakeLists.txt`) pins the module under `qrc:/qt/qml` — only the
+*default* from 6.5 on. `InputMap::trigger` (`src/input/InputMap.cpp`) cannot
+assume `qReturnArg` (Qt 6.5), so `invokeAction` runs through a helper that
+reads the handler's meta-object and **shapes the call from the signature it
+reports** — `(QString, bool) -> bool` or `(QVariant, QVariant) -> QVariant` —
+because a QML handler's typed-vs-untyped signature depends on the Qt it runs
+on, and guessing the shape would silently drop the handler on some Qt
+versions. `MusicRepository::ready` (`src/app/music/MusicRepository.cpp`) uses
+`QtFuture::makeReadyFuture` below Qt 6.6 and the un-deprecated
+`makeReadyValueFuture` from 6.6, so the full-tier build's `-Werror` never sees
+the deprecation.
+
+**The build floor is CMake 3.25**, Debian 12's version. The bundled SDL3 fetch
+(`cmake/StrmQtSdl3.cmake`) is the one place that would want `FetchContent`'s
+`EXCLUDE_FROM_ALL` (3.28) to keep SDL3 out of the install tree; it sets
+`SDL_INSTALL=OFF` instead, which does the same job on 3.25.
+
+**The binary imports one `Qt_6_PRIVATE_API` symbol,
+`QQmlPrivate::compositeMetaType`,** and carries `qmlcachegen`'s ahead-of-time
+code, valid only for the Qt it was generated against — why every native
+package is built inside, and pinned to, one distro release's Qt (§9) rather
+than shipped once for a whole distro family.
+
+Qt 6.4 behaviour no review can settle was checked by running the full suite
+and the page self-test in Ubuntu 24.04 and Debian 12 containers from the first
+porting task onward, plus the `floor` CI job that keeps doing it on every
+push. The sweep's findings — the bound-component loss behind
+`BoundLoader`/`BoundViewSlot`, the mpv console-switch rename, the pre-6.5
+`Overlay` import — are recorded under "Task 7: Qt 6.4 behaviour sweep" in
+`docs/superpowers/plans/2026-09-27-distro-compat-075-verifications.md`.
+
 ---
 
 ## 2. Server layer
@@ -234,7 +304,10 @@ comfortable / TV) that scales the whole interface. Fonts and icons are compiled
 into the binary, so a sandboxed artifact renders identically to a native build
 without depending on the host's font set. [`docs/BRANDING.md`](docs/BRANDING.md)
 covers the brand mark and verifies every token, weight and colour it documents
-against this file.
+against this file. Every tint, shadow, mask and blur — `StrmIcon`'s tint
+included — goes through the StrmTint shim and its siblings rather than an
+effect type named directly, so the same QML builds on Qt 6.4 ("Supported Qt
+versions and compatibility shims", §1).
 
 Music speaks a dialect of it called *Crate*: the same ground, accent and typefaces,
 set louder. Archivo is pushed wide and heavy for headings and hero titles, data sits
@@ -450,18 +523,37 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 74 suites
+ctest --preset dev                     # 75 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
 
 - **Unit** — DTO mapping, settings, the stream ladder, queue behaviour, the input
-  map, the stick decision table.
+  map, the stick decision table, and `tst_secret_backends` — the probe order,
+  the wire formats and the unavailable/refused split (§8) — over a fake D-Bus
+  transport (`src/platform/secrets/DBusTransport.h`) rather than a real bus.
 - **Integration** — controllers and the client against a local `QTcpServer` mock
   replaying recorded fixtures. No network, no display, no session bus.
 
-Three things about this gate are not obvious and were each learned from a defect
-that reached a user:
+The distro matrix runs in containers, not on the developer's own Qt:
+`scripts/ci/local.sh` and `scripts/ci/check.sh` build, test and self-test one
+distro's image (Arch and, since 0.7.5, Ubuntu 24.04/26.04, Debian 12/13 and
+Fedora 43/44) so a developer reproduces a container failure without waiting on
+CI. `.github/workflows/ci.yml` runs the Arch build on every push, plus a
+`floor` job (Ubuntu 24.04, Qt 6.4.2, the compat tier) and a `debian-13` job
+(Qt 6.8.2, the oldest full-tier Qt) — the two ends of the supported range.
+`.github/workflows/packages.yml` goes further: it builds every `.deb`, `.rpm`
+and the AppImage, then installs each into a fresh container of its own release
+and reruns the page self-test there, so a package is proven installable, not
+just buildable.
+
+One lesson from porting `tst_navigation_history` to Qt 6.8: **stage a QML
+module once per run, not once per test**, because Qt 6.8's type loader
+remembers where it first resolved a module URI across engines, and a per-test
+copy left later tests resolving `StrmQt` against an already-deleted directory.
+
+Three more things about this gate are not obvious and were each learned from a
+defect that reached a user:
 
 1. **`strmqt_qmllint` exits 0 on warnings.** The exit code is not the gate. CI
    normalizes warning locations and compares the complete warning stream with a
@@ -489,31 +581,96 @@ Settings live in `QSettings` (INI under `~/.config/StrmQt/`). **There is no defa
 server address**: the artifacts are distributable, so a baked-in host would be both
 a privacy leak and wrong for every user but one. The login screen asks.
 
-Access tokens go to KWallet via `kwalletd6` over D-Bus, one per saved account,
-keyed `emby/<sha256(server+user)>/accessToken`. If the wallet is unavailable or
-access is rejected, tokens fall back to a vault file (`secrets.ini` under the app
-data location, `0600` owner-only) — lower security, and the login screen says so
-while that mode is active; a vault written while the wallet was down is migrated
-into the wallet and scrubbed the next time the wallet opens. Accounts are listed
-in a server-tagged registry (`accounts/registry`) backing the login screen's
-profile picker: **switch user** keeps the profile and token, **sign out** forgets
-both. No credential is ever written to the repo, and TLS certificate errors are
-fatal in release builds.
+Access tokens go to a system keyring, one per saved account, keyed
+`emby/<sha256(server+user)>/accessToken`. There are three backends
+(`src/platform/secrets/`), tried in a fixed order — **KWallet 6, then
+KWallet 5, then the freedesktop Secret Service** — because a Plasma user's
+existing tokens are already in KWallet, and asking a second keyring after a
+KDE one answers would just duplicate them. `SecretsStore::chooseSecretBackends`
+builds the candidate list from the session bus's owned and activatable names:
+an *owned* wallet counts on any desktop, but an *activatable* one counts only
+when `XDG_CURRENT_DESKTOP` says KDE — activating `kwalletd` on GNOME or a
+window manager would greet the user with a "create a wallet" prompt for a
+wallet nothing else on their desktop uses. Plasma 6 aliases `org.kde.kwalletd5`
+onto `kwalletd6`'s own D-Bus unique name; when the store sees the two service
+names share an owner it drops KWallet 5 from the candidate list rather than
+asking the same daemon twice.
+
+Each backend answers `Ok`, `Unavailable`, `Refused` or `Failed`. **Unavailable**
+moves to the next backend (no wallet found, or it vanished between prepare and
+open); **Refused** — the user dismissed an unlock prompt — goes straight to the
+vault file without trying another keyring, on the same reasoning as the KWallet
+order: a refusal is a choice, not an outage. Interactive calls (opening a
+wallet, waiting on a prompt) carry a five-minute timeout; a timeout or a D-Bus
+`NoReply` is **Failed**, which behaves like a refusal — the vault, with a
+warning — rather than cascading to the next keyring, since a keyring that
+cannot answer in five minutes is not one to keep waiting on.
+
+If every keyring is unavailable, refused or failed, tokens fall back to a vault
+file (`secrets.ini` under the app data location, `0600` owner-only) — lower
+security, and the login screen says so while that mode is active; a vault
+written while the keyring was down is migrated into it and scrubbed the next
+time the keyring opens. Settings → Server shows a **Credentials** row naming
+whichever backend is in use (`SecretsStore::backendName`, "KWallet", "KWallet
+5", "Secret Service" or "vault file"), so a support conversation does not have
+to guess.
+
+The Secret Service backend stores one item per key, with attributes
+`xdg:schema=ca.mikesdev.StrmQt.Secret` and `strmqt-key=<that key>` — the
+server address and username appear in the keyring only as their hash, never in
+the clear. It opens its session with the Secret Service's `plain` algorithm,
+which puts the secret on the session bus unencrypted; that is the same
+exposure KWallet's own string-based write already has, and the bus is
+per-user, but it is a documented trade-off rather than an oversight — a
+negotiated DH-AES session is follow-up work, not this release's.
+
+Accounts are listed in a server-tagged registry (`accounts/registry`) backing
+the login screen's profile picker: **switch user** keeps the profile and
+token, **sign out** forgets both. No credential is ever written to the repo,
+and TLS certificate errors are fatal in release builds.
 
 ---
 
 ## 9. Packaging
 
-Three artifacts, all built from a clean checkout:
+Five artifacts, all built from a clean checkout:
 
 - **Arch package** — `install()` rules put two binaries, a desktop entry, AppStream
   metainfo and six icon sizes into `/usr`. Nothing else is installed: the QML module
   is compiled into the executable, so there is no qmldir or `.qml` to ship.
 - **Flatpak** — `org.kde.Platform` 6.11 plus libmpv, libplacebo, libass and uchardet
   built from source. FFmpeg comes from the runtime.
-- **AppImage** — Qt's own deploy script plus patchelf. linuxdeploy is deliberately
-  *not* used: its excludelist omits libva, libvulkan and libpulse, which are exactly
-  the libraries whose bundling breaks hardware decode.
+- **`.deb`** (`packaging/debian/`) — one binary package, built inside and for
+  exactly one release's container (`scripts/ci/package-deb.sh`, `dpkg-buildpackage`),
+  targeting Ubuntu 24.04/26.04 and Debian 12/13. `packaging/debian/rules`'
+  `override_dh_gencontrol` computes three dependencies no ELF `NEEDED` entry
+  can express: `QtAbi` (pins the upstream Qt the binary was built against,
+  since it imports a private symbol — §1), `QmlEffects` (the tier's effect
+  module, read from `strmqt-qml-tier.txt`) and `SvgPlugin` (whichever package
+  ships the Qt SVG image plugin, `libqsvg.so`, there).
+- **`.rpm`** (`packaging/rpm/strmqt.spec`) — one package per Fedora release
+  (43, 44; `scripts/ci/package-rpm.sh`, `rpmbuild`), which pins
+  `Requires: qt6-qtdeclarative = %{_qt6_version}` to the exact Qt it was built
+  against, for the same private-symbol reason. Fedora rebases Qt inside a
+  release, so that pin holds the update back on a system that has StrmQt
+  installed until a StrmQt rebuilt against the new Qt exists.
+- **AppImage** (`packaging/appimage/`) — built in an `ubuntu:24.04` container
+  with aqt-installed Qt 6.11.3, Qt's own qt-cmake deploy step plus patchelf.
+  linuxdeploy is deliberately *not* used: its excludelist omits libva,
+  libvulkan and libpulse, which are exactly the libraries whose bundling
+  breaks hardware decode. The build checks, on every run, that nothing bundled
+  imports a `GLIBC_` symbol newer than 2.39 or a `GLIBCXX_` symbol newer than
+  3.4.33 — Ubuntu 24.04's floor — and fails otherwise; its type2 runtime is
+  pinned by sha256. Release CI proves that floor by running the finished
+  AppImage's self-test in bare `ubuntu:24.04`, `debian:trixie` and `fedora:43`
+  containers (`.github/workflows/packages.yml`), not just trusting the check.
+
+SDL3 (§5's only gamepad path) is bundled statically, from a pinned,
+hash-checked `FetchContent` download, wherever the distro does not package
+it — Ubuntu 24.04, Debian 12, and the AppImage. `packaging/debian/rules` turns
+`STRMQT_BUNDLE_SDL3` on by probing `pkg-config --exists sdl3` in the target
+container; the AppImage always turns it on, since aqt's Qt carries no SDL3
+either. Fedora and Debian 13/Ubuntu 26.04 use the distro's own package.
 
 The rule for what an AppImage may bundle: *pure-userspace codec and render code,
 never anything that talks to a kernel device, the display server, the audio server
@@ -537,8 +694,19 @@ assertion catches the rot.
   album, so the order is not yet the one the shelf's name promises.
 - Chapter thumbnails, PiP and drag-to-reorder are unimplemented; each needs a verb or an
   id grammar the current interfaces do not have.
-- The AppImage's glibc floor is set by the bundled FFmpeg, not by this code. It runs
-  on current Arch and little else.
+- **The AppImage's floor is glibc 2.39** (Ubuntu 24.04, Debian 13+, Fedora 40+),
+  checked on every build against the bundled libmpv/ffmpeg closure and proven
+  in CI on bare hosts (§9). **Debian 12 is not covered**; its users take the
+  `.deb` or the Flatpak.
+- **Compat-tier visuals are an approximation, not a copy.** `Qt5Compat.GraphicalEffects`
+  gives Qt 6.4–6.7 the same shadows, masks and blurs `MultiEffect` gives 6.8+,
+  but not pixel-identically (§1) — this is accepted, not a defect to chase.
+- **A Fedora StrmQt rebuild is required after Fedora rebases Qt.** The `.rpm`'s
+  exact-Qt `Requires` (§9) holds the Qt package back until that happens, which
+  is a hold on the user's Qt updates, not a silent breakage.
+- **The Secret Service backend's session is unencrypted on the session bus**
+  (`plain`, §8) — the same exposure KWallet's own API already has. A
+  negotiated DH-AES session is follow-up work.
 - **Season badges go stale outside the loaded season.** `SeriesController`'s seasons
   model is not registered with `ItemActions` and nothing recomputes its unplayed
   counts, so marking an episode watched updates the badge only for the season
