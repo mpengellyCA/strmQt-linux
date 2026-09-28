@@ -1,0 +1,157 @@
+name: Packages
+
+# Builds every native package and the AppImage, then installs each into a
+# fresh container of its release and runs the self-test (spec 2026-09-27 §8.3).
+# release.yml calls it for a tag; workflow_dispatch runs it on main before
+# tagging (spec §8.4, step 3).
+#
+# Outputs go under the workspace (out/), not $RUNNER_TEMP: in a container job
+# the ${{ runner.temp }} expression names the HOST path, which the artifact
+# actions running inside the container cannot see.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Commit to build'
+        type: string
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    name: .deb (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: ubuntu-24.04, image: 'ubuntu:24.04' }
+          - { target: ubuntu-26.04, image: 'ubuntu:26.04' }
+          - { target: debian-12,    image: 'debian:bookworm' }
+          - { target: debian-13,    image: 'debian:trixie' }
+    container: ${{ matrix.image }}
+    steps:
+      # Without git in the container, actions/checkout falls back to the REST
+      # API and leaves no .git, and copy-tree.sh (git ls-files) has nothing to
+      # list. Installed before the checkout for that reason.
+      - name: Install git
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      # The container's root is not the checkout's owner, so git would refuse
+      # the workspace as "dubious ownership".
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: scripts/ci/deps.sh ${{ matrix.target }}
+      - run: scripts/ci/package-deb.sh ${{ matrix.target }} "$GITHUB_WORKSPACE/out"
+      - uses: actions/upload-artifact@v4
+        with: { name: 'deb-${{ matrix.target }}', path: 'out/*.deb', if-no-files-found: error }
+
+  deb-install:
+    name: .deb install check (${{ matrix.target }})
+    needs: deb
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: ubuntu-24.04, image: 'ubuntu:24.04' }
+          - { target: ubuntu-26.04, image: 'ubuntu:26.04' }
+          - { target: debian-12,    image: 'debian:bookworm' }
+          - { target: debian-13,    image: 'debian:trixie' }
+    container: ${{ matrix.image }}
+    steps:
+      # No git here on purpose: the container must hold only what the package
+      # pulls in. Checkout therefore downloads the tree through the REST API,
+      # which cannot do a sparse checkout.
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      - uses: actions/download-artifact@v4
+        with: { name: 'deb-${{ matrix.target }}', path: pkgs }
+      - run: scripts/ci/install-check.sh pkgs/*.deb
+
+  rpm:
+    name: .rpm (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: fedora-43, image: 'registry.fedoraproject.org/fedora:43' }
+          - { target: fedora-44, image: 'registry.fedoraproject.org/fedora:44' }
+    container: ${{ matrix.image }}
+    steps:
+      # See the deb job: copy-tree.sh needs the .git only a git checkout leaves.
+      - name: Install git
+        run: dnf install -y --setopt=install_weak_deps=False git-core
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: scripts/ci/deps.sh ${{ matrix.target }}
+      - run: scripts/ci/package-rpm.sh ${{ matrix.target }} "$GITHUB_WORKSPACE/out"
+      - uses: actions/upload-artifact@v4
+        with: { name: 'rpm-${{ matrix.target }}', path: 'out/*.rpm', if-no-files-found: error }
+
+  rpm-install:
+    name: .rpm install check (${{ matrix.target }})
+    needs: rpm
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: fedora-43, image: 'registry.fedoraproject.org/fedora:43' }
+          - { target: fedora-44, image: 'registry.fedoraproject.org/fedora:44' }
+    container: ${{ matrix.image }}
+    steps:
+      # See deb-install: no git, so no sparse checkout.
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      - uses: actions/download-artifact@v4
+        with: { name: 'rpm-${{ matrix.target }}', path: pkgs }
+      - run: scripts/ci/install-check.sh pkgs/*.rpm
+
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      - run: scripts/ci/deps.sh appimage
+      - name: Build
+        # appimagetool is itself an AppImage, and the container has no FUSE.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          STRMQT_APPIMAGE_BUILD_ROOT="$GITHUB_WORKSPACE/out" \
+          STRMQT_APPIMAGE_CMAKE_ARGS="$(scripts/ci/deps.sh --cmake-args appimage)" \
+            packaging/appimage/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: appimage, path: 'out/dist/*.AppImage', if-no-files-found: error }
+
+  # The floor packaging/appimage/README.md claims, tested: the AppImage's
+  # self-test on bare hosts carrying only the README's host table.
+  appimage-hosts:
+    name: AppImage on ${{ matrix.target }}
+    needs: appimage
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: debian-13, image: 'debian:trixie' }
+          - { target: fedora-43, image: 'registry.fedoraproject.org/fedora:43' }
+    container: ${{ matrix.image }}
+    steps:
+      # See deb-install: no git, so no sparse checkout.
+      - uses: actions/checkout@v4
+        with: { ref: '${{ inputs.ref || github.sha }}' }
+      - uses: actions/download-artifact@v4
+        with: { name: appimage, path: dist }
+      - run: scripts/ci/appimage-host.sh ${{ matrix.target }}
+      - run: chmod +x dist/*.AppImage && APPIMAGE_EXTRACT_AND_RUN=1 scripts/ci/selftest.sh dist/*.AppImage

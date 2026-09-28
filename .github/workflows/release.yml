@@ -135,6 +135,24 @@ jobs:
             "v$CM_VER"|"v$CM_VER"-*) ;;
             *) echo "::error::tag $TAG does not match CMake version $CM_VER"; exit 1 ;;
           esac
+          # The .deb and .rpm take their versions from their own files, which
+          # are just as hand-written as _tag.
+          DEB_VER=$(sed -n '1s/^strmqt (\([^)]*\)).*/\1/p' packaging/debian/changelog)
+          DEB_DIST=$(sed -n '1s/^strmqt ([^)]*) \([^;]*\);.*/\1/p' packaging/debian/changelog)
+          RPM_VER=$(sed -n 's/^Version:[[:space:]]*//p' packaging/rpm/strmqt.spec)
+          echo "debian/changelog=$DEB_VER ($DEB_DIST)  strmqt.spec Version=$RPM_VER"
+          [ "$DEB_VER" = "${CM_VER}-1" ] || {
+            echo "::error::debian/changelog version ($DEB_VER) is not ${CM_VER}-1"
+            exit 1
+          }
+          [ "$DEB_DIST" != "UNRELEASED" ] || {
+            echo "::error::debian/changelog's top entry is still UNRELEASED"
+            exit 1
+          }
+          [ "$RPM_VER" = "$CM_VER" ] || {
+            echo "::error::strmqt.spec Version ($RPM_VER) does not match CMake version $CM_VER"
+            exit 1
+          }
 
       - name: makepkg
         run: |
@@ -159,50 +177,13 @@ jobs:
           name: arch-package
           path: packaging/arch/strmqt-[0-9]*.pkg.tar.zst
 
-  # ── AppImage ────────────────────────────────────────────────────────────────
-  appimage:
-    name: AppImage
+  # ── Native packages and AppImage ────────────────────────────────────────────
+  packages:
+    name: Packages
     needs: resolve
-    runs-on: ubuntu-latest
-    container: archlinux:base-devel
-    steps:
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm --needed \
-            git cmake ninja pkgconf gcc patchelf fuse2 wget \
-            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv sdl3
-
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
-      - name: Fetch appimagetool
-        run: |
-          wget -q -O /usr/local/bin/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /usr/local/bin/appimagetool" \
-            | sha256sum --check --strict
-          chmod +x /usr/local/bin/appimagetool
-
-      - name: Build
-        # appimagetool needs FUSE, which a container usually lacks; extracting
-        # and running the tool directly is the documented way around it.
-        run: APPIMAGE_EXTRACT_AND_RUN=1 ./packaging/appimage/build-appimage.sh
-
-      # A successful build proves the compiler was happy, not that the packaged
-      # QML module resolves inside the bundle. This is the check that does.
-      - name: Self-test from inside the bundle
-        env:
-          STRMQT_SELFTEST: "1"
-          QT_QPA_PLATFORM: offscreen
-          QT_ASSUME_STDERR_HAS_CONSOLE: "1"
-        run: |
-          APPIMAGE_EXTRACT_AND_RUN=1 ./build/dist/StrmQt-*-x86_64.AppImage
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: appimage
-          path: build/dist/*.AppImage
+    uses: ./.github/workflows/packages.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   # ── Flatpak ─────────────────────────────────────────────────────────────────
   flatpak:
@@ -225,7 +206,7 @@ jobs:
   # ── Publish ─────────────────────────────────────────────────────────────────
   release:
     name: Publish release
-    needs: [resolve, arch, appimage, flatpak]
+    needs: [resolve, arch, packages, flatpak]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -274,4 +255,4 @@ jobs:
             --title "StrmQt $TAG" \
             --generate-notes \
             --draft $PRERELEASE \
-            $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.flatpak' -o -name 'release-provenance.txt' \) | tr '\n' ' ')
+            $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.flatpak' -o -name 'release-provenance.txt' \) | tr '\n' ' ')

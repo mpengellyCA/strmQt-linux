@@ -399,3 +399,48 @@ Task 17 fix round 1 (review), rebuilt in `/tmp/w17f-appimage`:
   section appimagetool fills in.
 - Bare-host self-test: ubuntu:24.04, fedora:43 and debian:trixie each log `SDL3 gamepad support active`,
   `QML tier: full on Qt 6.11.3`, `selftest: 15/15 pages constructed`, `selftest.sh: OK`.
+
+## Task 18: `packages.yml` and `release.yml`
+
+Lint: `podman run --rm --security-opt label=disable -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.12 -no-color`
+(1.7.12 has no `-color=never`). `packages.yml` is clean. `release.yml` keeps two warnings that HEAD already has:
+SC2010 in `makepkg` (`ls | grep`) and SC2046 in `Publish` (the unquoted `$(find …)`). Removing the old `appimage`
+job also removes HEAD's SC2037/SC2211.
+
+Replay: each job's `run:` steps, in order, in a fresh podman container of the job's image, from commit 8304825.
+- In the `deb` and `rpm` jobs, the git install comes first. "checkout" is then a fresh `git clone` into
+  `/__w/StrmQt/StrmQt`, chowned to uid 1001 (the runner user), followed by the `safe.directory` step.
+- In the jobs with no git, "checkout" is `git archive HEAD` unpacked with no `.git`, which is what the REST fallback
+  leaves. The install jobs also assert that `git` is absent.
+- Artifacts are handed between jobs as a copy through `/tmp/w18a/artifacts`. The AppImage is copied with its
+  exec bit dropped, as download-artifact does.
+- The harness is `/tmp/w18a/replay2.sh JOB TARGET IMAGE`, with logs in `/tmp/w18a/logs/`.
+
+| Job | Result |
+|---|---|
+| `deb` ubuntu-24.04 | `strmqt_0.7.5-1~ubuntu24.04_amd64.deb`, lintian clean |
+| `deb-install` ubuntu-24.04 | `SDL3 gamepad support active`, `QML tier: compat on Qt 6.4.2`, `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| `rpm` fedora-43 | `strmqt-0.7.5-1.fc43.x86_64.rpm`, rpmlint 0 errors, 0 warnings |
+| `rpm-install` fedora-43 | `selftest.sh: OK` |
+| `appimage` | `StrmQt-0.7.0-x86_64.AppImage`, `GLIBC_2.38` / `GLIBCXX_3.4.32` needed |
+| `appimage-hosts` debian-13 | `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| `appimage-hosts` fedora-43 | `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+
+Found on the way: the first `deb` replay set `TMPDIR=/var/tmp`, and `deps.sh`'s `mk-build-deps` died with
+"cannot access archive 'strmqt-build-deps_0.7.5-1_all.deb'". When `TMPDIR` is set, `equivs-build` writes the package
+into `$TMPDIR` instead of the working directory (`/usr/bin/equivs-build:19-20,197`). GitHub sets no `TMPDIR` in a
+container job, and `local.sh` runs `deps.sh` at image build with none, so neither path hits it. The rows above come
+from a replay with no `TMPDIR`; scratch stayed inside the container's own filesystem.
+
+The version-consistency step, run on the current tree:
+
+```
+$ RELEASE_TAG=v0.7.0 RELEASE_SHA=$(git rev-list -n1 v0.7.0) bash -e <step>
+release tag=v0.7.0  PKGBUILD _tag=v0.7.0  CMake version=0.7.0
+debian/changelog=0.7.5-1 (UNRELEASED)  strmqt.spec Version=0.7.5
+::error::debian/changelog version (0.7.5-1) is not 0.7.0-1
+$ CM_VER=0.7.5 bash -e <the new checks only>
+::error::debian/changelog's top entry is still UNRELEASED
+```
+
+With the distribution set to `unstable` in a scratch copy, and `CM_VER=0.7.5`, the new checks pass (exit 0).
