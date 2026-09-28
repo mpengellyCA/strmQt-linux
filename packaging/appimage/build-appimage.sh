@@ -4,11 +4,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Usage:  ./packaging/appimage/build-appimage.sh
-# Output: build/dist/StrmQt-<version>-x86_64.AppImage
+# Output: ${STRMQT_APPIMAGE_BUILD_ROOT:-build}/dist/StrmQt-<version>-x86_64.AppImage
 #
-# Read packaging/appimage/README.md before shipping this to anyone: the bundled
-# ffmpeg imports GLIBC_2.43, so this artifact is NOT portable across distros.
-# It is a convenience build for current Arch. Flatpak is the portable path.
+# Environment:
+#   STRMQT_APPIMAGE_BUILD_ROOT  where build/ and dist/ go (default: <source>/build)
+#   STRMQT_APPIMAGE_CMAKE_ARGS  extra CMake flags, word-split
+#                               (`scripts/ci/deps.sh --cmake-args appimage`)
+#
+# The release build runs on Ubuntu 24.04 (`scripts/ci/deps.sh appimage`) with
+# Qt 6.11.3 from aqtinstall, for a glibc 2.39 floor: nothing bundled may need a
+# newer glibc symbol, and the script fails if anything does. See
+# packaging/appimage/README.md for the hosts that covers. Arch still works when
+# pkg-config and a Qt >= 6.10 are present, but its AppImage inherits Arch's
+# glibc floor.
 
 set -euo pipefail
 
@@ -26,9 +34,10 @@ APP_VERSION="$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' \
     "${SRC_DIR}/CMakeLists.txt")"
 [ -n "${APP_VERSION}" ] || { printf 'ERROR: cannot read project version from %s\n' \
     "${SRC_DIR}/CMakeLists.txt" >&2; exit 1; }
-BUILD_DIR="${SRC_DIR}/build/appimage"
+BUILD_ROOT="${STRMQT_APPIMAGE_BUILD_ROOT:-${SRC_DIR}/build}"
+BUILD_DIR="${BUILD_ROOT}/appimage"
 APPDIR="${BUILD_DIR}/AppDir"
-DIST_DIR="${SRC_DIR}/build/dist"
+DIST_DIR="${BUILD_ROOT}/dist"
 OUTPUT="${DIST_DIR}/${APP_NAME}-${APP_VERSION}-${APP_ARCH}.AppImage"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -45,14 +54,14 @@ for tool in cmake ninja patchelf appimagetool; do
 done
 if ((${#missing[@]})); then
     die "missing required tool(s): ${missing[*]}
-  cmake/ninja  : pacman -S cmake ninja
-  patchelf     : pacman -S patchelf
+  cmake/ninja  : pacman -S cmake ninja     | apt-get install cmake ninja-build
+  patchelf     : pacman -S patchelf        | apt-get install patchelf
   appimagetool : https://github.com/AppImage/appimagetool/releases  (drop in ~/.local/bin, chmod +x)"
 fi
 
 command -v pkg-config >/dev/null 2>&1 || die "pkg-config not found"
 pkg-config --exists mpv \
-    || die "libmpv development files not found (pkg-config 'mpv'). Install mpv/libmpv."
+    || die "libmpv development files not found (pkg-config 'mpv'). Install mpv (pacman) or libmpv-dev (apt)."
 log "  mpv $(pkg-config --modversion mpv), $(cmake --version | head -1), patchelf $(patchelf --version 2>&1 | head -1)"
 
 # ─── 2. Configure + build ─────────────────────────────────────────────────────
@@ -80,16 +89,23 @@ log "  mpv $(pkg-config --modversion mpv), $(cmake --version | head -1), patchel
 #
 # Setting this makes Qt shell out to `patchelf --set-rpath` instead
 # (Qt6CoreDeploySupport.cmake:124-136), which adds the entry when absent.
+#
+# CMAKE_INSTALL_LIBDIR=lib: GNUInstallDirs picks lib/x86_64-linux-gnu for a
+# /usr prefix on Debian and Ubuntu, and Qt's deploy step copies its libraries
+# there. Everything below -- the mpv walk, the $ORIGIN/../lib RPATHs and the
+# forbidden-soname assertion -- works on usr/lib, so the bundle has one lib dir.
 log "Configuring in ${BUILD_DIR}"
 rm -rf "${BUILD_DIR}" "${OUTPUT}"
 cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib' \
     -DQT_DEPLOY_USE_PATCHELF=ON \
     -DSTRMQT_APPIMAGE_DEPLOY=ON \
     -DSTRMQT_WERROR=OFF \
-    -DSTRMQT_WITH_VLC=OFF
+    -DSTRMQT_WITH_VLC=OFF \
+    ${STRMQT_APPIMAGE_CMAKE_ARGS:-}
 
 log "Building"
 cmake --build "${BUILD_DIR}"
@@ -100,6 +116,27 @@ DESTDIR="${APPDIR}" cmake --install "${BUILD_DIR}"
 
 [[ -x "${APPDIR}/usr/bin/strmqt" ]]     || die "strmqt did not install into the AppDir"
 [[ -x "${APPDIR}/usr/bin/strmqt-cli" ]] || die "strmqt-cli did not install into the AppDir"
+
+# Where the deploy step put Qt's plugins and QML modules. It follows the Qt it
+# deploys: a distro Qt's lib/qt6/plugins and lib/qt6/qml, aqt's plugins/ and
+# qml/. The qt.conf it writes next to the binary (qt6_deploy_qt_conf in
+# Qt6CoreDeploySupport.cmake) is the record of which, and it is also what the
+# bundled Qt reads at runtime. It omits a key whose value is Qt's default
+# ("plugins", "qml"), so an absent key means exactly that, as in QLibraryInfo.
+QT_CONF="${APPDIR}/usr/bin/qt.conf"
+[[ -f "${QT_CONF}" ]] || die "${QT_CONF} is missing: Qt's deploy step (GENERATE_QT_CONF) did not write it,
+so the plugin and QML directories are unknown and the bundled Qt would not find them either."
+qt_conf_get() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "${QT_CONF}" | tail -1; }
+qt_prefix="$(qt_conf_get Prefix)"
+[[ -n "${qt_prefix}" ]] || die "${QT_CONF} has no Prefix= key"
+qt_plugins="$(qt_conf_get Plugins)"
+qt_qml="$(qt_conf_get QmlImports)"
+[[ -n "${qt_qml}" ]] || qt_qml="$(qt_conf_get Qml2Imports)"
+PLUGINS_DIR="$(realpath -m "${APPDIR}/usr/bin/${qt_prefix}/${qt_plugins:-plugins}")"
+QML_DIR="$(realpath -m "${APPDIR}/usr/bin/${qt_prefix}/${qt_qml:-qml}")"
+[[ -d "${PLUGINS_DIR}" ]] || die "qt.conf's plugin directory ${PLUGINS_DIR#"${APPDIR}"/} does not exist in the AppDir"
+[[ -d "${QML_DIR}" ]]     || die "qt.conf's QML directory ${QML_DIR#"${APPDIR}"/} does not exist in the AppDir"
+log "  Qt plugins in ${PLUGINS_DIR#"${APPDIR}"/}, QML in ${QML_DIR#"${APPDIR}"/}"
 
 # ─── 3. The denylist ─────────────────────────────────────────────────────────
 # Sonames that must resolve to the HOST at runtime. Kept in lockstep with
@@ -124,7 +161,9 @@ FORBIDDEN+='|^(libglib-|libgobject-|libgio-|libgmodule-|libgthread-|libgdk_pixbu
 FORBIDDEN+='|^(libssl|libcrypto|libgnutls|libnettle|libhogweed|libgmp\.so|libp11-kit|libtasn1|libgcrypt|libgpg-error)'
 FORBIDDEN+='|^(libkrb5|libk5crypto|libgssapi_krb5|libkrb5support|libcom_err|libkeyutils|libsasl2|libldap|liblber)'
 FORBIDDEN+='|^(libsystemd|libudev|libdbus-1|libcap\.so|libcap-|libselinux|libapparmor|libseccomp|libelf)'
-FORBIDDEN+='|^(libz\.so|libzstd|liblzma|libbz2|liblz4|libbrotli)'
+# libbz2 is not here: Debian's soname is libbz2.so.1.0 and Fedora ships only
+# libbz2.so.1, so the Ubuntu-built ffmpeg would not start on Fedora. Bundled.
+FORBIDDEN+='|^(libz\.so|libzstd|liblzma|liblz4|libbrotli)'
 
 # ─── 4. Bundle libmpv and its codec closure by hand ──────────────────────────
 # WHY THIS IS NOT DONE BY Qt's DEPLOY STEP
@@ -143,7 +182,9 @@ FORBIDDEN+='|^(libz\.so|libzstd|liblzma|libbz2|liblz4|libbrotli)'
 log "Bundling libmpv and its dependency closure"
 
 MPV_ROOT="$(pkg-config --variable=libdir mpv 2>/dev/null || echo /usr/lib)/libmpv.so.2"
-[[ -f "${MPV_ROOT}" ]] || MPV_ROOT=/usr/lib/libmpv.so.2
+for dir in /usr/lib /usr/lib/x86_64-linux-gnu; do
+    [[ -f "${MPV_ROOT}" ]] || MPV_ROOT="${dir}/libmpv.so.2"
+done
 [[ -f "${MPV_ROOT}" ]] || die "cannot locate libmpv.so.2 on the host"
 
 # Resolve soname -> host path once, using the real loader. More trustworthy than
@@ -179,8 +220,10 @@ while ((${#queue[@]})); do
             continue
         fi
         host="${RESOLVE[${base}]:-}"
-        if [[ -z "${host}" && -f "/usr/lib/${base}" ]]; then
-            host="/usr/lib/${base}"          # absolute-NEEDED targets ldd may not list
+        if [[ -z "${host}" ]]; then         # absolute-NEEDED targets ldd may not list
+            for dir in /usr/lib /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
+                [[ -f "${dir}/${base}" ]] && { host="${dir}/${base}"; break; }
+            done
         fi
         [[ -n "${host}" && -f "${host}" ]] || { warn "unresolved mpv dependency: ${base}"; continue; }
         if [[ ! -e "${APPDIR}/usr/lib/${base}" ]]; then
@@ -253,6 +296,8 @@ log "  2 binaries -> \$ORIGIN/../lib"
 # 4c. Defence in depth for plugin / QML .so files. Qt should already have set
 #     these; we only touch ones that have no $ORIGIN, and we compute the correct
 #     relative hop rather than assuming a depth. Idempotent by construction.
+#     aqt's layout puts plugins and QML beside usr/lib, not under it, so walk
+#     the qt.conf directories too; a file reached twice is skipped the second time.
 plugin_fixed=0
 while IFS= read -r -d '' so; do
     cur="$(patchelf --print-rpath "${so}" 2>/dev/null || true)"
@@ -260,7 +305,8 @@ while IFS= read -r -d '' so; do
     rel="$(realpath --relative-to="$(dirname "${so}")" "${APPDIR}/usr/lib")"
     patchelf --set-rpath "\$ORIGIN/${rel}" "${so}"
     plugin_fixed=$((plugin_fixed + 1))
-done < <(find "${APPDIR}/usr/lib" -mindepth 2 -type f -name '*.so' -print0)
+done < <(find "${APPDIR}/usr/lib" -mindepth 2 -type f -name '*.so' -print0
+         find "${PLUGINS_DIR}" "${QML_DIR}" -type f -name '*.so' -print0)
 log "  ${plugin_fixed} plugin/QML object(s) needed an RPATH top-up"
 
 # ─── 7. HARD ASSERTION: no host-owned library may be inside the AppDir ────────
@@ -305,8 +351,6 @@ log "  clean: no forbidden sonames in ${APPDIR}/usr/lib"
 # starts -- under XWayland, blurry, with no native fullscreen. Nobody notices
 # until a user reports "it looks fuzzy".
 log "Asserting required components are present"
-
-PLUGINS_DIR="${APPDIR}/usr/lib/qt6/plugins"
 
 [[ -f "${PLUGINS_DIR}/platforms/libqwayland.so" ]] || die \
 "libqwayland.so is MISSING from the AppDir.
@@ -377,6 +421,26 @@ install -m 0755 "${SCRIPT_DIR}/AppRun" "${APPDIR}/AppRun"
 install -Dm 0644 "${SRC_DIR}/COPYING" \
                  "${APPDIR}/usr/share/licenses/${APP_ID}/COPYING"
 
+# ─── 9b. The glibc floor ─────────────────────────────────────────────────────
+# glibc floor (spec 2026-09-27 §7.4): nothing bundled may need newer than 2.39.
+# glibc symbol versioning is forward-only, so the newest GLIBC_ version any
+# bundled object imports is the oldest glibc the AppImage starts on. Only ELF
+# files go to objdump: AppRun is a /bin/sh script and matches -perm -u+x.
+log "Checking the glibc floor"
+glibc_imports() {
+    local f
+    while IFS= read -r -d '' f; do
+        readelf -h "${f}" >/dev/null 2>&1 || continue
+        objdump -T "${f}" || die "objdump -T failed on ${f#"${APPDIR}"/}"
+    done < <(find "${APPDIR}" -type f \( -name '*.so*' -o -perm -u+x \) -print0)
+}
+newest=$(glibc_imports | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } | sort -Vu | tail -1)
+[[ -n "${newest}" ]] || die "no bundled ELF object imports a GLIBC_ symbol: the glibc check found nothing to check"
+log "  newest glibc symbol needed: ${newest}"
+if [[ "$(printf '%s\n' "${newest#GLIBC_}" 2.39 | sort -V | tail -1)" != "2.39" ]]; then
+    die "a bundled object needs ${newest}, above the 2.39 floor"
+fi
+
 # ─── 10. Pack ─────────────────────────────────────────────────────────────────
 # zstd: noticeably faster startup than the legacy gzip squashfs for a bundle
 # this size, at a comparable ratio.
@@ -388,5 +452,5 @@ ARCH="${APP_ARCH}" VERSION="${APP_VERSION}" \
 chmod +x "${OUTPUT}"
 log "Done: ${OUTPUT} ($(du -h "${OUTPUT}" | cut -f1))"
 printf '\n'
-printf 'Portability note: the bundled ffmpeg imports GLIBC_2.43. This AppImage\n'
-printf 'runs on current Arch and very little else. See packaging/appimage/README.md.\n'
+printf 'Portability note: the newest glibc symbol bundled is %s. See\n' "${newest}"
+printf 'packaging/appimage/README.md for the hosts that covers.\n'

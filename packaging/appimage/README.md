@@ -1,34 +1,48 @@
 # StrmQt AppImage
 
-    ./packaging/appimage/build-appimage.sh
-    # -> build/dist/StrmQt-0.3.0-x86_64.AppImage   (~99 MB)
+The release AppImage is built in an `ubuntu:24.04` container
+(`scripts/ci/deps.sh appimage`):
 
-## Read this before you hand the file to anyone
+| Piece | Source |
+|---|---|
+| Qt 6.11.3 (`linux_gcc_64`, plus `qtwebsockets`) | aqtinstall 3.3.0, installed at `/opt/qt/6.11.3/gcc_64`. `Deploy.cmake`'s `INCLUDE_PLUGINS` needs Qt ≥ 6.10, and the base download already carries QtSvg and QtWayland. |
+| libmpv 0.37 and its codec closure (ffmpeg 6.1) | Ubuntu 24.04's `libmpv-dev`, walked by `build-appimage.sh` |
+| SDL3 3.4.16 | bundled static (`-DSTRMQT_BUNDLE_SDL3=ON`) |
+| appimagetool 1.9.1 | pinned by sha256 |
 
-**This AppImage is not portable.** It is a convenience artifact for the machine
-class it was built on, not a run-anywhere binary. If you need portable
-distribution, use the Flatpak (`packaging/flatpak/`). That is what it is for.
+Local build, the same one release CI runs (the source copy is there because
+`build-appimage.sh` writes next to its source, and `/src` is read-only):
 
-The reason is not our code and cannot be fixed by our packaging:
-
+```bash
+df -h /tmp
+scripts/ci/local.sh appimage /tmp/w17a-appimage -- bash -c '
+  export TMPDIR=/var/tmp
+  /src/scripts/ci/copy-tree.sh /src /var/tmp/src-copy
+  cd /var/tmp/src-copy &&
+  STRMQT_APPIMAGE_BUILD_ROOT=/build/out STRMQT_APPIMAGE_CMAKE_ARGS="$(/src/scripts/ci/deps.sh --cmake-args appimage)" \
+  APPIMAGE_EXTRACT_AND_RUN=1 packaging/appimage/build-appimage.sh'
+# -> /tmp/w17a-appimage/out/dist/StrmQt-<version>-x86_64.AppImage   (~180 MB)
 ```
-$ objdump -T AppDir/usr/lib/libavcodec.so.62 | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1
-GLIBC_2.43
-```
 
-The bundled `libavcodec` — which we must bundle, because the whole point is to
-carry the codec stack — imports symbols versioned `GLIBC_2.43`. glibc symbol
-versioning is forward-only: a binary importing `GLIBC_2.43` will not load
-against an older glibc, full stop. That puts the floor at roughly February 2026
-**regardless of what StrmQt itself is compiled against**. In practice: current
-Arch and its derivatives. Debian stable, Ubuntu LTS, RHEL and friends will
-refuse to start it.
+On Arch, `./packaging/appimage/build-appimage.sh` still works (pkg-config and a
+Qt ≥ 6.10 are enough) and writes `build/dist/`, but that AppImage inherits
+Arch's glibc floor and is for that machine class only.
 
-The usual AppImage answer is to build on the oldest distro you intend to
-support. That would mean building ffmpeg, libplacebo, libmpv and Qt 6.11 from
-source on an ancient base — a distinct, much larger job than this script. Until
-someone does that, treat this as "an Arch build you can copy to another Arch
-box without installing dependencies".
+## Where it runs: glibc 2.39 and up
+
+glibc symbol versioning is forward-only: a binary importing `GLIBC_2.x` will
+not load against an older glibc. So the newest `GLIBC_` symbol anything in the
+bundle imports is the oldest glibc the AppImage starts on. `build-appimage.sh`
+checks it on every build and fails above **2.39**, Ubuntu 24.04's glibc. The
+aqt Qt is built on an older base and does not raise it. The 0.7.5 build logs
+`newest glibc symbol needed: GLIBC_2.38`.
+
+That covers **Ubuntu 24.04+, Debian 13+ and Fedora 40+**. **Debian 12**
+(glibc 2.36) is not covered: its users take the `.deb` or the Flatpak.
+
+Release CI proves the floor rather than trusting it: the finished AppImage runs
+its self-test in bare `debian:trixie` and `fedora:43` containers that carry only
+the table below (`scripts/ci/appimage-host.sh`).
 
 ## What the host must provide
 
@@ -38,30 +52,41 @@ host's, because the other half of the conversation is the host's — a bundled
 `libGL` cannot load the host's DRI driver, and a bundled `fontconfig` reads the
 host font cache with the wrong version stamp and returns zero fonts.
 
-So the host needs:
+This is every soname a bundled object needs that the bundle does not carry,
+measured from the `DT_NEEDED` entries of the 0.7.5 AppDir. Most of it is
+required at startup, not just by a feature: `libmpv` is linked, and Ubuntu's
+libmpv and ffmpeg link SDL2, JACK, PipeWire, Vulkan, OpenCL, cairo and pango
+directly. `scripts/ci/appimage-host.sh` installs exactly these packages.
 
-| Component | Sonames | Consequence if absent |
-|---|---|---|
-| Mesa / GL | `libGL`, `libGLX`, `libEGL`, `libGLdispatch`, `libgbm`, `libdrm` | no GL context; app aborts at startup |
-| Video accel | `libva`, `libva-drm`, `libva-wayland`, `libva-x11`, `libvdpau`, `libvulkan` | software decode only, or mpv init failure |
-| Display | `libwayland-client/cursor/egl`, `libxkbcommon`, `libX11`, `libxcb-*` | no QPA platform; app aborts |
-| Fonts | `libfontconfig`, `libfreetype`, `libharfbuzz`, `libfribidi` | no text rendered |
-| Audio | `libasound`, `libpulse`, `libpipewire`, `libjack` | no audio output |
-| Input | `libSDL3` (gamepad), `libSDL2` (mpv) | gamepad support disabled / mpv load failure |
-| System | glibc ≥ 2.43, `libdbus-1`, `libsystemd` | MPRIS and secrets unavailable |
-| TLS | `libssl`, `libcrypto`, `libgnutls` | HTTPS to the Emby server fails |
+| Component | Sonames | Debian / Ubuntu | Fedora |
+|---|---|---|---|
+| GL / Mesa | `libGL`, `libEGL`, `libgbm`, `libdrm` (+ Mesa's drivers) | `libgl1 libegl1 libglx-mesa0 libegl-mesa0 libgl1-mesa-dri libgbm1 libdrm2` | `libglvnd-glx libglvnd-egl mesa-libGL mesa-libEGL mesa-dri-drivers mesa-libgbm libdrm` |
+| Video accel / compute | `libva`, `libva-drm`, `libva-wayland`, `libva-x11`, `libvdpau`, `libvulkan`, `libOpenCL` | `libva2 libva-drm2 libva-wayland2 libva-x11-2 libvdpau1 libvulkan1 ocl-icd-libopencl1` | `libva libvdpau vulkan-loader OpenCL-ICD-Loader` |
+| Wayland / keyboard | `libwayland-client/cursor/egl`, `libxkbcommon`, `libxkbcommon-x11` | `libwayland-client0 libwayland-cursor0 libwayland-egl1 libxkbcommon0 libxkbcommon-x11-0` | `libwayland-client libwayland-cursor libwayland-egl libxkbcommon libxkbcommon-x11` |
+| X11 | `libX11`, `libX11-xcb`, `libXext`, `libXrandr`, `libXss`, `libXv`, `libXpresent` | `libx11-6 libx11-xcb1 libxext6 libxrandr2 libxss1 libxv1 libxpresent1` | `libX11 libX11-xcb libXext libXrandr libXScrnSaver libXv libXpresent` |
+| xcb (Qt's xcb plugin) | `libxcb`, `-cursor`, `-glx`, `-icccm`, `-image`, `-keysyms`, `-randr`, `-render`, `-render-util`, `-shape`, `-shm`, `-sync`, `-util`, `-xfixes`, `-xkb` | `libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1` | `libxcb xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util` |
+| Fonts | `libfontconfig`, `libfreetype`, `libharfbuzz`, `libfribidi` | `libfontconfig1 libfreetype6 libharfbuzz0b libfribidi0` | `fontconfig freetype harfbuzz fribidi` |
+| GLib / cairo / pango | `libglib-2.0`, `libgobject`, `libgio`, `libgthread`, `libcairo`, `libcairo-gobject`, `libpango-1.0`, `libpangocairo` | `libglib2.0-0t64 libcairo2 libcairo-gobject2 libpango-1.0-0 libpangocairo-1.0-0` | `glib2 cairo cairo-gobject pango` |
+| Pixbuf (ffmpeg's librsvg) | `libgdk_pixbuf-2.0` | `libgdk-pixbuf-2.0-0` | `gdk-pixbuf2` |
+| Audio | `libasound`, `libpulse`, `libpipewire-0.3`, `libjack`, `libSDL2` (mpv, ffmpeg) | `libasound2t64 libpulse0 libpipewire-0.3-0t64 libjack-jackd2-0 libsdl2-2.0-0` | `alsa-lib pulseaudio-libs pipewire-libs pipewire-jack-audio-connection-kit-libs sdl2-compat` |
+| TLS / crypto | `libssl`, `libcrypto`, `libgnutls`, `libnettle`, `libgcrypt`, `libgpg-error`, `libgssapi_krb5` | `libssl3t64 libgnutls30t64 libnettle8t64 libgcrypt20 libgpg-error0 libgssapi-krb5-2` | `openssl-libs gnutls nettle libgcrypt libgpg-error krb5-libs` |
+| System | glibc ≥ 2.39, `libdbus-1`, `libudev` | `libdbus-1-3 libudev1` | `dbus-libs systemd-libs` |
+| Compression | `libz`, `libzstd`, `liblzma`, `liblz4`, `libbrotli*` | `zlib1g libzstd1 liblzma5 liblz4-1 libbrotli1` | `zlib-ng-compat libzstd xz-libs lz4-libs libbrotli` |
 
-On a normal Arch desktop all of these are already present. `libSDL2` is worth
-calling out — it comes from Arch's `sdl2-compat`, which is not in `base`.
+A desktop install has all of these. SDL3 is not on the list: the AppImage links
+it statically. `libbz2` is not either: Debian's soname is `libbz2.so.1.0` and
+Fedora ships only `libbz2.so.1`, so the AppImage carries its own.
 
 ## What is bundled
 
-Qt 6.11 (Core/Gui/Quick/QuickControls2/Qml/Network/DBus/OpenGL/WaylandClient),
-the Qt QPA plugins `qwayland`, `qxcb`, `qoffscreen`, `qminimal` plus the Wayland
-shell/decoration/graphics integrations, the imageformats Emby actually needs
-(jpeg, png, gif, webp, svg, ico), `libmpv` and its codec closure (ffmpeg,
-libplacebo, libass, libzimg, dav1d, x264/x265, …), and `libstdc++`/`libgcc_s`.
-139 shared objects, ~233 MB uncompressed, ~99 MB after zstd squashfs.
+Qt 6.11.3 (Core/Gui/Quick/QuickControls2/Qml/Network/DBus/OpenGL/WebSockets/
+WaylandClient/XcbQpa and ICU), the Qt QPA plugins `qwayland`, `qxcb`,
+`qoffscreen`, `qminimal` plus the Wayland shell/decoration/graphics
+integrations, the imageformats plugins in aqt's base download (jpeg, gif, svg,
+ico; PNG is built into QtGui), `libmpv` and its codec closure (ffmpeg,
+libplacebo, libass, dav1d, x264/x265, …), and `libstdc++`/`libgcc_s`. About 186
+shared objects, ~550 MB uncompressed (RelWithDebInfo), ~180 MB after zstd
+squashfs.
 
 Explicitly **not** bundled: libVLC (the AppImage is mpv-only — see
 `build-appimage.sh`), Qt translations, the 27 KImageFormats plugins, GTK/Plasma
@@ -120,20 +145,19 @@ look like over-caution and are not.
 ## Verifying a build
 
 ```bash
-APPDIR=build/appimage/AppDir
+APPDIR=/tmp/w17a-appimage/out/appimage/AppDir     # build/appimage/AppDir on Arch
 
 # Bundled Qt/mpv resolve into the AppDir; GL/fontconfig/libva resolve to the host.
 ldd $APPDIR/usr/bin/strmqt | grep -E 'libQt6Core|libmpv|libGL\.so|libfontconfig|libva\.so'
 
-# No bundled object may be missing an $ORIGIN RPATH.
-find $APPDIR/usr/lib -type f -name '*.so*' -exec sh -c 'patchelf --print-rpath "$1" | grep -q "\$ORIGIN" || echo "BAD $1"' _ {} \;
+# No bundled object may be missing an $ORIGIN RPATH (aqt puts plugins and QML in usr/plugins, usr/qml).
+find $APPDIR/usr/lib $APPDIR/usr/plugins $APPDIR/usr/qml -type f -name '*.so*' -exec sh -c 'patchelf --print-rpath "$1" | grep -q "\$ORIGIN" || echo "BAD $1"' _ {} \;
 
 # No absolute DT_NEEDED may survive.
 find $APPDIR/usr -type f -name '*.so*' -exec patchelf --print-needed {} \; | grep '^/'
 
-# Headless smoke test (this is what qoffscreen is bundled for).
-QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen \
-  ./build/dist/StrmQt-0.3.0-x86_64.AppImage
+# Headless page-construction self-test (this is what qoffscreen is bundled for).
+APPIMAGE_EXTRACT_AND_RUN=1 scripts/ci/selftest.sh /tmp/w17a-appimage/out/dist/StrmQt-*-x86_64.AppImage
 ```
 
 `build-appimage.sh` runs the forbidden-soname assertion and the

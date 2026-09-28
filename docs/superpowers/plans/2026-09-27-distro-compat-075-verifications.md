@@ -335,3 +335,53 @@ Task 16 fix round 1 (review):
   texts. `rpm -qp --recommends` gives `(kf6-kwallet or gnome-keyring or keepassxc)`. The bare fedora-43 install
   check logs `SDL3 gamepad support active`, `QML tier: full on Qt 6.10.3`, `selftest: 15/15 pages constructed`,
   `selftest.sh: OK`. fc44 was not rebuilt, because nothing release-specific changed.
+
+## Task 17: the AppImage on Ubuntu 24.04
+
+`deps.sh appimage` on `ubuntu:24.04`: `aqt list-qt linux desktop --arch 6.11.3` → `linux_gcc_64` (install dir
+`gcc_64`), as pinned. `aqt list-qt linux desktop --archives 6.11.3 linux_gcc_64` → `icu qtbase qtdeclarative qtdoc
+qtsvg qttools qttranslations qtwayland`: QtWayland and QtSvg are in the base download, so only `-m qtwebsockets` is
+added (ruling R18). CMake: `StrmQt QML tier: full (Qt 6.11.3)`, `SDL3: bundled 3.4.16 (static)`.
+
+Built with the brief's Step 4 command, but with the source copy and `TMPDIR` in the container's `/var/tmp`:
+
+```
+==>   Qt plugins in usr/plugins, QML in usr/qml
+==>   121 librar(y/ies) bundled, 60 pruned as host-owned
+==>   147 top-level libraries -> $ORIGIN
+==>   0 plugin/QML object(s) needed an RPATH top-up
+==>   clean: no forbidden sonames in /build/out/appimage/AppDir/usr/lib
+==>   libqwayland.so, wayland-shell-integration/, libmpv.so.2, libqsvg.so all present
+==>   newest glibc symbol needed: GLIBC_2.38
+==> Done: /build/out/dist/StrmQt-0.7.0-x86_64.AppImage (178M)
+```
+
+Bare-host self-test (`appimage-host.sh T`, then `selftest.sh` on a copy of the AppImage with
+`APPIMAGE_EXTRACT_AND_RUN=1`):
+
+| Host | Result |
+|---|---|
+| `debian:trixie` (debian-13) | `SDL3 gamepad support active`, `QML tier: full on Qt 6.11.3`, `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| `fedora:43` | same four lines, `selftest.sh: OK` |
+| `ubuntu:24.04` (Debian list) | same four lines, `selftest.sh: OK` |
+
+Found on the way:
+
+- The first build put Qt's libraries in `usr/lib/x86_64-linux-gnu`: GNUInstallDirs picks that `LIBDIR` for a `/usr`
+  prefix on Debian/Ubuntu, and Qt's deploy step follows it (`qt.conf` said `Libraries = lib/x86_64-linux-gnu`).
+  `strmqt`'s `$ORIGIN/../lib` RPATH then missed them (`ldd`: `libQt6Core.so.6 => not found`), and the
+  forbidden-soname assertion, which checks `usr/lib` only, never saw them. `build-appimage.sh` now passes
+  `-DCMAKE_INSTALL_LIBDIR=lib`.
+- The deployed `qt.conf` has no `Plugins=` or `QmlImports=` key under aqt: `qt6_deploy_qt_conf` omits a key whose value
+  is Qt's default (`plugins`, `qml`). `build-appimage.sh` reads an absent key as that default, as QLibraryInfo does,
+  and fails if `qt.conf` or `Prefix=` is missing or a resolved directory does not exist.
+- The host table was wrong. It is now every `DT_NEEDED` soname of the AppDir that the AppDir does not carry (73 beyond
+  glibc), mapped to packages with `apt-file` (trixie) and `dnf repoquery --whatprovides` (fedora:43). Ubuntu's libmpv
+  and ffmpeg link SDL2, JACK, PipeWire, PulseAudio, Vulkan, OpenCL, VDPAU, XScrnSaver, Xv, Xpresent, cairo, pango,
+  gdk-pixbuf, gnutls and gcrypt directly, so all of them are needed at startup.
+- `libbz2`: the first fedora-43 run stopped at `strmqt: error while loading shared libraries: libbz2.so.1.0`.
+  Debian's soname is `libbz2.so.1.0`; Fedora's `bzip2-libs` ships only `libbz2.so.1`. libbz2 left the forbidden list
+  (build-appimage.sh and Deploy.cmake together) and is bundled.
+- The glibc check, exercised outside the build: an AppDir holding only a `/bin/sh` AppRun fails with "no bundled ELF
+  object imports a GLIBC_ symbol"; one holding Arch's `libavutil.so.61` fails with "a bundled object needs
+  GLIBC_2.44, above the 2.39 floor".

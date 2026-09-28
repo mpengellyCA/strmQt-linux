@@ -295,7 +295,9 @@ set(_strmqt_pre_exclude_regexes
     "^libz\\.so.*"
     "^libzstd.*"
     "^liblzma.*"
-    "^libbz2.*"
+    # NOT libbz2: Debian/Ubuntu name it libbz2.so.1.0, Fedora only libbz2.so.1,
+    # so an Ubuntu-built AppImage must carry its own. Keep in step with
+    # build-appimage.sh's FORBIDDEN.
     "^liblz4.*"
     "^libbrotli.*"
 )

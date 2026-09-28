@@ -22,6 +22,7 @@ case "$target" in
     debian-13)    image=docker.io/library/debian:trixie ;;
     fedora-43)    image=registry.fedoraproject.org/fedora:43 ;;
     fedora-44)    image=registry.fedoraproject.org/fedora:44 ;;
+    appimage)     image=docker.io/library/ubuntu:24.04 ;;
     *) echo "deps.sh: unknown target '$target'" >&2; exit 2 ;;
 esac
 
@@ -29,6 +30,7 @@ cmake_args=""
 case "$target" in
     # No SDL3 package on these releases (spec §5): bundle the pinned static one.
     ubuntu-24.04|debian-12) cmake_args="-DSTRMQT_BUNDLE_SDL3=ON" ;;
+    appimage) cmake_args="-DSTRMQT_BUNDLE_SDL3=ON -DCMAKE_PREFIX_PATH=/opt/qt/6.11.3/gcc_64" ;;
 esac
 
 case "$mode" in
@@ -43,6 +45,24 @@ esac
 # Fedora: packaging/rpm/strmqt.spec's BuildRequires is the single list (dnf builddep below).
 
 case "$target" in
+    appimage)
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+        # Build tools, libmpv 0.37 + its codec closure (walked by build-appimage.sh),
+        # libvlc, SDL3's udev, OpenGL/xkb headers aqt's Qt links against, and Python for aqt.
+        apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates file patchelf \
+            python3-venv libmpv-dev libvlc-dev libssl-dev libudev-dev libgl-dev libegl-dev \
+            libxkbcommon-dev libfontconfig-dev libfreetype-dev libdbus-1-dev \
+            vlc-plugin-base ffmpeg libgl1-mesa-dri curl binutils
+        python3 -m venv /opt/aqt
+        /opt/aqt/bin/pip install --no-cache-dir aqtinstall==3.3.0
+        /opt/aqt/bin/aqt install-qt linux desktop 6.11.3 linux_gcc_64 -m qtwebsockets -O /opt/qt
+        curl -fsSL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+        echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /usr/local/bin/appimagetool" | sha256sum -c -
+        chmod +x /usr/local/bin/appimagetool
+        ;;
     ubuntu-*|debian-*)
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
