@@ -1792,9 +1792,11 @@ void WebRemoteServer::handleApiPlayback(QSslSocket *socket, const QJsonObject &b
     } else if (action == QLatin1String("stop")) {
         m_player->stop();
     } else if (action == QLatin1String("next")) {
-        m_player->playNext();
+        // The same verb as the remote keys, pad and MPRIS (ARCHITECTURE.md §3).
+        m_player->skipForward();
     } else if (action == QLatin1String("previous")) {
-        m_player->playPrevious();
+        // The same verb as the remote keys, pad and MPRIS (ARCHITECTURE.md §3).
+        m_player->skipBack();
     } else if (action == QLatin1String("seekTo")) {
         m_player->seekTo(qMax<qint64>(0, val.toVariant().toLongLong()));
     } else if (action == QLatin1String("seekRelative")) {

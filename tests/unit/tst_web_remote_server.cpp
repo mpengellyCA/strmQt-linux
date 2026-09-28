@@ -16,8 +16,10 @@
 #include <memory>
 #include <vector>
 
+#include "FakePlayerBackend.h"
 #include "MockEmbyServer.h"
 #include "RemoteTestClient.h"
+#include "app/controllers/PlayerController.h"
 #include "core/Settings.h"
 #include "remote/TlsCertificateGenerator.h"
 #include "remote/WebRemoteServer.h"
@@ -52,6 +54,7 @@ private slots:
     void qualityWritesSettings();
     void subtitleStyleValidatesColour();
     void playbackWithoutPlayerIsUnavailable();
+    void nextAndPreviousStepByChapter();
     void imageProxyServesOnlyRasterImages();
 
     // Request framing
@@ -480,6 +483,79 @@ void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()
     QCOMPARE(request("POST", QStringLiteral("/api/playback"), R"({"action":"togglePause"})").status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/libraries")).status, 503);
     QCOMPARE(request("GET", QStringLiteral("/api/unknown")).status, 404);
+}
+
+// spec 2026-09-27 §9.3: the web remote's Next/Previous are the same verbs as
+// the remote keys, the pad and MPRIS: skipForward/skipBack, which step by
+// chapter when the item has chapters.
+void WebRemoteServerTest::nextAndPreviousStepByChapter()
+{
+    // A playing film with three chapters (0 s, 600 s, 1200 s), positioned at
+    // 700 s, wired up the way tst_player_skip's chapter tests are.
+    const QString userId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
+    const QString itemId = QStringLiteral("301001");
+
+    MockEmbyServer emby;
+    QVERIFY(emby.start());
+    QVERIFY(emby.addRouteFromFile(QStringLiteral("POST"),
+                                  QStringLiteral("/Items/%1/PlaybackInfo").arg(itemId),
+                                  QStringLiteral(STRMQT_FIXTURES_DIR "/playback_info.json")));
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing"), 204, {});
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Progress"), 204, {});
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"), 204, {});
+    emby.addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/%2").arg(userId, itemId), 200,
+                 QByteArrayLiteral(R"json({
+        "Id": "301001", "Name": "301001", "Type": "Movie",
+        "Chapters": [
+            {"Name": "One", "StartPositionTicks": 0},
+            {"Name": "Two", "StartPositionTicks": 6000000000},
+            {"Name": "Three", "StartPositionTicks": 12000000000}
+        ]
+    })json"));
+
+    emby::EmbyClient client;
+    client.setBaseUrl(emby.baseUrl());
+    client.setDeviceId(QStringLiteral("test-device"));
+    client.setSession(QStringLiteral("not-a-real-token-fixture-only"), userId);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings settings(dir.filePath(QStringLiteral("settings.ini")));
+    settings.setWebRemotePort(m_port + 1);
+    settings.setWebRemoteBindMode(QStringLiteral("localhost"));
+    settings.setWebRemoteRequirePin(false);
+
+    FakePlayerBackend backend;
+    PlayerController controller(&client, &backend, &settings);
+
+    WebRemoteServer server(&settings, &controller, nullptr, nullptr, nullptr, &client);
+    QVERIFY(server.start());
+    const auto stopServer = qScopeGuard([&server] { server.stop(); });
+
+    RemoteTestClient http(static_cast<quint16>(m_port + 1));
+
+    QVariantMap item;
+    item.insert(QStringLiteral("itemId"), itemId);
+    item.insert(QStringLiteral("name"), itemId);
+    item.insert(QStringLiteral("label"), itemId);
+    item.insert(QStringLiteral("type"), QStringLiteral("Movie"));
+    item.insert(QStringLiteral("runtimeMs"), 1800'000);
+
+    controller.playQueue({item}, 0);
+    QTRY_COMPARE(backend.loadedUrls.size(), 1);
+    backend.simulateState(PlayerBackend::State::Playing);
+    backend.simulateDuration(1800'000);
+    QTRY_COMPARE(controller.chapters().size(), 3);
+    backend.simulatePosition(700'000);
+
+    QCOMPARE(http.post(QStringLiteral("/api/playback"), R"({"action":"next"})").status, 200);
+    QCOMPARE(backend.seeks.constLast(), Q_INT64_C(1200'000)); // next chapter, not the next item
+    QCOMPARE(backend.loadedUrls.size(), 1);                   // no new item was loaded
+
+    QCOMPARE(http.post(QStringLiteral("/api/playback"), R"({"action":"previous"})").status, 200);
+    // Exactly at chapter three's start: skipBack's rule is "restart the current
+    // chapter past the window, else step back" — at 0 into it, that is chapter two.
+    QCOMPARE(backend.seeks.constLast(), Q_INT64_C(600'000));
 }
 
 void WebRemoteServerTest::imageProxyServesOnlyRasterImages()

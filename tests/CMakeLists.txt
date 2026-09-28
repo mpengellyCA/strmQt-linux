@@ -266,7 +266,8 @@ strmqt_add_test(tst_qr_code_generator unit/tst_qr_code_generator.cpp)
 target_link_libraries(tst_qr_code_generator PRIVATE strmqt_remote)
 
 strmqt_add_test(tst_web_remote_server unit/tst_web_remote_server.cpp
-    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp)
+    mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    mocks/FakePlayerBackend.h)
 target_include_directories(tst_web_remote_server PRIVATE mocks)
 target_link_libraries(tst_web_remote_server PRIVATE strmqt_remote)
 
