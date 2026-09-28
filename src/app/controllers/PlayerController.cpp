@@ -1106,7 +1106,10 @@ bool PlayerController::canSkipForward() const
 
 bool PlayerController::canSkipBack() const
 {
-    return skipsByChapter() || hasPrevious() || (m_active && m_isAudio && m_pastRestartThreshold);
+    // Mirrors skipBack(): a chapter to step to, an item to go back to, or a
+    // restart of the current item once it is past the threshold. The restart
+    // applies to every item, not only music (spec 2026-09-27 §9.2).
+    return skipsByChapter() || hasPrevious() || (m_active && m_pastRestartThreshold);
 }
 
 void PlayerController::skipForward()

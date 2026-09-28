@@ -176,9 +176,9 @@ public:
     Q_INVOKABLE void skipForward();
     Q_INVOKABLE void skipBack();
     bool canSkipForward() const;
-    // For music, also true with nothing earlier in the queue once the track
-    // is 5 s in, because ⏮ then restarts it (the rule the player's ⏮ button
-    // is enabled by).
+    // Also true once the current item is past the restart threshold, since
+    // skipBack would restart it (the rule the player's ⏮ button is enabled
+    // by).
     bool canSkipBack() const;
 
     // ⏭ as a key, which has a release: a tap is skipForward() — on the
