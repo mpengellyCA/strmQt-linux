@@ -245,6 +245,12 @@ jobs:
           commit=$RELEASE_SHA
           appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+          appimage_runtime_url=https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          appimage_runtime_sha256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          appimage_qt=6.11.3 linux_gcc_64 (aqtinstall 3.3.0, archives checked against download.qt.io sha256)
+          aqt_requirements_sha256=$(sha256sum scripts/ci/aqt-requirements.txt | cut -d' ' -f1)
+          sdl3_bundled_url=https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+          sdl3_bundled_sha256=7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
           EOF
           find artifacts -type f | sort
           # A tag carrying a prerelease suffix (v0.3.0-rc1, -beta2, -alpha) is

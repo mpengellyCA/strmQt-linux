@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Every job only reads the repository; PR code runs here with this token.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build and test
@@ -81,16 +85,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Dependencies
         run: scripts/ci/deps.sh ubuntu-24.04
+      # Under the workspace, not $RUNNER_TEMP: in a container job the
+      # ${{ runner.temp }} expression names the host path, which the upload
+      # step would not find (packages.yml).
       - name: Build, test, self-test
         run: |
           read -ra args < <(scripts/ci/deps.sh --cmake-args ubuntu-24.04)
-          scripts/ci/check.sh "$RUNNER_TEMP/build" "${args[@]}"
+          scripts/ci/check.sh "$GITHUB_WORKSPACE/out/build" "${args[@]}"
       - name: Self-test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: selftest-floor
-          path: ${{ runner.temp }}/build/selftest.log
+          path: out/build/selftest.log
           if-no-files-found: ignore
 
   # The oldest full-tier Qt the release supports: Debian 13's 6.8.2.
