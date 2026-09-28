@@ -13,7 +13,7 @@ BuildRequires:  qt6-rpm-macros
 BuildRequires:  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel
 BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel
 BuildRequires:  mpv-devel vlc-devel SDL3-devel openssl-devel
-# %%check runs the full suite and the page self-test:
+# Runtime pieces for %%check's ctest and for the C(fedora-*) self-test (deps.sh installs these via dnf builddep):
 BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpeg-free mesa-dri-drivers
 
 # The binary imports a Qt_6_PRIVATE_API symbol and carries qmlcachegen code
@@ -22,7 +22,8 @@ BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpe
 Requires:       qt6-qtdeclarative%{?_isa} = %{_qt6_version}
 Requires:       qt6-qtsvg%{?_isa} qt6-qtwayland%{?_isa}
 Requires:       vlc-plugins-base vlc-plugin-ffmpeg
-Recommends:     (kwallet or gnome-keyring or keepassxc)
+# kf6-kwallet ships ksecretd/kwalletd6; Fedora's "kwallet" is the KDE 4 one.
+Recommends:     (kf6-kwallet or gnome-keyring or keepassxc)
 
 %description
 StrmQt is a native Qt 6 / QML client for Emby media servers, built to be
@@ -47,7 +48,7 @@ export QT_QPA_PLATFORM=offscreen
 %ctest
 
 %files
-%license assets/fonts/OFL-*.txt
+%license COPYING assets/fonts/OFL-*.txt
 %doc README.md
 %{_bindir}/strmqt
 %{_bindir}/strmqt-cli

@@ -15,6 +15,8 @@ tar -C "$top" -czf "$top/SOURCES/strmqt-$version.tar.gz" "strmqt-$version"
 cp "$src/packaging/rpm/strmqt.spec" "$top/SPECS/"
 rpmbuild --define "_topdir $top" -bb "$top/SPECS/strmqt.spec"
 mkdir -p "$out"
+# A reused OUT_DIR must not hand rpmlint (or a caller's glob) a stale package.
+rm -f "$out"/strmqt-*.rpm
 find "$top/RPMS" -name 'strmqt-[0-9]*.rpm' -exec cp {} "$out"/ \;
 rpmlint -r "$src/packaging/rpm/strmqt.rpmlintrc" "$out"/strmqt-"$version"-*.rpm
 ls -l "$out"

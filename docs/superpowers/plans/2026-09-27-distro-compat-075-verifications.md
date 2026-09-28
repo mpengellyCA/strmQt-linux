@@ -320,3 +320,18 @@ Found on the way:
 C(fedora-43) on the image `deps.sh` now builds with `dnf builddep` from the spec: `SDL3: system 3.4.16`,
 `100% tests passed, 0 tests failed out of 75`, `selftest: 15/15 pages constructed`, `selftest.sh: OK`,
 `check.sh: OK (full)`.
+
+Task 16 fix round 1 (review):
+
+- KWallet Recommends. `dnf repoquery` in the fedora-43 / fedora-44 CI images:
+  - `--whatprovides kwallet` → `kwallet-0:4.12.3-28.fc43` / `kwallet-0:4.12.3-29.fc44` (KDE 4's kwallet, plus
+    `kwalletmanager-0:15.04.3`), not the Plasma 6 daemon;
+  - `kf6-kwallet kf5-kwallet` → `kf5-kwallet-0:5.116.0-4.fc43` / `-5.fc44`, `kf6-kwallet-0:6.30.0-1.fc43` / `.fc44`
+    (plus the GA 6.18.0 / 6.25.0 and i686 builds);
+  - `--whatprovides /usr/bin/ksecretd /usr/bin/kwalletd6` → `kf6-kwallet` only.
+  Recommends is now `(kf6-kwallet or gnome-keyring or keepassxc)`.
+- `%license COPYING assets/fonts/OFL-*.txt`. Rebuilt fc43 (`/tmp/w16f-fedora-43`): ctest 75/75, rpmlint
+  `0 errors, 0 warnings, 8 filtered`. `rpm -qlp` lists `/usr/share/licenses/strmqt/COPYING` and the three OFL
+  texts. `rpm -qp --recommends` gives `(kf6-kwallet or gnome-keyring or keepassxc)`. The bare fedora-43 install
+  check logs `SDL3 gamepad support active`, `QML tier: full on Qt 6.10.3`, `selftest: 15/15 pages constructed`,
+  `selftest.sh: OK`. fc44 was not rebuilt, because nothing release-specific changed.
