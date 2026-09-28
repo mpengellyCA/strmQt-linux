@@ -68,9 +68,12 @@ network from taking over playback.
 
 ### Your credentials stay yours
 
-Sign-in tokens go to KWallet, scoped per profile, and there is no compiled-in server
-address. Where KWallet is unavailable the app says so plainly and falls back to an
-owner-only vault file rather than quietly writing a plaintext config.
+Sign-in tokens go to the system keyring — KWallet on Plasma 6 or 5, and the Secret
+Service (GNOME Keyring, KeePassXC) elsewhere — scoped per profile, and there is no
+compiled-in server address. Where no keyring is available the app says so plainly and
+falls back to an owner-only vault file rather than quietly writing a plaintext config.
+Settings → Server has a **Credentials** row naming the store in use, and the Flatpak can
+reach every one of them.
 
 ---
 
@@ -79,33 +82,72 @@ owner-only vault file rather than quietly writing a plaintext config.
 Builds for every release are on the
 [**Releases page**](https://github.com/mpengellyCA/strmQt-linux/releases).
 
-**On Fedora, Ubuntu, Debian or anything that is not Arch — use the Flatpak.**
+Each package is built inside, and for, one distro release, against that release's own
+Qt. Install it from its local path so the package manager pulls in the dependencies.
 
-| Format | Who it is for | |
+| Distro | Format | Command |
 |---|---|---|
-| **Flatpak** | everyone | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
-| **Arch package** | Arch and derivatives | `sudo pacman -U ./strmqt-*.pkg.tar.zst` |
-| **AppImage** | Arch, without installing anything | `chmod +x` and run — **needs glibc ≥ 2.44** |
+| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1~ubuntu24.04_amd64.deb` |
+| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1~ubuntu26.04_amd64.deb` |
+| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.7.5-1~deb12_amd64.deb` |
+| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.7.5-1~deb13_amd64.deb` |
+| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc43.x86_64.rpm` |
+| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc44.x86_64.rpm` |
+| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.7.5-1-x86_64.pkg.tar.zst` |
+| everyone | Flatpak | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
+| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.7.5-x86_64.AppImage` and run it |
 
-The AppImage is a convenience build, not a run-anywhere binary, and the difference
-matters enough to spell out. An AppImage bundles libraries but never glibc itself —
-the C library has to be the host's, because the dynamic loader, the NSS modules and
-the graphics drivers all have to agree with it. glibc is backward compatible and not
-forward compatible, so a bundle built on a new distro will not start on an older one.
-This one is built on current Arch, and the ffmpeg it has to carry imports
-`GLIBC_2.44`, which puts the floor above Fedora 43 (2.42) and every current Ubuntu
-and Debian. They get:
+A keyring is recommended, not required: the `.deb` recommends
+`kwalletmanager | gnome-keyring | keepassxc`, the `.rpm` recommends
+`(kf6-kwallet or gnome-keyring or keepassxc)`, and the Arch package lists `kwallet` and
+`gnome-keyring` as optional dependencies. Without one, tokens go to the vault file.
 
-```
-/lib64/libm.so.6: version `GLIBC_2.44' not found
-```
+### On Qt older than 6.8
 
-Lowering that floor means building ffmpeg, libplacebo, libmpv and Qt from source on
-an old base — a real packaging project, not a flag. The Flatpak already solves it by
-carrying its own runtime, which is what it is for.
+Ubuntu 24.04 and Debian 12 ship Qt 6.4, and StrmQt runs on it with every page and every
+feature. Nothing is missing; a few things are drawn differently:
 
-Target platform is **Plasma 6 on Wayland**. It is written to stay portable to other
-Plasma/Wayland and X11 systems, but that is untested.
+- Icons, shadows and round masks are drawn by Qt's older effects module, and look the
+  same or nearly so.
+- The blurred backdrop behind Home and a person's page has a slightly different
+  character.
+- The Crate music headings are narrower, because Qt 6.4 cannot widen the display font.
+
+[ARCHITECTURE.md](ARCHITECTURE.md#supported-qt-versions-and-compatibility-shims) has the
+details.
+
+### On Fedora
+
+- **The `.rpm` is tied to Fedora's exact Qt version.** StrmQt uses a piece of Qt's
+  private interface and carries QML compiled ahead of time for one Qt, so the package
+  requires `qt6-qtdeclarative` at exactly the version it was built against. When Fedora
+  updates Qt within a release, `dnf upgrade` holds that update back, or asks to remove
+  StrmQt, until the next StrmQt release ships an `.rpm` rebuilt for the new Qt. The
+  Flatpak does not have this problem.
+- **HEVC and AAC need RPM Fusion's `ffmpeg`** in place of Fedora's `ffmpeg-free`. See
+  [RPM Fusion's configuration page](https://rpmfusion.org/Configuration), then
+  `sudo dnf swap ffmpeg-free ffmpeg --allowerasing`.
+
+### The AppImage
+
+An AppImage bundles libraries but never glibc itself — the dynamic loader, the NSS modules
+and the graphics drivers all have to agree with the host's C library — so every AppImage
+has a glibc floor. This one is built on Ubuntu 24.04, which puts that floor at glibc 2.39,
+and CI runs it on bare Ubuntu 24.04, Debian 13 and Fedora 43 systems before a release.
+It uses the host's own C++ runtime. Debian 12 (glibc 2.36) is below the floor; its users
+take the `.deb` or the Flatpak.
+
+### Building a `.deb` from source
+
+On Ubuntu 24.04 and Debian 12, which do not package SDL3, the source package's build
+downloads one pinned, hash-checked SDL3 3.4.16 tarball for the gamepad support, so an
+offline build (an `sbuild` with no network) of those two will not work. Installing the
+binary `.deb` is unaffected.
+
+### Target platform
+
+**Plasma 6 on Wayland** remains the primary target. Plasma 5.27 and GNOME are supported
+through the keyring backends above, and a gamepad works on every listed distro.
 
 ## First run
 
@@ -170,15 +212,18 @@ without them, so a password never reaches the log). For the Flatpak, pass it wit
 
 ## Where it stands
 
-Version **0.7.0**, a pre-release. It completes the Crate music redesign — Music Home,
-Browse, the album, artist and playlist pages, and the full player with lyrics, volume
-and mute — and adds support for Bluetooth and TV remotes. The core of it has been
-exercised against a live Emby 4.9 server: browsing, search, playback of video and audio,
-live updates over a WebSocket, playlists, favourites, resume and watch state reported
-back, remote control, and MPRIS2.
+Version **0.7.5**, a pre-release: the distro compatibility release. StrmQt now builds
+and runs on Qt 6.4 and up, ships native `.deb` and `.rpm` packages for current Ubuntu,
+Debian and Fedora, keeps sign-in tokens in GNOME Keyring or KeePassXC as well as
+KWallet, and fixes two skip bugs: the Web Remote's Next/Previous now step by chapter
+like every other control, and Previous is offered as soon as it would restart an item.
+The core of it has been exercised against a live Emby 4.9 server: browsing, search,
+playback of video and audio, live updates over a WebSocket, playlists, favourites,
+resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 74/74, the reviewed qmllint warning
-baseline matches, and a page-construction self-test builds all 15 screens on every release.
+The build is clean under `-Werror`, `ctest` passes 75/75 on Qt 6.4.2, 6.8.2, 6.10 and
+6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
+page-construction self-test builds all 15 screens on every release.
 
 Worth knowing before you rely on it:
 
@@ -207,16 +252,31 @@ The full list, and the reasoning behind each, is in
 <details>
 <summary>Requirements and build steps</summary>
 
-Required: **Qt 6.8+** (Core, Gui, Quick, QuickControls2, Network, DBus, OpenGL, Test,
-WebSockets), **libmpv**, **CMake 3.28+** and **Ninja**.
+Required: **Qt 6.4+** (6.8+ for the full visual tier; Core, Gui, Quick, QuickControls2,
+Network, DBus, OpenGL, Test, WebSockets), **libmpv**, **CMake 3.25+** and **Ninja**.
 
 Optional, each degrading gracefully when absent: **libvlc** (fallback engine,
-`-DSTRMQT_WITH_VLC=OFF`), **SDL3** (gamepad, `-DSTRMQT_WITH_SDL3=OFF`), **kwallet**
-(credential storage), **kscreen** (HDR probing via `kscreen-doctor`).
+`-DSTRMQT_WITH_VLC=OFF`), **SDL3** (gamepad, `-DSTRMQT_WITH_SDL3=OFF`), a keyring —
+**KWallet** or a **Secret Service** provider (credential storage), **kscreen** (HDR
+probing via `kscreen-doctor`).
+
+- `-DSTRMQT_QML_TIER=auto|full|compat` picks the QML tier; `auto` chooses `full` on
+  Qt 6.8+ and `compat` below it.
+- `-DSTRMQT_BUNDLE_SDL3=ON` fetches and statically links a pinned SDL3 3.4.16, for
+  distros that do not package SDL3.
+
+The compat tier needs **Qt5Compat.GraphicalEffects** at runtime.
 
 ```bash
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 ./build/dev/strmqt
+```
+
+To check a change on another distro's Qt, run the same build, tests and self-test CI
+runs inside that distro's container (podman):
+
+```bash
+scripts/ci/local.sh ubuntu-24.04 /tmp/wX -- /src/scripts/ci/check.sh /build $(scripts/ci/deps.sh --cmake-args ubuntu-24.04)
 ```
 
 `dev` is a Ninja Debug build with warnings as errors; `release` is RelWithDebInfo without
