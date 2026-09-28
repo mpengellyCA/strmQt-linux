@@ -19,7 +19,8 @@ base=$("$repo/scripts/ci/deps.sh" --image "$target")
 # image instead of silently reusing a stale one.
 context=$(mktemp -d)
 trap 'rm -rf "$context"' EXIT
-for f in scripts/ci/deps.sh packaging/debian/control packaging/rpm/strmqt.spec; do
+for f in scripts/ci/deps.sh scripts/ci/aqt-requirements.txt packaging/debian/control \
+         packaging/rpm/strmqt.spec; do
     [ -f "$repo/$f" ] || continue
     mkdir -p "$context/$(dirname "$f")"
     cp "$repo/$f" "$context/$f"

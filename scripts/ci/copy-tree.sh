@@ -6,5 +6,7 @@ set -euo pipefail
 src=${1:?usage: copy-tree.sh SRC DEST}; dest=${2:?usage: copy-tree.sh SRC DEST}
 mkdir -p "$dest"
 git -c safe.directory='*' -C "$src" ls-files -z --cached --others --exclude-standard |
-    while IFS= read -r -d '' f; do [ -e "$src/$f" ] && printf '%s\0' "$f"; done |
+    while IFS= read -r -d '' f; do
+        if [ -e "$src/$f" ] || [ -L "$src/$f" ]; then printf '%s\0' "$f"; fi
+    done |
     tar -C "$src" --null -T - -cf - | tar -C "$dest" -xf -

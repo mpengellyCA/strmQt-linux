@@ -55,8 +55,10 @@ case "$target" in
             python3-venv libmpv-dev libvlc-dev libssl-dev libudev-dev libgl-dev libegl-dev \
             libxkbcommon-dev libfontconfig-dev libfreetype-dev libdbus-1-dev \
             vlc-plugin-base ffmpeg libgl1-mesa-dri curl binutils
+        # aqtinstall and every dependency it pulls, pinned by hash (aqt-requirements.txt).
         python3 -m venv /opt/aqt
-        /opt/aqt/bin/pip install --no-cache-dir aqtinstall==3.3.0
+        /opt/aqt/bin/pip install --no-cache-dir --require-hashes --no-deps \
+            -r "$(cd "$(dirname "$0")" && pwd)/aqt-requirements.txt"
         /opt/aqt/bin/aqt install-qt linux desktop 6.11.3 linux_gcc_64 -m qtwebsockets -O /opt/qt
         curl -fsSL -o /usr/local/bin/appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
@@ -75,7 +77,9 @@ case "$target" in
         apt-get install -y --no-install-recommends devscripts equivs lintian git ca-certificates
         control=$(cd "$(dirname "$0")/../.." && pwd)/packaging/debian/control
         work=$(mktemp -d)
-        (cd "$work" && mk-build-deps --install --remove \
+        # equivs-build writes the package to $TMPDIR when that is set, and
+        # mk-build-deps then looks for it in the working directory: make them one.
+        (cd "$work" && TMPDIR="$work" mk-build-deps --install --remove \
             --tool 'apt-get -y --no-install-recommends' "$control")
         rm -rf "$work"
         ;;

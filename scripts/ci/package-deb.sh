@@ -11,6 +11,7 @@ case "$target" in
 esac
 src=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 "$src/scripts/ci/copy-tree.sh" "$src" "$work/strmqt"
 cp -r "$work/strmqt/packaging/debian" "$work/strmqt/debian"
 cd "$work/strmqt"
