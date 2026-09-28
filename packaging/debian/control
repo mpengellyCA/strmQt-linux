@@ -1,0 +1,43 @@
+Source: strmqt
+Section: video
+Priority: optional
+Maintainer: Mike Pengelly <mike@leadrix.io>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.25), ninja-build, pkgconf | pkg-config, file,
+               qt6-base-dev, qt6-base-dev-tools, qt6-declarative-dev, qt6-declarative-dev-tools,
+               qt6-websockets-dev, qt6-svg-dev,
+               libmpv-dev, libvlc-dev, libssl-dev,
+# An or-group already satisfied by a package something else pulls in installs
+# nothing, and libsdl2-dev pulls libudev-dev, qt6-svg-dev pulls libqt6svg6. The
+# version bounds keep the second alternative from satisfying the group on
+# trixie and 26.04 (systemd 257+, Qt 6.8+), where SDL3 and the separate SVG
+# plugin package exist; noble and bookworm (systemd 255/252, Qt 6.4) take it.
+               libsdl3-dev | libudev-dev (<< 256),
+               qml6-module-qtquick-effects | qml6-module-qt5compat-graphicaleffects,
+               qt6-svg-plugins | libqt6svg6 (<< 6.5),
+               qml6-module-qtquick <!nocheck>, qml6-module-qtquick-controls <!nocheck>,
+               qml6-module-qtquick-templates <!nocheck>, qml6-module-qtquick-window <!nocheck>,
+               qml6-module-qtqml-workerscript <!nocheck>, qml6-module-qtqml <!nocheck>,
+               qml6-module-qtqml-models <!nocheck>,
+               qt6-qpa-plugins <!nocheck>, qt6-wayland <!nocheck>,
+               vlc-plugin-base <!nocheck>, vlc-plugin-video-output <!nocheck>,
+               ffmpeg <!nocheck>, libgl1-mesa-dri <!nocheck>,
+               ca-certificates, git
+Standards-Version: 4.7.0
+Homepage: https://github.com/mpengellyCA/strmQt-linux
+Rules-Requires-Root: no
+
+Package: strmqt
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         ${strmqt:QtAbi}, ${strmqt:QmlEffects}, ${strmqt:SvgPlugin},
+         qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-templates,
+         qml6-module-qtquick-window, qml6-module-qtqml-workerscript, qml6-module-qtqml,
+         qml6-module-qtqml-models,
+         qt6-qpa-plugins, qt6-wayland, vlc-plugin-base, vlc-plugin-video-output,
+         hicolor-icon-theme
+Recommends: kwalletmanager | gnome-keyring | keepassxc, kscreen
+Description: Watch your Emby library on the big screen
+ StrmQt is a native Qt 6 client for Emby media servers, built for KDE Plasma
+ and designed to be driven from the couch with a remote, a gamepad, or the
+ keyboard.

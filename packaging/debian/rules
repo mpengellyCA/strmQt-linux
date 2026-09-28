@@ -1,0 +1,49 @@
+#!/usr/bin/make -f
+# StrmQt Debian packaging (spec 2026-09-27 §7.2). One binary package, built in
+# and for exactly one release's container.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/architecture.mk
+BUILDDIR := obj-$(DEB_HOST_GNU_TYPE)
+
+# No SDL3 package (Ubuntu 24.04, Debian 12): bundle the pinned static 3.4.16.
+# debhelper passes FETCHCONTENT_FULLY_DISCONNECTED=ON; the bundled build must
+# download the pinned, hash-checked tarball, so it turns that back off.
+BUNDLE_SDL3 := $(shell pkg-config --exists sdl3 && echo OFF || echo ON)
+FETCH_ONLINE := $(if $(filter ON,$(BUNDLE_SDL3)),-DFETCHCONTENT_FULLY_DISCONNECTED=OFF)
+
+%:
+	dh $@ --buildsystem=cmake+ninja --builddirectory=$(BUILDDIR)
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DSTRMQT_WERROR=OFF -DSTRMQT_BUNDLE_SDL3=$(BUNDLE_SDL3) $(FETCH_ONLINE)
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cd $(BUILDDIR) && QT_QPA_PLATFORM=offscreen ctest --output-on-failure
+endif
+
+# Runtime dependencies no ELF NEEDED entry can express (spec §7.2):
+#  - QtAbi: the binary imports a Qt_6_PRIVATE_API symbol, so pin the upstream
+#    Qt version it was built against (a same-version distro rebuild still fits);
+#  - QmlEffects: the QML tier's effect module (strmqt-qml-tier.txt);
+#  - SvgPlugin: whichever package ships imageformats/libqsvg.so here. None is
+#    a build failure, not a package with blank icons.
+override_dh_gencontrol:
+	set -e; \
+	qml=$$(dpkg -S "$$(find /usr/lib -name 'libQt6Qml.so.6' | head -1)" | cut -d: -f1); \
+	qtver=$$(dpkg-query -W -f='$${Version}' "$$qml" | sed -E 's/^[0-9]+://; s/[-+~].*$$//'); \
+	next=$$(echo "$$qtver" | awk -F. '{ printf "%d.%d.%d", $$1, $$2, $$3 + 1 }'); \
+	tier=$$(cat $(BUILDDIR)/strmqt-qml-tier.txt); \
+	case "$$tier" in \
+	  full) effects=qml6-module-qtquick-effects ;; \
+	  compat) effects=qml6-module-qt5compat-graphicaleffects ;; \
+	  *) echo "rules: unknown QML tier '$$tier'" >&2; exit 1 ;; \
+	esac; \
+	svgso=$$(find /usr/lib -path '*/qt6/plugins/imageformats/libqsvg.so' | head -1); \
+	[ -n "$$svgso" ] || { echo "rules: no Qt SVG image plugin installed" >&2; exit 1; }; \
+	svg=$$(dpkg -S "$$svgso" | cut -d: -f1); \
+	echo "strmqt:QtAbi=$$qml (>= $$qtver), $$qml (<< $$next~)" >> debian/strmqt.substvars; \
+	echo "strmqt:QmlEffects=$$effects" >> debian/strmqt.substvars; \
+	echo "strmqt:SvgPlugin=$$svg" >> debian/strmqt.substvars
+	dh_gencontrol

@@ -36,27 +36,9 @@ case "$mode" in
     cmake-args) echo "$cmake_args"; exit 0 ;;
 esac
 
-# Debian family. qt6-tools-dev is deliberately absent: nothing here uses Qt
-# Tools, and bookworm's is a mismatched 6.4.2~rc1.
-apt_common=(
-    build-essential cmake ninja-build pkg-config git ca-certificates file
-    qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-declarative-dev-tools
-    qt6-websockets-dev qt6-svg-dev qt6-wayland qt6-qpa-plugins
-    qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates
-    qml6-module-qtquick-window qml6-module-qtqml-workerscript qml6-module-qtqml
-    qml6-module-qtqml-models
-    libmpv-dev libvlc-dev vlc-plugin-base vlc-plugin-video-output libssl-dev
-    ffmpeg libgl1-mesa-dri
-)
-case "$target" in
-    # Qt 6.4.2: no QtQuick.Effects (compat tier), no SDL3 package, and the SVG
-    # image plugin ships inside libqt6svg6 (pulled by qt6-svg-dev).
-    ubuntu-24.04|debian-12)
-        apt_extra=(qml6-module-qt5compat-graphicaleffects libudev-dev) ;;
-    # Qt 6.8+: full tier; the SVG plugin is its own package (study §2.5).
-    ubuntu-26.04|debian-13)
-        apt_extra=(qml6-module-qtquick-effects qt6-svg-plugins libsdl3-dev) ;;
-esac
+# Debian family: packaging/debian/control's Build-Depends is the single list
+# (installed below with mk-build-deps). qt6-tools-dev is deliberately absent:
+# nothing here uses Qt Tools, and bookworm's is a mismatched 6.4.2~rc1.
 
 dnf_pkgs=(
     gcc-c++ cmake ninja-build pkgconf git-core file
@@ -70,7 +52,12 @@ case "$target" in
     ubuntu-*|debian-*)
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-        apt-get install -y --no-install-recommends "${apt_common[@]}" "${apt_extra[@]}"
+        apt-get install -y --no-install-recommends devscripts equivs lintian git ca-certificates
+        control=$(cd "$(dirname "$0")/../.." && pwd)/packaging/debian/control
+        work=$(mktemp -d)
+        (cd "$work" && mk-build-deps --install --remove \
+            --tool 'apt-get -y --no-install-recommends' "$control")
+        rm -rf "$work"
         ;;
     fedora-*)
         dnf install -y --setopt=install_weak_deps=False "${dnf_pkgs[@]}"

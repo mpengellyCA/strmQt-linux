@@ -1,0 +1,4 @@
+# GUI app; strmqt-cli --help documents itself.
+strmqt: no-manual-page [usr/bin/strmqt]
+# GUI app; strmqt-cli --help documents itself.
+strmqt: no-manual-page [usr/bin/strmqt-cli]

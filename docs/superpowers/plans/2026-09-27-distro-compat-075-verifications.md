@@ -239,3 +239,47 @@ Gates after the fixes:
 
 For Task 19/20: two new tier shims, `BoundLoader` and `BoundViewSlot` (spec §4.3 list). No cosmetic 6.4
 degradation is left open from this sweep.
+
+## Task 15: native .deb packages
+
+Built with `scripts/ci/local.sh $T /tmp/w15a-$T -- bash -c "TMPDIR=/var/tmp /src/scripts/ci/package-deb.sh $T /build/out"`
+(the scratch tree in the container's own filesystem, so /tmp holds only the .deb), then install-checked in the
+**bare** distro image, glob and `dpkg-deb` inside the container (ruling R10):
+`podman run --rm --security-opt label=disable -v /tmp/w15a-$T/out:/pkgs:ro -v "$PWD:/src:ro" $(scripts/ci/deps.sh --image $T) bash -c '/src/scripts/ci/install-check.sh /pkgs/*.deb'`.
+
+| Target | Package | Build | ctest | lintian | Install pulls | Self-test |
+|---|---|---|---|---|---|---|
+| ubuntu-24.04 | `strmqt_0.7.5-1~ubuntu24.04_amd64.deb` | compat, SDL3 bundled 3.4.16 | 75/75 | clean (2 overrides) | `qml6-module-qt5compat-graphicaleffects`, `libqt6svg6` | `QML tier: compat on Qt 6.4.2`, 15/15, `selftest.sh: OK` |
+| debian-12 | `strmqt_0.7.5-1~deb12_amd64.deb` | compat, SDL3 bundled 3.4.16 | 75/75 | clean (2 overrides) | `qml6-module-qt5compat-graphicaleffects`, `libqt6svg6` | `QML tier: compat on Qt 6.4.2`, 15/15, `selftest.sh: OK` |
+| debian-13 | `strmqt_0.7.5-1~deb13_amd64.deb` | full, system SDL3 3.2.10 | 75/75 | clean (2 overrides) | `qml6-module-qtquick-effects`, `qt6-svg-plugins`, `libsdl3-0` | `QML tier: full on Qt 6.8.2`, 15/15, `selftest.sh: OK` |
+| ubuntu-26.04 | `strmqt_0.7.5-1~ubuntu26.04_amd64.deb` | full, system SDL3 3.4.2 | 75/75 | clean (2 overrides) | `qml6-module-qtquick-effects`, `qt6-svg-plugins`, `libsdl3-0` | `QML tier: full on Qt 6.10.2`, 15/15, `selftest.sh: OK` |
+
+All four self-tests log `SDL3 gamepad support active`. Resolved `Depends` excerpts (`dpkg-deb -f … Depends`, in the container):
+
+- ubuntu-24.04, debian-12: `libqt6qml6 (>= 6.4.2)`, `libqt6qml6 (<< 6.4.3~)`, `qml6-module-qt5compat-graphicaleffects`, `libqt6svg6`, `qml6-module-qtqml-models`
+- debian-13: `libqt6qml6 (>= 6.8.2)`, `libsdl3-0 (>= 3.2.0)`, `libqt6qml6 (<< 6.8.3~)`, `qml6-module-qtquick-effects`, `qt6-svg-plugins`, `qml6-module-qtqml-models`
+- ubuntu-26.04: `libqt6qml6 (>= 6.10.2)`, `libsdl3-0 (>= 3.2.0)`, `libqt6qml6 (<< 6.10.3~)`, `qml6-module-qtquick-effects`, `qt6-svg-plugins`, `qml6-module-qtqml-models`
+
+Lintian warnings: only `no-manual-page` for `usr/bin/strmqt` and `usr/bin/strmqt-cli`, overridden in
+`packaging/debian/strmqt.lintian-overrides` ("GUI app; strmqt-cli --help documents itself"). The DEP-5
+copyright, with the SDL3 note as a stand-alone comment paragraph, drew no tag. `dpkg -L strmqt` on 24.04 lists
+`/usr/share/doc/strmqt/SDL3-LICENSE.txt`, the path `debian/copyright` names (R4).
+
+QML imports in `src/ui` (`QtQuick`, `QtQuick.Controls.Basic`, `QtQuick.Templates`, `QtQuick.Window`,
+`QtQuick.Effects` / `Qt5Compat.GraphicalEffects`) map to the `qml6-module-*` Depends; `qml6-module-qtqml-models`
+(Task 4 follow-up) was added to Depends and Build-Depends.
+
+Found on the way:
+
+- debhelper passes `-DFETCHCONTENT_FULLY_DISCONNECTED=ON`, so the first 24.04 build failed at configure
+  (`Target "strmqt" links to: SDL3::SDL3-static but the target was not found`). `rules` passes
+  `-DFETCHCONTENT_FULLY_DISCONNECTED=OFF` when it bundles SDL3.
+- The first debian-13 image had neither `libsdl3-dev` nor `qt6-svg-plugins`: an or-group already satisfied by a
+  transitively installed alternative installs nothing (`libsdl2-dev` pulls `libudev-dev`; `qt6-svg-dev` pulls
+  `libqt6svg6`). The build bundled SDL3 and `rules` stopped with `rules: no Qt SVG image plugin installed`.
+  Build-Depends now read `libsdl3-dev | libudev-dev (<< 256)` and `qt6-svg-plugins | libqt6svg6 (<< 6.5)`
+  (systemd 255/252 and Qt 6.4 on noble/bookworm; 257+ and 6.8+ on trixie/26.04). All four packages above were
+  built from that control file.
+
+C(debian-13) on the image `deps.sh` now builds from `control` (mk-build-deps): `SDL3: system 3.2.10`,
+`100% tests passed, 0 tests failed out of 75`, `selftest.sh: OK`, `check.sh: OK (full)`.
