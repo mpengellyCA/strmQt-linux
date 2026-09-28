@@ -433,7 +433,9 @@ void SecretsStore::migrateNext()
             if (m_initialization != InitializationState::LegacyCleanupPending)
                 return;
             if (removed.ok())
-                qCInfo(logCore) << "migrated legacy plaintext credentials to KWallet";
+                qCInfo(logCore).noquote()
+                    << "migrated legacy plaintext credentials to"
+                    << (m_backend ? m_backend->name() : QStringLiteral("the keyring"));
             else
                 qCWarning(logCore)
                     << "migrated legacy credentials but could not remove" << path << removed.error;

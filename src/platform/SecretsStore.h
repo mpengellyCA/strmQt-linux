@@ -22,12 +22,12 @@ enum class BackendKind;
 } // namespace secrets
 
 // Secret storage for auth tokens. Talks to a system keyring asynchronously over
-// D-Bus when one is reachable — KWallet 6, then KWallet 5 (platform/secrets/), no
-// KF link dependency. When the keyring is
-// unreachable or the open is rejected, secrets persist to a vault file instead
+// D-Bus when one is reachable — KWallet 6, KWallet 5 or the freedesktop Secret
+// Service (platform/secrets/), no KF link dependency. When no keyring is
+// reachable or the open is rejected, secrets persist to a vault file instead
 // (<AppDataLocation>/secrets.ini, owner-only 0600) — lower security, surfaced to the
-// user through the storageMode property. A vault written while the wallet was down is
-// migrated into the wallet and scrubbed the next time the wallet opens. Vault file
+// user through the storageMode property. A vault written while the keyring was down is
+// migrated into the keyring and scrubbed the next time the keyring opens. Vault file
 // operations are dispatched to the Qt thread pool; the explicit-file constructor below
 // is a test seam that forces vault mode against a chosen path.
 class SecretsStore : public QObject
