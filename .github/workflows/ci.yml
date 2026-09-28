@@ -70,3 +70,38 @@ jobs:
             echo "::error::unexpected files in the install tree"
             exit 1
           fi
+
+  # The Qt floor (spec 2026-09-27 §8.2): Ubuntu 24.04's Qt 6.4.2, the compat
+  # QML tier and the bundled SDL3. The same commands a developer runs through
+  # scripts/ci/local.sh. qmllint stays on the Arch job: its baseline is 6.11's.
+  floor:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: scripts/ci/deps.sh ubuntu-24.04
+      - name: Build, test, self-test
+        run: |
+          read -ra args < <(scripts/ci/deps.sh --cmake-args ubuntu-24.04)
+          scripts/ci/check.sh "$RUNNER_TEMP/build" "${args[@]}"
+      - name: Self-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-floor
+          path: ${{ runner.temp }}/build/selftest.log
+          if-no-files-found: ignore
+
+  # The oldest full-tier Qt the release supports: Debian 13's 6.8.2.
+  debian-13:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: scripts/ci/deps.sh debian-13
+      - name: Build, test, self-test
+        run: |
+          read -ra args < <(scripts/ci/deps.sh --cmake-args debian-13)
+          scripts/ci/check.sh "$RUNNER_TEMP/build" "${args[@]}"
