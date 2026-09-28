@@ -39,6 +39,24 @@ QDBusMessage busMessage(const QString &method)
                                           QStringLiteral("org.freedesktop.DBus"), method);
 }
 
+const auto kKWallet6Service = QStringLiteral("org.kde.kwalletd6");
+const auto kKWallet5Service = QStringLiteral("org.kde.kwalletd5");
+
+QDBusMessage ownerMessage(const QString &service)
+{
+    QDBusMessage message = busMessage(QStringLiteral("GetNameOwner"));
+    message.setArguments({service});
+    return message;
+}
+
+// GetNameOwner answers the unique name (":1.42"); empty when it failed.
+QString ownerReply(const QDBusMessage &reply)
+{
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() != 1)
+        return {};
+    return reply.arguments().first().toString();
+}
+
 // ListNames / ListActivatableNames answer `as`. The session bus hands that over as
 // a QStringList; accept a QDBusArgument too. A failed probe counts as no names.
 QStringList nameListReply(const QDBusMessage &reply)
@@ -582,19 +600,45 @@ void SecretsStore::requestNetworkWallet()
             m_transport->call(
                 busMessage(QStringLiteral("ListActivatableNames")), this,
                 [this, owned](const QDBusMessage &activatableReply) {
-                    m_candidates =
-                        secrets::chooseSecretBackends(owned, nameListReply(activatableReply),
-                                                      qEnvironmentVariable("XDG_CURRENT_DESKTOP"));
-                    QStringList names;
-                    for (const secrets::BackendKind kind : std::as_const(m_candidates))
-                        names.append(secrets::backendKindName(kind));
-                    qCInfo(logCore).noquote()
-                        << "secrets: keyring candidates"
-                        << (names.isEmpty() ? QStringLiteral("(none)")
-                                            : names.join(QStringLiteral(", ")));
-                    tryNextBackend();
+                    const QStringList activatable = nameListReply(activatableReply);
+                    if (!owned.contains(kKWallet6Service) || !owned.contains(kKWallet5Service)) {
+                        finishProbe(owned, activatable, false);
+                        return;
+                    }
+                    // Plasma 6's kwalletd6 also owns org.kde.kwalletd5 as a
+                    // compatibility name. Trying it after kwalletd6 would ask the
+                    // same daemon, and the user, twice.
+                    m_transport->call(
+                        ownerMessage(kKWallet6Service), this,
+                        [this, owned, activatable](const QDBusMessage &owner6) {
+                            const QString kwallet6 = ownerReply(owner6);
+                            m_transport->call(
+                                ownerMessage(kKWallet5Service), this,
+                                [this, owned, activatable, kwallet6](const QDBusMessage &owner5) {
+                                    finishProbe(owned, activatable,
+                                                !kwallet6.isEmpty() &&
+                                                    kwallet6 == ownerReply(owner5));
+                                });
+                        });
                 });
         });
+}
+
+void SecretsStore::finishProbe(const QStringList &owned, const QStringList &activatable,
+                               bool kwallet5IsAlias)
+{
+    m_candidates = secrets::chooseSecretBackends(owned, activatable,
+                                                 qEnvironmentVariable("XDG_CURRENT_DESKTOP"));
+    if (kwallet5IsAlias && m_candidates.removeAll(secrets::BackendKind::KWallet5) > 0)
+        qCInfo(logCore).noquote() << "secrets:" << kKWallet5Service << "is an alias of"
+                                  << kKWallet6Service << "- skipping KWallet5";
+    QStringList names;
+    for (const secrets::BackendKind kind : std::as_const(m_candidates))
+        names.append(secrets::backendKindName(kind));
+    qCInfo(logCore).noquote() << "secrets: keyring candidates"
+                              << (names.isEmpty() ? QStringLiteral("(none)")
+                                                  : names.join(QStringLiteral(", ")));
+    tryNextBackend();
 }
 
 // Replaces m_backend with the next candidate this build can drive. A kind with

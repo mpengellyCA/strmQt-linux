@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QQueue>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 #include <memory>
@@ -137,6 +138,8 @@ private:
     void setStorageMode(StorageMode mode);
     QString fallbackFilePath() const;
     void removeLegacyForCurrent(Result<QString> operationResult);
+    void finishProbe(const QStringList &owned, const QStringList &activatable,
+                     bool kwallet5IsAlias);
     bool takeNextBackend();
     void tryNextBackend();
     void openCurrentBackend();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DBusTransport.h"
 #include "SecretBackend.h"
 
 #include <QPointer>
@@ -28,7 +29,8 @@ public:
 
 private:
     using Handler = std::function<void(const QDBusMessage &reply)>;
-    void send(const QString &method, const QVariantList &arguments, Handler handler);
+    void send(const QString &method, const QVariantList &arguments, Handler handler,
+              int timeoutMs = kDefaultTimeoutMs);
 
     int m_generation;
     DBusTransport &m_transport;

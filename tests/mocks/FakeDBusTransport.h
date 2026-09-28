@@ -26,6 +26,7 @@ public:
         QPointer<QObject> context;
         Done done;
         bool answered = false;
+        int timeoutMs = secrets::kDefaultTimeoutMs;
     };
     struct Subscription
     {
@@ -39,9 +40,10 @@ public:
     QList<Subscription> subscriptions;
 
     bool connected() const override { return busConnected; }
-    void call(const QDBusMessage &message, QObject *context, Done done) override
+    void call(const QDBusMessage &message, QObject *context, Done done,
+              int timeoutMs = secrets::kDefaultTimeoutMs) override
     {
-        calls.append({message, context, std::move(done)});
+        calls.append({message, context, std::move(done), false, timeoutMs});
     }
     bool connectSignal(const QString &service, const QString &path, const QString &interface,
                        const QString &name, QObject *context, SignalHandler handler) override

@@ -40,10 +40,11 @@ bool SessionBusTransport::connected() const
     return QDBusConnection::sessionBus().isConnected();
 }
 
-void SessionBusTransport::call(const QDBusMessage &message, QObject *context, Done done)
+void SessionBusTransport::call(const QDBusMessage &message, QObject *context, Done done,
+                               int timeoutMs)
 {
-    auto *watcher =
-        new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), context);
+    auto *watcher = new QDBusPendingCallWatcher(
+        QDBusConnection::sessionBus().asyncCall(message, timeoutMs), context);
     const QPointer<QObject> self(context);
     QObject::connect(watcher, &QDBusPendingCallWatcher::finished, watcher,
                      [self, watcher, done = std::move(done)]() {

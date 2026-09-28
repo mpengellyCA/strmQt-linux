@@ -15,6 +15,9 @@
 #include "platform/secrets/SecretBackend.h"
 
 #include <memory>
+#include <utility>
+
+Q_DECLARE_METATYPE(strmqt::secrets::Outcome)
 
 using strmqt::Result;
 using strmqt::SecretsStore;
@@ -90,8 +93,11 @@ bool nextIsKWallet(const FakeDBusTransport &fake, int generation, const QString 
            m.interface() == QStringLiteral("org.kde.KWallet") && m.member() == member;
 }
 
-// Answers the store's two probes of org.freedesktop.DBus.
-void answerProbe(FakeDBusTransport &fake, const QStringList &owned, const QStringList &activatable)
+// Answers the store's probes of org.freedesktop.DBus: ListNames, ListActivatableNames
+// and, when both KWallet names are owned, GetNameOwner for each.
+void answerProbe(FakeDBusTransport &fake, const QStringList &owned, const QStringList &activatable,
+                 const QString &owner6 = QStringLiteral(":1.6"),
+                 const QString &owner5 = QStringLiteral(":1.5"))
 {
     QTRY_VERIFY(fake.pending() >= 0);
     QCOMPARE(fake.next().service(), kBus);
@@ -103,6 +109,15 @@ void answerProbe(FakeDBusTransport &fake, const QStringList &owned, const QStrin
     QCOMPARE(fake.next().service(), kBus);
     QCOMPARE(fake.next().member(), QStringLiteral("ListActivatableNames"));
     fake.reply({QVariant(activatable)});
+    if (!owned.contains(kKWallet6) || !owned.contains(kKWallet5))
+        return;
+    for (const auto &[name, owner] : {std::pair{kKWallet6, owner6}, std::pair{kKWallet5, owner5}}) {
+        QVERIFY(fake.pending() >= 0);
+        QCOMPARE(fake.next().service(), kBus);
+        QCOMPARE(fake.next().member(), QStringLiteral("GetNameOwner"));
+        QCOMPARE(fake.next().arguments(), QVariantList{name});
+        fake.reply({owner});
+    }
 }
 
 } // namespace
@@ -124,10 +139,14 @@ private slots:
     void kwalletOpenMinusOneIsRefused();
     void kwalletServiceUnknownIsUnavailable();
     void kwalletOtherErrorsFail();
+    void kwalletOpenWaitsForTheUser_data();
+    void kwalletOpenWaitsForTheUser();
 
     void storeFallsThroughAnUnavailableBackend();
     void storeReopensOnTheNextBackendWhenOneVanishes();
     void storeGoesToTheVaultWhenAKeyringRefuses();
+    void storeGoesToTheVaultWhenTheWalletPromptTimesOut();
+    void storeDropsTheKWallet5AliasOfKWallet6();
     void storeUsesTheVaultWithNoCandidates();
     void storeUsesTheVaultWithoutASessionBus();
 
@@ -229,6 +248,7 @@ void SecretBackendsTest::driveKWallet(int generation)
     QCOMPARE(fake.calls.size(), 1);
     QVERIFY(nextIsKWallet(fake, generation, QStringLiteral("networkWallet")));
     QVERIFY(fake.next().arguments().isEmpty());
+    QCOMPARE(fake.calls.last().timeoutMs, strmqt::secrets::kDefaultTimeoutMs);
     fake.reply({QStringLiteral("kdewallet")});
     QCOMPARE(prepared.count, 1);
     QCOMPARE(prepared.reply.outcome, Outcome::Ok);
@@ -236,6 +256,9 @@ void SecretBackendsTest::driveKWallet(int generation)
     Captured opened;
     backend.open(opened.callback());
     QVERIFY(nextIsKWallet(fake, generation, QStringLiteral("open")));
+    // open answers only once the user answers the unlock dialog.
+    QCOMPARE(fake.calls.last().timeoutMs, strmqt::secrets::kInteractiveTimeoutMs);
+    QCOMPARE(strmqt::secrets::kInteractiveTimeoutMs, 300000);
     QVariantList args = fake.next().arguments();
     QCOMPARE(args.size(), 3);
     QCOMPARE(args.at(0).toString(), QStringLiteral("kdewallet"));
@@ -249,6 +272,7 @@ void SecretBackendsTest::driveKWallet(int generation)
     Captured written;
     backend.write(kKey, kToken, written.callback());
     QVERIFY(nextIsKWallet(fake, generation, QStringLiteral("writePassword")));
+    QCOMPARE(fake.calls.last().timeoutMs, strmqt::secrets::kDefaultTimeoutMs);
     args = fake.next().arguments();
     QCOMPARE(args.size(), 5);
     QCOMPARE(args.at(0).metaType().id(), int(QMetaType::Int));
@@ -350,6 +374,36 @@ void SecretBackendsTest::kwalletOtherErrorsFail()
     QCOMPARE(again.reply.outcome, Outcome::Failed);
 }
 
+void SecretBackendsTest::kwalletOpenWaitsForTheUser_data()
+{
+    QTest::addColumn<QString>("error");
+    QTest::addColumn<Outcome>("expected");
+    QTest::newRow("NoReply") << dbusError("NoReply") << Outcome::Failed;
+    QTest::newRow("Timeout") << dbusError("Timeout") << Outcome::Failed;
+    QTest::newRow("TimedOut") << dbusError("TimedOut") << Outcome::Failed;
+    QTest::newRow("UnknownMethod") << dbusError("UnknownMethod") << Outcome::Failed;
+    QTest::newRow("ServiceUnknown") << dbusError("ServiceUnknown") << Outcome::Unavailable;
+    QTest::newRow("NameHasNoOwner") << dbusError("NameHasNoOwner") << Outcome::Unavailable;
+    QTest::newRow("UnknownObject") << dbusError("UnknownObject") << Outcome::Unavailable;
+}
+
+void SecretBackendsTest::kwalletOpenWaitsForTheUser()
+{
+    QFETCH(QString, error);
+    QFETCH(Outcome, expected);
+    FakeDBusTransport fake;
+    QObject ctx;
+    KWalletBackend backend(6, fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({QStringLiteral("kdewallet")});
+    Captured opened;
+    backend.open(opened.callback());
+    fake.replyError(error);
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, expected);
+}
+
 void SecretBackendsTest::storeFallsThroughAnUnavailableBackend()
 {
     auto fake = std::make_shared<FakeDBusTransport>();
@@ -359,6 +413,7 @@ void SecretBackendsTest::storeFallsThroughAnUnavailableBackend()
     QCOMPARE(store.backendName(), QString());
 
     const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    // Two daemons (different owners): KWallet 5 stays a candidate.
     answerProbe(*fake, {kKWallet6, kKWallet5}, {});
     if (QTest::currentTestFailed())
         return;
@@ -393,7 +448,7 @@ void SecretBackendsTest::storeReopensOnTheNextBackendWhenOneVanishes()
     QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("networkWallet")));
     fake->reply({QStringLiteral("kdewallet")});
     QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("open")));
-    fake->replyError(dbusError("NoReply"));
+    fake->replyError(dbusError("ServiceUnknown"));
     QTRY_VERIFY(nextIsKWallet(*fake, 5, QStringLiteral("networkWallet")));
     fake->reply({QStringLiteral("kdewallet")});
     QVERIFY(nextIsKWallet(*fake, 5, QStringLiteral("open")));
@@ -430,11 +485,65 @@ void SecretBackendsTest::storeGoesToTheVaultWhenAKeyringRefuses()
     QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
     QCOMPARE(store.backendName(), QStringLiteral("vault file"));
     QCOMPARE(modeChanged.count(), 1);
-    QCOMPARE(fake->calls.size(), 4);
+    QCOMPARE(fake->calls.size(), 6);
     for (const FakeDBusTransport::Call &call : std::as_const(fake->calls))
         QVERIFY2(call.message.service() == kBus || call.message.service() == kKWallet6,
                  qPrintable(call.message.service()));
     QCOMPARE(QSettings(vault, QSettings::IniFormat).value(kKey).toString(), kToken);
+}
+
+void SecretBackendsTest::storeGoesToTheVaultWhenTheWalletPromptTimesOut()
+{
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    const QString vault = m_dir->filePath(QStringLiteral("secrets.ini"));
+    store.setLegacyFilePathForTests(vault);
+
+    const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    // A separate kwalletd5 (different owner) is a real candidate, and still not asked.
+    answerProbe(*fake, {kKWallet6, kKWallet5, kSecrets}, {});
+    if (QTest::currentTestFailed())
+        return;
+
+    QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("networkWallet")));
+    fake->reply({QStringLiteral("kdewallet")});
+    QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("open")));
+    fake->replyError(dbusError("NoReply"));
+    // A cascade would leave the write waiting on another keyring.
+    QTRY_VERIFY(write.isFinished());
+
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+    QCOMPARE(store.backendName(), QStringLiteral("vault file"));
+    for (const FakeDBusTransport::Call &call : std::as_const(fake->calls))
+        QVERIFY2(call.message.service() == kBus || call.message.service() == kKWallet6,
+                 qPrintable(call.message.service()));
+    QCOMPARE(fake->pending(), -1);
+    QCOMPARE(QSettings(vault, QSettings::IniFormat).value(kKey).toString(), kToken);
+}
+
+void SecretBackendsTest::storeDropsTheKWallet5AliasOfKWallet6()
+{
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    store.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("secrets.ini")));
+
+    const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    // Plasma 6: kwalletd6 also owns org.kde.kwalletd5.
+    answerProbe(*fake, {kKWallet6, kKWallet5}, {}, QStringLiteral(":1.42"),
+                QStringLiteral(":1.42"));
+    if (QTest::currentTestFailed())
+        return;
+
+    QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("networkWallet")));
+    fake->replyError(dbusError("ServiceUnknown"));
+
+    QTRY_VERIFY(write.isFinished());
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+    QCOMPARE(fake->calls.size(), 5);
+    for (const FakeDBusTransport::Call &call : std::as_const(fake->calls))
+        QVERIFY2(call.message.service() != kKWallet5, qPrintable(call.message.member()));
 }
 
 void SecretBackendsTest::storeUsesTheVaultWithNoCandidates()

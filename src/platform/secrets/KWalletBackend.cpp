@@ -45,6 +45,20 @@ Reply success(const QString &value = {})
     return result;
 }
 
+// open waits on the user's unlock dialog, so a missing reply there means a slow
+// user, not a vanished daemon: NoReply / Timeout / TimedOut fail (vault, no second
+// keyring prompt). Only a daemon that is really gone moves on to the next keyring.
+Reply openFailure(const QDBusMessage &reply)
+{
+    Reply result = failure(reply);
+    const QString name = reply.errorName();
+    const bool gone = name == QLatin1String("org.freedesktop.DBus.Error.ServiceUnknown") ||
+                      name == QLatin1String("org.freedesktop.DBus.Error.NameHasNoOwner") ||
+                      name == QLatin1String("org.freedesktop.DBus.Error.UnknownObject");
+    result.outcome = gone ? Outcome::Unavailable : Outcome::Failed;
+    return result;
+}
+
 // writePassword / removeEntry answer 0 on success.
 Reply zeroMeansOk(const QDBusMessage &reply)
 {
@@ -67,17 +81,20 @@ QString KWalletBackend::name() const
     return m_generation == 5 ? QStringLiteral("KWallet 5") : QStringLiteral("KWallet");
 }
 
-void KWalletBackend::send(const QString &method, const QVariantList &arguments, Handler handler)
+void KWalletBackend::send(const QString &method, const QVariantList &arguments, Handler handler,
+                          int timeoutMs)
 {
     QDBusMessage message =
         QDBusMessage::createMethodCall(m_service, m_path, kWalletInterface, method);
     message.setArguments(arguments);
     const std::weak_ptr<int> alive = m_alive;
-    m_transport.call(message, m_context,
-                     [alive, handler = std::move(handler)](const QDBusMessage &reply) {
-                         if (!alive.expired())
-                             handler(reply);
-                     });
+    m_transport.call(
+        message, m_context,
+        [alive, handler = std::move(handler)](const QDBusMessage &reply) {
+            if (!alive.expired())
+                handler(reply);
+        },
+        timeoutMs);
 }
 
 void KWalletBackend::prepare(Callback done)
@@ -100,23 +117,25 @@ void KWalletBackend::prepare(Callback done)
 
 void KWalletBackend::open(Callback done)
 {
-    send(QStringLiteral("open"), {m_walletName, QVariant::fromValue(qlonglong(0)), applicationId()},
-         [this, done](const QDBusMessage &reply) {
-             if (!singleArgument(reply, QMetaType::Int)) {
-                 done(failure(reply));
-                 return;
-             }
-             const int handle = reply.arguments().first().toInt();
-             if (handle < 0) {
-                 Reply result;
-                 result.outcome = Outcome::Refused;
-                 result.error = QStringLiteral("KWallet open refused");
-                 done(result);
-                 return;
-             }
-             m_handle = handle;
-             done(success());
-         });
+    send(
+        QStringLiteral("open"), {m_walletName, QVariant::fromValue(qlonglong(0)), applicationId()},
+        [this, done](const QDBusMessage &reply) {
+            if (!singleArgument(reply, QMetaType::Int)) {
+                done(openFailure(reply));
+                return;
+            }
+            const int handle = reply.arguments().first().toInt();
+            if (handle < 0) {
+                Reply result;
+                result.outcome = Outcome::Refused;
+                result.error = QStringLiteral("KWallet open refused");
+                done(result);
+                return;
+            }
+            m_handle = handle;
+            done(success());
+        },
+        kInteractiveTimeoutMs);
 }
 
 void KWalletBackend::write(const QString &key, const QString &value, Callback done)
