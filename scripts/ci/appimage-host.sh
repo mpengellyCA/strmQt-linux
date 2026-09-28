@@ -25,7 +25,7 @@ case "${1:?usage: appimage-host.sh TARGET}" in
             libgdk-pixbuf-2.0-0 \
             libasound2t64 libpulse0 libpipewire-0.3-0t64 libjack-jackd2-0 libsdl2-2.0-0 \
             libssl3t64 libgnutls30t64 libnettle8t64 libgcrypt20 libgpg-error0 libgssapi-krb5-2 \
-            libdbus-1-3 libudev1 \
+            libdbus-1-3 libudev1 libstdc++6 libgcc-s1 \
             zlib1g libzstd1 liblzma5 liblz4-1 libbrotli1 ;;
     fedora-43)
         dnf install -y --setopt=install_weak_deps=False \
@@ -40,7 +40,7 @@ case "${1:?usage: appimage-host.sh TARGET}" in
             gdk-pixbuf2 \
             alsa-lib pulseaudio-libs pipewire-libs pipewire-jack-audio-connection-kit-libs sdl2-compat \
             openssl-libs gnutls nettle libgcrypt libgpg-error krb5-libs \
-            dbus-libs systemd-libs \
+            dbus-libs systemd-libs libstdc++ libgcc \
             zlib-ng-compat libzstd xz-libs lz4-libs libbrotli ;;
     *) echo "appimage-host.sh: no host list for $1" >&2; exit 2 ;;
 esac

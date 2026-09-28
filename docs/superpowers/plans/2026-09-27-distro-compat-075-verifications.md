@@ -385,3 +385,17 @@ Found on the way:
 - The glibc check, exercised outside the build: an AppDir holding only a `/bin/sh` AppRun fails with "no bundled ELF
   object imports a GLIBC_ symbol"; one holding Arch's `libavutil.so.61` fails with "a bundled object needs
   GLIBC_2.44, above the 2.39 floor".
+
+Task 17 fix round 1 (review), rebuilt in `/tmp/w17f-appimage`:
+
+- The host now provides `libstdc++`/`libgcc_s`: they are in FORBIDDEN and in Deploy.cmake's pre-exclude list, and
+  `find AppDir -name 'libstdc++*' -o -name 'libgcc_s*'` finds nothing. The build logs
+  `newest GLIBC symbol needed: GLIBC_2.38` and `newest GLIBCXX symbol needed: GLIBCXX_3.4.32` (floor 3.4.33).
+  Exercised outside the build: Arch's `libbotan-3.so.13` fails with "needs GLIBCXX_3.4.35, above the 3.4.33 floor";
+  a static ELF (no dynamic section, `objdump -T` exits 1) is skipped instead of aborting.
+- The type2 runtime is pinned: `20251108` `runtime-x86_64`, sha256 `2fca8b44…ec260d` (matches GitHub's asset
+  digest), passed as `--runtime-file`. Re-packing the same AppDir in the appimage image with `--network none`
+  succeeds, and the packed AppImage's first 944632 bytes equal the pinned runtime except the 16-byte `.digest_md5`
+  section appimagetool fills in.
+- Bare-host self-test: ubuntu:24.04, fedora:43 and debian:trixie each log `SDL3 gamepad support active`,
+  `QML tier: full on Qt 6.11.3`, `selftest: 15/15 pages constructed`, `selftest.sh: OK`.

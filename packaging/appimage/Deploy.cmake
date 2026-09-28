@@ -42,11 +42,14 @@
 #
 # BUNDLING RULE (apply this when adding anything):
 #   BUNDLE   pure-userspace codec/render code: libmpv, the ffmpeg libs,
-#            libplacebo, libass, libzimg, dav1d and friends, Qt itself,
-#            libstdc++/libgcc_s.
+#            libplacebo, libass, libzimg, dav1d and friends, Qt itself.
 #   NEVER    anything that talks to a kernel device, the display server, the
 #   BUNDLE   audio server, or the font database. Those must be the host's,
 #            because the *other half* of the conversation is the host's.
+#            Nor the C++ runtime (libstdc++/libgcc_s): there is one per process,
+#            and host Mesa/LLVM, Vulkan ICDs and JACK load into ours, so a
+#            bundled copy older than theirs breaks GL. Every host at the glibc
+#            floor has GCC 14's (GLIBCXX_3.4.33); build-appimage.sh checks it.
 #
 # ==============================================================================
 # WHY `INCLUDE_PLUGINS qwayland` IS MANDATORY
@@ -300,6 +303,12 @@ set(_strmqt_pre_exclude_regexes
     # build-appimage.sh's FORBIDDEN.
     "^liblz4.*"
     "^libbrotli.*"
+
+    # --- C++ runtime -------------------------------------------------------------
+    # One per process, and host GL/Vulkan/JACK code loads into ours. See the
+    # BUNDLING RULE at the top of this file.
+    "^libstdc\\+\\+.*"
+    "^libgcc_s.*"
 )
 
 # NO_TRANSLATIONS      - the UI is English-only in 0.1.0; Qt's .qm files are dead

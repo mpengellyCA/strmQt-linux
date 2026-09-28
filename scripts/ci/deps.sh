@@ -62,6 +62,12 @@ case "$target" in
             https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
         echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /usr/local/bin/appimagetool" | sha256sum -c -
         chmod +x /usr/local/bin/appimagetool
+        # The type2 runtime is the first ELF every user runs; appimagetool would
+        # otherwise fetch the latest one, unverified, on every pack.
+        mkdir -p /usr/local/share/appimage
+        curl -fsSL -o /usr/local/share/appimage/runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+        echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /usr/local/share/appimage/runtime-x86_64" | sha256sum -c -
         ;;
     ubuntu-*|debian-*)
         export DEBIAN_FRONTEND=noninteractive

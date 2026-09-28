@@ -8,20 +8,21 @@ The release AppImage is built in an `ubuntu:24.04` container
 | Qt 6.11.3 (`linux_gcc_64`, plus `qtwebsockets`) | aqtinstall 3.3.0, installed at `/opt/qt/6.11.3/gcc_64`. `Deploy.cmake`'s `INCLUDE_PLUGINS` needs Qt ≥ 6.10, and the base download already carries QtSvg and QtWayland. |
 | libmpv 0.37 and its codec closure (ffmpeg 6.1) | Ubuntu 24.04's `libmpv-dev`, walked by `build-appimage.sh` |
 | SDL3 3.4.16 | bundled static (`-DSTRMQT_BUNDLE_SDL3=ON`) |
-| appimagetool 1.9.1 | pinned by sha256 |
+| appimagetool 1.9.1 | pinned by sha256, at `/usr/local/bin/appimagetool` |
+| AppImage type2 runtime `20251108` (`runtime-x86_64`) | pinned by sha256, at `/usr/local/share/appimage/runtime-x86_64`; `build-appimage.sh` passes it as `--runtime-file` (override: `STRMQT_APPIMAGE_RUNTIME`), so packing downloads nothing |
 
 Local build, the same one release CI runs (the source copy is there because
 `build-appimage.sh` writes next to its source, and `/src` is read-only):
 
 ```bash
 df -h /tmp
-scripts/ci/local.sh appimage /tmp/w17a-appimage -- bash -c '
+scripts/ci/local.sh appimage /tmp/strmqt-appimage -- bash -c '
   export TMPDIR=/var/tmp
   /src/scripts/ci/copy-tree.sh /src /var/tmp/src-copy
   cd /var/tmp/src-copy &&
   STRMQT_APPIMAGE_BUILD_ROOT=/build/out STRMQT_APPIMAGE_CMAKE_ARGS="$(/src/scripts/ci/deps.sh --cmake-args appimage)" \
   APPIMAGE_EXTRACT_AND_RUN=1 packaging/appimage/build-appimage.sh'
-# -> /tmp/w17a-appimage/out/dist/StrmQt-<version>-x86_64.AppImage   (~180 MB)
+# -> /tmp/strmqt-appimage/out/dist/StrmQt-<version>-x86_64.AppImage   (~180 MB)
 ```
 
 On Arch, `./packaging/appimage/build-appimage.sh` still works (pkg-config and a
@@ -34,8 +35,9 @@ glibc symbol versioning is forward-only: a binary importing `GLIBC_2.x` will
 not load against an older glibc. So the newest `GLIBC_` symbol anything in the
 bundle imports is the oldest glibc the AppImage starts on. `build-appimage.sh`
 checks it on every build and fails above **2.39**, Ubuntu 24.04's glibc. The
-aqt Qt is built on an older base and does not raise it. The 0.7.5 build logs
-`newest glibc symbol needed: GLIBC_2.38`.
+aqt Qt is built on an older base and does not raise it. The same check holds
+the host's C++ runtime to **GLIBCXX_3.4.33** (GCC 14's libstdc++, which Ubuntu
+24.04 ships). The 0.7.5 build logs `GLIBC_2.38` and `GLIBCXX_3.4.32`.
 
 That covers **Ubuntu 24.04+, Debian 13+ and Fedora 40+**. **Debian 12**
 (glibc 2.36) is not covered: its users take the `.deb` or the Flatpak.
@@ -71,11 +73,15 @@ directly. `scripts/ci/appimage-host.sh` installs exactly these packages.
 | Audio | `libasound`, `libpulse`, `libpipewire-0.3`, `libjack`, `libSDL2` (mpv, ffmpeg) | `libasound2t64 libpulse0 libpipewire-0.3-0t64 libjack-jackd2-0 libsdl2-2.0-0` | `alsa-lib pulseaudio-libs pipewire-libs pipewire-jack-audio-connection-kit-libs sdl2-compat` |
 | TLS / crypto | `libssl`, `libcrypto`, `libgnutls`, `libnettle`, `libgcrypt`, `libgpg-error`, `libgssapi_krb5` | `libssl3t64 libgnutls30t64 libnettle8t64 libgcrypt20 libgpg-error0 libgssapi-krb5-2` | `openssl-libs gnutls nettle libgcrypt libgpg-error krb5-libs` |
 | System | glibc ≥ 2.39, `libdbus-1`, `libudev` | `libdbus-1-3 libudev1` | `dbus-libs systemd-libs` |
+| C++ runtime | `libstdc++` (≥ `GLIBCXX_3.4.33`), `libgcc_s` | `libstdc++6 libgcc-s1` | `libstdc++ libgcc` |
 | Compression | `libz`, `libzstd`, `liblzma`, `liblz4`, `libbrotli*` | `zlib1g libzstd1 liblzma5 liblz4-1 libbrotli1` | `zlib-ng-compat libzstd xz-libs lz4-libs libbrotli` |
 
-A desktop install has all of these. SDL3 is not on the list: the AppImage links
-it statically. `libbz2` is not either: Debian's soname is `libbz2.so.1.0` and
-Fedora ships only `libbz2.so.1`, so the AppImage carries its own.
+A desktop install has all of these. The C++ runtime is the host's on purpose:
+there is one per process, and the host's Mesa/LLVM, Vulkan drivers and JACK
+load into ours, so a bundled libstdc++ older than theirs would break GL. SDL3
+is not on the list: the AppImage links it statically. `libbz2` is not either:
+Debian's soname is `libbz2.so.1.0` and Fedora ships only `libbz2.so.1`, so the
+AppImage carries its own.
 
 ## What is bundled
 
@@ -84,12 +90,11 @@ WaylandClient/XcbQpa and ICU), the Qt QPA plugins `qwayland`, `qxcb`,
 `qoffscreen`, `qminimal` plus the Wayland shell/decoration/graphics
 integrations, the imageformats plugins in aqt's base download (jpeg, gif, svg,
 ico; PNG is built into QtGui), `libmpv` and its codec closure (ffmpeg,
-libplacebo, libass, dav1d, x264/x265, …), and `libstdc++`/`libgcc_s`. About 186
-shared objects, ~550 MB uncompressed (RelWithDebInfo), ~180 MB after zstd
-squashfs.
+libplacebo, libass, dav1d, x264/x265, …). About 184 shared objects, ~550 MB
+uncompressed (RelWithDebInfo), ~180 MB after zstd squashfs.
 
-Explicitly **not** bundled: libVLC (the AppImage is mpv-only — see
-`build-appimage.sh`), Qt translations, the 27 KImageFormats plugins, GTK/Plasma
+Explicitly **not** bundled: `libstdc++`/`libgcc_s` (see the host table),
+libVLC (the AppImage is mpv-only — see `build-appimage.sh`), Qt translations, the 27 KImageFormats plugins, GTK/Plasma
 platform themes, and QML tooling plugins.
 
 ## Files here
@@ -145,7 +150,7 @@ look like over-caution and are not.
 ## Verifying a build
 
 ```bash
-APPDIR=/tmp/w17a-appimage/out/appimage/AppDir     # build/appimage/AppDir on Arch
+APPDIR=/tmp/strmqt-appimage/out/appimage/AppDir     # build/appimage/AppDir on Arch
 
 # Bundled Qt/mpv resolve into the AppDir; GL/fontconfig/libva resolve to the host.
 ldd $APPDIR/usr/bin/strmqt | grep -E 'libQt6Core|libmpv|libGL\.so|libfontconfig|libva\.so'
@@ -157,7 +162,7 @@ find $APPDIR/usr/lib $APPDIR/usr/plugins $APPDIR/usr/qml -type f -name '*.so*' -
 find $APPDIR/usr -type f -name '*.so*' -exec patchelf --print-needed {} \; | grep '^/'
 
 # Headless page-construction self-test (this is what qoffscreen is bundled for).
-APPIMAGE_EXTRACT_AND_RUN=1 scripts/ci/selftest.sh /tmp/w17a-appimage/out/dist/StrmQt-*-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 scripts/ci/selftest.sh /tmp/strmqt-appimage/out/dist/StrmQt-*-x86_64.AppImage
 ```
 
 `build-appimage.sh` runs the forbidden-soname assertion and the

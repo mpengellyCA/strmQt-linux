@@ -10,6 +10,9 @@
 #   STRMQT_APPIMAGE_BUILD_ROOT  where build/ and dist/ go (default: <source>/build)
 #   STRMQT_APPIMAGE_CMAKE_ARGS  extra CMake flags, word-split
 #                               (`scripts/ci/deps.sh --cmake-args appimage`)
+#   STRMQT_APPIMAGE_RUNTIME     the pinned type2 runtime appimagetool embeds
+#                               (default: /usr/local/share/appimage/runtime-x86_64,
+#                               where `scripts/ci/deps.sh appimage` puts it)
 #
 # The release build runs on Ubuntu 24.04 (`scripts/ci/deps.sh appimage`) with
 # Qt 6.11.3 from aqtinstall, for a glibc 2.39 floor: nothing bundled may need a
@@ -39,6 +42,7 @@ BUILD_DIR="${BUILD_ROOT}/appimage"
 APPDIR="${BUILD_DIR}/AppDir"
 DIST_DIR="${BUILD_ROOT}/dist"
 OUTPUT="${DIST_DIR}/${APP_NAME}-${APP_VERSION}-${APP_ARCH}.AppImage"
+RUNTIME_FILE="${STRMQT_APPIMAGE_RUNTIME:-/usr/local/share/appimage/runtime-x86_64}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*" >&2; }
@@ -58,6 +62,13 @@ if ((${#missing[@]})); then
   patchelf     : pacman -S patchelf        | apt-get install patchelf
   appimagetool : https://github.com/AppImage/appimagetool/releases  (drop in ~/.local/bin, chmod +x)"
 fi
+
+# The runtime is the first ELF every user runs. Without --runtime-file,
+# appimagetool downloads whatever type2-runtime release is latest, unverified,
+# on every pack.
+[[ -f "${RUNTIME_FILE}" ]] || die "AppImage runtime not found at ${RUNTIME_FILE}
+  Install the pinned one with scripts/ci/deps.sh appimage (it checks the sha256),
+  or point STRMQT_APPIMAGE_RUNTIME at a verified runtime-x86_64."
 
 command -v pkg-config >/dev/null 2>&1 || die "pkg-config not found"
 pkg-config --exists mpv \
@@ -164,6 +175,9 @@ FORBIDDEN+='|^(libsystemd|libudev|libdbus-1|libcap\.so|libcap-|libselinux|libapp
 # libbz2 is not here: Debian's soname is libbz2.so.1.0 and Fedora ships only
 # libbz2.so.1, so the Ubuntu-built ffmpeg would not start on Fedora. Bundled.
 FORBIDDEN+='|^(libz\.so|libzstd|liblzma|liblz4|libbrotli)'
+# The C++ runtime is the host's: host Mesa/LLVM, Vulkan ICDs and JACK load into
+# this process, and a bundled libstdc++ older than theirs is the one they get.
+FORBIDDEN+='|^(libstdc\+\+|libgcc_s)'
 
 # ─── 4. Bundle libmpv and its codec closure by hand ──────────────────────────
 # WHY THIS IS NOT DONE BY Qt's DEPLOY STEP
@@ -361,7 +375,9 @@ strips the 'platforms' type from bulk selection. Without an explicit
 'INCLUDE_PLUGINS qwayland' in packaging/appimage/Deploy.cmake, the AppImage
 ships the xcb plugin alone and runs silently under XWayland.
 
-FIX: restore 'INCLUDE_PLUGINS qwayland' in packaging/appimage/Deploy.cmake."
+FIX: restore 'INCLUDE_PLUGINS qwayland' in packaging/appimage/Deploy.cmake.
+With an aqt Qt, also check that the Qt install has plugins/platforms/libqwayland.so:
+the qtwayland archive (part of the base download for 6.11.3) must be installed."
 
 [[ -d "${PLUGINS_DIR}/wayland-shell-integration" ]] || die \
 "wayland-shell-integration/ is MISSING from the AppDir.
@@ -421,25 +437,40 @@ install -m 0755 "${SCRIPT_DIR}/AppRun" "${APPDIR}/AppRun"
 install -Dm 0644 "${SRC_DIR}/COPYING" \
                  "${APPDIR}/usr/share/licenses/${APP_ID}/COPYING"
 
-# ─── 9b. The glibc floor ─────────────────────────────────────────────────────
+# ─── 9b. The glibc and libstdc++ floors ──────────────────────────────────────
 # glibc floor (spec 2026-09-27 §7.4): nothing bundled may need newer than 2.39.
 # glibc symbol versioning is forward-only, so the newest GLIBC_ version any
-# bundled object imports is the oldest glibc the AppImage starts on. Only ELF
-# files go to objdump: AppRun is a /bin/sh script and matches -perm -u+x.
-log "Checking the glibc floor"
-glibc_imports() {
+# bundled object imports is the oldest glibc the AppImage starts on. The same
+# holds for the host's libstdc++ (GLIBCXX_): 3.4.33 is GCC 14's, which Ubuntu
+# 24.04 ships. Only dynamic ELF files go to objdump: AppRun is a /bin/sh script
+# and matches -perm -u+x, and objdump -T fails on an ELF with no dynamic section.
+log "Checking the glibc and libstdc++ floors"
+dynamic_symbols() {
     local f
     while IFS= read -r -d '' f; do
         readelf -h "${f}" >/dev/null 2>&1 || continue
+        # Not `readelf -d | grep -q`: under pipefail grep's early exit can
+        # SIGPIPE readelf and silently skip the file.
+        [[ "$(readelf -d "${f}" 2>/dev/null)" == *'(NEEDED)'* ]] || continue
         objdump -T "${f}" || die "objdump -T failed on ${f#"${APPDIR}"/}"
     done < <(find "${APPDIR}" -type f \( -name '*.so*' -o -perm -u+x \) -print0)
 }
-newest=$(glibc_imports | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } | sort -Vu | tail -1)
-[[ -n "${newest}" ]] || die "no bundled ELF object imports a GLIBC_ symbol: the glibc check found nothing to check"
-log "  newest glibc symbol needed: ${newest}"
-if [[ "$(printf '%s\n' "${newest#GLIBC_}" 2.39 | sort -V | tail -1)" != "2.39" ]]; then
-    die "a bundled object needs ${newest}, above the 2.39 floor"
-fi
+symbols="$(dynamic_symbols)"   # its own statement, so a die inside it stops the script
+versions="$(grep -o 'GLIBCX*_[0-9][0-9.]*' <<<"${symbols}" | sort -u || true)"
+# check_floor TAG FLOOR: fail if any bundled object imports TAG_<v> with v > FLOOR,
+# or if none imports TAG_ at all (the check would then have checked nothing).
+check_floor() {
+    local newest
+    newest="$(grep "^$1_" <<<"${versions}" | sort -V | tail -1 || true)"
+    [[ -n "${newest}" ]] || die "no bundled ELF object imports a $1_ symbol: the $1 check found nothing to check"
+    log "  newest $1 symbol needed: ${newest}"
+    if [[ "$(printf '%s\n' "${newest#"$1"_}" "$2" | sort -V | tail -1)" != "$2" ]]; then
+        die "a bundled object needs ${newest}, above the $2 floor"
+    fi
+    printf -v "newest_$1" '%s' "${newest}"
+}
+check_floor GLIBC 2.39
+check_floor GLIBCXX 3.4.33
 
 # ─── 10. Pack ─────────────────────────────────────────────────────────────────
 # zstd: noticeably faster startup than the legacy gzip squashfs for a bundle
@@ -447,10 +478,10 @@ fi
 log "Packing ${OUTPUT}"
 mkdir -p "${DIST_DIR}"
 ARCH="${APP_ARCH}" VERSION="${APP_VERSION}" \
-    appimagetool --comp zstd "${APPDIR}" "${OUTPUT}"
+    appimagetool --comp zstd --runtime-file "${RUNTIME_FILE}" "${APPDIR}" "${OUTPUT}"
 
 chmod +x "${OUTPUT}"
 log "Done: ${OUTPUT} ($(du -h "${OUTPUT}" | cut -f1))"
 printf '\n'
-printf 'Portability note: the newest glibc symbol bundled is %s. See\n' "${newest}"
+printf 'Portability note: the newest glibc symbol bundled is %s. See\n' "${newest_GLIBC}"
 printf 'packaging/appimage/README.md for the hosts that covers.\n'
