@@ -1,6 +1,7 @@
 #include "SecretBackend.h"
 
 #include "KWalletBackend.h"
+#include "SecretServiceBackend.h"
 
 namespace strmqt::secrets {
 
@@ -44,7 +45,7 @@ std::unique_ptr<SecretBackend> makeSecretBackend(BackendKind kind, DBusTransport
     case BackendKind::KWallet5:
         return std::make_unique<KWalletBackend>(5, transport, context);
     case BackendKind::SecretService:
-        return nullptr; // Task 13
+        return std::make_unique<SecretServiceBackend>(transport, context);
     }
     return nullptr;
 }

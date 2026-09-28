@@ -30,6 +30,7 @@ qt_add_library(strmqt_core STATIC
     platform/secrets/DBusTransport.h platform/secrets/DBusTransport.cpp
     platform/secrets/SecretBackend.h platform/secrets/SecretBackend.cpp
     platform/secrets/KWalletBackend.h platform/secrets/KWalletBackend.cpp
+    platform/secrets/SecretServiceBackend.h platform/secrets/SecretServiceBackend.cpp
     playback/PlayerBackend.h playback/PlayerBackend.cpp
     playback/FastForwardRamp.h
 )

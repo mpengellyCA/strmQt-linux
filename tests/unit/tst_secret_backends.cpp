@@ -1,4 +1,7 @@
 #include <QDBusMessage>
+#include <QDBusMetaType>
+#include <QDBusObjectPath>
+#include <QDBusVariant>
 #include <QEventLoop>
 #include <QFile>
 #include <QFutureWatcher>
@@ -13,6 +16,7 @@
 #include "platform/secrets/DBusTransport.h"
 #include "platform/secrets/KWalletBackend.h"
 #include "platform/secrets/SecretBackend.h"
+#include "platform/secrets/SecretServiceBackend.h"
 
 #include <memory>
 #include <utility>
@@ -22,9 +26,12 @@ Q_DECLARE_METATYPE(strmqt::secrets::Outcome)
 using strmqt::Result;
 using strmqt::SecretsStore;
 using strmqt::secrets::BackendKind;
+using strmqt::secrets::DBusSecret;
 using strmqt::secrets::KWalletBackend;
 using strmqt::secrets::Outcome;
 using strmqt::secrets::Reply;
+using strmqt::secrets::SecretServiceBackend;
+using strmqt::secrets::StringMap;
 using strmqt::test::FakeDBusTransport;
 
 namespace {
@@ -120,6 +127,102 @@ void answerProbe(FakeDBusTransport &fake, const QStringList &owned, const QStrin
     }
 }
 
+const auto kSecretsPath = QStringLiteral("/org/freedesktop/secrets");
+const auto kServiceInterface = QStringLiteral("org.freedesktop.Secret.Service");
+const auto kCollectionInterface = QStringLiteral("org.freedesktop.Secret.Collection");
+const auto kItemInterface = QStringLiteral("org.freedesktop.Secret.Item");
+const auto kPromptInterface = QStringLiteral("org.freedesktop.Secret.Prompt");
+const auto kPropertiesInterface = QStringLiteral("org.freedesktop.DBus.Properties");
+const auto kSession = QStringLiteral("/org/freedesktop/secrets/session/s1");
+const auto kCollection = QStringLiteral("/org/freedesktop/secrets/collection/login");
+const auto kItem = QStringLiteral("/org/freedesktop/secrets/collection/login/1");
+const auto kItem2 = QStringLiteral("/org/freedesktop/secrets/collection/login/2");
+const auto kPrompt = QStringLiteral("/org/freedesktop/secrets/prompt/p1");
+const auto kNoPrompt = QStringLiteral("/");
+
+QVariant objectPath(const QString &path)
+{
+    return QVariant::fromValue(QDBusObjectPath(path));
+}
+
+QVariant objectPaths(const QStringList &paths)
+{
+    QList<QDBusObjectPath> list;
+    for (const QString &path : paths)
+        list.append(QDBusObjectPath(path));
+    return QVariant::fromValue(list);
+}
+
+QVariant dbusVariant(const QVariant &value)
+{
+    return QVariant::fromValue(QDBusVariant(value));
+}
+
+QStringList pathsOf(const QVariant &value)
+{
+    QStringList paths;
+    for (const QDBusObjectPath &path : value.value<QList<QDBusObjectPath>>())
+        paths.append(path.path());
+    return paths;
+}
+
+StringMap attributesFor(const QString &key)
+{
+    return {{QStringLiteral("xdg:schema"), QStringLiteral("ca.mikesdev.StrmQt.Secret")},
+            {QStringLiteral("strmqt-key"), key}};
+}
+
+// Asserts the oldest unanswered call is `interface`.`member` at `path` on org.freedesktop.secrets.
+bool nextIsSecrets(const FakeDBusTransport &fake, const QString &path, const QString &interface,
+                   const QString &member)
+{
+    if (fake.pending() < 0)
+        return false;
+    const QDBusMessage &m = fake.next();
+    return m.service() == kSecrets && m.path() == path && m.interface() == interface &&
+           m.member() == member;
+}
+
+// Answers OpenSession and ReadAlias, then reports the collection unlocked.
+void openSecretService(FakeDBusTransport &fake, SecretServiceBackend &backend)
+{
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("OpenSession")));
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    fake.reply({objectPath(kCollection)});
+    QCOMPARE(prepared.count, 1);
+    QCOMPARE(prepared.reply.outcome, Outcome::Ok);
+
+    Captured opened;
+    backend.open(opened.callback());
+    QVERIFY(nextIsSecrets(fake, kCollection, kPropertiesInterface, QStringLiteral("Get")));
+    fake.reply({dbusVariant(false)});
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, Outcome::Ok);
+}
+
+// The backend has just been handed prompt kPrompt: it must subscribe to its
+// Completed signal, then call Prompt(""); the user answers `dismissed`.
+void answerPrompt(FakeDBusTransport &fake, bool dismissed)
+{
+    QVERIFY(!fake.subscriptions.isEmpty());
+    const FakeDBusTransport::Subscription s = fake.subscriptions.last();
+    QCOMPARE(s.service, QString());
+    QCOMPARE(s.path, kPrompt);
+    QCOMPARE(s.interface, kPromptInterface);
+    QCOMPARE(s.name, QStringLiteral("Completed"));
+    QVERIFY(!s.context.isNull());
+
+    QVERIFY(nextIsSecrets(fake, kPrompt, kPromptInterface, QStringLiteral("Prompt")));
+    QCOMPARE(fake.next().arguments(), QVariantList{QString()});
+    QCOMPARE(fake.calls[fake.pending()].timeoutMs, strmqt::secrets::kInteractiveTimeoutMs);
+    fake.reply({});
+    fake.emitSignal(kPrompt, kPromptInterface, QStringLiteral("Completed"),
+                    {dismissed, dbusVariant(objectPaths({}))});
+}
+
 } // namespace
 
 class SecretBackendsTest : public QObject
@@ -149,6 +252,24 @@ private slots:
     void storeDropsTheKWallet5AliasOfKWallet6();
     void storeUsesTheVaultWithNoCandidates();
     void storeUsesTheVaultWithoutASessionBus();
+
+    void secretServiceMarshalsTheSpecTypes();
+    void secretServicePreparesAPlainSessionAndTheDefaultCollection();
+    void secretServiceWithoutADefaultCollectionIsUnavailable();
+    void secretServiceOpenOfAnUnlockedCollectionNeedsNoPrompt();
+    void secretServiceUnlockRunsThePrompt();
+    void secretServiceDismissedPromptIsRefused();
+    void secretServiceUnlockWaitsForTheUser_data();
+    void secretServiceUnlockWaitsForTheUser();
+    void secretServiceUnansweredPromptFails();
+    void secretServiceWriteStoresOneItemPerKey();
+    void secretServiceWriteRunsItsPrompt();
+    void secretServiceReadFindsTheItemAndGetsItsSecret();
+    void secretServiceReadOfAMissingKeyIsAnEmptySuccess();
+    void secretServiceReadUnlocksLockedItems();
+    void secretServiceRemoveDeletesEveryMatch();
+    void storeReachesTheSecretServiceOnGnome();
+    void storeFallsFromKWalletToTheSecretService();
 
 private:
     void driveKWallet(int generation);
@@ -577,6 +698,465 @@ void SecretBackendsTest::storeUsesTheVaultWithoutASessionBus()
     QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
     QCOMPARE(store.backendName(), QStringLiteral("vault file"));
     QVERIFY(fake->calls.isEmpty());
+}
+
+void SecretBackendsTest::secretServiceMarshalsTheSpecTypes()
+{
+    FakeDBusTransport fake;
+    const SecretServiceBackend backend(fake, nullptr); // registers the D-Bus types
+    QCOMPARE(backend.name(), QStringLiteral("Secret Service"));
+    QCOMPARE(QDBusMetaType::typeToSignature(QMetaType::fromType<DBusSecret>()),
+             QByteArray("(oayays)"));
+    QCOMPARE(QDBusMetaType::typeToSignature(QMetaType::fromType<StringMap>()), QByteArray("a{ss}"));
+
+    // A reply from the bus arrives as a QDBusArgument; a test's as the plain value.
+    QCOMPARE(strmqt::secrets::fromDBus<QDBusObjectPath>(objectPath(kItem)).path(), kItem);
+    QCOMPARE(strmqt::secrets::fromDBus<QDBusVariant>(dbusVariant(true)).variant().toBool(), true);
+}
+
+void SecretBackendsTest::secretServicePreparesAPlainSessionAndTheDefaultCollection()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    QCOMPARE(fake.calls.size(), 1);
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("OpenSession")));
+    QVariantList args = fake.next().arguments();
+    QCOMPARE(args.size(), 2);
+    QCOMPARE(args.at(0).toString(), QStringLiteral("plain"));
+    QCOMPARE(args.at(1).metaType(), QMetaType::fromType<QDBusVariant>());
+    const QVariant input = args.at(1).value<QDBusVariant>().variant();
+    QCOMPARE(input.metaType(), QMetaType::fromType<QString>());
+    QCOMPARE(input.toString(), QString());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    QCOMPARE(prepared.count, 0);
+
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    QCOMPARE(fake.next().arguments(), QVariantList{QStringLiteral("default")});
+    fake.reply({objectPath(kCollection)});
+    QCOMPARE(prepared.count, 1);
+    QCOMPARE(prepared.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.pending(), -1);
+
+    // The session and collection from prepare() are what later steps use.
+    Captured opened;
+    backend.open(opened.callback());
+    QCOMPARE(fake.next().path(), kCollection);
+    fake.reply({dbusVariant(false)});
+    Captured written;
+    backend.write(kKey, kToken, written.callback());
+    QCOMPARE(fake.next().path(), kCollection);
+    QCOMPARE(fake.next().arguments().at(1).value<DBusSecret>().session.path(), kSession);
+}
+
+void SecretBackendsTest::secretServiceWithoutADefaultCollectionIsUnavailable()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    fake.reply({objectPath(kNoPrompt)});
+    QCOMPARE(prepared.count, 1);
+    QCOMPARE(prepared.reply.outcome, Outcome::Unavailable);
+
+    // A daemon that is not there is unavailable too.
+    Captured again;
+    backend.prepare(again.callback());
+    fake.replyError(dbusError("ServiceUnknown"));
+    QCOMPARE(again.count, 1);
+    QCOMPARE(again.reply.outcome, Outcome::Unavailable);
+}
+
+void SecretBackendsTest::secretServiceOpenOfAnUnlockedCollectionNeedsNoPrompt()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    fake.reply({objectPath(kCollection)});
+
+    Captured opened;
+    backend.open(opened.callback());
+    QVERIFY(nextIsSecrets(fake, kCollection, kPropertiesInterface, QStringLiteral("Get")));
+    QCOMPARE(fake.next().arguments(),
+             (QVariantList{kCollectionInterface, QStringLiteral("Locked")}));
+    fake.reply({dbusVariant(false)});
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.pending(), -1);
+    for (const FakeDBusTransport::Call &call : std::as_const(fake.calls))
+        QVERIFY(call.message.member() != QLatin1String("Unlock"));
+    QVERIFY(fake.subscriptions.isEmpty());
+}
+
+void SecretBackendsTest::secretServiceUnlockRunsThePrompt()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    fake.reply({objectPath(kCollection)});
+
+    Captured opened;
+    backend.open(opened.callback());
+    fake.reply({dbusVariant(true)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("Unlock")));
+    const QVariantList args = fake.next().arguments();
+    QCOMPARE(args.size(), 1);
+    QCOMPARE(pathsOf(args.at(0)), QStringList{kCollection});
+    QCOMPARE(fake.calls[fake.pending()].timeoutMs, strmqt::secrets::kInteractiveTimeoutMs);
+    QVERIFY(fake.subscriptions.isEmpty());
+    fake.reply({objectPaths({}), objectPath(kPrompt)});
+    QCOMPARE(opened.count, 0);
+
+    answerPrompt(fake, false);
+    if (QTest::currentTestFailed())
+        return;
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.pending(), -1);
+
+    // A repeated signal does not complete the step twice, and the subscription goes away.
+    fake.emitSignal(kPrompt, kPromptInterface, QStringLiteral("Completed"),
+                    {false, dbusVariant(objectPaths({}))});
+    QCOMPARE(opened.count, 1);
+    QTRY_VERIFY(fake.subscriptions.last().context.isNull());
+}
+
+void SecretBackendsTest::secretServiceDismissedPromptIsRefused()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    fake.reply({objectPath(kCollection)});
+
+    Captured opened;
+    backend.open(opened.callback());
+    fake.reply({dbusVariant(true)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("Unlock")));
+    fake.reply({objectPaths({}), objectPath(kPrompt)});
+    answerPrompt(fake, true);
+    if (QTest::currentTestFailed())
+        return;
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, Outcome::Refused);
+    QCOMPARE(fake.pending(), -1);
+}
+
+void SecretBackendsTest::secretServiceUnlockWaitsForTheUser_data()
+{
+    QTest::addColumn<QString>("error");
+    QTest::addColumn<Outcome>("expected");
+    QTest::newRow("NoReply") << dbusError("NoReply") << Outcome::Failed;
+    QTest::newRow("Timeout") << dbusError("Timeout") << Outcome::Failed;
+    QTest::newRow("AccessDenied") << dbusError("AccessDenied") << Outcome::Failed;
+    QTest::newRow("ServiceUnknown") << dbusError("ServiceUnknown") << Outcome::Unavailable;
+    QTest::newRow("NameHasNoOwner") << dbusError("NameHasNoOwner") << Outcome::Unavailable;
+    QTest::newRow("UnknownObject") << dbusError("UnknownObject") << Outcome::Unavailable;
+}
+
+void SecretBackendsTest::secretServiceUnlockWaitsForTheUser()
+{
+    QFETCH(QString, error);
+    QFETCH(Outcome, expected);
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    fake.reply({objectPath(kCollection)});
+    Captured opened;
+    backend.open(opened.callback());
+    fake.reply({dbusVariant(true)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("Unlock")));
+    // A slow user is not a vanished daemon: only a daemon that is gone moves on.
+    fake.replyError(error);
+    QCOMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, expected);
+}
+
+void SecretBackendsTest::secretServiceUnansweredPromptFails()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    backend.setPromptTimeoutMs(20);
+    Captured prepared;
+    backend.prepare(prepared.callback());
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    fake.reply({objectPath(kCollection)});
+    Captured opened;
+    backend.open(opened.callback());
+    fake.reply({dbusVariant(true)});
+    fake.reply({objectPaths({}), objectPath(kPrompt)});
+    QVERIFY(nextIsSecrets(fake, kPrompt, kPromptInterface, QStringLiteral("Prompt")));
+    fake.reply({});
+    QCOMPARE(opened.count, 0);
+
+    // Nobody answers: the step fails (the vault), it does not try another keyring.
+    QTRY_COMPARE(opened.count, 1);
+    QCOMPARE(opened.reply.outcome, Outcome::Failed);
+    fake.emitSignal(kPrompt, kPromptInterface, QStringLiteral("Completed"),
+                    {false, dbusVariant(objectPaths({}))});
+    QCOMPARE(opened.count, 1);
+    QTRY_VERIFY(fake.subscriptions.last().context.isNull());
+}
+
+void SecretBackendsTest::secretServiceWriteStoresOneItemPerKey()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured written;
+    backend.write(kKey, kToken, written.callback());
+    QVERIFY(nextIsSecrets(fake, kCollection, kCollectionInterface, QStringLiteral("CreateItem")));
+    QCOMPARE(fake.calls[fake.pending()].timeoutMs, strmqt::secrets::kInteractiveTimeoutMs);
+    const QVariantList args = fake.next().arguments();
+    QCOMPARE(args.size(), 3);
+
+    const QVariantMap properties = args.at(0).toMap();
+    QCOMPARE(properties.size(), 2);
+    QCOMPARE(properties.value(QStringLiteral("org.freedesktop.Secret.Item.Label")).toString(),
+             QStringLiteral("StrmQt access token"));
+    const QVariant attributes =
+        properties.value(QStringLiteral("org.freedesktop.Secret.Item.Attributes"));
+    QCOMPARE(attributes.metaType(), QMetaType::fromType<StringMap>());
+    // The hashed key and nothing else: no server URL, no user name.
+    QCOMPARE(attributes.value<StringMap>(), attributesFor(kKey));
+
+    QCOMPARE(args.at(1).metaType(), QMetaType::fromType<DBusSecret>());
+    const DBusSecret secret = args.at(1).value<DBusSecret>();
+    QCOMPARE(secret.session.path(), kSession);
+    QCOMPARE(secret.parameters, QByteArray());
+    QCOMPARE(secret.value, kToken.toUtf8());
+    QCOMPARE(secret.contentType, QStringLiteral("text/plain; charset=utf8"));
+    QCOMPARE(args.at(2).metaType(), QMetaType::fromType<bool>());
+    QCOMPARE(args.at(2).toBool(), true);
+
+    fake.reply({objectPath(kItem), objectPath(kNoPrompt)});
+    QCOMPARE(written.count, 1);
+    QCOMPARE(written.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.pending(), -1);
+    QVERIFY(fake.subscriptions.isEmpty());
+}
+
+void SecretBackendsTest::secretServiceWriteRunsItsPrompt()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured written;
+    backend.write(kKey, kToken, written.callback());
+    QVERIFY(nextIsSecrets(fake, kCollection, kCollectionInterface, QStringLiteral("CreateItem")));
+    fake.reply({objectPath(kNoPrompt), objectPath(kPrompt)});
+    answerPrompt(fake, false);
+    if (QTest::currentTestFailed())
+        return;
+    QCOMPARE(written.count, 1);
+    QCOMPARE(written.reply.outcome, Outcome::Ok);
+
+    Captured refused;
+    backend.write(kKey, kToken, refused.callback());
+    fake.reply({objectPath(kNoPrompt), objectPath(kPrompt)});
+    answerPrompt(fake, true);
+    if (QTest::currentTestFailed())
+        return;
+    QCOMPARE(refused.count, 1);
+    QCOMPARE(refused.reply.outcome, Outcome::Refused);
+}
+
+void SecretBackendsTest::secretServiceReadFindsTheItemAndGetsItsSecret()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured read;
+    backend.read(kKey, read.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    QVariantList args = fake.next().arguments();
+    QCOMPARE(args.size(), 1);
+    QCOMPARE(args.at(0).metaType(), QMetaType::fromType<StringMap>());
+    QCOMPARE(args.at(0).value<StringMap>(), attributesFor(kKey));
+    fake.reply({objectPaths({kItem}), objectPaths({})});
+
+    QVERIFY(nextIsSecrets(fake, kItem, kItemInterface, QStringLiteral("GetSecret")));
+    args = fake.next().arguments();
+    QCOMPARE(args.size(), 1);
+    QCOMPARE(args.at(0).value<QDBusObjectPath>().path(), kSession);
+    QCOMPARE(read.count, 0);
+    fake.reply({QVariant::fromValue(DBusSecret{
+        QDBusObjectPath(kSession), {}, "tok", QStringLiteral("text/plain; charset=utf8")})});
+    QCOMPARE(read.count, 1);
+    QCOMPARE(read.reply.outcome, Outcome::Ok);
+    QCOMPARE(read.reply.value, QStringLiteral("tok"));
+    QCOMPARE(fake.pending(), -1);
+}
+
+void SecretBackendsTest::secretServiceReadOfAMissingKeyIsAnEmptySuccess()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured read;
+    backend.read(kKey, read.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    fake.reply({objectPaths({}), objectPaths({})});
+    QCOMPARE(read.count, 1);
+    QCOMPARE(read.reply.outcome, Outcome::Ok);
+    QVERIFY(read.reply.value.isEmpty());
+    QCOMPARE(fake.pending(), -1);
+}
+
+void SecretBackendsTest::secretServiceReadUnlocksLockedItems()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured read;
+    backend.read(kKey, read.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    fake.reply({objectPaths({}), objectPaths({kItem})});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("Unlock")));
+    QCOMPARE(pathsOf(fake.next().arguments().at(0)), QStringList{kItem});
+    fake.reply({objectPaths({kItem}), objectPath(kNoPrompt)});
+    QVERIFY(nextIsSecrets(fake, kItem, kItemInterface, QStringLiteral("GetSecret")));
+    fake.reply({QVariant::fromValue(DBusSecret{
+        QDBusObjectPath(kSession), {}, "tok", QStringLiteral("text/plain; charset=utf8")})});
+    QCOMPARE(read.count, 1);
+    QCOMPARE(read.reply.outcome, Outcome::Ok);
+    QCOMPARE(read.reply.value, QStringLiteral("tok"));
+}
+
+void SecretBackendsTest::secretServiceRemoveDeletesEveryMatch()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openSecretService(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured removed;
+    backend.remove(kKey, removed.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    QCOMPARE(fake.next().arguments().at(0).value<StringMap>(), attributesFor(kKey));
+    fake.reply({objectPaths({kItem, kItem2}), objectPaths({})});
+    for (const QString &item : {kItem, kItem2}) {
+        QVERIFY(nextIsSecrets(fake, item, kItemInterface, QStringLiteral("Delete")));
+        QVERIFY(fake.next().arguments().isEmpty());
+        QCOMPARE(removed.count, 0);
+        fake.reply({objectPath(kNoPrompt)});
+    }
+    QCOMPARE(removed.count, 1);
+    QCOMPARE(removed.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.pending(), -1);
+
+    // No matches: success, and nothing to delete.
+    const int before = fake.calls.size();
+    Captured none;
+    backend.remove(kKey, none.callback());
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    fake.reply({objectPaths({}), objectPaths({})});
+    QCOMPARE(none.count, 1);
+    QCOMPARE(none.reply.outcome, Outcome::Ok);
+    QCOMPARE(fake.calls.size(), before + 1);
+}
+
+void SecretBackendsTest::storeReachesTheSecretServiceOnGnome()
+{
+    qputenv("XDG_CURRENT_DESKTOP", "GNOME");
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    const QString vault = m_dir->filePath(QStringLiteral("secrets.ini"));
+    store.setLegacyFilePathForTests(vault);
+
+    const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    answerProbe(*fake, {kSecrets}, {});
+    if (QTest::currentTestFailed())
+        return;
+
+    QTRY_VERIFY(
+        nextIsSecrets(*fake, kSecretsPath, kServiceInterface, QStringLiteral("OpenSession")));
+    fake->reply({dbusVariant(QString()), objectPath(kSession)});
+    QVERIFY(nextIsSecrets(*fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    fake->reply({objectPath(kCollection)});
+    QTRY_VERIFY(nextIsSecrets(*fake, kCollection, kPropertiesInterface, QStringLiteral("Get")));
+    fake->reply({dbusVariant(false)});
+    QTRY_VERIFY(
+        nextIsSecrets(*fake, kCollection, kCollectionInterface, QStringLiteral("CreateItem")));
+    QCOMPARE(fake->next().arguments().at(1).value<DBusSecret>().value, kToken.toUtf8());
+    fake->reply({objectPath(kItem), objectPath(kNoPrompt)});
+
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::Wallet);
+    QCOMPARE(store.backendName(), QStringLiteral("Secret Service"));
+    QVERIFY(!QFile::exists(vault));
+    QCOMPARE(fake->pending(), -1);
+}
+
+void SecretBackendsTest::storeFallsFromKWalletToTheSecretService()
+{
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    const QString vault = m_dir->filePath(QStringLiteral("secrets.ini"));
+    store.setLegacyFilePathForTests(vault);
+
+    const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    answerProbe(*fake, {kKWallet6, kSecrets}, {});
+    if (QTest::currentTestFailed())
+        return;
+
+    QVERIFY(nextIsKWallet(*fake, 6, QStringLiteral("networkWallet")));
+    fake->replyError(dbusError("ServiceUnknown"));
+    QTRY_VERIFY(
+        nextIsSecrets(*fake, kSecretsPath, kServiceInterface, QStringLiteral("OpenSession")));
+    fake->reply({dbusVariant(QString()), objectPath(kSession)});
+    QVERIFY(nextIsSecrets(*fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    fake->reply({objectPath(kCollection)});
+    QTRY_VERIFY(nextIsSecrets(*fake, kCollection, kPropertiesInterface, QStringLiteral("Get")));
+    fake->reply({dbusVariant(false)});
+    QTRY_VERIFY(
+        nextIsSecrets(*fake, kCollection, kCollectionInterface, QStringLiteral("CreateItem")));
+    fake->reply({objectPath(kItem), objectPath(kNoPrompt)});
+
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::Wallet);
+    QCOMPARE(store.backendName(), QStringLiteral("Secret Service"));
+    QVERIFY(!QFile::exists(vault));
 }
 
 QTEST_GUILESS_MAIN(SecretBackendsTest)
