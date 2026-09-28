@@ -26,6 +26,10 @@ case "$target" in
 esac
 
 cmake_args=""
+case "$target" in
+    # No SDL3 package on these releases (spec §5): bundle the pinned static one.
+    ubuntu-24.04|debian-12) cmake_args="-DSTRMQT_BUNDLE_SDL3=ON" ;;
+esac
 
 case "$mode" in
     image) echo "$image"; exit 0 ;;

@@ -90,9 +90,7 @@ if(STRMQT_WITH_VLC)
 endif()
 # SDL3 is optional (PLAN §3.2): the app must build and run keyboard-only without it.
 option(STRMQT_WITH_SDL3 "Build SDL3 gamepad support" ON)
-if(STRMQT_WITH_SDL3)
-    pkg_check_modules(SDL3 IMPORTED_TARGET sdl3)
-endif()
+include(${CMAKE_SOURCE_DIR}/cmake/StrmQtSdl3.cmake)
 
 qt_add_executable(strmqt
     app/main.cpp
@@ -119,7 +117,7 @@ if(LIBVLC_FOUND)
         playback/vlc/VlcVideoItem.h playback/vlc/VlcVideoItem.cpp)
     target_compile_definitions(strmqt PRIVATE STRMQT_HAVE_VLC)
 endif()
-if(SDL3_FOUND)
+if(STRMQT_HAVE_SDL3)
     target_sources(strmqt PRIVATE input/GamepadManager.h input/GamepadManager.cpp)
     target_compile_definitions(strmqt PRIVATE STRMQT_HAVE_SDL3)
 endif()
@@ -226,8 +224,8 @@ if(LIBVLC_FOUND)
     target_include_directories(strmqt PRIVATE playback/vlc)
     target_link_libraries(strmqt PRIVATE PkgConfig::LIBVLC)
 endif()
-if(SDL3_FOUND)
-    target_link_libraries(strmqt PRIVATE PkgConfig::SDL3)
+if(STRMQT_HAVE_SDL3)
+    target_link_libraries(strmqt PRIVATE ${STRMQT_SDL3_TARGET})
 endif()
 
 # Headless Emby probe tool (M1 acceptance). Core-only: no QtGui.
