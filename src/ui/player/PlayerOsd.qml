@@ -232,7 +232,9 @@ Item {
     }
 
     function chapterName(index: int): string {
-        if (index < 0)
+        // The engine's chapter index can outlive the chapter list for a moment
+        // while one item hands over to the next.
+        if (index < 0 || index >= osd.chapters.length)
             return "";
         const name = osd.chapters[index].name;
         return (name !== undefined && String(name).length > 0)
