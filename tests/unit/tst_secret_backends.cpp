@@ -209,7 +209,7 @@ void answerPrompt(FakeDBusTransport &fake, bool dismissed)
 {
     QVERIFY(!fake.subscriptions.isEmpty());
     const FakeDBusTransport::Subscription s = fake.subscriptions.last();
-    QCOMPARE(s.service, QString());
+    QCOMPARE(s.service, kSecrets);
     QCOMPARE(s.path, kPrompt);
     QCOMPARE(s.interface, kPromptInterface);
     QCOMPARE(s.name, QStringLiteral("Completed"));
@@ -910,6 +910,10 @@ void SecretBackendsTest::secretServiceUnansweredPromptFails()
     // Nobody answers: the step fails (the vault), it does not try another keyring.
     QTRY_COMPARE(opened.count, 1);
     QCOMPARE(opened.reply.outcome, Outcome::Failed);
+    // ...and takes the keyring's dialog down, so a late answer stores nothing.
+    QVERIFY(nextIsSecrets(fake, kPrompt, kPromptInterface, QStringLiteral("Dismiss")));
+    QCOMPARE(fake.next().arguments(), QVariantList{});
+    fake.reply({});
     fake.emitSignal(kPrompt, kPromptInterface, QStringLiteral("Completed"),
                     {false, dbusVariant(objectPaths({}))});
     QCOMPARE(opened.count, 1);

@@ -267,8 +267,10 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
             done(reply);
     };
 
+    // Only the Secret Service's own Completed counts: with no sender filter,
+    // any session-bus peer could fake the user's answer.
     const bool subscribed = m_transport.connectSignal(
-        QString(), prompt.path(), kPromptInterface, QStringLiteral("Completed"), guard,
+        kService, prompt.path(), kPromptInterface, QStringLiteral("Completed"), guard,
         [finish, step](const QDBusMessage &signal) {
             const QVariantList arguments = signal.arguments();
             if (arguments.isEmpty())
@@ -285,8 +287,13 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
 
     auto *timer = new QTimer(guard);
     timer->setSingleShot(true);
-    QObject::connect(timer, &QTimer::timeout, guard, [finish, step] {
+    // The keyring's dialog stays up after the step gives in, and a late answer
+    // would store the secret there as well as in the vault: take it down.
+    QObject::connect(timer, &QTimer::timeout, guard, [this, alive, finish, step, prompt] {
         finish(outcome(Outcome::Failed, step, QStringLiteral("prompt not answered")));
+        if (!alive.expired())
+            send(prompt.path(), kPromptInterface, QStringLiteral("Dismiss"), {},
+                 [](const QDBusMessage &) {});
     });
     timer->start(m_promptTimeoutMs);
 
