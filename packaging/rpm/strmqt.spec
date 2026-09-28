@@ -24,6 +24,9 @@ Requires:       qt6-qtsvg%{?_isa} qt6-qtwayland%{?_isa}
 Requires:       vlc-plugins-base vlc-plugin-ffmpeg
 # kf6-kwallet ships ksecretd/kwalletd6; Fedora's "kwallet" is the KDE 4 one.
 Recommends:     (kf6-kwallet or gnome-keyring or keepassxc)
+# HDR detection shells out to kscreen-doctor, which Fedora ships in libkscreen
+# (the .deb recommends kscreen, Arch lists it as an optdepend).
+Recommends:     libkscreen
 
 %description
 StrmQt is a native Qt 6 / QML client for Emby media servers, built to be
