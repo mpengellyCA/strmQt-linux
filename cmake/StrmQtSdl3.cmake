@@ -47,6 +47,15 @@ if(STRMQT_BUNDLE_SDL3)
     # No EXCLUDE_FROM_ALL argument: it needs CMake 3.28 and the floor is 3.25.
     # SDL_INSTALL=OFF keeps it out of the install tree instead.
     FetchContent_MakeAvailable(SDL3)
+    # Disconnected mode (debhelper's default) with nothing fetched leaves no
+    # source and no SDL3 target, and the failure would surface later as an
+    # unexplained missing SDL3::SDL3-static.
+    if(NOT EXISTS "${sdl3_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "SDL3: STRMQT_BUNDLE_SDL3=ON, but the pinned 3.4.16 source was "
+                            "not fetched (FETCHCONTENT_FULLY_DISCONNECTED?). Set "
+                            "FETCHCONTENT_FULLY_DISCONNECTED=OFF, or STRMQT_BUNDLE_SDL3=OFF "
+                            "to use the system SDL3.")
+    endif()
     foreach(_auto AUTOMOC AUTOUIC AUTORCC)
         set(CMAKE_${_auto} ${_strmqt_saved_${_auto}})
     endforeach()
