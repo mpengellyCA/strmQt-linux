@@ -1,16 +1,16 @@
 #include "SecretsStore.h"
 
 #include "core/Log.h"
+#include "platform/secrets/DBusTransport.h"
+#include "platform/secrets/SecretBackend.h"
 
 #include <QCoreApplication>
-#include <QDBusConnection>
+#include <QDBusArgument>
 #include <QDBusMessage>
-#include <QDBusPendingCallWatcher>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
-#include <QPointer>
 #include <QPromise>
 #include <QSettings>
 #include <QStandardPaths>
@@ -20,11 +20,6 @@
 namespace strmqt {
 
 namespace {
-
-const auto kWalletService = QStringLiteral("org.kde.kwalletd6");
-const auto kWalletPath = QStringLiteral("/modules/kwalletd6");
-const auto kWalletInterface = QStringLiteral("org.kde.KWallet");
-const auto kWalletFolder = QStringLiteral("StrmQt");
 
 using LegacyEntries = QList<QPair<QString, QString>>;
 
@@ -37,45 +32,23 @@ struct LegacyScan
     bool ok() const { return error.isEmpty(); }
 };
 
-QString appId()
+QDBusMessage busMessage(const QString &method)
 {
-    const QString name = QCoreApplication::applicationName();
-    return name.isEmpty() ? QStringLiteral("strmqt") : name;
+    return QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.DBus"),
+                                          QStringLiteral("/org/freedesktop/DBus"),
+                                          QStringLiteral("org.freedesktop.DBus"), method);
 }
 
-QDBusMessage walletMessage(const QString &method, const QVariantList &arguments = {})
+// ListNames / ListActivatableNames answer `as`. The session bus hands that over as
+// a QStringList; accept a QDBusArgument too. A failed probe counts as no names.
+QStringList nameListReply(const QDBusMessage &reply)
 {
-    QDBusMessage message =
-        QDBusMessage::createMethodCall(kWalletService, kWalletPath, kWalletInterface, method);
-    message.setArguments(arguments);
-    return message;
-}
-
-template<class Completion>
-void watchCall(SecretsStore *store, const QDBusMessage &message, Completion completion)
-{
-    auto *watcher =
-        new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), store);
-    const QPointer<SecretsStore> self(store);
-    QObject::connect(watcher, &QDBusPendingCallWatcher::finished, watcher,
-                     [self, watcher, completion = std::move(completion)]() mutable {
-                         const QDBusMessage reply = watcher->reply();
-                         // Future settlement below is a reentrancy point: a
-                         // context-free continuation may synchronously delete
-                         // the store and its children. Detach and retire the
-                         // watcher before invoking any completion, then never
-                         // touch its raw pointer again.
-                         watcher->setParent(QCoreApplication::instance());
-                         watcher->deleteLater();
-                         if (self)
-                             completion(reply);
-                     });
-}
-
-QString dbusError(const QDBusMessage &reply)
-{
-    const QString message = reply.errorMessage();
-    return message.isEmpty() ? QStringLiteral("KWallet request failed") : message;
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() != 1)
+        return {};
+    const QVariant argument = reply.arguments().first();
+    if (argument.canConvert<QDBusArgument>())
+        return qdbus_cast<QStringList>(argument.value<QDBusArgument>());
+    return argument.toStringList();
 }
 
 template<class T> QFuture<Result<T>> startedFuture(std::shared_ptr<QPromise<Result<T>>> &promise)
@@ -107,7 +80,7 @@ void runLegacyTask(SecretsStore *store, Work work, Completion completion)
     QObject::connect(watcher, &QFutureWatcher<T>::finished, watcher,
                      [watcher, completion = std::move(completion)]() mutable {
                          T result = watcher->result();
-                         // See watchCall(): completion can synchronously delete
+                         // See SessionBusTransport::call(): completion can synchronously delete
                          // SecretsStore through the public operation's future.
                          watcher->setParent(QCoreApplication::instance());
                          watcher->deleteLater();
@@ -205,7 +178,15 @@ Result<QString> readPlaintextSecretFile(const QString &path, const QString &key)
 
 } // namespace
 
-SecretsStore::SecretsStore(QObject *parent) : QObject(parent) {}
+SecretsStore::SecretsStore(QObject *parent)
+    : SecretsStore(std::make_shared<secrets::SessionBusTransport>(), parent)
+{
+}
+
+SecretsStore::SecretsStore(std::shared_ptr<secrets::DBusTransport> transport, QObject *parent)
+    : QObject(parent), m_transport(std::move(transport))
+{
+}
 
 SecretsStore::SecretsStore(const QString &fallbackFilePath, QObject *parent)
     : QObject(parent), m_forcedFallbackPath(fallbackFilePath),
@@ -339,7 +320,7 @@ void SecretsStore::startWalletInitialization()
     if (m_initialization != InitializationState::NotStarted)
         return;
     if (!walletTransportAvailable()) {
-        qCWarning(logCore) << "kwalletd6 not reachable; secrets fall back to the vault file"
+        qCWarning(logCore) << "session bus not reachable; secrets fall back to the vault file"
                            << fallbackFilePath();
         setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
@@ -566,80 +547,190 @@ QString SecretsStore::fallbackFilePath() const
     return dir + QStringLiteral("/secrets.ini");
 }
 
-bool SecretsStore::walletTransportAvailable() const
+QString SecretsStore::backendName() const
 {
-    return QDBusConnection::sessionBus().isConnected();
+    switch (m_storageMode) {
+    case StorageMode::Wallet:
+        // No backend object only under FakeSecretsStore, whose seam bypasses them.
+        return m_backend ? m_backend->name() : QStringLiteral("keyring");
+    case StorageMode::PlaintextFallback:
+        return QStringLiteral("vault file");
+    case StorageMode::Unknown:
+        break;
+    }
+    return {};
 }
 
+bool SecretsStore::walletTransportAvailable() const
+{
+    return m_transport && m_transport->connected();
+}
+
+// Probe the session bus once for who owns or could start a keyring, then try the
+// candidates in order (spec 2026-09-27 §6.2). The log names backends only, never
+// a key or a value.
 void SecretsStore::requestNetworkWallet()
 {
-    watchCall(this, walletMessage(QStringLiteral("networkWallet")),
-              [this](const QDBusMessage &reply) {
-                  const QVariantList arguments = reply.arguments();
-                  const bool valid = reply.type() != QDBusMessage::ErrorMessage &&
-                                     arguments.size() == 1 &&
-                                     arguments.first().metaType().id() == QMetaType::QString;
-                  completeNetworkWallet(valid, valid ? arguments.first().toString() : QString(),
-                                        dbusError(reply));
-              });
+    if (m_probed) {
+        tryNextBackend();
+        return;
+    }
+    m_probed = true;
+    m_transport->call(
+        busMessage(QStringLiteral("ListNames")), this, [this](const QDBusMessage &ownedReply) {
+            const QStringList owned = nameListReply(ownedReply);
+            m_transport->call(
+                busMessage(QStringLiteral("ListActivatableNames")), this,
+                [this, owned](const QDBusMessage &activatableReply) {
+                    m_candidates =
+                        secrets::chooseSecretBackends(owned, nameListReply(activatableReply),
+                                                      qEnvironmentVariable("XDG_CURRENT_DESKTOP"));
+                    QStringList names;
+                    for (const secrets::BackendKind kind : std::as_const(m_candidates))
+                        names.append(secrets::backendKindName(kind));
+                    qCInfo(logCore).noquote()
+                        << "secrets: keyring candidates"
+                        << (names.isEmpty() ? QStringLiteral("(none)")
+                                            : names.join(QStringLiteral(", ")));
+                    tryNextBackend();
+                });
+        });
+}
+
+// Replaces m_backend with the next candidate this build can drive. A kind with
+// no backend is skipped as unavailable.
+bool SecretsStore::takeNextBackend()
+{
+    m_backend.reset();
+    while (!m_backend && !m_candidates.isEmpty()) {
+        const secrets::BackendKind kind = m_candidates.takeFirst();
+        m_backend = secrets::makeSecretBackend(kind, *m_transport, this);
+        if (!m_backend)
+            qCInfo(logCore).noquote()
+                << "secrets:" << secrets::backendKindName(kind) << "is not supported; skipping";
+    }
+    return m_backend != nullptr;
+}
+
+// Unavailable moves on to the next candidate. The move is queued, so the backend
+// whose callback is running is never destroyed on its own stack.
+void SecretsStore::tryNextBackend()
+{
+    if (m_initialization != InitializationState::NetworkWalletPending)
+        return;
+    if (!takeNextBackend()) {
+        completeNetworkWallet(false, {}, QStringLiteral("no keyring reachable"));
+        return;
+    }
+    m_backend->prepare([this](const secrets::Reply &reply) {
+        switch (reply.outcome) {
+        case secrets::Outcome::Ok:
+            completeNetworkWallet(true, m_backend->name());
+            return;
+        case secrets::Outcome::Unavailable:
+            qCInfo(logCore).noquote()
+                << "secrets:" << m_backend->name() << "unavailable:" << reply.error;
+            QMetaObject::invokeMethod(this, &SecretsStore::tryNextBackend, Qt::QueuedConnection);
+            return;
+        case secrets::Outcome::Refused:
+        case secrets::Outcome::Failed:
+            break;
+        }
+        completeNetworkWallet(false, {}, reply.error);
+    });
 }
 
 void SecretsStore::requestOpenWallet(const QString &walletName)
 {
-    watchCall(this,
-              walletMessage(QStringLiteral("open"),
-                            {walletName, QVariant::fromValue(qlonglong(0)), appId()}),
-              [this](const QDBusMessage &reply) {
-                  const QVariantList arguments = reply.arguments();
-                  const bool valid = reply.type() != QDBusMessage::ErrorMessage &&
-                                     arguments.size() == 1 &&
-                                     arguments.first().metaType().id() == QMetaType::Int;
-                  completeOpenWallet(valid, valid ? arguments.first().toInt() : -1,
-                                     dbusError(reply));
-              });
+    Q_UNUSED(walletName) // the backend kept its own wallet name from prepare()
+    openCurrentBackend();
+}
+
+// A refusal goes to the vault without asking a second keyring (spec §6.2). A
+// keyring that vanished between prepare and open hands over to the next one.
+void SecretsStore::openCurrentBackend()
+{
+    if (!m_backend) {
+        completeOpenWallet(false, -1, QStringLiteral("no keyring reachable"));
+        return;
+    }
+    m_backend->open([this](const secrets::Reply &reply) {
+        switch (reply.outcome) {
+        case secrets::Outcome::Ok:
+            completeOpenWallet(true, 0);
+            return;
+        case secrets::Outcome::Unavailable:
+            qCInfo(logCore).noquote()
+                << "secrets:" << m_backend->name() << "unavailable:" << reply.error;
+            QMetaObject::invokeMethod(this, &SecretsStore::openNextBackend, Qt::QueuedConnection);
+            return;
+        case secrets::Outcome::Refused:
+        case secrets::Outcome::Failed:
+            break;
+        }
+        completeOpenWallet(false, -1, reply.error);
+    });
+}
+
+// The OpenPending counterpart of tryNextBackend(): prepare the next candidate,
+// then open it; only its final result completes the open.
+void SecretsStore::openNextBackend()
+{
+    if (m_initialization != InitializationState::OpenPending)
+        return;
+    if (!takeNextBackend()) {
+        completeOpenWallet(false, -1, QStringLiteral("no keyring reachable"));
+        return;
+    }
+    m_backend->prepare([this](const secrets::Reply &reply) {
+        switch (reply.outcome) {
+        case secrets::Outcome::Ok:
+            openCurrentBackend();
+            return;
+        case secrets::Outcome::Unavailable:
+            qCInfo(logCore).noquote()
+                << "secrets:" << m_backend->name() << "unavailable:" << reply.error;
+            QMetaObject::invokeMethod(this, &SecretsStore::openNextBackend, Qt::QueuedConnection);
+            return;
+        case secrets::Outcome::Refused:
+        case secrets::Outcome::Failed:
+            break;
+        }
+        completeOpenWallet(false, -1, reply.error);
+    });
 }
 
 void SecretsStore::requestWritePassword(const QString &key, const QString &value)
 {
-    watchCall(this,
-              walletMessage(QStringLiteral("writePassword"),
-                            {m_walletHandle, kWalletFolder, key, value, appId()}),
-              [this](const QDBusMessage &reply) {
-                  const QVariantList arguments = reply.arguments();
-                  const bool valid = reply.type() != QDBusMessage::ErrorMessage &&
-                                     arguments.size() == 1 &&
-                                     arguments.first().metaType().id() == QMetaType::Int;
-                  completeWritePassword(valid && arguments.first().toInt() == 0, dbusError(reply));
-              });
+    if (!m_backend) {
+        completeWritePassword(false, QStringLiteral("no keyring"));
+        return;
+    }
+    m_backend->write(key, value, [this](const secrets::Reply &reply) {
+        completeWritePassword(reply.outcome == secrets::Outcome::Ok, reply.error);
+    });
 }
 
 void SecretsStore::requestReadPassword(const QString &key)
 {
-    watchCall(this,
-              walletMessage(QStringLiteral("readPassword"),
-                            {m_walletHandle, kWalletFolder, key, appId()}),
-              [this](const QDBusMessage &reply) {
-                  const QVariantList arguments = reply.arguments();
-                  const bool valid = reply.type() != QDBusMessage::ErrorMessage &&
-                                     arguments.size() == 1 &&
-                                     arguments.first().metaType().id() == QMetaType::QString;
-                  completeReadPassword(valid, valid ? arguments.first().toString() : QString(),
-                                       dbusError(reply));
-              });
+    if (!m_backend) {
+        completeReadPassword(false, {}, QStringLiteral("no keyring"));
+        return;
+    }
+    m_backend->read(key, [this](const secrets::Reply &reply) {
+        completeReadPassword(reply.outcome == secrets::Outcome::Ok, reply.value, reply.error);
+    });
 }
 
 void SecretsStore::requestRemoveEntry(const QString &key)
 {
-    watchCall(
-        this,
-        walletMessage(QStringLiteral("removeEntry"), {m_walletHandle, kWalletFolder, key, appId()}),
-        [this](const QDBusMessage &reply) {
-            const QVariantList arguments = reply.arguments();
-            const bool valid = reply.type() != QDBusMessage::ErrorMessage &&
-                               arguments.size() == 1 &&
-                               arguments.first().metaType().id() == QMetaType::Int;
-            completeRemoveEntry(valid && arguments.first().toInt() == 0, dbusError(reply));
-        });
+    if (!m_backend) {
+        completeRemoveEntry(false, QStringLiteral("no keyring"));
+        return;
+    }
+    m_backend->remove(key, [this](const secrets::Reply &reply) {
+        completeRemoveEntry(reply.outcome == secrets::Outcome::Ok, reply.error);
+    });
 }
 
 } // namespace strmqt

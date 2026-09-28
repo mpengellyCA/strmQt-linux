@@ -3,6 +3,7 @@
 #include "core/Result.h"
 
 #include <QFuture>
+#include <QList>
 #include <QObject>
 #include <QQueue>
 #include <QString>
@@ -13,8 +14,15 @@
 
 namespace strmqt {
 
-// Secret storage for auth tokens. Talks to KWallet asynchronously over D-Bus
-// (org.kde.kwalletd6) when available — no KF6 link dependency. When the wallet is
+namespace secrets {
+class DBusTransport;
+class SecretBackend;
+enum class BackendKind;
+} // namespace secrets
+
+// Secret storage for auth tokens. Talks to a system keyring asynchronously over
+// D-Bus when one is reachable — KWallet 6, then KWallet 5 (platform/secrets/), no
+// KF link dependency. When the keyring is
 // unreachable or the open is rejected, secrets persist to a vault file instead
 // (<AppDataLocation>/secrets.ini, owner-only 0600) — lower security, surfaced to the
 // user through the storageMode property. A vault written while the wallet was down is
@@ -26,6 +34,8 @@ class SecretsStore : public QObject
     Q_OBJECT
     Q_PROPERTY(StorageMode storageMode READ storageMode NOTIFY storageModeChanged)
     Q_PROPERTY(bool persistent READ persistent NOTIFY storageModeChanged)
+    // The active keyring's name in Wallet mode, "vault file" in PlaintextFallback, "" when Unknown.
+    Q_PROPERTY(QString backendName READ backendName NOTIFY storageModeChanged)
 
 public:
     enum class StorageMode
@@ -37,6 +47,10 @@ public:
     Q_ENUM(StorageMode)
 
     explicit SecretsStore(QObject *parent = nullptr);
+    // Reaches the keyrings through `transport` (tests inject a fake; see
+    // tests/mocks/FakeDBusTransport.h). The default constructor uses the session bus.
+    explicit SecretsStore(std::shared_ptr<secrets::DBusTransport> transport,
+                          QObject *parent = nullptr);
     // Test seam: force vault-file mode against this INI path, bypassing the wallet.
     explicit SecretsStore(const QString &fallbackFilePath, QObject *parent = nullptr);
     ~SecretsStore() override;
@@ -50,6 +64,7 @@ public:
         return m_storageMode == StorageMode::Wallet ||
                m_storageMode == StorageMode::PlaintextFallback;
     }
+    QString backendName() const;
 
     QFuture<Result<bool>> writeSecret(const QString &key, const QString &value);
     QFuture<Result<QString>> readSecret(const QString &key);
@@ -68,8 +83,9 @@ signals:
     void storageModeChanged();
 
 protected:
-    // Narrow transport seam. Production implementations issue QDBusConnection::asyncCall;
-    // tests hold these requests and complete them later without a live wallet daemon.
+    // Narrow transport seam. Production implementations delegate to the chosen keyring
+    // backend over the D-Bus transport; tests hold these requests and complete them
+    // later without a live wallet daemon.
     virtual bool walletTransportAvailable() const;
     virtual void requestNetworkWallet();
     virtual void requestOpenWallet(const QString &walletName);
@@ -121,6 +137,10 @@ private:
     void setStorageMode(StorageMode mode);
     QString fallbackFilePath() const;
     void removeLegacyForCurrent(Result<QString> operationResult);
+    bool takeNextBackend();
+    void tryNextBackend();
+    void openCurrentBackend();
+    void openNextBackend();
 
     int m_walletHandle = -1;
     QString m_forcedFallbackPath;
@@ -132,6 +152,10 @@ private:
     qsizetype m_legacyIndex = 0;
     bool m_legacyMigrationSucceeded = true;
     quint64 m_identity = 0;
+    std::shared_ptr<secrets::DBusTransport> m_transport;
+    QList<secrets::BackendKind> m_candidates;
+    bool m_probed = false;
+    std::unique_ptr<secrets::SecretBackend> m_backend;
 };
 
 } // namespace strmqt

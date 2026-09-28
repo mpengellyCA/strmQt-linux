@@ -20,6 +20,8 @@ strmqt_add_test(tst_music_mapper unit/tst_music_mapper.cpp)
 strmqt_add_test(tst_music_query_translator unit/tst_music_query_translator.cpp)
 strmqt_add_test(tst_music_user_data_relay unit/tst_music_user_data_relay.cpp)
 strmqt_add_test(tst_secrets_store unit/tst_secrets_store.cpp)
+strmqt_add_test(tst_secret_backends unit/tst_secret_backends.cpp)
+target_include_directories(tst_secret_backends PRIVATE mocks)
 
 strmqt_add_test(tst_models unit/tst_models.cpp)
 strmqt_add_test(tst_music_models unit/tst_music_models.cpp)
