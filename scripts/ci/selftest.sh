@@ -10,7 +10,11 @@ bin=${1:?usage: selftest.sh BINARY [LOG]}
 log=${2:-$(mktemp)}
 
 status=0
+# The page lines are console.log, category qml at debug level. Fedora's Qt
+# ships /usr/share/qt6/qtlogging.ini with *.debug=false; the environment's
+# rules win over that file.
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen QT_ASSUME_STDERR_HAS_CONSOLE=1 \
+    QT_LOGGING_RULES="qml.debug=true" \
     "$bin" >"$log" 2>&1 || status=$?
 cat "$log"
 

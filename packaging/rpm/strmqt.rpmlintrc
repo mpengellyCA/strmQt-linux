@@ -1,0 +1,7 @@
+# rpmlint overrides for strmqt (scripts/ci/package-rpm.sh passes this with -r).
+
+# Words the dictionary lacks but the description means: game controllers, and
+# the names of the two playback libraries.
+addFilter(r"spelling-error \('(gamepad|libmpv|libvlc)'")
+# GUI app; strmqt-cli --help documents itself.
+addFilter(r"no-manual-page-for-binary strmqt(-cli)?$")

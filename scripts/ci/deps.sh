@@ -40,13 +40,7 @@ esac
 # (installed below with mk-build-deps). qt6-tools-dev is deliberately absent:
 # nothing here uses Qt Tools, and bookworm's is a mismatched 6.4.2~rc1.
 
-dnf_pkgs=(
-    gcc-c++ cmake ninja-build pkgconf git-core file
-    qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel
-    qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtsvg qt6-qtwayland
-    mpv-devel vlc-devel vlc-plugins-base vlc-plugin-ffmpeg SDL3-devel openssl-devel
-    ffmpeg-free mesa-dri-drivers
-)
+# Fedora: packaging/rpm/strmqt.spec's BuildRequires is the single list (dnf builddep below).
 
 case "$target" in
     ubuntu-*|debian-*)
@@ -60,6 +54,8 @@ case "$target" in
         rm -rf "$work"
         ;;
     fedora-*)
-        dnf install -y --setopt=install_weak_deps=False "${dnf_pkgs[@]}"
+        dnf install -y --setopt=install_weak_deps=False dnf-plugins-core rpm-build rpmlint git-core
+        dnf builddep -y --setopt=install_weak_deps=False \
+            "$(cd "$(dirname "$0")/../.." && pwd)/packaging/rpm/strmqt.spec"
         ;;
 esac

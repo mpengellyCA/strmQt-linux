@@ -283,3 +283,40 @@ Found on the way:
 
 C(debian-13) on the image `deps.sh` now builds from `control` (mk-build-deps): `SDL3: system 3.2.10`,
 `100% tests passed, 0 tests failed out of 75`, `selftest.sh: OK`, `check.sh: OK (full)`.
+
+## Task 16: native .rpm packages
+
+Built with `scripts/ci/local.sh $T /tmp/w16a-$T -- bash -c "TMPDIR=/var/tmp /src/scripts/ci/package-rpm.sh $T /build/out"`
+(the rpmbuild tree in the container's own filesystem, removed by the script's EXIT trap), then install-checked in
+the **bare** Fedora image, glob and `rpm -qp` inside the container (ruling R10):
+`podman run --rm --security-opt label=disable -v /tmp/w16a-$T/out:/pkgs:ro -v "$PWD:/src:ro" $(scripts/ci/deps.sh --image $T) bash -c '/src/scripts/ci/install-check.sh /pkgs/*.rpm && rpm -qp --requires /pkgs/*.rpm | grep -E "qtdeclarative|svg|SDL3"'`.
+
+| Target | Package | Build | %check ctest | rpmlint | Install pulls (Qt/SDL) | Self-test |
+|---|---|---|---|---|---|---|
+| fedora-43 | `strmqt-0.7.5-1.fc43.x86_64.rpm` | full, system SDL3 3.4.16 | 75/75 | 0 errors, 0 warnings, 8 filtered | `qt6-qtdeclarative 6.10.3`, `qt6-qtsvg`, `qt6-qtwayland`, `SDL3 3.4.16` | `QML tier: full on Qt 6.10.3`, 15/15, `selftest.sh: OK` |
+| fedora-44 | `strmqt-0.7.5-1.fc44.x86_64.rpm` | full, system SDL3 3.4.16 | 75/75 | 0 errors, 0 warnings, 8 filtered | `qt6-qtdeclarative 6.11.2`, `qt6-qtsvg`, `qt6-qtwayland`, `SDL3 3.4.16` | `QML tier: full on Qt 6.11.2`, 15/15, `selftest.sh: OK` |
+
+Both self-tests log `SDL3 gamepad support active`. `rpm -qp --requires` excerpts: fc43
+`qt6-qtdeclarative(x86-64) = 6.10.3`, fc44 `qt6-qtdeclarative(x86-64) = 6.11.2`; both `qt6-qtsvg(x86-64)`,
+`libSDL3.so.0(SDL3_0.0.0)(64bit)`. `%{_qt6_version}` (qt6-rpm-macros) expands to the installed Qt on both, so no
+`--define` is needed. Fedora's `qt6-qtdeclarative` carries every QML module the app imports (QtQuick,
+QtQuick.Controls.Basic, QtQuick.Templates, QtQuick.Window, QtQuick.Effects), so the pin doubles as the QML
+Requires; `qt6-qtsvg` is the SVG image plugin.
+
+rpmlint (8 filtered = Fedora's own 3 plus 5 in `packaging/rpm/strmqt.rpmlintrc`): `spelling-error` for `gamepad`,
+`libmpv`, `libvlc` in `%description`, and `no-manual-page-for-binary` for `strmqt` / `strmqt-cli` (same reason as
+the lintian override).
+
+Found on the way:
+
+- rpmlint `E: binary-or-shlib-defines-rpath /usr/bin/strmqt (RUNPATH: $ORIGIN:$ORIGIN/../lib64)`: Qt's
+  `qt_standard_project_setup()` sets an `$ORIGIN` install RPATH. The spec's `%cmake` adds
+  `-DCMAKE_SKIP_INSTALL_RPATH=ON`.
+- The first install check stopped at `selftest.sh: not every page was constructed` with the app exiting 0: Fedora's
+  qt6-qtbase ships `/usr/share/qt6/qtlogging.ini` with `*.debug=false`, which silences `console.log` (category
+  `qml`, debug), so the per-page lines and the summary never reached the log. `selftest.sh` now runs the binary with
+  `QT_LOGGING_RULES="qml.debug=true"`. This also affected `check.sh` (C(fedora-*)) before this task.
+
+C(fedora-43) on the image `deps.sh` now builds with `dnf builddep` from the spec: `SDL3: system 3.4.16`,
+`100% tests passed, 0 tests failed out of 75`, `selftest: 15/15 pages constructed`, `selftest.sh: OK`,
+`check.sh: OK (full)`.
