@@ -221,7 +221,7 @@ The core of it has been exercised against a live Emby 4.9 server: browsing, sear
 playback of video and audio, live updates over a WebSocket, playlists, favourites,
 resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 75/75 on Qt 6.4.2, 6.8.2, 6.10 and
+The build is clean under `-Werror`, `ctest` passes 76/76 on Qt 6.4.2, 6.8.2, 6.10 and
 6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
 page-construction self-test builds all 15 screens on every release.
 

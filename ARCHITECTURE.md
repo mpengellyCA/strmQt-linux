@@ -523,7 +523,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 75 suites
+ctest --preset dev                     # 76 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
