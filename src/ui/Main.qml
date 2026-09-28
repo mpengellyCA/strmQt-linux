@@ -1616,7 +1616,7 @@ ApplicationWindow {
 
         function onSecretStorageChanged() {
             if (Session.secretStorage === "vault")
-                toasts.show(qsTr("KWallet is unavailable or refused the write — your sign-in will be stored in a vault file with lower security."),
+                toasts.show(qsTr("No system keyring (KWallet or Secret Service) accepted your sign-in — it will be stored in a vault file with lower security."),
                             "warning");
         }
     }

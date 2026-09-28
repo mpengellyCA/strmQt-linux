@@ -111,6 +111,11 @@ QString SessionController::secretStorage() const
     return QStringLiteral("unknown");
 }
 
+QString SessionController::secretBackend() const
+{
+    return m_secrets->backendName();
+}
+
 QVariantList SessionController::profiles() const
 {
     return m_settings->accountProfiles();

@@ -5,9 +5,9 @@ import StrmQt
 // request) the server + credentials form.
 //
 // The password is never stored. `Session.login()` exchanges it for a token;
-// KWallet persists that token when available, otherwise it falls back to the
-// vault file — lower security, and the banner below says so. The password
-// field is cleared as sign-in is issued.
+// the system keyring persists that token when available, otherwise it falls
+// back to the vault file — lower security, and the banner below says so. The
+// password field is cleared as sign-in is issued.
 //
 // This is the first screen anyone sees, so it gets the projection-booth
 // treatment in full (ARCHITECTURE.md): warm near-black ground, one amber beam
@@ -351,7 +351,7 @@ FocusScope {
 
         // ── Storage-mode warning ───────────────────────────────────────────
         // The vault file is a deliberate fallback, not a silent one: when the
-        // token will not live in KWallet, the login screen says so.
+        // token will not live in a system keyring, the login screen says so.
         Row {
             width: parent.width
             spacing: Theme.spacingTight
@@ -365,7 +365,7 @@ FocusScope {
 
             Text {
                 width: parent.width - Theme.iconSize - Theme.spacingTight
-                text: qsTr("KWallet is unavailable, so your sign-in will be stored in a vault file with lower security — anyone who can read your home folder could take it.")
+                text: qsTr("No system keyring (KWallet or Secret Service) is available, so your sign-in will be stored in a vault file with lower security — anyone who can read your home folder could take it.")
                 color: Theme.textSecondaryColor
                 font.family: Theme.fontBody
                 font.pixelSize: Theme.fontSmall
@@ -378,7 +378,7 @@ FocusScope {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: qsTr("StrmQt %1 · passwords are never stored · access tokens use KWallet, or a vault file when none is available")
+            text: qsTr("StrmQt %1 · passwords are never stored · access tokens use your system keyring, or a vault file when none is available")
                       .arg(Qt.application.version)
             color: Theme.textTertiary
             font.family: Theme.fontMono

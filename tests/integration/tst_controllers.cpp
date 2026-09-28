@@ -66,6 +66,8 @@ private slots:
     void delayedWalletRestoreIsRetiredByLogout();
     void loginSupersedesADelayedWalletRestore();
     void logoutDuringDelayedTokenWriteCannotReauthenticate();
+    void secretBackendFollowsTheVault();
+    void secretBackendFollowsTheWallet();
     void serverUrlPolicyRejectsUnsafeAddresses();
     void loginRegistersAServerTaggedProfile();
     void switchUserKeepsTheProfileAndSelectRestoresIt();
@@ -318,6 +320,50 @@ void ControllersTest::loginSupersedesADelayedWalletRestore()
     QTRY_VERIFY(session.authenticated());
     QCOMPARE(m_client->accessToken(), kToken);
     QCOMPARE(m_client->userId(), kUserId);
+}
+
+void ControllersTest::secretBackendFollowsTheVault()
+{
+    // No session bus: the store engages the vault file, which test mode keeps
+    // out of the real app data directory.
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restorePaths = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+    test::FakeSecretsStore secrets;
+    secrets.available = false;
+    secrets.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("missing-legacy.ini")));
+    SessionController session(m_settings, &secrets, m_client);
+    QSignalSpy changed(&session, &SessionController::secretStorageChanged);
+    QVERIFY(session.secretBackend().isEmpty());
+
+    awaitResult(secrets.readSecret(QStringLiteral("strmqt-test-probe")));
+    QVERIFY(secrets.calls.isEmpty());
+
+    QCOMPARE(session.secretStorage(), QStringLiteral("vault"));
+    QCOMPARE(session.secretBackend(), QStringLiteral("vault file"));
+    QCOMPARE(session.property("secretBackend").toString(), QStringLiteral("vault file"));
+    QCOMPARE(changed.count(), 1);
+}
+
+void ControllersTest::secretBackendFollowsTheWallet()
+{
+    test::FakeSecretsStore secrets;
+    secrets.setLegacyFilePathForTests(m_dir->filePath(QStringLiteral("missing-legacy.ini")));
+    SessionController session(m_settings, &secrets, m_client);
+    QSignalSpy changed(&session, &SessionController::secretStorageChanged);
+    QVERIFY(session.secretBackend().isEmpty());
+
+    auto read = secrets.readSecret(QStringLiteral("probe"));
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::NetworkWallet));
+    secrets.replyNetworkWallet(true);
+    secrets.replyOpen(true);
+    QTRY_VERIFY(lastSecretCallIs(secrets, test::FakeSecretsStore::CallType::Read));
+    secrets.replyRead(true, kToken);
+    QCOMPARE(awaitResult(read).value, kToken);
+
+    QCOMPARE(session.secretStorage(), QStringLiteral("wallet"));
+    QCOMPARE(session.secretBackend(), QStringLiteral("keyring"));
+    QCOMPARE(session.property("secretBackend").toString(), QStringLiteral("keyring"));
+    QCOMPARE(changed.count(), 1);
 }
 
 void ControllersTest::serverUrlPolicyRejectsUnsafeAddresses()

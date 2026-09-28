@@ -1179,8 +1179,10 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: LiveCtl.c
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: LiveCtl.transport
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: PlayerCtl.volume
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: Session.playbackEngine
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: Session.secretBackend
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: Session.username
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: String(Session.serverUrl)
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	visible: Session.secretBackend.length > 0
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	PlayerCtl.seekTo(Number(panel.chapters[index].startMs));
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	PlayerCtl.seekToChapter(index);
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	if (typeof PlayerCtl.seekToChapter === "function")

@@ -737,6 +737,15 @@ FocusScope {
                         value: Session.username
                     }
 
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        label: qsTr("Credentials")
+                        // "KWallet", "KWallet 5", "Secret Service" or "vault file"
+                        // (SecretsStore::backendName); empty until first used.
+                        value: Session.secretBackend
+                        visible: Session.secretBackend.length > 0
+                    }
+
                     // Server version: SessionController does not surface one
                     // yet (EmbyClient::publicSystemInfo() has it, nothing keeps
                     // it). The row appears the moment a `Session.serverVersion`

@@ -28,9 +28,12 @@ class SessionController : public QObject
     Q_PROPERTY(QUrl serverUrl READ serverUrl WRITE setServerUrl NOTIFY serverUrlChanged)
     Q_PROPERTY(QString playbackEngine READ playbackEngine WRITE setPlaybackEngine NOTIFY
                    playbackEngineChanged)
-    // "wallet", "vault" (KWallet unavailable — lower security, warn the user),
+    // "wallet", "vault" (no system keyring — lower security, warn the user),
     // or "unknown" before the first secret operation.
     Q_PROPERTY(QString secretStorage READ secretStorage NOTIFY secretStorageChanged)
+    // The keyring holding the token (SecretsStore::backendName): "KWallet",
+    // "KWallet 5", "Secret Service" or "vault file"; empty before first use.
+    Q_PROPERTY(QString secretBackend READ secretBackend NOTIFY secretStorageChanged)
     // Saved accounts, most recently used first; QVariantMaps with serverUrl,
     // userId, username, lastUsed. Backs the login screen's profile picker.
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
@@ -53,6 +56,7 @@ public:
     QString playbackEngine() const;
     void setPlaybackEngine(const QString &engine); // applies on next launch
     QString secretStorage() const;
+    QString secretBackend() const;
     QVariantList profiles() const;
     bool profilePickerAtStart() const;
     void setProfilePickerAtStart(bool enabled);

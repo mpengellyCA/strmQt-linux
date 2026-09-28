@@ -57,10 +57,15 @@ finish-args:
   # The entire point of the app: HTTP(S) to the Emby server, plus streaming.
   - --share=network
   # ── D-Bus ──────────────────────────────────────────────────────────────────
-  # KWallet is the SecretsStore backend. Load-bearing for security: without this
-  # name the wallet is unreachable inside the sandbox and SecretsStore falls back
-  # to the vault file (app data dir, 0600) — the login screen warns while so.
+  # The system keyring is the SecretsStore backend (ARCHITECTURE.md §8). Load-
+  # bearing for security: without these names no keyring is reachable inside
+  # the sandbox and SecretsStore falls back to the vault file (app data dir,
+  # 0600) — the login screen warns while so. Probed in this order: KWallet 6
+  # (Plasma 6), KWallet 5 (Plasma 5.27), the freedesktop Secret Service
+  # (gnome-keyring, KeePassXC).
   - --talk-name=org.kde.kwalletd6
+  - --talk-name=org.kde.kwalletd5
+  - --talk-name=org.freedesktop.secrets
   # MPRIS2: media-key handling, KDE Connect remote control, Plasma media applet.
   - --own-name=org.mpris.MediaPlayer2.strmqt
   # The wildcard is required for the `org.mpris.MediaPlayer2.strmqt.instance<pid>`
