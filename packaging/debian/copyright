@@ -1,6 +1,11 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: StrmQt
 Source: https://github.com/mpengellyCA/strmQt-linux
+Comment: The Ubuntu 24.04 and Debian 12 packages statically link SDL3 3.4.16
+ (https://libsdl.org), which is fetched at build time and so has no path in
+ this source tree. Copyright (C) 1997-2026 Sam Lantinga
+ <slouken@libsdl.org>, under the Zlib license below; its LICENSE.txt is also
+ installed as /usr/share/doc/strmqt/SDL3-LICENSE.txt.
 
 Files: *
 Copyright: 2026 Mike Pengelly
@@ -11,16 +16,30 @@ Copyright: 2020 The Archivo Project Authors
            2017 IBM Corp.
            2015 The Public Sans Project Authors
 License: OFL-1.1
-Comment: Embedded in the executable as Qt resources. Full texts:
- assets/fonts/OFL-Archivo.txt, OFL-IBMPlexMono.txt, OFL-PublicSans.txt.
-
-Comment: SDL3
- The Ubuntu 24.04 and Debian 12 packages statically link SDL3 3.4.16
- (https://libsdl.org), Copyright (C) 1997-2026 Sam Lantinga, under the zlib
- license; its text is installed as /usr/share/doc/strmqt/SDL3-LICENSE.txt.
+Comment: Embedded in the executable as Qt resources. Each font's own copyright
+ notice and the full licence text are installed in /usr/share/doc/strmqt/ as
+ OFL-Archivo.txt, OFL-IBMPlexMono.txt and OFL-PublicSans.txt.
 
 License: GPL-3.0-or-later
  On Debian systems, the full text is in /usr/share/common-licenses/GPL-3.
 
 License: OFL-1.1
- SIL Open Font License, Version 1.1. See the OFL-*.txt files named above.
+ SIL Open Font License, Version 1.1. The full text is installed in
+ /usr/share/doc/strmqt/ with each font's copyright notice (OFL-*.txt).
+
+License: Zlib
+ This software is provided 'as-is', without any express or implied
+ warranty.  In no event will the authors be held liable for any damages
+ arising from the use of this software.
+ .
+ Permission is granted to anyone to use this software for any purpose,
+ including commercial applications, and to alter it and redistribute it
+ freely, subject to the following restrictions:
+ .
+ 1. The origin of this software must not be misrepresented; you must not
+    claim that you wrote the original software. If you use this software
+    in a product, an acknowledgment in the product documentation would be
+    appreciated but is not required.
+ 2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+ 3. This notice may not be removed or altered from any source distribution.

@@ -10,10 +10,11 @@ Build-Depends: debhelper-compat (= 13),
 # An or-group already satisfied by a package something else pulls in installs
 # nothing, and libsdl2-dev pulls libudev-dev, qt6-svg-dev pulls libqt6svg6. The
 # version bounds keep the second alternative from satisfying the group on
-# trixie and 26.04 (systemd 257+, Qt 6.8+), where SDL3 and the separate SVG
-# plugin package exist; noble and bookworm (systemd 255/252, Qt 6.4) take it.
+# trixie and 26.04 (systemd 257+, Qt 6.8+), where SDL3, QtQuick.Effects and
+# the separate SVG plugin package exist; noble and bookworm (systemd 255/252,
+# Qt 6.4) take it.
                libsdl3-dev | libudev-dev (<< 256),
-               qml6-module-qtquick-effects | qml6-module-qt5compat-graphicaleffects,
+               qml6-module-qtquick-effects | qml6-module-qt5compat-graphicaleffects (<< 6.5),
                qt6-svg-plugins | libqt6svg6 (<< 6.5),
                qml6-module-qtquick <!nocheck>, qml6-module-qtquick-controls <!nocheck>,
                qml6-module-qtquick-templates <!nocheck>, qml6-module-qtquick-window <!nocheck>,

@@ -15,8 +15,18 @@ FETCH_ONLINE := $(if $(filter ON,$(BUNDLE_SDL3)),-DFETCHCONTENT_FULLY_DISCONNECT
 %:
 	dh $@ --buildsystem=cmake+ninja --builddirectory=$(BUILDDIR)
 
+# qt_standard_project_setup() gives the binaries an $ORIGIN RUNPATH for
+# relocatable bundles; a system package links only system libraries (as the
+# rpm and PKGBUILD do). Only the two executables are installed, and every
+# internal library, bundled SDL3 included, is static.
 override_dh_auto_configure:
-	dh_auto_configure -- -DSTRMQT_WERROR=OFF -DSTRMQT_BUNDLE_SDL3=$(BUNDLE_SDL3) $(FETCH_ONLINE)
+	dh_auto_configure -- -DSTRMQT_WERROR=OFF -DSTRMQT_BUNDLE_SDL3=$(BUNDLE_SDL3) $(FETCH_ONLINE) \
+		-DCMAKE_SKIP_INSTALL_RPATH=ON
+
+# The OFL texts (strmqt.docs) stay plain text at the paths debian/copyright
+# names, as the rpm's %license ships them.
+override_dh_compress:
+	dh_compress -XOFL-
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
