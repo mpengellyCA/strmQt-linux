@@ -144,6 +144,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { target: ubuntu-24.04, image: 'ubuntu:24.04' }
           - { target: debian-13, image: 'debian:trixie' }
           - { target: fedora-43, image: 'registry.fedoraproject.org/fedora:43' }
     container: ${{ matrix.image }}

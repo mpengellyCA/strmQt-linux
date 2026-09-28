@@ -444,3 +444,16 @@ $ CM_VER=0.7.5 bash -e <the new checks only>
 ```
 
 With the distribution set to `unstable` in a scratch copy, and `CM_VER=0.7.5`, the new checks pass (exit 0).
+
+Task 18 fix round 1 (review):
+
+- `appimage-hosts` gains `ubuntu-24.04` (the glibc 2.39 floor).
+  - The AppImage was rebuilt, because the round-0 artifact was gone.
+  - The `appimage` job was then replayed in `/tmp/w18f`, with the harness at `/tmp/w18f/replay.sh`.
+  - The new host job was replayed in a bare `ubuntu:24.04`, with no git and the exec bit dropped, and logged
+    `SDL3 gamepad support active`, `QML tier: full on Qt 6.11.3`, `selftest: 15/15 pages constructed` and
+    `selftest.sh: OK`.
+- The version check now rejects an unreadable changelog distribution. Against a changelog whose first line is
+  `strmqt (0.7.5-1)garbage`, it fails with `::error::could not read debian/changelog distribution` (exit 1).
+- actionlint on both workflows: `packages.yml` is clean, and `release.yml` shows only the two warnings HEAD
+  already had (SC2010, SC2046).

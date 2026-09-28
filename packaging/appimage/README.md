@@ -43,8 +43,9 @@ That covers **Ubuntu 24.04+, Debian 13+ and Fedora 40+**. **Debian 12**
 (glibc 2.36) is not covered: its users take the `.deb` or the Flatpak.
 
 Release CI proves the floor rather than trusting it: the finished AppImage runs
-its self-test in bare `debian:trixie` and `fedora:43` containers that carry only
-the table below (`scripts/ci/appimage-host.sh`).
+its self-test in bare `ubuntu:24.04` (the floor itself), `debian:trixie` and
+`fedora:43` containers that carry only the table below
+(`scripts/ci/appimage-host.sh`).
 
 ## What the host must provide
 

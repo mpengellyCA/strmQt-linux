@@ -145,6 +145,10 @@ jobs:
             echo "::error::debian/changelog version ($DEB_VER) is not ${CM_VER}-1"
             exit 1
           }
+          [ -n "$DEB_DIST" ] || {
+            echo "::error::could not read debian/changelog distribution"
+            exit 1
+          }
           [ "$DEB_DIST" != "UNRELEASED" ] || {
             echo "::error::debian/changelog's top entry is still UNRELEASED"
             exit 1
