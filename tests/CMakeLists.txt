@@ -39,6 +39,27 @@ strmqt_add_test(tst_input_map unit/tst_input_map.cpp)
 target_link_libraries(tst_input_map PRIVATE Qt6::Qml)
 strmqt_add_test(tst_stick_decision unit/tst_stick_decision.cpp)
 strmqt_add_test(tst_gamepad_decision unit/tst_gamepad_decision.cpp)
+# GamepadManager is SDL and lives in the executable, so it is compiled straight
+# into the test, against the SDL3 src/ resolved (cmake/StrmQtSdl3.cmake). The
+# bundled SDL3::SDL3-static is visible here; pkg-config's imported target is
+# scoped to src/, so the system one is looked up again.
+get_directory_property(_strmqt_have_sdl3 DIRECTORY ${CMAKE_SOURCE_DIR}/src
+                       DEFINITION STRMQT_HAVE_SDL3)
+if(_strmqt_have_sdl3)
+    get_directory_property(_strmqt_sdl3_target DIRECTORY ${CMAKE_SOURCE_DIR}/src
+                           DEFINITION STRMQT_SDL3_TARGET)
+    if(NOT TARGET ${_strmqt_sdl3_target})
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SDL3_TEST REQUIRED IMPORTED_TARGET sdl3)
+        set(_strmqt_sdl3_target PkgConfig::SDL3_TEST)
+    endif()
+    strmqt_add_test(tst_gamepad_signals unit/tst_gamepad_signals.cpp
+                    ${CMAKE_SOURCE_DIR}/src/input/GamepadManager.h
+                    ${CMAKE_SOURCE_DIR}/src/input/GamepadManager.cpp)
+    target_include_directories(tst_gamepad_signals PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(tst_gamepad_signals PRIVATE Qt6::Gui ${_strmqt_sdl3_target})
+    set_tests_properties(tst_gamepad_signals PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
 strmqt_add_test(tst_fast_forward_ramp unit/tst_fast_forward_ramp.cpp)
 strmqt_add_test(tst_vlc_frame_buffers unit/tst_vlc_frame_buffers.cpp)
 target_link_libraries(tst_vlc_frame_buffers PRIVATE Qt6::Gui)

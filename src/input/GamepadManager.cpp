@@ -69,6 +69,11 @@ enum DirectionSlot
 GamepadManager::GamepadManager(InputMap *input, QObject *parent) : QObject(parent), m_input(input)
 {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
+    // SDL_INIT_GAMEPAD implies SDL_INIT_EVENTS, which by default turns SIGINT
+    // and SIGTERM into an SDL_EVENT_QUIT that nothing here reads: kill, Ctrl+C
+    // and a session logout would all be swallowed. Leave the signals to the
+    // process, as they were before SDL.
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
         qCWarning(logApp) << "SDL gamepad init failed:" << SDL_GetError();
         return;
