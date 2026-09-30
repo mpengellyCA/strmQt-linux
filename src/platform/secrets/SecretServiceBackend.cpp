@@ -181,12 +181,10 @@ void SecretServiceBackend::prepare(Callback done)
                           done(malformed(alias));
                           return;
                       }
+                      // "/" is a keyring with no default collection yet (a fresh
+                      // account's gnome-keyring): still usable. The first write
+                      // creates it; reads and removes find nothing meanwhile.
                       m_collection = fromDBus<QDBusObjectPath>(reply.arguments().first());
-                      if (isNone(m_collection)) {
-                          done(outcome(Outcome::Unavailable, alias,
-                                       QStringLiteral("no default collection")));
-                          return;
-                      }
                       done(success());
                   });
          });
@@ -194,6 +192,11 @@ void SecretServiceBackend::prepare(Callback done)
 
 void SecretServiceBackend::open(Callback done)
 {
+    // No default collection yet: nothing to unlock until a write creates one.
+    if (isNone(m_collection)) {
+        done(success());
+        return;
+    }
     const QString step = QStringLiteral("Locked");
     send(m_collection.path(), kPropertiesInterface, QStringLiteral("Get"),
          {kCollectionInterface, QStringLiteral("Locked")},
@@ -241,8 +244,14 @@ void SecretServiceBackend::unlock(const QList<QDBusObjectPath> &items, const QSt
 void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QString &step,
                                      Callback done)
 {
+    runPrompt(prompt, step, [done](const Reply &reply, const QVariant &) { done(reply); });
+}
+
+void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QString &step,
+                                     PromptDone done)
+{
     if (isNone(prompt)) {
-        done(success());
+        done(success(), {});
         return;
     }
     qCInfo(logCore).noquote() << "secrets: Secret Service" << step << "is waiting for the user";
@@ -257,14 +266,15 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
     const std::weak_ptr<int> alive = m_alive;
     auto finished = std::make_shared<bool>(false);
     const QPointer<QObject> guardPtr(guard);
-    const auto finish = [alive, finished, guardPtr, done](const Reply &reply) {
+    const auto finish = [alive, finished, guardPtr, done](const Reply &reply,
+                                                          const QVariant &result) {
         if (*finished)
             return;
         *finished = true;
         if (guardPtr)
             guardPtr->deleteLater();
         if (!alive.expired())
-            done(reply);
+            done(reply, result);
     };
 
     // Only the Secret Service's own Completed counts: with no sender filter,
@@ -274,14 +284,16 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
         [finish, step](const QDBusMessage &signal) {
             const QVariantList arguments = signal.arguments();
             if (arguments.isEmpty())
-                finish(malformed(step));
+                finish(malformed(step), {});
             else if (arguments.first().toBool())
-                finish(outcome(Outcome::Refused, step, QStringLiteral("prompt dismissed")));
+                finish(outcome(Outcome::Refused, step, QStringLiteral("prompt dismissed")), {});
             else
-                finish(success());
+                finish(success(), arguments.size() > 1
+                                      ? fromDBus<QDBusVariant>(arguments.at(1)).variant()
+                                      : QVariant());
         });
     if (!subscribed) {
-        finish(outcome(Outcome::Failed, step, QStringLiteral("cannot watch the prompt")));
+        finish(outcome(Outcome::Failed, step, QStringLiteral("cannot watch the prompt")), {});
         return;
     }
 
@@ -290,7 +302,7 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
     // The keyring's dialog stays up after the step gives in, and a late answer
     // would store the secret there as well as in the vault: take it down.
     QObject::connect(timer, &QTimer::timeout, guard, [this, alive, finish, step, prompt] {
-        finish(outcome(Outcome::Failed, step, QStringLiteral("prompt not answered")));
+        finish(outcome(Outcome::Failed, step, QStringLiteral("prompt not answered")), {});
         if (!alive.expired())
             send(prompt.path(), kPromptInterface, QStringLiteral("Dismiss"), {},
                  [](const QDBusMessage &) {});
@@ -302,13 +314,75 @@ void SecretServiceBackend::runPrompt(const QDBusObjectPath &prompt, const QStrin
         [finish, step](const QDBusMessage &reply) {
             // Success only means the prompt is showing; Completed ends it.
             if (reply.type() == QDBusMessage::ErrorMessage)
-                finish(interactiveFailure(step, reply));
+                finish(interactiveFailure(step, reply), {});
+        },
+        kInteractiveTimeoutMs);
+}
+
+// What libsecret does for a keyring with no default collection: create one
+// aliased "default" (gnome-keyring asks the user for the new keyring's
+// password), then carry on as if ReadAlias had found it, unlock check included.
+void SecretServiceBackend::createDefaultCollection(Callback done)
+{
+    const QString step = QStringLiteral("CreateCollection");
+    const QVariantMap properties{
+        {QStringLiteral("org.freedesktop.Secret.Collection.Label"), QStringLiteral("Login")},
+    };
+    send(
+        kServicePath, kServiceInterface, step, {properties, QStringLiteral("default")},
+        [this, step, done](const QDBusMessage &reply) {
+            if (reply.type() == QDBusMessage::ErrorMessage) {
+                // A slow user fails (the vault); a keyring that cannot create
+                // collections is unavailable, as a missing collection was before.
+                const QString name = reply.errorName();
+                const bool slow = name == QLatin1String("org.freedesktop.DBus.Error.NoReply") ||
+                                  name == QLatin1String("org.freedesktop.DBus.Error.Timeout");
+                done(
+                    outcome(slow ? Outcome::Failed : Outcome::Unavailable, step, errorText(reply)));
+                return;
+            }
+            if (!answered(reply, 2)) {
+                done(malformed(step));
+                return;
+            }
+            const auto created = fromDBus<QDBusObjectPath>(reply.arguments().at(0));
+            const auto prompt = fromDBus<QDBusObjectPath>(reply.arguments().at(1));
+            const auto adopt = [this, step, done](const QDBusObjectPath &collection) {
+                if (isNone(collection)) {
+                    done(malformed(step));
+                    return;
+                }
+                qCInfo(logCore).noquote()
+                    << "secrets: Secret Service created the default collection";
+                m_collection = collection;
+                open(done);
+            };
+            if (isNone(prompt)) {
+                adopt(created);
+                return;
+            }
+            // The collection's path is the prompt's result: a variant holding `o`.
+            runPrompt(prompt, step, [adopt, done](const Reply &prompted, const QVariant &result) {
+                if (prompted.outcome != Outcome::Ok)
+                    done(prompted);
+                else
+                    adopt(fromDBus<QDBusObjectPath>(result));
+            });
         },
         kInteractiveTimeoutMs);
 }
 
 void SecretServiceBackend::write(const QString &key, const QString &value, Callback done)
 {
+    if (isNone(m_collection)) {
+        createDefaultCollection([this, key, value, done](const Reply &created) {
+            if (created.outcome != Outcome::Ok)
+                done(created);
+            else
+                write(key, value, done);
+        });
+        return;
+    }
     const QString step = QStringLiteral("CreateItem");
     const QVariantMap properties{
         {QStringLiteral("org.freedesktop.Secret.Item.Label"),

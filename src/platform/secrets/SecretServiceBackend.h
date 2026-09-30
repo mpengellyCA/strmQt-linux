@@ -44,7 +44,8 @@ template<class T> T fromDBus(const QVariant &v)
 
 // The freedesktop Secret Service (org.freedesktop.secrets: gnome-keyring,
 // KeePassXC, kwalletd6's own implementation) over QtDBus, with the "plain"
-// session (spec 2026-09-27 §6.3). One item per key in the default collection,
+// session (spec 2026-09-27 §6.3). One item per key in the default collection
+// (created, as libsecret does, by the first write when the keyring has none),
 // found by the attributes xdg:schema=ca.mikesdev.StrmQt.Secret and
 // strmqt-key=<key>; the key is already the hashed per-account one, so the
 // server and user never appear in the keyring.
@@ -71,6 +72,11 @@ private:
               const QVariantList &arguments, Handler handler, int timeoutMs = kDefaultTimeoutMs);
     // `/` completes at once; otherwise shows the prompt and waits for Completed.
     void runPrompt(const QDBusObjectPath &prompt, const QString &step, Callback done);
+    // The same, also handing over Completed's result (the unwrapped variant).
+    using PromptDone = std::function<void(const Reply &reply, const QVariant &result)>;
+    void runPrompt(const QDBusObjectPath &prompt, const QString &step, PromptDone done);
+    // CreateCollection(Label "Login", alias "default"), its prompt, then open().
+    void createDefaultCollection(Callback done);
     // Unlocks `items` (running the prompt if one is needed), then `done`.
     void unlock(const QList<QDBusObjectPath> &items, const QString &step, Callback done);
     // Finds the key's items: `done(reply, unlocked + locked)`, unlocking the locked ones first.
