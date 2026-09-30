@@ -315,12 +315,17 @@ private slots:
     void secretServiceWriteCreatesTheMissingDefaultCollection();
     void secretServiceCreateCollectionRunsItsPrompt();
     void secretServiceDismissedCreateCollectionIsRefused();
+    void secretServiceUnansweredCreateCollectionFails();
+    void secretServiceCreateCollectionWithoutAPathFails_data();
+    void secretServiceCreateCollectionWithoutAPathFails();
     void secretServiceCreateCollectionErrors_data();
     void secretServiceCreateCollectionErrors();
     void secretServiceReadWithoutADefaultCollectionCreatesNothing();
     void storeReachesTheSecretServiceOnGnome();
     void storeFallsFromKWalletToTheSecretService();
     void storeCreatesTheDefaultCollectionOnAFreshAccount();
+    void storeGoesToTheVaultWhenTheNewKeyringIsDismissed();
+    void storeDefersMigrationUntilACollectionExists();
 
 private:
     void driveKWallet(int generation);
@@ -814,6 +819,7 @@ void SecretBackendsTest::secretServiceWithoutADefaultCollectionIsReady()
     if (QTest::currentTestFailed())
         return;
     QVERIFY(fake.subscriptions.isEmpty());
+    QVERIFY(!backend.hasStorage());
 
     // A daemon that is not there is unavailable too.
     Captured again;
@@ -1239,6 +1245,7 @@ void SecretBackendsTest::secretServiceWriteCreatesTheMissingDefaultCollection()
     QCOMPARE(written.reply.outcome, Outcome::Ok);
     QCOMPARE(fake.pending(), -1);
     QVERIFY(fake.subscriptions.isEmpty());
+    QVERIFY(backend.hasStorage());
 
     // Created once: the next write goes straight to the collection.
     const int before = fake.calls.size();
@@ -1302,7 +1309,27 @@ void SecretBackendsTest::secretServiceDismissedCreateCollectionIsRefused()
     QCOMPARE(fake.pending(), -1);
     QVERIFY(!calledMember(fake, QStringLiteral("CreateItem")));
 
-    // Unanswered: the step fails and the dialog is taken down; still no item.
+    // The refusal sticks: the next write answers it without asking again.
+    const int before = fake.calls.size();
+    const int subscribed = fake.subscriptions.size();
+    Captured again;
+    backend.write(kKey, kToken, again.callback());
+    QCOMPARE(again.count, 1);
+    QCOMPARE(again.reply.outcome, Outcome::Refused);
+    QCOMPARE(fake.calls.size(), before);
+    QCOMPARE(fake.subscriptions.size(), subscribed);
+}
+
+void SecretBackendsTest::secretServiceUnansweredCreateCollectionFails()
+{
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openWithoutADefaultCollection(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Unanswered: the step fails and the dialog is taken down; no item.
     backend.setPromptTimeoutMs(20);
     Captured unanswered;
     backend.write(kKey, kToken, unanswered.callback());
@@ -1317,6 +1344,57 @@ void SecretBackendsTest::secretServiceDismissedCreateCollectionIsRefused()
     QVERIFY(nextIsSecrets(fake, kPrompt, kPromptInterface, QStringLiteral("Dismiss")));
     fake.reply({});
     QVERIFY(!calledMember(fake, QStringLiteral("CreateItem")));
+
+    // ...and is not asked again by this backend.
+    const int before = fake.calls.size();
+    Captured again;
+    backend.write(kKey, kToken, again.callback());
+    QCOMPARE(again.count, 1);
+    QCOMPARE(again.reply.outcome, Outcome::Failed);
+    QCOMPARE(fake.calls.size(), before);
+}
+
+void SecretBackendsTest::secretServiceCreateCollectionWithoutAPathFails_data()
+{
+    QTest::addColumn<bool>("prompted");
+    QTest::addColumn<QVariant>("result");
+    // No prompt and no collection in the reply.
+    QTest::newRow("reply /") << false << objectPath(kNoPrompt);
+    // A completed (not dismissed) prompt whose result is not a collection.
+    QTest::newRow("Completed /") << true << objectPath(kNoPrompt);
+    QTest::newRow("Completed string") << true << QVariant(QStringLiteral("not a path"));
+    QTest::newRow("Completed ao") << true << objectPaths({kCollection});
+}
+
+void SecretBackendsTest::secretServiceCreateCollectionWithoutAPathFails()
+{
+    QFETCH(bool, prompted);
+    QFETCH(QVariant, result);
+    FakeDBusTransport fake;
+    QObject ctx;
+    SecretServiceBackend backend(fake, &ctx);
+    openWithoutADefaultCollection(fake, backend);
+    if (QTest::currentTestFailed())
+        return;
+
+    Captured written;
+    backend.write(kKey, kToken, written.callback());
+    expectCreateCollection(fake);
+    if (QTest::currentTestFailed())
+        return;
+    if (prompted) {
+        fake.reply({objectPath(kNoPrompt), objectPath(kPrompt)});
+        answerPrompt(fake, false, result);
+        if (QTest::currentTestFailed())
+            return;
+    } else {
+        fake.reply({result, objectPath(kNoPrompt)});
+    }
+    QCOMPARE(written.count, 1);
+    QCOMPARE(written.reply.outcome, Outcome::Failed);
+    QCOMPARE(fake.pending(), -1);
+    QVERIFY(!calledMember(fake, QStringLiteral("CreateItem")));
+    QVERIFY(!backend.hasStorage());
 }
 
 void SecretBackendsTest::secretServiceCreateCollectionErrors_data()
@@ -1353,6 +1431,13 @@ void SecretBackendsTest::secretServiceCreateCollectionErrors()
     QCOMPARE(written.reply.outcome, expected);
     QCOMPARE(fake.pending(), -1);
     QVERIFY(!calledMember(fake, QStringLiteral("CreateItem")));
+
+    // Sticky: the same answer again, without another CreateCollection.
+    const int before = fake.calls.size();
+    Captured again;
+    backend.write(kKey, kToken, again.callback());
+    QCOMPARE(again.reply.outcome, expected);
+    QCOMPARE(fake.calls.size(), before);
 }
 
 void SecretBackendsTest::secretServiceReadWithoutADefaultCollectionCreatesNothing()
@@ -1422,6 +1507,109 @@ void SecretBackendsTest::storeCreatesTheDefaultCollectionOnAFreshAccount()
     QCOMPARE(store.backendName(), QStringLiteral("Secret Service"));
     QVERIFY(!QFile::exists(vault));
     QCOMPARE(fake->pending(), -1);
+}
+
+// Probe, OpenSession and a ReadAlias of "/": the store's Secret Service has no
+// collection. Opening it makes no call.
+void answerFreshSecretService(FakeDBusTransport &fake)
+{
+    answerProbe(fake, {kSecrets}, {});
+    if (QTest::currentTestFailed())
+        return;
+    QTRY_VERIFY(
+        nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("OpenSession")));
+    fake.reply({dbusVariant(QString()), objectPath(kSession)});
+    QVERIFY(nextIsSecrets(fake, kSecretsPath, kServiceInterface, QStringLiteral("ReadAlias")));
+    fake.reply({objectPath(kNoPrompt)});
+}
+
+void SecretBackendsTest::storeGoesToTheVaultWhenTheNewKeyringIsDismissed()
+{
+    qputenv("XDG_CURRENT_DESKTOP", "XFCE");
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    const QString vault = m_dir->filePath(QStringLiteral("secrets.ini"));
+    store.setLegacyFilePathForTests(vault);
+
+    const QFuture<Result<bool>> write = store.writeSecret(kKey, kToken);
+    answerFreshSecretService(*fake);
+    if (QTest::currentTestFailed())
+        return;
+    QTRY_VERIFY(fake->pending() >= 0);
+    expectCreateCollection(*fake);
+    if (QTest::currentTestFailed())
+        return;
+    fake->reply({objectPath(kNoPrompt), objectPath(kPrompt)});
+    answerPrompt(*fake, true, objectPath(kNoPrompt));
+    if (QTest::currentTestFailed())
+        return;
+
+    // The user said no to a new keyring: the token goes to the vault, which the
+    // store now uses (and the UI warns about).
+    QVERIFY(awaitResult(write).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+    QCOMPARE(QSettings(vault, QSettings::IniFormat).value(kKey).toString(), kToken);
+    QVERIFY(!calledMember(*fake, QStringLiteral("CreateItem")));
+    QCOMPARE(fake->pending(), -1);
+}
+
+void SecretBackendsTest::storeDefersMigrationUntilACollectionExists()
+{
+    qputenv("XDG_CURRENT_DESKTOP", "XFCE");
+    const QString vault = m_dir->filePath(QStringLiteral("secrets.ini"));
+    const QString otherKey = QStringLiteral("emby/00112233445566778899aabbccddeeff/accessToken");
+    {
+        QSettings seed(vault, QSettings::IniFormat);
+        seed.setValue(kKey, kToken);
+        seed.setValue(otherKey, QStringLiteral("other-token"));
+    }
+    auto fake = std::make_shared<FakeDBusTransport>();
+    SecretsStore store(fake);
+    store.setLegacyFilePathForTests(vault);
+
+    // Session restore reads first. With no collection yet, the vault is not
+    // migrated (that would ask for a new keyring from a read): the read finds
+    // nothing in the keyring and answers from the vault.
+    const QFuture<Result<QString>> read = store.readSecret(kKey);
+    answerFreshSecretService(*fake);
+    if (QTest::currentTestFailed())
+        return;
+    QTRY_VERIFY(fake->pending() >= 0);
+    QVERIFY(nextIsSecrets(*fake, kSecretsPath, kServiceInterface, QStringLiteral("SearchItems")));
+    fake->reply({objectPaths({}), objectPaths({})});
+    const Result<QString> restored = awaitResult(read);
+    QVERIFY(restored.ok());
+    QCOMPARE(restored.value, kToken);
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::Wallet);
+    QVERIFY(!calledMember(*fake, QStringLiteral("CreateCollection")));
+    QVERIFY(fake->subscriptions.isEmpty());
+    QCOMPARE(QSettings(vault, QSettings::IniFormat).allKeys().size(), 2);
+
+    // The first explicit write asks once; the user dismisses it.
+    const QFuture<Result<bool>> login = store.writeSecret(kKey, kToken);
+    QTRY_VERIFY(fake->pending() >= 0);
+    expectCreateCollection(*fake);
+    if (QTest::currentTestFailed())
+        return;
+    fake->reply({objectPath(kNoPrompt), objectPath(kPrompt)});
+    answerPrompt(*fake, true, objectPath(kNoPrompt));
+    if (QTest::currentTestFailed())
+        return;
+    QVERIFY(awaitResult(login).ok());
+    QCOMPARE(store.storageMode(), SecretsStore::StorageMode::PlaintextFallback);
+
+    // A second write in this session does not ask again.
+    const int before = fake->calls.size();
+    const int subscribed = fake->subscriptions.size();
+    QVERIFY(awaitResult(store.writeSecret(otherKey, QStringLiteral("rotated"))).ok());
+    QCOMPARE(fake->calls.size(), before);
+    QCOMPARE(fake->subscriptions.size(), subscribed);
+    int creates = 0;
+    for (const FakeDBusTransport::Call &call : std::as_const(fake->calls))
+        creates += call.message.member() == QLatin1String("CreateCollection");
+    QCOMPARE(creates, 1);
+    QCOMPARE(QSettings(vault, QSettings::IniFormat).value(otherKey).toString(),
+             QStringLiteral("rotated"));
 }
 
 QTEST_GUILESS_MAIN(SecretBackendsTest)

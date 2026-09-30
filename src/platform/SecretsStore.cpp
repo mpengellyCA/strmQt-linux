@@ -400,6 +400,17 @@ void SecretsStore::startLegacyMigration()
                 finishInitialization();
                 return;
             }
+            // Migrating into a keyring with nowhere to put it would raise its
+            // "new keyring" dialog from whatever operation came first, a read
+            // included. The vault stays (reads consult it); the first explicit
+            // write creates the store, and the next launch migrates.
+            if (m_backend && !m_backend->hasStorage()) {
+                qCInfo(logCore).noquote()
+                    << "secrets:" << m_backend->name()
+                    << "has no default collection yet; legacy migration deferred";
+                finishInitialization();
+                return;
+            }
             m_legacyEntries = std::move(scan.entries);
             m_legacyIndex = 0;
             m_legacyMigrationSucceeded = true;

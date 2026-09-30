@@ -15,6 +15,7 @@
 #include <QVariantList>
 
 #include <memory>
+#include <optional>
 
 namespace strmqt::secrets {
 
@@ -61,6 +62,7 @@ public:
     void write(const QString &key, const QString &value, Callback done) override;
     void read(const QString &key, Callback done) override;
     void remove(const QString &key, Callback done) override;
+    bool hasStorage() const override;
 
     // How long a prompt may stay unanswered before the step fails;
     // kInteractiveTimeoutMs unless a test shortens it.
@@ -88,6 +90,9 @@ private:
     QPointer<QObject> m_context;
     QDBusObjectPath m_session;
     QDBusObjectPath m_collection;
+    // How creating the default collection ended when it did not succeed; later
+    // writes answer it at once instead of asking the user again.
+    std::optional<Reply> m_createFailure;
     int m_promptTimeoutMs = kInteractiveTimeoutMs;
     // Signal subscriptions and timers of prompts still running; deleted with us.
     QList<QPointer<QObject>> m_prompts;

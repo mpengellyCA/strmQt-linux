@@ -103,6 +103,22 @@ Reply interactiveFailure(const QString &step, const QDBusMessage &reply)
     return outcome(gone ? Outcome::Unavailable : Outcome::Failed, step, errorText(reply));
 }
 
+// NoReply / Timeout: the user may simply be slow, whatever the call.
+bool timedOut(const QDBusMessage &reply)
+{
+    const QString name = reply.errorName();
+    return name == QLatin1String("org.freedesktop.DBus.Error.NoReply") ||
+           name == QLatin1String("org.freedesktop.DBus.Error.Timeout");
+}
+
+// For CreateCollection: a keyring that cannot create one is unavailable (as a
+// missing collection was before); a timeout fails, as for interactiveFailure.
+Reply creationFailure(const QString &step, const QDBusMessage &reply)
+{
+    return outcome(timedOut(reply) ? Outcome::Failed : Outcome::Unavailable, step,
+                   errorText(reply));
+}
+
 Reply malformed(const QString &step)
 {
     return outcome(Outcome::Failed, step, QStringLiteral("unexpected reply"));
@@ -332,13 +348,7 @@ void SecretServiceBackend::createDefaultCollection(Callback done)
         kServicePath, kServiceInterface, step, {properties, QStringLiteral("default")},
         [this, step, done](const QDBusMessage &reply) {
             if (reply.type() == QDBusMessage::ErrorMessage) {
-                // A slow user fails (the vault); a keyring that cannot create
-                // collections is unavailable, as a missing collection was before.
-                const QString name = reply.errorName();
-                const bool slow = name == QLatin1String("org.freedesktop.DBus.Error.NoReply") ||
-                                  name == QLatin1String("org.freedesktop.DBus.Error.Timeout");
-                done(
-                    outcome(slow ? Outcome::Failed : Outcome::Unavailable, step, errorText(reply)));
+                done(creationFailure(step, reply));
                 return;
             }
             if (!answered(reply, 2)) {
@@ -375,11 +385,18 @@ void SecretServiceBackend::createDefaultCollection(Callback done)
 void SecretServiceBackend::write(const QString &key, const QString &value, Callback done)
 {
     if (isNone(m_collection)) {
+        // One dialog per backend: a dismissed or failed creation is not asked again.
+        if (m_createFailure) {
+            done(*m_createFailure);
+            return;
+        }
         createDefaultCollection([this, key, value, done](const Reply &created) {
-            if (created.outcome != Outcome::Ok)
+            if (created.outcome != Outcome::Ok) {
+                m_createFailure = created;
                 done(created);
-            else
-                write(key, value, done);
+                return;
+            }
+            write(key, value, done);
         });
         return;
     }
@@ -407,6 +424,11 @@ void SecretServiceBackend::write(const QString &key, const QString &value, Callb
             runPrompt(fromDBus<QDBusObjectPath>(reply.arguments().at(1)), step, done);
         },
         kInteractiveTimeoutMs);
+}
+
+bool SecretServiceBackend::hasStorage() const
+{
+    return !isNone(m_collection);
 }
 
 void SecretServiceBackend::search(

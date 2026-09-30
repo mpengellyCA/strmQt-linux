@@ -42,6 +42,10 @@ public:
     virtual void write(const QString &key, const QString &value, Callback done) = 0;
     virtual void read(const QString &key, Callback done) = 0;
     virtual void remove(const QString &key, Callback done) = 0;
+    // Whether a write can land without first creating the keyring's store (a
+    // Secret Service with no default collection answers false). The legacy
+    // vault migration waits for true rather than prompting from a read.
+    virtual bool hasStorage() const { return true; }
 };
 
 enum class BackendKind
