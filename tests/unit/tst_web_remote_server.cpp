@@ -14,6 +14,7 @@
 #include <QtTest>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "FakePlayerBackend.h"
@@ -547,6 +548,16 @@ void WebRemoteServerTest::nextAndPreviousStepByChapter()
     backend.simulateDuration(1800'000);
     QTRY_COMPARE(controller.chapters().size(), 3);
     backend.simulatePosition(700'000);
+
+    // The page enables ⏮ / ⏭ from these, so a film with chapters left keeps
+    // Next live even with nothing queued after it.
+    const auto skipState = [&http] {
+        const QJsonObject playback = QJsonDocument::fromJson(http.get(QStringLiteral("/api/status")).body)
+                                         .object().value(QStringLiteral("playback")).toObject();
+        return std::pair{playback.value(QStringLiteral("canSkipForward")).toBool(),
+                         playback.value(QStringLiteral("canSkipBack")).toBool()};
+    };
+    QTRY_COMPARE(skipState(), std::pair(true, true));
 
     QCOMPARE(http.post(QStringLiteral("/api/playback"), R"({"action":"next"})").status, 200);
     QCOMPARE(backend.seeks.constLast(), Q_INT64_C(1200'000)); // next chapter, not the next item

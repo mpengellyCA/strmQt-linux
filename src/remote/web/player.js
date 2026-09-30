@@ -470,8 +470,10 @@ export function initPlayer({ openItem }) {
 
     setIcon(playIcon, p.paused ? 'play' : 'pause');
     playButton.setAttribute('aria-label', p.paused ? 'Play' : 'Pause');
-    prevButton.disabled = !p.queue?.hasPrevious && !(livePosition() > 3000);
-    nextButton.disabled = !p.queue?.hasNext;
+    // The app says what ⏮ / ⏭ would do, chapters included; the queue fallback
+    // covers an older app that does not send it.
+    prevButton.disabled = !(p.canSkipBack ?? (p.queue?.hasPrevious || livePosition() > 3000));
+    nextButton.disabled = !(p.canSkipForward ?? p.queue?.hasNext);
 
     if (!volumeDragging) {
       volumeRange.max = String(p.maxVolume || 100);

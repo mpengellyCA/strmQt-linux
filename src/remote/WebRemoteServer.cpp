@@ -356,6 +356,7 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
         connect(m_player, &PlayerController::upNextChanged, this, schedule);
         connect(m_player, &PlayerController::chaptersChanged, this, schedule);
         connect(m_player, &PlayerController::currentChapterChanged, this, schedule);
+        connect(m_player, &PlayerController::skipStateChanged, this, schedule);
         connect(m_player, &PlayerController::seeked, this, schedule);
         connect(m_player, &PlayerController::queueStateChanged, this, [this] {
             scheduleStatus();
@@ -1206,6 +1207,10 @@ QJsonObject WebRemoteServer::currentStatusJson() const
     playback[QStringLiteral("speed")] = m_player->playbackSpeed();
     playback[QStringLiteral("audioDelayMs")] = m_player->audioDelayMs();
     playback[QStringLiteral("subtitleDelayMs")] = m_player->subtitleDelayMs();
+    // What ⏮ / ⏭ would do right now, chapters included — the same answer the
+    // player's own buttons and MPRIS use.
+    playback[QStringLiteral("canSkipForward")] = m_player->canSkipForward();
+    playback[QStringLiteral("canSkipBack")] = m_player->canSkipBack();
 
     if (PlayQueue *queue = m_player->queue()) {
         if (queue->currentIndex() >= 0)
