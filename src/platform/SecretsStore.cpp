@@ -354,7 +354,7 @@ void SecretsStore::completeNetworkWallet(bool success, const QString &walletName
     if (m_initialization != InitializationState::NetworkWalletPending)
         return;
     if (!success || walletName.isEmpty()) {
-        qCWarning(logCore) << "networkWallet failed; secrets fall back to the vault file"
+        qCWarning(logCore) << "no keyring usable; secrets fall back to the vault file"
                            << fallbackFilePath() << error;
         setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
@@ -369,7 +369,7 @@ void SecretsStore::completeOpenWallet(bool success, int handle, const QString &e
     if (m_initialization != InitializationState::OpenPending)
         return;
     if (!success || handle < 0) {
-        qCWarning(logCore) << "wallet open rejected or failed; secrets fall back to the vault file"
+        qCWarning(logCore) << "keyring open rejected or failed; secrets fall back to the vault file"
                            << fallbackFilePath() << error;
         setStorageMode(StorageMode::PlaintextFallback);
         finishInitialization();
@@ -468,7 +468,7 @@ void SecretsStore::completeWritePassword(bool success, const QString &error)
     // leaves an empty entry behind). Persist to the vault file instead, and
     // demote for the rest of the process so later operations stop trusting the
     // wallet's copy of this key. storageModeChanged drives the user warning.
-    qCWarning(logCore) << "wallet write failed; storing the secret in the vault file instead:"
+    qCWarning(logCore) << "keyring write failed; storing the secret in the vault file instead:"
                        << error;
     const QString path = fallbackFilePath();
     const QString key = m_current->key;
