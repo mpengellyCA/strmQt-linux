@@ -598,7 +598,8 @@ asking the same daemon twice.
 
 Each backend answers `Ok`, `Unavailable`, `Refused` or `Failed`. **Unavailable**
 moves to the next backend (no wallet found, or it vanished between prepare and
-open); **Refused** — the user dismissed an unlock prompt — goes straight to the
+open); **Refused** — the user dismissed an unlock prompt, or the Secret
+Service's "new keyring" prompt — goes straight to the
 vault file without trying another keyring, on the same reasoning as the KWallet
 order: a refusal is a choice, not an outage. Interactive calls (opening a
 wallet, waiting on a prompt) carry a five-minute timeout; a timeout or a D-Bus
@@ -614,6 +615,11 @@ time the keyring opens. Settings → Server shows a **Credentials** row naming
 whichever backend is in use (`SecretsStore::backendName`, "KWallet", "KWallet
 5", "Secret Service" or "vault file"), so a support conversation does not have
 to guess.
+
+A Secret Service with no default collection (a fresh gnome-keyring account has
+no `login` keyring) is still used: the first write creates one, prompted, as
+libsecret does, and the vault migration waits until a collection exists, so a
+read never raises that dialog.
 
 The Secret Service backend stores one item per key, with attributes
 `xdg:schema=ca.mikesdev.StrmQt.Secret` and `strmqt-key=<that key>` — the

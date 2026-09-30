@@ -266,11 +266,13 @@ The rules:
 
 **Two kinds of failure, handled differently:**
 - **Unavailable** moves to the next candidate. This covers:
-  - a D-Bus error of `ServiceUnknown`, `NoReply`, `UnknownObject`, `UnknownMethod`, `NameHasNoOwner` or `Timeout`;
-  - a Secret Service with no `default` collection (`ReadAlias` answers `/`).
+  - a D-Bus error of `ServiceUnknown`, `NoReply`, `UnknownObject`, `UnknownMethod`, `NameHasNoOwner` or `Timeout`.
+
+  A Secret Service with no `default` collection (`ReadAlias` answers `/`, as on a fresh gnome-keyring account) is *not* unavailable: the first write creates it, as libsecret does (§6.3). By then the keyring is chosen, so any failure to create it takes the write-failure path: the vault, with the warning.
 - **Refused** goes straight to the vault, as today, and does not ask a second keyring. This covers:
   - KWallet's `open` answering −1;
-  - a Secret Service unlock prompt the user dismissed.
+  - a Secret Service unlock prompt the user dismissed;
+  - a Secret Service "new keyring" prompt (from `CreateCollection`) the user dismissed.
 
   The user said no. Asking them again in a different dialog would be the bug.
 
@@ -287,9 +289,10 @@ All calls are asynchronous and go through the same transport seam (§6.5).
 | Step | Call | Notes |
 |---|---|---|
 | prepare | `Service.OpenSession("plain", <"">)` → `(v, o session)` | The `plain` algorithm puts the secret on the session bus in the clear. That is the same exposure KWallet's `writePassword(…, QString)` already has; the bus is per-user. A DH-AES session is a follow-up (§11). |
-| prepare | `Service.ReadAlias("default")` → `o collection` | `/` is *unavailable*. |
-| open | `Properties.Get("org.freedesktop.Secret.Collection", "Locked")` on the collection | If unlocked: done. |
+| prepare | `Service.ReadAlias("default")` → `o collection` | `/` means no default collection yet. That is still a usable keyring: open does nothing, reads and removes find nothing (the vault is consulted), and the first write creates it. |
+| open | `Properties.Get("org.freedesktop.Secret.Collection", "Locked")` on the collection | If unlocked: done. Skipped while there is no collection. |
 | open | `Service.Unlock([collection])` → `(ao unlocked, o prompt)` | A prompt of `/` means done. Otherwise `Prompt.Prompt("")`, then wait for `Prompt.Completed(b dismissed, v)`. Dismissed is *refused*. |
+| write (no collection) | `Service.CreateCollection({"org.freedesktop.Secret.Collection.Label": "Login"}, "default")` → `(o collection, o prompt)` | What libsecret does. A non-`/` prompt (gnome-keyring's "choose a password for the new keyring") runs as above, and the collection is `Completed`'s result (`v` holding `o`). Then open, as if `ReadAlias` had found it. A D-Bus error is *unavailable* (`NoReply`/`Timeout` *failed*), a dismissed prompt *refused*, a `/` collection *failed*; each ends the write in the vault (the write-failure demotion), and sticks for the backend's lifetime, so the user is asked once per process. Only an explicit write creates the collection: the vault migration waits until one exists, and the next launch migrates. |
 | write | `Collection.CreateItem({Label, Attributes}, (session, "", utf8 value, "text/plain; charset=utf8"), true)` → `(o item, o prompt)` | `replace = true` makes a rewrite idempotent. A non-`/` prompt runs as above. |
 | read | `Service.SearchItems(attributes)` → `(ao unlocked, ao locked)` | If both are empty: success with an empty value, so `SecretsStore` consults the vault, as it does for KWallet. If only locked items match: `Unlock` them, then continue. Then `Item.GetSecret(session)` → `(oayays)`. |
 | remove | `SearchItems`, then `Item.Delete()` on each match | No matches is success. |
@@ -508,9 +511,10 @@ Both run `scripts/ci/deps.sh` and `scripts/ci/check.sh`, the same commands a dev
    - What the tests cannot reach (feel, focus under a real compositor) is a manual pass on a 24.04 VM before release.
 2. **Visual parity of the compat effects**, above all `StrmIcon`, which every glyph passes through. **Mitigation:** the compat tier builds on the 6.11 dev machine (`-DSTRMQT_QML_TIER=compat`), so the user compares both tiers side by side before the shim tasks close.
 3. **Fedora Qt rebases** break the exact-version `Requires` until a rebuild exists (§7.3). This is accepted and documented. Copr is the follow-up.
-4. **Secret Service implementations vary.** KeePassXC may have no `default` alias, and prompts differ.
-   - **Mitigation:** a missing default collection is *unavailable* (the next candidate, then the vault), never an error loop.
+4. **Secret Service implementations vary.** KeePassXC may have no `default` alias, a fresh gnome-keyring account has no `login` keyring, and prompts differ.
+   - **Mitigation:** a missing default collection is created on the first explicit write, as libsecret does, with one prompt per process: a refusal or failure sticks, and goes to the vault with the warning, never an error loop. A keyring that cannot create one ends there too. Reads and the vault migration never create it.
    - A manual check against gnome-keyring (a GNOME VM or container session) is a release-gate item.
+   - **Residual: a cross-process race.** On a fresh account, the GUI and the CLI (or another libsecret client) could each see no default collection and each call `CreateCollection`. The user would get two "new keyring" dialogs and possibly two collections, one of them holding the `default` alias. It needs two first writes within one prompt's lifetime, so it is accepted; the item written to the non-default one is still found, because reads search every collection.
 5. **AppImage host coverage.** Ubuntu's libmpv 0.37 closure differs from Arch's.
    - **Mitigation:** the forbidden-soname assertion, the glibc-symbol check, and the self-test in bare trixie and fedora:43.
 6. **The `plain` Secret Service session** sends the token over the session bus unencrypted. This is no worse than KWallet's D-Bus API today, and it is recorded as a follow-up (a DH-AES session using the OpenSSL the app already links).
