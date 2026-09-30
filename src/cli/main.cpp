@@ -197,9 +197,9 @@ int commandLogin(emby::EmbyClient &client, Settings &settings, SecretsStore &sec
     if (!stored.ok())
         out() << " (access token was not saved)\n";
     else if (secrets.isWalletBacked())
-        out() << " (token stored in KWallet)\n";
+        out() << " (token stored in " << secrets.backendName() << ")\n";
     else if (secrets.persistent())
-        out() << " (token stored in the vault file — KWallet unavailable)\n";
+        out() << " (token stored in the vault file — no keyring available)\n";
     else
         out() << " (token kept for this process only)\n";
     return 0;
