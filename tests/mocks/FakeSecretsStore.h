@@ -29,7 +29,7 @@ public:
     QList<Call> calls;
 
     void replyNetworkWallet(bool success, const QString &name = QStringLiteral("kdewallet"),
-                            const QString &error = QStringLiteral("networkWallet failed"))
+                            const QString &error = QStringLiteral("no keyring usable"))
     {
         completeNetworkWallet(success, name, error);
     }
