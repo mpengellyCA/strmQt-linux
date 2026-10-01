@@ -569,6 +569,10 @@ void PlayerControllerTest::rawUrlHandoffClearsEngineReadyWhileResolving()
 
 void PlayerControllerTest::seekAndPauseReportProgress()
 {
+    // The fixture's watchdog nudges after 40 ms of a frozen position; on a slow
+    // runner the progress round trip below outlasts that and the nudge moves
+    // the persisted playhead to 31000. This test is not about the watchdog.
+    m_controller->setTimingForTests(20, 1000, 10);
     m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
     QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
     m_backend->simulateState(PlayerBackend::State::Playing);
