@@ -457,3 +457,133 @@ Task 18 fix round 1 (review):
   `strmqt (0.7.5-1)garbage`, it fails with `::error::could not read debian/changelog distribution` (exit 1).
 - actionlint on both workflows: `packages.yml` is clean, and `release.yml` shows only the two warnings HEAD
   already had (SC2010, SC2046).
+
+## Task 21: final gate
+
+Build dirs: `/tmp/w21a` and `/tmp/w21b` (kept for Step 3's manual checks). Every container and package build
+below went to `/var/tmp/w21a-<target>[-pkg]` per the orchestrator's ruling (the `/tmp` tmpfs is 16G and hit
+its 5G floor after `C(ubuntu-24.04)`; `/var/tmp` has ~300G on disk). `local.sh` sets `TMPDIR` inside the
+container as usual; nothing here hit the `deps.sh`/`mk-build-deps` `TMPDIR` trap because that only runs at
+image-build time, before `local.sh`'s `-e TMPDIR=...` applies.
+
+### Step 1.1: Gate H and HC
+
+| Check | Command | Result |
+|---|---|---|
+| H configure | `cmake -S . -B /tmp/w21a -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSTRMQT_WERROR=ON` | `StrmQt QML tier: full (Qt 6.11.2)` |
+| H build | `cmake --build /tmp/w21a` | clean, exit 0, no warnings |
+| H test | `ctest --test-dir /tmp/w21a --output-on-failure` | `100% tests passed out of 75` |
+| H qmllint | `bash scripts/check-qmllint-baseline.sh /tmp/w21a` | `qmllint warning baseline matches (1336 warnings)` |
+| H selftest | `scripts/ci/selftest.sh /tmp/w21a/strmqt` | `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| HC configure | `cmake -S . -B /tmp/w21b -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSTRMQT_WERROR=ON -DSTRMQT_QML_TIER=compat` | `StrmQt QML tier: compat (Qt 6.11.2)` |
+| HC build | `cmake --build /tmp/w21b` | clean, exit 0, no warnings |
+| HC test | `ctest --test-dir /tmp/w21b --output-on-failure` | `100% tests passed out of 75` |
+| HC selftest | `scripts/ci/selftest.sh /tmp/w21b/strmqt` | `QML tier: compat on Qt 6.11.2`, `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+
+`H/HC READY` written to `task-21-hh-ready.txt` once both were green, so the controller could start Step 3
+against `/tmp/w21a/strmqt` and `/tmp/w21b/strmqt` in parallel with the rest of this task.
+
+### Step 1.2: `C(target)`
+
+`scripts/ci/local.sh <target> /var/tmp/w21a-<target> -- /src/scripts/ci/check.sh /build $(scripts/ci/deps.sh --cmake-args <target>)`
+
+| Target | Result |
+|---|---|
+| `ubuntu-24.04` | `check.sh: OK (compat)` — ctest 100%/75; selftest: `QML tier: compat on Qt 6.4.2`, `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| `debian-12` | `check.sh: OK (compat)` — ctest 100%/75; selftest: `QML tier: compat on Qt 6.4.2`, `selftest.sh: OK` |
+| `debian-13` | `check.sh: OK (full)` — ctest 100%/75; selftest: `QML tier: full on Qt 6.8.2`, `selftest.sh: OK` |
+| `ubuntu-26.04` | `check.sh: OK (full)` — ctest 100%/75; selftest: `QML tier: full on Qt 6.10.2`, `selftest.sh: OK` |
+| `fedora-43` | `check.sh: OK (full)` — ctest 100%/75; selftest: `QML tier: full on Qt 6.10.3`, `selftest.sh: OK` |
+| `fedora-44` | `check.sh: OK (full)` — ctest 100%/75; selftest: `QML tier: full on Qt 6.11.2`, `selftest.sh: OK` |
+
+### Step 1.3: Task 15 Step 6 — `.deb` build + install-check, all four Debian targets
+
+`scripts/ci/local.sh $T /var/tmp/w21a-$T-pkg -- /src/scripts/ci/package-deb.sh $T /build/out`, then
+`install-check.sh` in the bare distro image, then the `dpkg-deb -f … Depends` excerpt.
+
+| Target | lintian | install-check | Depends excerpt |
+|---|---|---|---|
+| `ubuntu-24.04` | clean (`--fail-on error --info`, no tags beyond the "running as root" notice) | `selftest.sh: OK` (compat) | `libqt6qml6 (>= 6.4.2)`, `(<< 6.4.3~)`, `qml6-module-qt5compat-graphicaleffects`, `libqt6svg6` |
+| `debian-12` | clean | `selftest.sh: OK` (compat) | `libqt6qml6 (>= 6.4.2)`, `(<< 6.4.3~)`, `qml6-module-qt5compat-graphicaleffects`, `libqt6svg6` |
+| `debian-13` | clean | `selftest.sh: OK` (full) | `libqt6qml6 (>= 6.8.2)`, `(<< 6.8.3~)`, `qml6-module-qtquick-effects`, `qt6-svg-plugins` |
+| `ubuntu-26.04` | clean | `selftest.sh: OK` (full) | `libqt6qml6 (>= 6.10.2)`, `(<< 6.10.3~)`, `qml6-module-qtquick-effects`, `qt6-svg-plugins` |
+
+The tier's effects module and the SVG plugin package resolve correctly on each target (compat tier → Qt5Compat
+effects module + `libqt6svg6`; full tier → `qml6-module-qtquick-effects` + `qt6-svg-plugins`), matching Task 15's
+expectation. The `ubuntu-24.04` `.deb` (`strmqt_0.7.5-1~ubuntu24.04_amd64.deb`) was copied to
+`/var/tmp/w21-deliverables/` for a manual VM install check.
+
+`C(debian-13)` (Task 15 Step 7, "container checks still green" after `deps.sh` moved to `mk-build-deps`) is the
+same run recorded in Step 1.2 above — `OK (full)`.
+
+### Step 1.4: Task 16 Step 4 — `.rpm` build + install-check, both Fedora targets
+
+`scripts/ci/local.sh $T /var/tmp/w21a-$T-pkg -- /src/scripts/ci/package-rpm.sh $T /build/out`, then
+`install-check.sh`, then `rpm -qp --requires`.
+
+| Target | rpmlint | install-check | Requires excerpt |
+|---|---|---|---|
+| `fedora-43` | `0 errors, 0 warnings` | `selftest.sh: OK` (full, Qt 6.10.3) | `qt6-qtdeclarative(x86-64) = 6.10.3`, `qt6-qtsvg(x86-64)` |
+| `fedora-44` | `0 errors, 0 warnings` | `selftest.sh: OK` (full, Qt 6.11.2) | `qt6-qtdeclarative(x86-64) = 6.11.2`, `qt6-qtsvg(x86-64)` |
+
+`C(fedora-43)` (Task 16 Step 5) is the same run recorded in Step 1.2 above — `OK (full)`.
+
+### Step 1.5: Task 17 Step 4 — the AppImage and its hosts
+
+Build: `scripts/ci/local.sh appimage /var/tmp/w21a-appimage -- bash -c '… build-appimage.sh …'` (as Task 17's
+own command, build root and `out/` under `/var/tmp/w21a-appimage`).
+
+Result: `/var/tmp/w21a-appimage/out/dist/StrmQt-0.7.0-x86_64.AppImage` (177M) built successfully; the script's
+own hard assertions (forbidden-soname denylist, `libqwayland.so`, `wayland-shell-integration/`, `libmpv.so.2`,
+`libqsvg.so`/`libqsvgicon.so`, and the GLIBC/GLIBCXX floor checks) all gate the final "Done:" line, so a
+completed build is proof they passed. Portability note logged: `newest glibc symbol bundled is GLIBC_2.38`
+(≤ 2.39 floor).
+
+Per the orchestrator's ruling, three bare hosts were checked (CI now includes the Ubuntu 24.04 floor):
+
+| Host | Result |
+|---|---|
+| `ubuntu-24.04` | `SDL3 gamepad support active`, `QML tier: full on Qt 6.11.3`, `selftest: 15/15 pages constructed`, `selftest.sh: OK` |
+| `debian-13` | same four lines, `selftest.sh: OK` |
+| `fedora-43` | same four lines, `selftest.sh: OK` (host also pulled in `SDL3-0:3.4.16` as a dependency of `sdl2-compat` in the README's host list — incidental, not something the AppImage itself links) |
+
+### Step 1.6: actionlint (Task 9 Step 2)
+
+`podman run --rm --security-opt label=disable -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.12 -no-color`
+(1.7.12 has no `-color=never`, per Task 18's note). `packages.yml`: clean. `release.yml`: the same two
+pre-existing warnings Task 18 recorded on HEAD (SC2010 `ls | grep` in the `makepkg` step, SC2046 unquoted
+`$(find …)` in `Publish`) — no new findings, exit 1 only because of those two.
+
+### Step 2: Hygiene greps
+
+| Grep | Result |
+|---|---|
+| `QtQuick.Effects\|Qt5Compat` outside `src/ui/shims/` | One hit: `src/ui/Theme.qml:166`, a comment ("Shadow parameters for QtQuick.Effects MultiEffect…") — no `import` or type use outside the shims. Not a violation. |
+| `font.features\|variableAxes` outside `src/ui/shims/` | One hit: `src/ui/music/CrateHeading.qml:7`, a comment explaining that the width axis is applied by the `CrateDisplayText` shim ("since font.variableAxes is Qt 6.7+"). The file itself imports only `QtQuick` and `StrmQt` and uses the shim component — no direct use outside shims. Not a violation. |
+| `kwalletd6` outside `secrets/` | Hits in `src/platform/SecretsStore.cpp` (one constant, `kKWallet6Service`, plus three comments). Reviewed: this is the state machine's own D-Bus probe (spec §6.2) detecting whether Plasma 6's `kwalletd6` also owns the `org.kde.kwalletd5` alias, so KWallet5 isn't tried twice against the same daemon — orchestration logic that is deliberately separate from the backend implementations under `src/platform/secrets/` (`KWalletBackend`, `SecretServiceBackend`, etc.), which the filter correctly excludes. Not a violation of "no secrets in the repo" or of the backend architecture. |
+| `ignoreSslErrors\|QSslSocket::VerifyNone` | One hit, `src/remote/WebRemoteServer.cpp:426` (`QSslSocket::VerifyNone` on the local web-remote HTTPS server's self-signed cert). Compared against `main`: `git grep -nE "ignoreSslErrors|VerifyNone" main -- src` shows the **identical** hit at the same line, plus the same "deliberately no ignoreSslErrors()" comment in `EmbyWebSocket.cpp`. Pre-existing on `main`; not a new hit on this branch. Not a stop. |
+| `git diff main --stat \| tail -1` | `117 files changed, 9496 insertions(+), 448 deletions(-)` |
+| `git status --short` | `?? docs/strmqt-backport.md` and `?? skills-lock.json` only (the user's untracked files) |
+
+No regressions found; no fix commit needed.
+
+### Step 3: Manual checklist (user)
+
+Run by the user against `/tmp/w21a/strmqt` (H), `/tmp/w21b/strmqt` (HC) and an Ubuntu 24.04 XFCE + noVNC
+container desktop (gnome-keyring, TigerVNC; no audio, GPU or gamepad) with the `~ubuntu24.04` `.deb` installed.
+
+| # | Check | Result | Date |
+|---|---|---|---|
+| 1 | Plasma 6 / KWallet 6: token survives, `Credentials: KWallet` | Pass — starts signed in, Settings shows `Credentials: KWallet` | 2026-09-30 |
+| 2 | GNOME keyring: sign-in stores the token, no vault warning | **Failed first**, then pass. A Secret Service with no default collection (`ReadAlias` → `/`) fell back to the vault; fixed by creating the collection on the first write (`03e3745`, `d8e033c`, `880947b`). A second failure was the container's bus lacking `DISPLAY` (prompter dismissed in 14 ms), fixed in the container. Retest: `Credentials: Secret Service`, `secret-tool` finds the item | 2026-09-30 |
+| 3 | Compat visuals, H vs HC side by side | Both builds run by the user; no differences from spec §3 reported | 2026-09-30 |
+| 4 | Ubuntu 24.04 desktop with the `.deb`: sign in, browse, play, focus | Pass for sign-in, browse, video playback, stats and music in the container desktop (stands in for a VM). Gamepad not available. Found missing music artwork: newly added Emby albums carry only `PrimaryImageItemId`/`PrimaryImageTag`; fixed with a cover fallback sequence (`53b9a86`), confirmed by the user | 2026-09-30 |
+| 5 | GNOME idle inhibition | **Deferred** — no GNOME Shell session available (the container desktop is XFCE). Not a blocker (spec §11 risk 7) | — |
+| 6a | Web remote Next in a chaptered film | **Failed first** (page used `queue.hasNext` only), then pass after `279026b`: status JSON carries `canSkipForward`/`canSkipBack` | 2026-09-30 |
+| 6b | MPRIS Previous | Pass — `busctl --user call org.mpris.MediaPlayer2.strmqt /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player Previous` (no `playerctl` on this host) restarts/steps back | 2026-10-01 |
+
+Also fixed during the checks: `38afd55` (OSD chapter name past the chapter list), `02509cf`/`3f2132d` (CLI names
+the keyring actually used), `2b983f4` (backend-neutral vault logs).
+
+Gate after the fixes: H rebuilt at `53b9a86` — `100% tests passed out of 76`, qmllint baseline matches (1336),
+`selftest.sh: OK`.
