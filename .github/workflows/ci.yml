@@ -81,6 +81,11 @@ jobs:
   floor:
     runs-on: ubuntu-latest
     container: ubuntu:24.04
+    # A container job's run steps default to sh (dash); the steps below use
+    # bash's read -a and process substitution.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
@@ -104,6 +109,11 @@ jobs:
   debian-13:
     runs-on: ubuntu-latest
     container: debian:trixie
+    # A container job's run steps default to sh (dash); the steps below use
+    # bash's read -a and process substitution.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
