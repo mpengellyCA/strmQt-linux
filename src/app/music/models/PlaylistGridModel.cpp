@@ -58,8 +58,7 @@ QVariantMap PlaylistGridModel::get(int row) const
     item.type = QStringLiteral("Playlist");
     item.childCount = playlist.trackCount;
     item.runtimeTicks = playlist.runtimeMs * kTicksPerMs;
-    if (playlist.coverRef.itemId == playlist.id)
-        item.primaryImageTag = playlist.coverRef.tag;
+    applyCover(item, playlist.coverRef);
     QVariantMap map = MediaItemModel::mapForItem(item);
     const auto names = roleNames();
     for (auto it = names.cbegin(); it != names.cend(); ++it)

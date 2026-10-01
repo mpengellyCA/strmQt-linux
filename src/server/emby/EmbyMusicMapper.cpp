@@ -1,6 +1,7 @@
 #include "server/emby/EmbyMusicMapper.h"
 
 #include <algorithm>
+#include <initializer_list>
 
 #include <QHash>
 #include <QMap>
@@ -86,17 +87,53 @@ QList<NamedRef> namesOnly(const QJsonValue &value)
     return list;
 }
 
-QString primaryTag(const QJsonObject &json)
+// Art sources, each yielding nothing when the server sent no tag for it.
+ImageRef ownArt(const QJsonObject &json, const QString &type)
 {
-    return text(json.value(QStringLiteral("ImageTags")).toObject().value(QStringLiteral("Primary")));
-}
-
-ImageRef ownPrimary(const QJsonObject &json)
-{
-    const QString tag = primaryTag(json);
+    const QString tag = text(json.value(QStringLiteral("ImageTags")).toObject().value(type));
     if (tag.isEmpty())
         return {};
-    return {text(json.value(QStringLiteral("Id"))), QStringLiteral("Primary"), tag};
+    return {text(json.value(QStringLiteral("Id"))), type, tag};
+}
+
+ImageRef namedArt(const QJsonObject &json, const QString &idKey, const QString &tagKey)
+{
+    const QString id = text(json.value(idKey));
+    const QString tag = text(json.value(tagKey));
+    if (id.isEmpty() || tag.isEmpty())
+        return {};
+    return {id, QStringLiteral("Primary"), tag};
+}
+
+// Verified live: a newly added album has empty ImageTags while its art lives
+// on one of its tracks, named by PrimaryImageItemId / PrimaryImageTag. The
+// Emby web client follows that; so do we.
+ImageRef borrowedArt(const QJsonObject &json)
+{
+    return namedArt(json, QStringLiteral("PrimaryImageItemId"), QStringLiteral("PrimaryImageTag"));
+}
+
+ImageRef parentArt(const QJsonObject &json)
+{
+    return namedArt(json, QStringLiteral("ParentPrimaryImageItemId"), QStringLiteral("ParentPrimaryImageTag"));
+}
+
+ImageRef firstArt(std::initializer_list<ImageRef> candidates)
+{
+    for (const ImageRef &candidate : candidates) {
+        if (!candidate.tag.isEmpty())
+            return candidate;
+    }
+    return {};
+}
+
+// The fallback sequence for an album, artist or playlist card: its own cover,
+// the art the server borrows for it (a track's), its folder's, and last a
+// 16:9 thumb (cropped by the square card, but better than a blank sleeve).
+ImageRef ownPrimary(const QJsonObject &json)
+{
+    return firstArt({ownArt(json, QStringLiteral("Primary")), borrowedArt(json), parentArt(json),
+                     ownArt(json, QStringLiteral("Thumb"))});
 }
 
 bool sameArtist(const NamedRef &a, const NamedRef &b)
@@ -389,15 +426,13 @@ Track parseTrack(const QJsonObject &json)
 
     track.format = parseAudioFormat(json);
 
+    // A track prefers its album's cover, so every track of an album matches,
+    // then falls through the same sequence as an album card.
     const QString albumTag = text(json.value(QStringLiteral("AlbumPrimaryImageTag")));
-    const QString parentId = text(json.value(QStringLiteral("ParentPrimaryImageItemId")));
-    const QString parentTag = text(json.value(QStringLiteral("ParentPrimaryImageTag")));
-    if (!albumTag.isEmpty() && !track.albumId.isEmpty())
-        track.coverRef = {track.albumId, QStringLiteral("Primary"), albumTag};
-    else if (!parentTag.isEmpty() && !parentId.isEmpty())
-        track.coverRef = {parentId, QStringLiteral("Primary"), parentTag};
-    else
-        track.coverRef = ownPrimary(json);
+    const ImageRef albumArt = !albumTag.isEmpty() && !track.albumId.isEmpty()
+        ? ImageRef{track.albumId, QStringLiteral("Primary"), albumTag} : ImageRef{};
+    track.coverRef = firstArt({albumArt, parentArt(json), ownArt(json, QStringLiteral("Primary")),
+                               borrowedArt(json), ownArt(json, QStringLiteral("Thumb"))});
 
     const FeaturedSplit split = splitFeatured(track.title);
     track.displayTitle = split.title;

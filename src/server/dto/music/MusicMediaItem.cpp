@@ -14,6 +14,26 @@ void applyArtists(MediaItem &item, const QList<ArtistRef> &artists)
 
 } // namespace
 
+void applyCover(MediaItem &item, const ImageRef &cover)
+{
+    if (cover.tag.isEmpty() || cover.itemId.isEmpty())
+        return;
+    const bool own = cover.itemId == item.id;
+    if (cover.imageType == QLatin1String("Thumb")) {
+        if (own) {
+            item.thumbImageTag = cover.tag;
+        } else {
+            item.parentThumbItemId = cover.itemId;
+            item.parentThumbImageTag = cover.tag;
+        }
+    } else if (own) {
+        item.primaryImageTag = cover.tag;
+    } else {
+        item.parentPrimaryImageItemId = cover.itemId;
+        item.parentPrimaryImageTag = cover.tag;
+    }
+}
+
 MediaItem toMediaItem(const Track &track)
 {
     MediaItem item;
@@ -35,16 +55,11 @@ MediaItem toMediaItem(const Track &track)
     item.playlistItemId = track.playlistItemId;
     // MediaItem::coverSource() prefers album tag, then parent, then own for
     // Audio; place the ref in the slot that reproduces it.
-    if (!track.coverRef.tag.isEmpty()) {
-        if (track.coverRef.itemId == track.id) {
-            item.primaryImageTag = track.coverRef.tag;
-        } else if (!track.albumId.isEmpty() && track.coverRef.itemId == track.albumId) {
-            item.albumPrimaryImageTag = track.coverRef.tag;
-        } else {
-            item.parentPrimaryImageItemId = track.coverRef.itemId;
-            item.parentPrimaryImageTag = track.coverRef.tag;
-        }
-    }
+    if (!track.coverRef.tag.isEmpty() && !track.albumId.isEmpty()
+        && track.coverRef.itemId == track.albumId)
+        item.albumPrimaryImageTag = track.coverRef.tag;
+    else
+        applyCover(item, track.coverRef);
     return item;
 }
 
@@ -62,12 +77,7 @@ MediaItem toMediaItem(const Album &album)
     item.runtimeTicks = album.runtimeMs * kTicksPerMs;
     item.playCount = album.playCount;
     item.favorite = album.favourite;
-    if (album.coverRef.itemId == album.id) {
-        item.primaryImageTag = album.coverRef.tag;
-    } else if (!album.coverRef.tag.isEmpty()) {
-        item.parentPrimaryImageItemId = album.coverRef.itemId;
-        item.parentPrimaryImageTag = album.coverRef.tag;
-    }
+    applyCover(item, album.coverRef);
     return item;
 }
 
@@ -79,8 +89,7 @@ MediaItem toMediaItem(const Artist &artist)
     item.type = QStringLiteral("MusicArtist");
     item.childCount = artist.albumCount;
     item.favorite = artist.favourite;
-    if (artist.coverRef.itemId == artist.id)
-        item.primaryImageTag = artist.coverRef.tag;
+    applyCover(item, artist.coverRef);
     if (artist.backdropRef.isValid())
         item.backdropImageTags = {artist.backdropRef.tag};
     return item;

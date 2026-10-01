@@ -173,10 +173,13 @@ struct MediaItem
         }
         if (own.isValid())
             return own;
-        // An album with no cover of its own falls back to the artist's image:
-        // a filled grid cell beats a hole, and the artist is the only other
-        // square the server offers for it.
-        if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0)
+        // A music container with no cover of its own falls back to borrowed
+        // art (an album's artist or first track, an artist's or playlist's
+        // first item): a filled grid cell beats a hole, and that is the only
+        // other square the server offers for it.
+        if (type.compare(QLatin1String("MusicAlbum"), Qt::CaseInsensitive) == 0
+            || type.compare(QLatin1String("MusicArtist"), Qt::CaseInsensitive) == 0
+            || type.compare(QLatin1String("Playlist"), Qt::CaseInsensitive) == 0)
             return parent;
         return {};
     }

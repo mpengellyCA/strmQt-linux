@@ -38,6 +38,7 @@ private slots:
     void trackFeaturedAndArtistDifference();
     void trackToleratesJunk();
     void albumParses();
+    void coverFallbackSequence();
     void artistGenrePlaylistParse();
     void classifyRelease_data();
     void classifyRelease();
@@ -335,6 +336,52 @@ void MusicMapperTest::trackToleratesJunk()
     QVERIFY(!t.format.isValid());
     QVERIFY(!t.coverRef.isValid());
     QVERIFY(parseTracks(QJsonArray{}).isEmpty());
+}
+
+// The cover fallback sequence: own Primary, the art the server borrows from
+// a track (PrimaryImageItemId/Tag — a newly added album, verified live),
+// the folder's, then a Thumb; nothing at all leaves no cover.
+void MusicMapperTest::coverFallbackSequence()
+{
+    const Album own = parseAlbum(json(R"({"Id":"al1","ImageTags":{"Primary":"mine","Thumb":"th"},
+        "PrimaryImageItemId":"t9","PrimaryImageTag":"borrowed"})"));
+    QCOMPARE(own.coverRef.itemId, QStringLiteral("al1"));
+    QCOMPARE(own.coverRef.tag, QStringLiteral("mine"));
+
+    const Album borrowed = parseAlbum(json(R"({"Id":"2004261","ImageTags":{},
+        "PrimaryImageItemId":"2004139","PrimaryImageTag":"cb4a614b867e60db50b380fc430c25d2"})"));
+    QCOMPARE(borrowed.coverRef.itemId, QStringLiteral("2004139"));
+    QCOMPARE(borrowed.coverRef.imageType, QStringLiteral("Primary"));
+    QCOMPARE(borrowed.coverRef.tag, QStringLiteral("cb4a614b867e60db50b380fc430c25d2"));
+
+    const Album parent = parseAlbum(json(R"({"Id":"al3","ImageTags":{},
+        "ParentPrimaryImageItemId":"f1","ParentPrimaryImageTag":"folder"})"));
+    QCOMPARE(parent.coverRef.itemId, QStringLiteral("f1"));
+
+    const Album thumb = parseAlbum(json(R"({"Id":"al4","ImageTags":{"Thumb":"th"}})"));
+    QCOMPARE(thumb.coverRef.itemId, QStringLiteral("al4"));
+    QCOMPARE(thumb.coverRef.imageType, QStringLiteral("Thumb"));
+
+    // Half a borrowed reference is no reference.
+    const Album none = parseAlbum(json(R"({"Id":"al5","ImageTags":{},"PrimaryImageTag":"orphan"})"));
+    QVERIFY(!none.coverRef.isValid());
+
+    // A track keeps preferring its album's cover, then borrows like an album.
+    const Track track = parseTrack(json(R"({"Id":"t1","AlbumId":"al6","ImageTags":{},
+        "PrimaryImageItemId":"t1x","PrimaryImageTag":"b"})"));
+    QCOMPARE(track.coverRef.itemId, QStringLiteral("t1x"));
+
+    // Every fallback survives the bridge to MediaItem, in the right image slot.
+    const auto borrowedCover = toMediaItem(borrowed).coverSource();
+    QCOMPARE(borrowedCover.itemId, QStringLiteral("2004139"));
+    QCOMPARE(borrowedCover.tag, QStringLiteral("cb4a614b867e60db50b380fc430c25d2"));
+    const Artist artist = parseArtist(json(R"({"Id":"ar1","ImageTags":{},
+        "PrimaryImageItemId":"al9","PrimaryImageTag":"x"})"));
+    QCOMPARE(toMediaItem(artist).coverSource().itemId, QStringLiteral("al9"));
+    const MediaItem thumbItem = toMediaItem(thumb);
+    QVERIFY(!thumbItem.coverSource().isValid());
+    QCOMPARE(thumbItem.thumbSource().imageType, QStringLiteral("Thumb"));
+    QCOMPARE(thumbItem.thumbSource().tag, QStringLiteral("th"));
 }
 
 void MusicMapperTest::albumParses()

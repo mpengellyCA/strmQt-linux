@@ -12,4 +12,8 @@ MediaItem toMediaItem(const Track &track);
 MediaItem toMediaItem(const Album &album);
 MediaItem toMediaItem(const Artist &artist);
 
+// Place a cover ref on `item` so coverSource()/thumbSource() reproduce it: on
+// the item itself when the ref names it, otherwise as borrowed (parent) art.
+void applyCover(MediaItem &item, const ImageRef &cover);
+
 } // namespace strmqt::music
