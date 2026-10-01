@@ -62,6 +62,17 @@
   </requires>
 
   <releases>
+    <release version="0.7.5" date="2026-10-01" type="development">
+      <description>
+        <p>A compatibility release: StrmQt now runs well beyond Arch.</p>
+        <ul>
+          <li>Runs on Ubuntu 24.04 and newer, Debian 12 and newer, and Fedora 43 and newer.</li>
+          <li>Native .deb and .rpm packages, and an AppImage that works on older systems.</li>
+          <li>Your sign-in is kept in GNOME Keyring or KWallet 5 as well as KWallet 6.</li>
+          <li>The phone remote's Next and Previous step through chapters, MPRIS Previous works for video, and newly added albums show their artwork.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-09-27" type="development">
       <description>
         <p>

@@ -1,6 +1,6 @@
-strmqt (0.7.5-1) UNRELEASED; urgency=medium
+strmqt (0.7.5-1) unstable; urgency=medium
 
   * Distro compatibility release: native packages for Ubuntu 24.04 and 26.04,
     Debian 12 and 13; Qt 6.4.2 or newer; KWallet 5 and Secret Service keyrings.
 
- -- Mike Pengelly <mike@leadrix.io>  Sun, 27 Sep 2026 12:00:00 +0000
+ -- Mike Pengelly <mike@leadrix.io>  Thu, 01 Oct 2026 12:00:00 +0000

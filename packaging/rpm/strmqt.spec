@@ -60,5 +60,5 @@ export QT_QPA_PLATFORM=offscreen
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*
 
 %changelog
-* Sun Sep 27 2026 Mike Pengelly <mike@leadrix.io> - 0.7.5-1
+* Thu Oct 01 2026 Mike Pengelly <mike@leadrix.io> - 0.7.5-1
 - Distro compatibility release: native Fedora 43/44 package.
