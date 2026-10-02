@@ -87,10 +87,10 @@ Qt. Install it from its local path so the package manager pulls in the dependenc
 
 | Distro | Format | Command |
 |---|---|---|
-| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1~ubuntu24.04_amd64.deb` |
-| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1~ubuntu26.04_amd64.deb` |
-| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.7.5-1~deb12_amd64.deb` |
-| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.7.5-1~deb13_amd64.deb` |
+| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1.ubuntu24.04_amd64.deb` |
+| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1.ubuntu26.04_amd64.deb` |
+| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.7.5-1.deb12_amd64.deb` |
+| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.7.5-1.deb13_amd64.deb` |
 | Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc43.x86_64.rpm` |
 | Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc44.x86_64.rpm` |
 | Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.7.5-1-x86_64.pkg.tar.zst` |
