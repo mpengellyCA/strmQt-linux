@@ -13,3 +13,6 @@ e800dbc5c1c95185cc82216c597724533ff5f2880179f256eef600f03e8dc2ae  FSRCNNX_x2_8-0
 5638fe31c37c151a3443fea3451a3ef91af073f4dbb9615f6c0d1e29db11493d  Anime4K_Upscale_CNN_x2_VL.glsl
 # Anime4K_Upscale_CNN_x2_M.glsl: https://github.com/bloc97/Anime4K/tree/v4.0.1 @ v4.0.1
 716e02098a68f0d648761f2b96b4dd139e1cb09b174bb369fca3aa34328fff7e  Anime4K_Upscale_CNN_x2_M.glsl
+# ArtCNN_C4F16_DS.glsl: https://github.com/Artoriuz/ArtCNN @ 7d6955141b88047a983e3a424e87c5a5e3df3e3c (GLSL/ArtCNN_C4F16_DS.glsl)
+# ArtCNN_C4F16_DS.glsl is upstream plus shaders/ArtCNN_C4F16_DS.vo_gpu.patch (libmpv vo_gpu compatibility); the checksum is the patched file's.
+3f71956bebec61328d2a6702b116787db23232d628b2565cc589f1a2952c2d30  ArtCNN_C4F16_DS.glsl

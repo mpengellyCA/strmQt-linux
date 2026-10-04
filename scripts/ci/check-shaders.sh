@@ -10,7 +10,8 @@ dir="$root/share/strmqt/shaders"
 missing=0
 for f in FSR.glsl FSR.LICENSE NVScaler.glsl NVScaler.LICENSE \
          FSRCNNX_x2_16-0-4-1.glsl FSRCNNX_x2_8-0-4-1.glsl FSRCNNX.LICENSE \
-         Anime4K_Upscale_CNN_x2_VL.glsl Anime4K_Upscale_CNN_x2_M.glsl Anime4K.LICENSE; do
+         Anime4K_Upscale_CNN_x2_VL.glsl Anime4K_Upscale_CNN_x2_M.glsl Anime4K.LICENSE \
+         ArtCNN_C4F16_DS.glsl ArtCNN.LICENSE; do
     if [ ! -s "$dir/$f" ]; then
         echo "check-shaders.sh: missing $dir/$f" >&2
         missing=1

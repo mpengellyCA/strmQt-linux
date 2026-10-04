@@ -1,0 +1,69 @@
+--- src/ArtCNN/GLSL/ArtCNN_C4F16_DS.glsl	2026-10-04 09:23:24.821892980 -0400
++++ shaders/ArtCNN_C4F16_DS.glsl	2026-10-04 09:30:39.637832149 -0400
+@@ -29,7 +29,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -121,7 +120,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -351,7 +349,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -581,7 +578,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -811,7 +807,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -1041,7 +1036,6 @@
+ //!HEIGHT LUMA.h 2.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -1272,7 +1266,6 @@
+ //!HEIGHT LUMA.h 1.0 *
+ //!COMPONENTS 4
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4
+@@ -1385,9 +1378,8 @@
+ //!BIND conv2d_6
+ //!WIDTH LUMA.w 2.0 *
+ //!HEIGHT LUMA.h 2.0 *
+-//!COMPONENTS 4
++//!COMPONENTS 1
+ //!WHEN OUTPUT.w LUMA.w / 1.3 > OUTPUT.h LUMA.h / 1.3 > *
+-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+ #ifdef GL_EXT_shader_explicit_arithmetic_types_float16
+ #	define V4 f16vec4
+ #	define M4 f16mat4

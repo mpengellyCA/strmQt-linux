@@ -63,6 +63,7 @@ set(STRMQT_SHADER_FILES
     FSR.glsl FSR.LICENSE
     NVScaler.glsl NVScaler.LICENSE
     FSRCNNX_x2_16-0-4-1.glsl FSRCNNX_x2_8-0-4-1.glsl FSRCNNX.LICENSE
-    Anime4K_Upscale_CNN_x2_VL.glsl Anime4K_Upscale_CNN_x2_M.glsl Anime4K.LICENSE)
+    Anime4K_Upscale_CNN_x2_VL.glsl Anime4K_Upscale_CNN_x2_M.glsl Anime4K.LICENSE
+    ArtCNN_C4F16_DS.glsl ArtCNN.LICENSE)
 list(TRANSFORM STRMQT_SHADER_FILES PREPEND ${CMAKE_SOURCE_DIR}/shaders/)
 install(FILES ${STRMQT_SHADER_FILES} DESTINATION ${CMAKE_INSTALL_DATADIR}/strmqt/shaders)

@@ -46,6 +46,15 @@ License: Expat
 Comment: bloc97/Anime4K v4.0.1. Licence text installed as
  /usr/share/strmqt/shaders/Anime4K.LICENSE.
 
+Files: shaders/ArtCNN_C4F16_DS.glsl shaders/ArtCNN_C4F16_DS.vo_gpu.patch
+Copyright: 2024 Joao Chrisostomo
+           2024 Kacper Michajłow
+License: Expat
+Comment: Artoriuz/ArtCNN at 7d6955141b88047a983e3a424e87c5a5e3df3e3c, patched
+ for libmpv's vo_gpu by shaders/ArtCNN_C4F16_DS.vo_gpu.patch. Revision and
+ checksum in shaders/SOURCES; licence text installed as
+ /usr/share/strmqt/shaders/ArtCNN.LICENSE.
+
 License: GPL-3.0-or-later
  On Debian systems, the full text is in /usr/share/common-licenses/GPL-3.
 
