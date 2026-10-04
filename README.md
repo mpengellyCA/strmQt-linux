@@ -34,6 +34,10 @@ and auto-advance through a series. Leave the player and the film carries on in a
 picture-in-picture frame; leave a record and it carries on in a docked bar with the artwork
 still on it.
 
+- Upscaling of video below the window's resolution: FSRCNNX and FSR1 for live
+  action, Anime4K for animation, chosen automatically per item and stepped
+  down on GPUs that cannot keep up; overridable live from the player's Quality tab (mpv engine).
+
 ### Music treated as music
 
 A music library opens on its own home: pick up where you left off, stations, genre
@@ -221,7 +225,7 @@ The core of it has been exercised against a live Emby 4.9 server: browsing, sear
 playback of video and audio, live updates over a WebSocket, playlists, favourites,
 resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 76/76 on Qt 6.4.2, 6.8.2, 6.10 and
+The build is clean under `-Werror`, `ctest` passes 80/80 on Qt 6.4.2, 6.8.2, 6.10 and
 6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
 page-construction self-test builds all 15 screens on every release.
 
