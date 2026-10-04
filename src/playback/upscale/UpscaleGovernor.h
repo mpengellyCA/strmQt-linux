@@ -39,6 +39,10 @@ public:
     void setActiveRung(int rung) { m_activeRung = rung; }
     // The user picked the chain: record timings, change nothing.
     void setManualOverride(bool manual) { m_manual = manual; }
+    // Playback off 1× (a fast-forward hold, a user speed): drops and timings
+    // then are the speed's, not the GPU's, so nothing steps. Leaving the hold
+    // is a transient of its own.
+    void setHeld(bool held);
 
     // From MpvVideoItem, twice a second. samples < 0 means the GPU has no
     // timer queries; 0 means no frames were rendered (paused).
@@ -69,6 +73,7 @@ private:
     int m_ceiling = 4;
     int m_activeRung = 0;
     bool m_manual = false;
+    bool m_held = false;
     qreal m_fps = 0.0;
     qint64 m_graceUntil = 0;
     qint64 m_overBudgetSince = -1;

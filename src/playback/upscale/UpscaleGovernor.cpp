@@ -88,9 +88,20 @@ qreal UpscaleGovernor::budgetMs() const
     return kBudgetShare * (1000.0 / fps) * scale;
 }
 
+void UpscaleGovernor::setHeld(bool held)
+{
+    if (held == m_held)
+        return;
+    m_held = held;
+    if (held)
+        m_overBudgetSince = -1;
+    else
+        noteTransient();
+}
+
 bool UpscaleGovernor::mayStep() const
 {
-    return !m_manual && m_activeRung > 0 && now() >= m_graceUntil;
+    return !m_manual && !m_held && m_activeRung > 0 && now() >= m_graceUntil;
 }
 
 void UpscaleGovernor::addTimingSummary(qreal p95Ms, qreal meanMs, int samples)

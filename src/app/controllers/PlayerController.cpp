@@ -131,6 +131,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
         // the hold's, not a setting (playbackSpeed() keeps the user's, and
         // endFastForward() announces the restore).
         connect(m_backend, &PlayerBackend::playbackSpeedChanged, this, [this] {
+            updateUpscaleHold();
             if (m_expectedLoadId != 0 && m_active && !m_fastForwarding)
                 emit playbackSpeedChanged();
         });
@@ -1256,6 +1257,7 @@ bool PlayerController::beginFastForward(qint64 nowMs)
     if (!fastForwardMaySeek() && m_backend->maximumPlaybackSpeed() <= userSpeed)
         return false;
     m_fastForwarding = true;
+    updateUpscaleHold();
     m_speedBeforeFastForward = userSpeed;
     m_fastForwardEngineSpeed = m_speedBeforeFastForward;
     m_lastFastForwardStepMs = nowMs;
@@ -1320,6 +1322,7 @@ void PlayerController::endFastForward(bool reportPosition)
     m_fastForwarding = false;
     if (m_backend->maximumPlaybackSpeed() > 1.0)
         m_backend->setPlaybackSpeed(m_speedBeforeFastForward);
+    updateUpscaleHold();
     m_fastForwardMuted = false;
     applyVolume();
     m_fastForwardTargetMs = -1;
@@ -2308,6 +2311,13 @@ void PlayerController::setContentType(ContentType type)
         return;
     m_contentType = type;
     updateUpscale();
+}
+
+void PlayerController::updateUpscaleHold()
+{
+    // The engine's speed, not the user's setting: mpv confirms a change
+    // asynchronously, and the hold ends only once it really plays at 1×.
+    m_governor->setHeld(m_fastForwarding || !qFuzzyCompare(m_backend->playbackSpeed(), 1.0));
 }
 
 void PlayerController::onVideoShaderFailed(const QString &path)

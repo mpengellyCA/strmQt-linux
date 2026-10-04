@@ -105,6 +105,7 @@ private slots:
     void audioAfterFilmClearsTheChain();
     void resizeStormPushesOnce();
     void seekStartsTheGovernorGrace();
+    void playbackSpeedNeverStepsTheCeiling();
 
 private:
     void expectReport(const QString &path, const QString &method, bool paused = false);
@@ -1354,6 +1355,58 @@ void PlayerControllerTest::seekStartsTheGovernorGrace()
     QCOMPARE(m_controller->upscaleCeiling(), 4);
     m_upscaleNow = 13'000;
     m_backend->simulateFrameDrops(5); // a real drop
+    QCOMPARE(m_controller->upscaleCeiling(), 3);
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
+}
+
+// Frames dropped at 2–4× are the speed's, not the GPU's: neither a fast-forward
+// hold nor a user speed may lower the ceiling saved for this GPU.
+void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
+{
+    startUpscaling();
+    m_backend->maxSpeed = 4.0;
+    m_controller->setSkipHoldClockForTests([this] { return m_upscaleNow; });
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+    const auto overBudget = [this](qint64 from, qint64 to) {
+        for (m_upscaleNow = from; m_upscaleNow <= to; m_upscaleNow += 500)
+            m_controller->reportGpuTiming(100.0, 90.0, 12);
+    };
+
+    // A fast-forward hold: the engine plays at 2×, no seek, no grace period.
+    m_upscaleNow = 10'000;
+    m_backend->simulateFrameDrops(0);
+    m_controller->skipForwardPressed();
+    m_upscaleNow = 10'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_backend->playbackSpeed(), 2.0);
+    m_upscaleNow = 13'000;
+    m_backend->simulateFrameDrops(3);
+    overBudget(13'000, 17'000);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->playbackSpeed(), 1.0);
+
+    // A user speed of 2×.
+    m_upscaleNow = 17'500;
+    m_controller->setPlaybackSpeed(2.0);
+    m_upscaleNow = 20'000;
+    m_backend->simulateFrameDrops(6);
+    overBudget(20'000, 24'000);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+
+    // Back at 1×: the change is a transient, and after it a drop steps as usual.
+    m_upscaleNow = 25'000;
+    m_controller->setPlaybackSpeed(1.0);
+    m_upscaleNow = 26'000;
+    m_backend->simulateFrameDrops(7);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+    m_upscaleNow = 27'500;
+    m_backend->simulateFrameDrops(8);
     QCOMPARE(m_controller->upscaleCeiling(), 3);
     QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
 }

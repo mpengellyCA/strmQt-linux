@@ -553,6 +553,9 @@ private:
     void setContentType(ContentType type);
     static bool genresSayAnimation(const ItemDetails &details);
     void onVideoShaderFailed(const QString &path);
+    // Holds the governor while playback is off 1×: a fast-forward hold or a
+    // user speed drops frames that say nothing about the GPU at 1×.
+    void updateUpscaleHold();
 
     emby::EmbyClient *m_client;
     PlayerBackend *m_backend;

@@ -34,6 +34,7 @@ private slots:
     void summaryUsesNearestRankP95();
     void resetCeilingWithoutRendererClearsEveryGpu();
     void counterResetIsANewBaseline();
+    void noSteppingWhileHeld();
 
 private:
     // Feeds an over-budget summary every stepMs over [fromMs, toMs].
@@ -274,6 +275,29 @@ void UpscaleGovernorTest::counterResetIsANewBaseline()
     m_now = 6100;
     m_governor->addDropCounts(1, 0);
     QCOMPARE(m_governor->ceiling(), 2);
+}
+
+void UpscaleGovernorTest::noSteppingWhileHeld()
+{
+    // Playback off 1× (a fast-forward hold, a user speed of 2×): drops and
+    // timings are the speed's, not the GPU's.
+    m_governor->setHeld(true);
+    feedOverBudget(2500, 8000);
+    m_governor->addDropCounts(0, 0);
+    m_governor->addDropCounts(50, 50);
+    QCOMPARE(m_governor->ceiling(), 4);
+    QCOMPARE(m_governor->lastP95Ms(), 30.0); // still recorded
+
+    // Back at 1×: the speed change itself is a transient...
+    m_now = 9000;
+    m_governor->setHeld(false);
+    m_now = 10000;
+    m_governor->addDropCounts(51, 50);
+    QCOMPARE(m_governor->ceiling(), 4);
+    // ...and after it the governor judges as usual.
+    m_now = 11500;
+    m_governor->addDropCounts(52, 50);
+    QCOMPARE(m_governor->ceiling(), 3);
 }
 
 QTEST_GUILESS_MAIN(UpscaleGovernorTest)
