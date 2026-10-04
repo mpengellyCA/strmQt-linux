@@ -17,7 +17,13 @@ cmake -S "$src" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr \
     -DSTRMQT_WERROR=OFF "$@"
 cmake --build "$build"
-ctest --test-dir "$build" --output-on-failure
+# Qt's offscreen platform gets GL only through GLX, so without an X server
+# tst_mpv_shader_compile skips. Run under Xvfb where it is installed (deps.sh).
+if command -v xvfb-run >/dev/null 2>&1; then
+    xvfb-run -a ctest --test-dir "$build" --output-on-failure
+else
+    ctest --test-dir "$build" --output-on-failure
+fi
 
 "$src/scripts/ci/selftest.sh" "$build/strmqt" "$build/selftest.log"
 

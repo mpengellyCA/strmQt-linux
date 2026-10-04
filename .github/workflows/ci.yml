@@ -47,7 +47,7 @@ jobs:
         run: cmake --build --preset release
 
       - name: Test
-        run: ctest --test-dir build/release --output-on-failure
+        run: xvfb-run -a ctest --test-dir build/release --output-on-failure
 
       # qmllint exits 0 even on warnings. Compare every normalized warning to
       # the reviewed baseline so warning noise cannot conceal a regression.

@@ -104,6 +104,18 @@ target_link_libraries(tst_mpv_video_item PRIVATE
     Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
 set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Every bundled upscaling shader, compiled and run by a real libmpv render
+# context (spec 2026-10-03 §6). llvmpipe in CI; the host GPU on a dev box.
+strmqt_add_test(tst_mpv_shader_compile integration/tst_mpv_shader_compile.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/GpuTimer.cpp
+)
+target_link_libraries(tst_mpv_shader_compile PRIVATE
+    Qt6::Gui Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
+target_compile_definitions(tst_mpv_shader_compile PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_mpv_shader_compile PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180)
+
 # Integration: client/controllers against a local mock HTTP server replaying fixtures.
 strmqt_add_test(tst_emby_client
     integration/tst_emby_client.cpp
