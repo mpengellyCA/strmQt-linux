@@ -105,6 +105,7 @@ private slots:
     void audioAfterFilmClearsTheChain();
     void resizeStormPushesOnce();
     void seekStartsTheGovernorGrace();
+    void watchdogNudgeStartsTheGovernorGrace();
     void playbackSpeedNeverStepsTheCeiling();
 
 private:
@@ -1357,6 +1358,27 @@ void PlayerControllerTest::seekStartsTheGovernorGrace()
     m_backend->simulateFrameDrops(5); // a real drop
     QCOMPARE(m_controller->upscaleCeiling(), 3);
     QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
+}
+
+// The watchdog's nudge is a seek like any other: its transient is not the GPU's.
+void PlayerControllerTest::watchdogNudgeStartsTheGovernorGrace()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    m_upscaleNow = 10'000; // well past every earlier grace period
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(0);
+    m_backend->simulatePosition(100'000); // then frozen: the watchdog nudges
+    QTRY_VERIFY(m_backend->seeks.contains(Q_INT64_C(101000)));
+    m_upscaleNow = 10'500;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(4); // the nudge's transient
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
 }
 
 // Frames dropped at 2–4× are the speed's, not the GPU's: neither a fast-forward

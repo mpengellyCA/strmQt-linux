@@ -919,6 +919,7 @@ void PlayerController::escalateStall()
     case 0:
         qCWarning(logPlayback) << "watchdog: position stalled, nudge-seeking +1s";
         m_backend->seekTo(m_lastPositionMs + 1000);
+        m_governor->noteTransient();
         break;
     case 1:
         qCWarning(logPlayback) << "watchdog: still stalled, reloading current rung";
