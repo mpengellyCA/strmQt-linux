@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 
+#include <algorithm>
 #include <clocale>
 #include <vector>
 
@@ -769,8 +770,43 @@ void MpvPlayer::noteLogForShaderFailure(const QString &text)
     // is one file today, which makes that exact (spec §5).
     if (m_shaderFailureReported || m_videoProcessing.shaderPaths.isEmpty())
         return;
-    if (!text.contains(QLatin1String("compile log (status=0)"))
-        && !text.contains(QLatin1String("Hook tried to")))
+    // A GLSL compile failure, a hook vo_gpu refuses at run time, and the
+    // parse errors of vo_gpu's user-shader reader (video/out/gpu/
+    // user_shaders.c, found in libmpv's strings): a shader that fails to
+    // parse is dropped with only an error line, and would otherwise show as
+    // active while doing nothing. Each is specific to user shaders.
+    static constexpr const char *kFailureMarkers[] = {
+        "compile log (status=0)",
+        "Hook tried to",
+        "Unrecognized command '",
+        "Unrecognized FILTER: '",
+        "Unrecognized BORDER: '",
+        "Unrecognized/unavailable FORMAT name",
+        "Unrecognized PARAM TYPE",
+        "Error while parsing OFFSET!",
+        "Error while parsing WIDTH!",
+        "Error while parsing HEIGHT!",
+        "Error while parsing WHEN!",
+        "Error while parsing COMPONENTS!",
+        "Error while parsing COMPUTE!",
+        "Error while parsing SIZE!",
+        "Error while parsing TEXTURE body",
+        "Invalid COMPONENTS:",
+        "RPN expression!",
+        "Shader appears to contain no headers!",
+        "Shader TEXTURE size mismatch",
+        "Shader defines too many parameters!",
+        "Passes may only hook up to",
+        "Passes may only bind up to",
+        "Expected PARAM header!",
+        "Missing initial parameter value!",
+        "Missing type for param",
+    };
+    const bool failed = std::any_of(std::begin(kFailureMarkers), std::end(kFailureMarkers),
+                                    [&text](const char *marker) {
+                                        return text.contains(QLatin1String(marker));
+                                    });
+    if (!failed)
         return;
     m_shaderFailureReported = true;
     for (const QString &path : m_videoProcessing.shaderPaths)

@@ -73,6 +73,7 @@ private slots:
     void chainCompiles_data();
     void chainCompiles();
     void brokenShaderIsReported();
+    void unparsableShaderIsReported();
 
 private:
     struct RunResult
@@ -256,6 +257,23 @@ void MpvShaderCompileTest::brokenShaderIsReported()
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.write("//!HOOK MAIN\n//!BIND HOOKED\nvec4 hook() { return this is not glsl; }\n");
+    file.close();
+    g_errors.clear();
+    const RunResult run = renderFor({{path}, QString(), QString()}, 1000);
+    QVERIFY(run.frames > 0);
+    QCOMPARE(run.failures, 1);
+}
+
+void MpvShaderCompileTest::unparsableShaderIsReported()
+{
+    // A shader vo_gpu cannot parse never reaches the compiler: mpv logs
+    // "Unrecognized command 'STORAGE'!" and drops it. That must come back as
+    // videoShaderFailed too, or StrmQt shows a chain that does nothing.
+    const QString path = m_dir.filePath(QStringLiteral("unparsable.glsl"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("//!HOOK MAIN\n//!BIND HOOKED\n//!STORAGE\n"
+               "vec4 hook() { return HOOKED_tex(HOOKED_pos); }\n");
     file.close();
     g_errors.clear();
     const RunResult run = renderFor({{path}, QString(), QString()}, 1000);
