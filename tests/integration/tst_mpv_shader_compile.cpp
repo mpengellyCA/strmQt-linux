@@ -53,6 +53,16 @@ void *glProcAddress(void *, const char *name)
 
 } // namespace
 
+// A missing GL context or ffmpeg skips the test where that is expected (a
+// package build), and fails it where the gate exists to prove the chains
+// compile: CI and check.sh under Xvfb export STRMQT_REQUIRE_GL=1.
+#define SKIP_UNLESS_GL_REQUIRED(message)                                                           \
+    do {                                                                                           \
+        if (qEnvironmentVariableIsSet("STRMQT_REQUIRE_GL"))                                        \
+            QFAIL(message);                                                                        \
+        QSKIP(message);                                                                            \
+    } while (false)
+
 class MpvShaderCompileTest : public QObject
 {
     Q_OBJECT
@@ -84,15 +94,16 @@ private:
 void MpvShaderCompileTest::initTestCase()
 {
     if (!m_context.create())
-        QSKIP("no OpenGL context: the shader compile test needs one (Mesa's llvmpipe is enough)");
+        SKIP_UNLESS_GL_REQUIRED(
+            "no OpenGL context: the shader compile test needs one (Mesa's llvmpipe is enough)");
     m_surface.setFormat(m_context.format());
     m_surface.create();
     if (!m_surface.isValid() || !m_context.makeCurrent(&m_surface))
-        QSKIP("no current OpenGL context on an offscreen surface");
+        SKIP_UNLESS_GL_REQUIRED("no current OpenGL context on an offscreen surface");
 
     const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
     if (ffmpeg.isEmpty())
-        QSKIP("ffmpeg is required to generate the 360p test clip");
+        SKIP_UNLESS_GL_REQUIRED("ffmpeg is required to generate the 360p test clip");
     m_clip = m_dir.filePath(QStringLiteral("clip360.avi"));
     QProcess process;
     process.start(ffmpeg, {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),

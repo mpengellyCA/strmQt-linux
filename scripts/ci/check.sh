@@ -18,10 +18,12 @@ cmake -S "$src" -B "$build" -G Ninja \
     -DSTRMQT_WERROR=OFF "$@"
 cmake --build "$build"
 # Qt's offscreen platform gets GL only through GLX, so without an X server
-# tst_mpv_shader_compile skips. Run under Xvfb where it is installed (deps.sh).
+# tst_mpv_shader_compile skips. Run under Xvfb where it is installed (deps.sh),
+# and there a skip is a failure: the run exists to prove the chains compile.
 if command -v xvfb-run >/dev/null 2>&1; then
-    xvfb-run -a ctest --test-dir "$build" --output-on-failure
+    STRMQT_REQUIRE_GL=1 xvfb-run -a ctest --test-dir "$build" --output-on-failure
 else
+    echo "check.sh: no xvfb-run, so tst_mpv_shader_compile may skip (no GL context)"
     ctest --test-dir "$build" --output-on-failure
 fi
 

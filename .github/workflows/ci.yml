@@ -47,6 +47,9 @@ jobs:
         run: cmake --build --preset release
 
       - name: Test
+        env:
+          # tst_mpv_shader_compile fails instead of skipping without GL.
+          STRMQT_REQUIRE_GL: "1"
         run: xvfb-run -a ctest --test-dir build/release --output-on-failure
 
       # qmllint exits 0 even on warnings. Compare every normalized warning to
