@@ -1412,9 +1412,10 @@ void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
     m_upscaleNow = 10'400;
     m_controller->tickSkipHoldForTests();
     QCOMPARE(m_backend->playbackSpeed(), 2.0);
-    m_upscaleNow = 13'000;
-    m_backend->simulateFrameDrops(3);
+    // Frames render (summaries keep coming), so only the hold keeps the drop
+    // from counting.
     overBudget(13'000, 17'000);
+    m_backend->simulateFrameDrops(3);
     QCOMPARE(m_controller->upscaleCeiling(), 4);
     m_controller->skipForwardReleased();
     QCOMPARE(m_backend->playbackSpeed(), 1.0);
@@ -1422,9 +1423,8 @@ void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
     // A user speed of 2×.
     m_upscaleNow = 17'500;
     m_controller->setPlaybackSpeed(2.0);
-    m_upscaleNow = 20'000;
-    m_backend->simulateFrameDrops(6);
     overBudget(20'000, 24'000);
+    m_backend->simulateFrameDrops(6);
     QCOMPARE(m_controller->upscaleCeiling(), 4);
 
     // Back at 1×: the change is a transient, and after it a drop steps as usual.
