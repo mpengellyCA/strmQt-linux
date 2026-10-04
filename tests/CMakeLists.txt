@@ -165,6 +165,7 @@ strmqt_add_test(tst_player_controller
     mocks/FakePlayerBackend.h
 )
 target_include_directories(tst_player_controller PRIVATE mocks)
+target_compile_definitions(tst_player_controller PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 strmqt_add_test(tst_item_actions
     integration/tst_item_actions.cpp

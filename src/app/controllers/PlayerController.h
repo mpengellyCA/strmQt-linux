@@ -4,11 +4,15 @@
 #include "core/Result.h"
 #include "playback/FastForwardRamp.h"
 #include "playback/PlayerBackend.h"
+#include "playback/upscale/UpscaleCatalog.h"
+#include "playback/upscale/UpscalePolicy.h"
 #include "server/dto/PlaybackTicket.h"
 
 #include <QElapsedTimer>
 #include <QFuture>
 #include <QObject>
+#include <QSet>
+#include <QSize>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
@@ -22,6 +26,8 @@
 namespace strmqt {
 
 class Settings;
+class UpscaleGovernor;
+struct ItemDetails;
 namespace emby {
 class EmbyClient;
 }
@@ -105,6 +111,20 @@ class PlayerController : public QObject
     // While ⏭ is held: the rate the picture is moving at (2, 4, 8, 16, 32).
     // 0 otherwise. For an OSD badge; nothing needs it to work.
     Q_PROPERTY(qreal fastForwardRate READ fastForwardRate NOTIFY fastForwardRateChanged)
+    // Upscaling (spec 2026-10-03 §4.3). The picker writes upscaleMode: "" is
+    // Auto, "off" is off, anything else a catalog id; it resets each item.
+    Q_PROPERTY(QString upscaleMode READ upscaleMode WRITE setUpscaleMode NOTIFY upscaleChanged)
+    // [{ id, name }] for this item's content type, best first.
+    Q_PROPERTY(QVariantList upscaleChoices READ upscaleChoices NOTIFY upscaleChanged)
+    Q_PROPERTY(QString upscaleActive READ upscaleActive NOTIFY upscaleChanged)
+    Q_PROPERTY(QString upscaleReason READ upscaleReason NOTIFY upscaleChanged)
+    // False on an engine without user shaders, and on a software renderer.
+    Q_PROPERTY(bool upscaleAvailable READ upscaleAvailable NOTIFY upscaleChanged)
+    Q_PROPERTY(int upscaleCeiling READ upscaleCeiling NOTIFY upscaleChanged)
+    // Twice a second, on their own signal so the picker is not rebuilt for them.
+    // upscaleGpuMs is the p95; -1 when the GPU has no timer queries.
+    Q_PROPERTY(qreal upscaleGpuMs READ upscaleGpuMs NOTIFY upscaleTimingChanged)
+    Q_PROPERTY(qreal upscaleBudgetMs READ upscaleBudgetMs NOTIFY upscaleTimingChanged)
 
 public:
     PlayerController(emby::EmbyClient *client, PlayerBackend *backend, Settings *settings = nullptr,
@@ -311,6 +331,26 @@ public:
     Q_INVOKABLE void setMuted(bool muted);
     Q_INVOKABLE void toggleMute();
 
+    QString upscaleMode() const { return m_upscaleOverride; }
+    Q_INVOKABLE void setUpscaleMode(const QString &mode);
+    QVariantList upscaleChoices() const;
+    QString upscaleActive() const;
+    QString upscaleReason() const;
+    bool upscaleAvailable() const;
+    int upscaleCeiling() const;
+    qreal upscaleGpuMs() const;
+    qreal upscaleBudgetMs() const;
+    // From the mpv video plane (MpvVideoPlane.qml), which only forwards.
+    Q_INVOKABLE void setVideoOutputSize(int width, int height);
+    Q_INVOKABLE void setGpuRenderer(const QString &renderer);
+    Q_INVOKABLE void reportGpuTiming(qreal p95Ms, qreal meanMs, int samples);
+    // Settings → Playback → "Re-test upscaling on this GPU".
+    Q_INVOKABLE void resetUpscaleCeiling();
+
+    void setUpscaleCatalogForTests(UpscaleCatalog catalog);
+    void setUpscaleDebounceForTests(int ms) { m_upscaleDebounce.setInterval(ms); }
+    UpscaleGovernor *upscaleGovernorForTests() const { return m_governor; }
+
     bool buffering() const { return m_backend->buffering(); }
 
     // Crash resume: non-empty map {itemId, title, positionMs} when the previous
@@ -372,6 +412,8 @@ signals:
     // the chapter under the playhead or the kind of media moved.
     void skipStateChanged();
     void fastForwardRateChanged();
+    void upscaleChanged();
+    void upscaleTimingChanged();
     void upNextChanged();
     // OSD toast for track switches ("Audio: eng — DTS 5.1").
     void trackChanged(const QString &description);
@@ -505,6 +547,12 @@ private:
     // Rungs available below the current one, within the current source only.
     bool canDemote() const { return m_rung + 1 < m_ticket.rungCount(m_sourceIndex); }
     void selectSource(qsizetype index);
+    // Re-runs the upscale policy and pushes the chain when it differs.
+    void updateUpscale();
+    void resolveContentType(const ItemDetails &details, int generation);
+    void setContentType(ContentType type);
+    static bool genresSayAnimation(const ItemDetails &details);
+    void onVideoShaderFailed(const QString &path);
 
     emby::EmbyClient *m_client;
     PlayerBackend *m_backend;
@@ -624,6 +672,24 @@ private:
     // drop back to normal speed can leave the position still for a moment,
     // which is a refill, not a stall.
     int m_watchdogGraceTicks = 0;
+
+    // Upscaling (spec 2026-10-03 §4.3).
+    UpscaleCatalog m_upscaleCatalog =
+        UpscaleCatalog::load(UpscaleCatalog::installedShaderDirectory());
+    UpscaleGovernor *m_governor = nullptr;
+    QTimer m_upscaleDebounce;
+    QString m_upscaleOverride;
+    ContentType m_contentType = ContentType::Unknown;
+    QSize m_videoOutputSize;
+    bool m_softwareRenderer = false;
+    // Catalog ids whose shaders failed to load; skipped until the app restarts.
+    QSet<QString> m_brokenUpscalers;
+    UpscaleDecision m_upscaleDecision;
+    // What the engine was last given; it starts at the engine's default.
+    VideoProcessing m_pushedChain;
+    // Everything the upscale properties show, so upscaleChanged fires only on
+    // a visible change and the picker's model is not reassigned under it.
+    QString m_upscaleSignature;
 };
 
 } // namespace strmqt
