@@ -23,6 +23,7 @@ const auto kProfilePickerKey = QStringLiteral("session/profilePickerAtStart");
 const auto kDeviceIdKey = QStringLiteral("device/id");
 const auto kEngineKey = QStringLiteral("playback/engine");
 const auto kToneMappingKey = QStringLiteral("playback/toneMapping");
+const auto kUpscaleBudgetScaleKey = QStringLiteral("upscale/budgetScale");
 const auto kDensityKey = QStringLiteral("appearance/density");
 const auto kThemeAccentKey = QStringLiteral("appearance/accent");
 const auto kReducedMotionKey = QStringLiteral("appearance/reducedMotion");
@@ -79,6 +80,14 @@ constexpr int kMaxRetainedPlaybackEntries = 256;
 // Persist the first crash-resume checkpoint immediately, then at most once per
 // minute. Pause/failure/clean-stop boundaries explicitly flush below.
 constexpr qint64 kResumeSyncIntervalMs = 60'000;
+// A GL_RENDERER string holds slashes, parentheses and commas, none of which a
+// QSettings key may safely contain.
+QString upscaleCeilingKey(const QString &glRenderer)
+{
+    const QByteArray digest =
+        QCryptographicHash::hash(glRenderer.toUtf8(), QCryptographicHash::Sha1).toHex().left(16);
+    return QStringLiteral("upscale/ceiling/") + QString::fromLatin1(digest);
+}
 } // namespace
 
 Settings::Settings(QObject *parent) : QObject(parent)
@@ -351,6 +360,41 @@ void Settings::setPlaybackEngine(const QString &engine)
 QString Settings::toneMapping() const
 {
     return m_store.value(kToneMappingKey, QStringLiteral("hable")).toString();
+}
+
+int Settings::upscaleCeiling(const QString &glRenderer) const
+{
+    if (glRenderer.isEmpty())
+        return -1;
+    bool ok = false;
+    const int value = m_store.value(upscaleCeilingKey(glRenderer)).toInt(&ok);
+    return ok ? qBound(0, value, 4) : -1;
+}
+
+void Settings::setUpscaleCeiling(const QString &glRenderer, int ceiling)
+{
+    if (glRenderer.isEmpty())
+        return;
+    m_store.setValue(upscaleCeilingKey(glRenderer), qBound(0, ceiling, 4));
+}
+
+void Settings::clearUpscaleCeiling(const QString &glRenderer)
+{
+    if (glRenderer.isEmpty())
+        return;
+    m_store.remove(upscaleCeilingKey(glRenderer));
+}
+
+void Settings::clearAllUpscaleCeilings()
+{
+    m_store.remove(QStringLiteral("upscale/ceiling"));
+}
+
+qreal Settings::upscaleBudgetScale() const
+{
+    bool ok = false;
+    const qreal scale = m_store.value(kUpscaleBudgetScaleKey, 1.0).toDouble(&ok);
+    return ok && scale > 0.0 ? qBound(0.001, scale, 10.0) : 1.0;
 }
 
 QStringList Settings::densityModes()

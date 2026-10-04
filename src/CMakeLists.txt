@@ -36,6 +36,8 @@ qt_add_library(strmqt_core STATIC
     playback/upscale/VideoProcessing.h
     playback/upscale/UpscaleCatalog.h playback/upscale/UpscaleCatalog.cpp
     playback/upscale/UpscalePolicy.h playback/upscale/UpscalePolicy.cpp
+    playback/upscale/GpuTimingSummary.h
+    playback/upscale/UpscaleGovernor.h playback/upscale/UpscaleGovernor.cpp
 )
 target_include_directories(strmqt_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(strmqt_core PUBLIC Qt6::Core Qt6::Network Qt6::DBus Qt6::WebSockets)

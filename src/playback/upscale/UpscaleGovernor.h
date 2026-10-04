@@ -1,0 +1,81 @@
+#pragma once
+
+#include <QObject>
+#include <QString>
+
+#include <functional>
+
+namespace strmqt {
+
+class Settings;
+
+// Owns the upscaling ceiling: the highest ladder rung Auto may use on this GPU
+// (spec 2026-10-03 §4.2). It only ever lowers it while a video plays, and it
+// remembers the result per GL_RENDERER, so a weak GPU steps down once and
+// later films start smooth.
+class UpscaleGovernor : public QObject
+{
+    Q_OBJECT
+
+public:
+    using Clock = std::function<qint64()>; // monotonic milliseconds
+
+    explicit UpscaleGovernor(Settings *settings, QObject *parent = nullptr);
+
+    void setClockForTests(Clock clock) { m_clock = std::move(clock); }
+
+    // Loads this GPU's saved ceiling (4 for an unseen one).
+    void setRenderer(const QString &glRenderer);
+    QString renderer() const { return m_renderer; }
+    int ceiling() const { return m_ceiling; }
+
+    // A new item: back to the saved ceiling, a fresh drop baseline, a grace period.
+    void beginVideo();
+    void setFrameRate(qreal fps);
+    // A load, seek or chain change. Drops and timings in the next 2 s are the
+    // transient of that, not the GPU's steady state.
+    void noteTransient();
+    // The rung the policy is running now; 0 = off. Steps go from here.
+    void setActiveRung(int rung) { m_activeRung = rung; }
+    // The user picked the chain: record timings, change nothing.
+    void setManualOverride(bool manual) { m_manual = manual; }
+
+    // From MpvVideoItem, twice a second. samples < 0 means the GPU has no
+    // timer queries; 0 means no frames were rendered (paused).
+    void addTimingSummary(qreal p95Ms, qreal meanMs, int samples);
+    // mpv's cumulative frame-drop-count and vo-delayed-frame-count.
+    void addDropCounts(qint64 dropped, qint64 delayed);
+
+    // Settings → Playback → "Re-test upscaling on this GPU".
+    void resetCeiling();
+
+    qreal budgetMs() const;
+    qreal lastP95Ms() const { return m_lastP95Ms; }
+    bool timingAvailable() const { return m_timingAvailable; }
+
+signals:
+    void ceilingChanged();
+    void timingChanged();
+
+private:
+    qint64 now() const;
+    int savedCeiling() const;
+    bool mayStep() const;
+    void stepDown(const char *why);
+
+    Settings *m_settings;
+    Clock m_clock;
+    QString m_renderer;
+    int m_ceiling = 4;
+    int m_activeRung = 0;
+    bool m_manual = false;
+    qreal m_fps = 0.0;
+    qint64 m_graceUntil = 0;
+    qint64 m_overBudgetSince = -1;
+    qint64 m_lastDropped = -1;
+    qint64 m_lastDelayed = -1;
+    qreal m_lastP95Ms = -1.0;
+    bool m_timingAvailable = true;
+};
+
+} // namespace strmqt
