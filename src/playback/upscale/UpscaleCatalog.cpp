@@ -28,6 +28,15 @@ UpscaleEntry makeEntry(const char *id, const char *name, UpscaleContent content,
     return entry;
 }
 
+UpscaleEntry sdOnlyEntry(UpscaleEntry entry)
+{
+    entry.sdOnly = true;
+    return entry;
+}
+
+// Below 720 lines: DVD, SD broadcast, old web video.
+constexpr int kSdHeightBelow = 720;
+
 } // namespace
 
 bool UpscaleEntry::offeredFor(ContentType type) const
@@ -47,6 +56,12 @@ QList<UpscaleEntry> UpscaleCatalog::builtinEntries()
     using C = UpscaleContent;
     // Order is the picker's: best first, manual-only NIS just above EWA.
     return {
+        // ArtCNN's DS (denoise + sharpen) model tops the live-action ladder for
+        // SD sources only: it cleans DVD-era compression noise, which HD
+        // sources do not have.
+        sdOnlyEntry(makeEntry("artcnn-ds", "ArtCNN DS", C::LiveAction, 4, true,
+                              {QStringLiteral("ArtCNN_C4F16_DS.glsl")}, "ArtCNN.LICENSE", ewa,
+                              ewa)),
         makeEntry("fsrcnnx16", "FSRCNNX 16", C::LiveAction, 4, true,
                   {QStringLiteral("FSRCNNX_x2_16-0-4-1.glsl")}, "FSRCNNX.LICENSE", ewa, ewa),
         makeEntry("fsrcnnx8", "FSRCNNX 8", C::LiveAction, 3, true,
@@ -136,13 +151,21 @@ const UpscaleEntry *UpscaleCatalog::find(const QString &id) const
     return nullptr;
 }
 
-const UpscaleEntry *UpscaleCatalog::atRung(ContentType type, int rung) const
+const UpscaleEntry *UpscaleCatalog::atRung(ContentType type, int rung, QSize source) const
 {
+    const bool sd = source.height() > 0 && source.height() < kSdHeightBelow;
+    const UpscaleEntry *general = nullptr;
     for (const UpscaleEntry &entry : m_entries) {
-        if (entry.rung == rung && entry.offeredFor(type))
-            return &entry;
+        if (entry.rung != rung || !entry.offeredFor(type))
+            continue;
+        if (entry.sdOnly) {
+            if (sd)
+                return &entry;
+        } else if (!general) {
+            general = &entry;
+        }
     }
-    return nullptr;
+    return general;
 }
 
 QStringList UpscaleCatalog::idsUsingShader(const QString &path) const

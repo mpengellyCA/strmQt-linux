@@ -41,6 +41,7 @@ private slots:
     void neuralRungsSetEwaForTheRest();
     void hdrSkipsSdrOnlyEntries();
     void brokenEntryIsSkippedAndSaidSo();
+    void brokenSdEntryStepsDownTheLadder();
     void brokenOverrideFallsBackToAuto();
     void softwareRenderersAreRecognised();
     void factorFitsTheAspect();
@@ -104,6 +105,19 @@ void UpscalePolicyTest::decides_data()
         << QStringLiteral("fsrcnnx16") << "fsrcnnx16" << "FSRCNNX 16 · 720p → 1440p · manual" << 4;
     QTest::newRow("unknown override → Auto") << p720 << p1440 << live << 4 << false
         << QStringLiteral("no-such") << "fsrcnnx16" << "FSRCNNX 16 · 720p → 1440p" << 4;
+    const QSize dvd(547, 480); // a 720×480 DVD at its display aspect
+    QTest::newRow("SD live action → ArtCNN DS") << dvd << p1440 << live << 4 << false << QString()
+        << "artcnn-ds" << "ArtCNN DS · 480p → 1440p" << 4;
+    QTest::newRow("SD unknown content → ArtCNN DS") << dvd << p1440 << ContentType::Unknown << 4
+        << false << QString() << "artcnn-ds" << "ArtCNN DS · 480p → 1440p" << 4;
+    QTest::newRow("SD ceiling 3 → FSRCNNX 8") << dvd << p1440 << live << 3 << false << QString()
+        << "fsrcnnx8" << "FSRCNNX 8 · 480p → 1440p · stepped down for smooth playback" << 3;
+    QTest::newRow("SD animation → Anime4K VL") << dvd << p1440 << anime << 4 << false << QString()
+        << "anime4k-vl" << "Anime4K CNN VL · animation · 480p → 1440p" << 4;
+    QTest::newRow("1080p live action → FSRCNNX 16") << p1080 << p2160 << live << 4 << false
+        << QString() << "fsrcnnx16" << "FSRCNNX 16 · 1080p → 2160p" << 4;
+    QTest::newRow("override artcnn-ds on 1080p") << p1080 << p2160 << live << 4 << false
+        << QStringLiteral("artcnn-ds") << "artcnn-ds" << "ArtCNN DS · 1080p → 2160p · manual" << 4;
     QTest::newRow("no video yet → off") << QSize() << p1440 << live << 4 << false << QString()
         << "off" << "Off" << 0;
     QTest::newRow("no output yet → off") << p720 << QSize() << live << 4 << false << QString()
@@ -144,8 +158,8 @@ void UpscalePolicyTest::neuralRungsSetEwaForTheRest()
     // 360p → 1440p is 4×: 2× neural, then ewa_lanczossharp for the other 2×.
     const UpscaleDecision decision =
         decideUpscale(fakeCatalog(), input(QSize(640, 360), QSize(2560, 1440)));
-    QCOMPARE(decision.activeId, QStringLiteral("fsrcnnx16"));
-    QCOMPARE(decision.chain.shaderPaths, QStringList{QStringLiteral("/shaders/FSRCNNX_x2_16-0-4-1.glsl")});
+    QCOMPARE(decision.activeId, QStringLiteral("artcnn-ds"));
+    QCOMPARE(decision.chain.shaderPaths, QStringList{QStringLiteral("/shaders/ArtCNN_C4F16_DS.glsl")});
     QCOMPARE(decision.chain.scale, QStringLiteral("ewa_lanczossharp"));
     QCOMPARE(decision.chain.cscale, QStringLiteral("ewa_lanczossharp"));
 }
@@ -153,10 +167,12 @@ void UpscalePolicyTest::neuralRungsSetEwaForTheRest()
 void UpscalePolicyTest::hdrSkipsSdrOnlyEntries()
 {
     QList<UpscaleEntry> entries = UpscaleCatalog::builtinEntries();
-    entries[0].sdrOnly = true; // fsrcnnx16
-    for (UpscaleEntry &entry : entries)
+    for (UpscaleEntry &entry : entries) {
+        if (entry.id == QLatin1String("fsrcnnx16"))
+            entry.sdrOnly = true;
         for (const QString &file : entry.shaderFiles)
             entry.shaderPaths << QStringLiteral("/shaders/") + file;
+    }
     const UpscaleCatalog catalog = UpscaleCatalog::fromEntries(entries);
 
     UpscaleInput in = input(QSize(1280, 720), QSize(2560, 1440));
@@ -175,6 +191,18 @@ void UpscalePolicyTest::brokenEntryIsSkippedAndSaidSo()
     QCOMPARE(decision.activeId, QStringLiteral("fsrcnnx8"));
     QCOMPARE(decision.reason,
              QStringLiteral("FSRCNNX 16 failed to load — using FSRCNNX 8 · 720p → 1440p"));
+}
+
+void UpscalePolicyTest::brokenSdEntryStepsDownTheLadder()
+{
+    // A broken ArtCNN DS is skipped like any rung: SD goes on to rung 3, not
+    // to the HD sources' rung 4.
+    UpscaleInput in = input(QSize(547, 480), QSize(2560, 1440));
+    in.broken = {QStringLiteral("artcnn-ds")};
+    const UpscaleDecision decision = decideUpscale(fakeCatalog(), in);
+    QCOMPARE(decision.activeId, QStringLiteral("fsrcnnx8"));
+    QCOMPARE(decision.reason,
+             QStringLiteral("ArtCNN DS failed to load — using FSRCNNX 8 · 480p → 1440p"));
 }
 
 void UpscalePolicyTest::brokenOverrideFallsBackToAuto()

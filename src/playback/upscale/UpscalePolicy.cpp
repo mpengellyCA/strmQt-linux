@@ -100,7 +100,7 @@ UpscaleDecision decideUpscale(const UpscaleCatalog &catalog, const UpscaleInput 
         notes << tr("stepped down for smooth playback");
 
     for (int rung = top; rung >= 1; --rung) {
-        const UpscaleEntry *entry = catalog.atRung(content, rung);
+        const UpscaleEntry *entry = catalog.atRung(content, rung, in.source);
         if (!entry || (entry->sdrOnly && in.hdr))
             continue;
         if (in.broken.contains(entry->id)) {

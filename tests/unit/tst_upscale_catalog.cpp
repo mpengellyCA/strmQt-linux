@@ -30,6 +30,7 @@ private slots:
     void everyEntryHasItsFilesAndLicence();
     void sourcesListsEveryShaderWithItsChecksum();
     void bothLaddersHaveEveryRung();
+    void sdOnlyEntriesTopTheSdLadder();
     void missingFilesDropTheEntry();
     void lookupsByIdRungAndPath();
 };
@@ -74,17 +75,39 @@ void UpscaleCatalogTest::sourcesListsEveryShaderWithItsChecksum()
 void UpscaleCatalogTest::bothLaddersHaveEveryRung()
 {
     const UpscaleCatalog catalog = UpscaleCatalog::load(kShaderDir);
-    for (const ContentType type : {ContentType::LiveAction, ContentType::Animation}) {
-        for (int rung = 1; rung <= 4; ++rung)
-            QVERIFY2(catalog.atRung(type, rung) != nullptr,
-                     qPrintable(QStringLiteral("rung %1 missing").arg(rung)));
+    const QSize hd(1920, 1080);
+    // Every source size, unknown included, has a full ladder of each kind.
+    for (const QSize source : {hd, QSize(547, 480), QSize()}) {
+        for (const ContentType type : {ContentType::LiveAction, ContentType::Animation}) {
+            for (int rung = 1; rung <= 4; ++rung)
+                QVERIFY2(catalog.atRung(type, rung, source) != nullptr,
+                         qPrintable(QStringLiteral("rung %1 missing").arg(rung)));
+        }
     }
-    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4)->id, QStringLiteral("fsrcnnx16"));
-    QCOMPARE(catalog.atRung(ContentType::Animation, 4)->id, QStringLiteral("anime4k-vl"));
-    QCOMPARE(catalog.atRung(ContentType::Unknown, 3)->id, QStringLiteral("fsrcnnx8"));
-    QCOMPARE(catalog.atRung(ContentType::Animation, 2)->id, QStringLiteral("fsr"));
-    QCOMPARE(catalog.atRung(ContentType::Animation, 1)->id, QStringLiteral("ewa"));
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, hd)->id, QStringLiteral("fsrcnnx16"));
+    QCOMPARE(catalog.atRung(ContentType::Animation, 4, hd)->id, QStringLiteral("anime4k-vl"));
+    QCOMPARE(catalog.atRung(ContentType::Unknown, 3, hd)->id, QStringLiteral("fsrcnnx8"));
+    QCOMPARE(catalog.atRung(ContentType::Animation, 2, hd)->id, QStringLiteral("fsr"));
+    QCOMPARE(catalog.atRung(ContentType::Animation, 1, hd)->id, QStringLiteral("ewa"));
     QVERIFY(catalog.find(QStringLiteral("nis"))->manualOnly());
+}
+
+void UpscaleCatalogTest::sdOnlyEntriesTopTheSdLadder()
+{
+    const UpscaleCatalog catalog = UpscaleCatalog::load(kShaderDir);
+    const QSize dvd(547, 480); // a 720×480 DVD at its display aspect
+    QVERIFY(catalog.find(QStringLiteral("artcnn-ds"))->sdOnly);
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, dvd)->id, QStringLiteral("artcnn-ds"));
+    QCOMPARE(catalog.atRung(ContentType::Unknown, 4, dvd)->id, QStringLiteral("artcnn-ds"));
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 3, dvd)->id, QStringLiteral("fsrcnnx8"));
+    // Live action only: SD animation keeps Anime4K.
+    QCOMPARE(catalog.atRung(ContentType::Animation, 4, dvd)->id, QStringLiteral("anime4k-vl"));
+    // 720 lines is HD; an unknown size is not assumed SD.
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1280, 720))->id,
+             QStringLiteral("fsrcnnx16"));
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1280, 719))->id,
+             QStringLiteral("artcnn-ds"));
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize())->id, QStringLiteral("fsrcnnx16"));
 }
 
 void UpscaleCatalogTest::missingFilesDropTheEntry()
