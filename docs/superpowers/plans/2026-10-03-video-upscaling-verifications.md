@@ -57,3 +57,23 @@ Run on the Task 10 tree (branch `video-upscaling`, 80 tests).
 | C(fedora-44) | `check-shaders.sh: OK (/build/stage/usr/share/strmqt/shaders)`; `check.sh: OK (full)` |
 | debian-13 .deb build and install-check | `check-shaders.sh: OK (/usr/share/strmqt/shaders)`; `selftest.sh: OK` |
 | fedora-44 .rpm build and install-check | `check-shaders.sh: OK (/usr/share/strmqt/shaders)`; `selftest.sh: OK` |
+
+## Final-review fixes (270dc8d..bdfd00c)
+
+Gates re-run after the four must-fix findings of the whole-branch review
+(minimised-window drops, watchdog nudge grace, undecided target clock,
+skip-as-pass). From bdfd00c on, `check.sh` under xvfb-run and the Arch CI Test
+step set `STRMQT_REQUIRE_GL=1`, so `tst_mpv_shader_compile` fails rather than
+skips without GL or ffmpeg: "Passed" there means it ran. Each row below was
+also read in the test log (`Totals: 10 passed, 0 failed, 0 skipped`).
+
+| Gate | Result | tst_mpv_shader_compile |
+|---|---|---|
+| H (full tier, Debug, `-Werror`, private Xwayland, `STRMQT_REQUIRE_GL=1`) | build: 0 warnings; `100% tests passed out of 80`; `qmllint warning baseline matches (1340 warnings).`; `selftest.sh: OK` | ran, passed (RX 9070, radeonsi) |
+| C(debian-12) | `check-shaders.sh: OK (/build/stage/usr/share/strmqt/shaders)`; `check.sh: OK (compat)` | ran, passed (llvmpipe, LLVM 15; Qt 6.4.2; pre-2.2 libmpv branch built) |
+| C(fedora-44) | `check-shaders.sh: OK (/build/stage/usr/share/strmqt/shaders)`; `check.sh: OK (full)` | ran, passed (llvmpipe, LLVM 22; Qt 6.11.2) |
+| C(ubuntu-26.04) | pending (batch B) | |
+| C(fedora-43) | pending (batch B) | |
+
+The earlier gate rows above predate the requirement, so they do not show
+whether the shader compile test ran or skipped there.
