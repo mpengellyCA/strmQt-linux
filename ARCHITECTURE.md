@@ -307,7 +307,7 @@ The parts, and where they live:
 
   The 2x neural rungs are used only from a 1.5x scale factor up. NIS is
   offered in the picker but never chosen by Auto. ArtCNN DS is `sdOnly`: Auto
-  picks it only when the source is under 720 lines, where it cleans DVD-era
+  picks it only when the source is under 1280×720 both ways, where it cleans DVD-era
   compression noise; HD and unknown-size sources get FSRCNNX 16, and the
   picker offers it for any source. Animation is any item whose
   genres (or, for an episode without any, its series') include "Anime" or

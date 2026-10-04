@@ -29,8 +29,8 @@ struct UpscaleEntry
     QString scale;            // mpv filters set alongside the shaders
     QString cscale;
     bool sdrOnly = false;     // skipped for HDR; no entry needs it today (spec §2.6)
-    bool sdOnly = false;      // Auto picks it only for an SD source (height below
-                              // 720); a manual pick ignores this
+    bool sdOnly = false;      // Auto picks it only for an SD source (smaller than
+                              // 1280×720 both ways); a manual pick ignores this
     QStringList shaderPaths;  // absolute; filled in by UpscaleCatalog::load()
 
     bool manualOnly() const { return rung < 0; }
@@ -56,7 +56,7 @@ public:
     const QList<UpscaleEntry> &entries() const { return m_entries; }
     const UpscaleEntry *find(const QString &id) const;
     // The Auto entry for this rung and content type; nullptr when there is none.
-    // An SD `source` (height 1..719) prefers an sdOnly entry for the rung; any
+    // An SD `source` (under 1280×720 both ways) prefers an sdOnly entry for the rung; any
     // other source, or an unknown (empty) one, never gets an sdOnly entry.
     const UpscaleEntry *atRung(ContentType type, int rung, QSize source) const;
     // Every entry whose chain includes this shader file. A failure report

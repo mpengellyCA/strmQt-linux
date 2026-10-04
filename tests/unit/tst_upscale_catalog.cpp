@@ -105,7 +105,13 @@ void UpscaleCatalogTest::sdOnlyEntriesTopTheSdLadder()
     // 720 lines is HD; an unknown size is not assumed SD.
     QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1280, 720))->id,
              QStringLiteral("fsrcnnx16"));
-    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1280, 719))->id,
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1279, 719))->id,
+             QStringLiteral("artcnn-ds"));
+    // A letterbox-cropped 720p encode is HD, however few lines it has.
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1280, 534))->id,
+             QStringLiteral("fsrcnnx16"));
+    // An anamorphic 16:9 PAL DVD at its display aspect is still SD.
+    QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize(1024, 576))->id,
              QStringLiteral("artcnn-ds"));
     QCOMPARE(catalog.atRung(ContentType::LiveAction, 4, QSize())->id, QStringLiteral("fsrcnnx16"));
 }

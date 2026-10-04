@@ -119,7 +119,7 @@ the ceiling one rung at a time.
 | 1 | `ewa_lanczossharp` (no shader) | `ewa_lanczossharp` |
 | 0 | mpv's default scaler (off) | the same |
 
-> **Amendment 2026-10-04.** On SD sources (display height under 720 lines), live-action
+> **Amendment 2026-10-04.** On SD sources (display size under 1280×720 both ways), live-action
 > rung 4 is ArtCNN C4F16 DS, vendored with a `vo_gpu` compatibility patch
 > (`shaders/ArtCNN_C4F16_DS.vo_gpu.patch`). HD and unknown-size sources keep FSRCNNX 16;
 > rung 3 and below are unchanged, and the picker offers ArtCNN DS for any source. A

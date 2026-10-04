@@ -34,8 +34,9 @@ UpscaleEntry sdOnlyEntry(UpscaleEntry entry)
     return entry;
 }
 
-// Below 720 lines: DVD, SD broadcast, old web video.
-constexpr int kSdHeightBelow = 720;
+// Smaller than 720p both ways: DVD, SD broadcast, old web video. Width as
+// well as height, or a letterbox-cropped 720p encode (1280×534) counts as SD.
+constexpr QSize kSdBelow(1280, 720);
 
 } // namespace
 
@@ -153,7 +154,8 @@ const UpscaleEntry *UpscaleCatalog::find(const QString &id) const
 
 const UpscaleEntry *UpscaleCatalog::atRung(ContentType type, int rung, QSize source) const
 {
-    const bool sd = source.height() > 0 && source.height() < kSdHeightBelow;
+    const bool sd = !source.isEmpty() && source.width() < kSdBelow.width()
+        && source.height() < kSdBelow.height();
     const UpscaleEntry *general = nullptr;
     for (const UpscaleEntry &entry : m_entries) {
         if (entry.rung != rung || !entry.offeredFor(type))
