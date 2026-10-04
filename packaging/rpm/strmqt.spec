@@ -4,7 +4,7 @@ Name:           strmqt
 Version:        0.7.5
 Release:        1%{?dist}
 Summary:        Couch-first Emby client for the Linux desktop
-License:        GPL-3.0-or-later AND OFL-1.1
+License:        GPL-3.0-or-later AND OFL-1.1 AND MIT AND LGPL-3.0-or-later
 URL:            https://github.com/mpengellyCA/strmQt-linux
 Source0:        %{name}-%{version}.tar.gz
 
@@ -51,10 +51,11 @@ export QT_QPA_PLATFORM=offscreen
 %ctest
 
 %files
-%license COPYING assets/fonts/OFL-*.txt
+%license COPYING assets/fonts/OFL-*.txt shaders/*.LICENSE
 %doc README.md
 %{_bindir}/strmqt
 %{_bindir}/strmqt-cli
+%{_datadir}/strmqt/
 %{_datadir}/applications/ca.mikesdev.StrmQt.desktop
 %{_metainfodir}/ca.mikesdev.StrmQt.metainfo.xml
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*

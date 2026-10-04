@@ -266,6 +266,8 @@ modules:
       # post-install with the cwd set to the out-of-tree `_flatpak_build`
       # directory, not the source root, so bare `COPYING` would not resolve.
       - install -Dm644 ../COPYING /app/share/licenses/ca.mikesdev.StrmQt/COPYING
+      # Same `../` reason: the install check lives in the source tree.
+      - ../scripts/ci/check-shaders.sh /app
     sources:
       - type: dir
         path: ../..

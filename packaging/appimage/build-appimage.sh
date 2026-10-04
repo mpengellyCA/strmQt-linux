@@ -127,6 +127,7 @@ DESTDIR="${APPDIR}" cmake --install "${BUILD_DIR}"
 
 [[ -x "${APPDIR}/usr/bin/strmqt" ]]     || die "strmqt did not install into the AppDir"
 [[ -x "${APPDIR}/usr/bin/strmqt-cli" ]] || die "strmqt-cli did not install into the AppDir"
+"${SRC_DIR}/scripts/ci/check-shaders.sh" "${APPDIR}/usr" || die "the upscaling shaders did not install into the AppDir"
 
 # Where the deploy step put Qt's plugins and QML modules. It follows the Qt it
 # deploys: a distro Qt's lib/qt6/plugins and lib/qt6/qml, aqt's plugins/ and

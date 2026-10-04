@@ -30,6 +30,7 @@ if find "$stage" \( -name '*.qml' -o -name qmldir -o -name '*.a' -o -path '*/inc
     echo "check.sh: unexpected files in the install tree" >&2
     exit 1
 fi
+"$src/scripts/ci/check-shaders.sh" "$stage/usr"
 
 tier=$(cat "$build/strmqt-qml-tier.txt" 2>/dev/null || echo "tier n/a")
 echo "check.sh: OK ($tier)"

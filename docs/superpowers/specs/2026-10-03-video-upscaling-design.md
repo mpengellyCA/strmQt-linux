@@ -99,7 +99,7 @@ are files on disk, not Qt resources. Each shader's licence text is installed nex
 |---|---|---|
 | `FSR.glsl` (AMD FidelityFX FSR1: EASU + RCAS) | agyild's mpv port | MIT |
 | `NVScaler.glsl` (NVIDIA Image Scaling) | agyild's mpv port | MIT |
-| `FSRCNNX_x2_16-0-4-1.glsl`, `FSRCNNX_x2_8-0-4-1.glsl` | igv/FSRCNN-TensorFlow release 1.1 | GPL-3.0 |
+| `FSRCNNX_x2_16-0-4-1.glsl`, `FSRCNNX_x2_8-0-4-1.glsl` | igv/FSRCNN-TensorFlow release 1.1 | LGPL-3.0-or-later |
 | `Anime4K_Upscale_CNN_x2_VL.glsl`, `Anime4K_Upscale_CNN_x2_M.glsl` | bloc97/Anime4K v4.0.1 | MIT |
 
 All of these are compatible with StrmQt's GPL-3.0-or-later.
@@ -399,9 +399,10 @@ why.
    mechanism. A real laptop check is welcome but not a release blocker.
 3. **Upstream shader repositories are effectively frozen** (FSRCNNX 2021, Anime4K 2021,
    the agyild gists). Vendored copies are what we ship, so this is low risk.
-4. **FSRCNNX is GPL-3.0, not MIT.** It is compatible with StrmQt's licence, but it must
-   be listed in the Debian `copyright` file and the `.rpm` licence field like any other
-   GPL component.
+4. **FSRCNNX is LGPL-3.0-or-later, not MIT.** Its shader headers say so (the upstream
+   repository's LICENSE file is MIT, which does not cover the shaders). It is compatible with
+   StrmQt's licence, but it must be listed in the Debian `copyright` file and the `.rpm`
+   licence field like any other copyleft component.
 
 ## 9. Acceptance
 
