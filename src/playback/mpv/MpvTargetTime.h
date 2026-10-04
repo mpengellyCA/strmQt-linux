@@ -8,9 +8,10 @@ namespace strmqt {
 // The clock a frame's MPV_RENDER_PARAM_NEXT_FRAME_INFO target_time is in.
 //
 // render.h says "the same unit and base as mpv_get_time_us()", but libmpv 2.5
-// delivers it in the mpv_get_time_ns() base (measured, spec 2026-10-03 §4.4):
-// waiting on it as microseconds holds every frame ~1000x too long. The 0.37
-// floor is unverified either way, so the base is read off the value itself.
+// delivers it in the mpv_get_time_ns() base (measured on libmpv 2.5 during
+// implementation): waiting on it as microseconds holds every frame ~1000x too
+// long. The 0.37 floor is unverified either way, so the base is read off the
+// value itself.
 enum class MpvClockBase { Unknown, Microseconds, Nanoseconds };
 
 // mpv's own wait is bounded by the frame duration; this only guards against a

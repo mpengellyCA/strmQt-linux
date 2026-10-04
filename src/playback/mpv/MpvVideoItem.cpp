@@ -291,8 +291,12 @@ private:
     {
         if (targetTime <= 0 || !m_handle)
             return;
-        const int64_t nowNs = mpv_get_time_ns(m_handle);
         const int64_t nowUs = mpv_get_time_us(m_handle);
+#if MPV_CLIENT_API_VERSION >= MPV_MAKE_VERSION(2, 2)
+        // mpv_get_time_ns() arrived with client API 2.2 (DOCS/client-api-changes.rst:
+        // "2.2 - add mpv_time_ns()", mpv 0.36/0.37); older libmpv has only the
+        // microsecond clock.
+        const int64_t nowNs = mpv_get_time_ns(m_handle);
         MpvClockBase base = m_clockBase;
         if (base == MpvClockBase::Unknown) {
             // render.h documents target_time in mpv_get_time_us() time, but
@@ -305,6 +309,12 @@ private:
                                      << (base == MpvClockBase::Nanoseconds ? "ns" : "us");
             }
         }
+#else
+        // Client API below 2.2: no nanosecond clock, so target_time is in the
+        // documented microseconds.
+        const int64_t nowNs = 0;
+        const MpvClockBase base = MpvClockBase::Microseconds;
+#endif
         const int64_t waitUs = targetWaitUs(targetTime, base, nowNs, nowUs);
         if (waitUs > 0)
             QThread::usleep(static_cast<unsigned long>(waitUs));
