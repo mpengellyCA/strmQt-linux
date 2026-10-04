@@ -17,7 +17,15 @@ cmake -S "$src" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr \
     -DSTRMQT_WERROR=OFF "$@"
 cmake --build "$build"
-ctest --test-dir "$build" --output-on-failure
+# Qt's offscreen platform gets GL only through GLX, so without an X server
+# tst_mpv_shader_compile skips. Run under Xvfb where it is installed (deps.sh),
+# and there a skip is a failure: the run exists to prove the chains compile.
+if command -v xvfb-run >/dev/null 2>&1; then
+    STRMQT_REQUIRE_GL=1 xvfb-run -a ctest --test-dir "$build" --output-on-failure
+else
+    echo "check.sh: no xvfb-run, so tst_mpv_shader_compile may skip (no GL context)"
+    ctest --test-dir "$build" --output-on-failure
+fi
 
 "$src/scripts/ci/selftest.sh" "$build/strmqt" "$build/selftest.log"
 
@@ -30,6 +38,7 @@ if find "$stage" \( -name '*.qml' -o -name qmldir -o -name '*.a' -o -path '*/inc
     echo "check.sh: unexpected files in the install tree" >&2
     exit 1
 fi
+"$src/scripts/ci/check-shaders.sh" "$stage/usr"
 
 tier=$(cat "$build/strmqt-qml-tier.txt" 2>/dev/null || echo "tier n/a")
 echo "check.sh: OK ($tier)"

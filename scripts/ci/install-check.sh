@@ -12,4 +12,5 @@ case "$pkg" in
     *.rpm) dnf install -y --setopt=install_weak_deps=False "$(realpath "$pkg")" ;;
     *) echo "install-check.sh: not a package: $pkg" >&2; exit 2 ;;
 esac
+"$(dirname "$0")/check-shaders.sh" /usr
 "$(dirname "$0")/selftest.sh" /usr/bin/strmqt

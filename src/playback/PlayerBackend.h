@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QObject>
+#include <QSize>
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+
+#include "playback/upscale/VideoProcessing.h"
 
 namespace strmqt {
 
@@ -184,6 +187,21 @@ public:
         Q_UNUSED(bMs);
     }
 
+    // ── Video processing (spec 2026-10-03 §4.1) ───────────────────────────────
+    // Upscaler shader chains. One call carries the whole chain, so an engine
+    // applies it atomically and on the next frame. Engines without user
+    // shaders say so; the controller then disables the Upscaling row instead
+    // of pushing chains at an engine that ignores them.
+    virtual bool supportsVideoShaders() const { return false; }
+    virtual void setVideoProcessing(const VideoProcessing &chain) { Q_UNUSED(chain); }
+    // What the upscale policy needs to know about the picture: its display size
+    // (sample aspect applied; empty while no video is up), whether its transfer
+    // is HDR (PQ or HLG), and its frame rate (0 when unknown). The three move
+    // together, on videoFormatChanged.
+    virtual QSize videoSize() const { return {}; }
+    virtual bool videoIsHdr() const { return false; }
+    virtual qreal videoFrameRate() const { return 0.0; }
+
 signals:
     void stateChanged(strmqt::PlayerBackend::State state, strmqt::PlayerBackend::LoadId loadId);
     void positionChanged(qint64 positionMs, strmqt::PlayerBackend::LoadId loadId);
@@ -205,6 +223,13 @@ signals:
     void audioDelayChanged();
     void subtitleDelayChanged();
     void videoStatsChanged();
+    void videoFormatChanged();
+    // Cumulative counts for the current file: frames the engine dropped, and
+    // frames it presented late. Engines that cannot count never emit this.
+    void frameDropCountsChanged(qint64 dropped, qint64 delayed);
+    // A shader in the current chain failed to compile or bind. Emitted once
+    // per path per setVideoProcessing() call.
+    void videoShaderFailed(const QString &path);
 };
 
 } // namespace strmqt

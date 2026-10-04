@@ -1,7 +1,9 @@
 #include <QtTest>
 
 #include "playback/mpv/MpvPlayer.h"
+#include "playback/mpv/MpvTargetTime.h"
 #include "playback/mpv/MpvVideoItem.h"
+#include "playback/upscale/VideoProcessing.h"
 
 #include <QOpenGLContext>
 #include <QProcess>
@@ -86,6 +88,10 @@ private slots:
     void hiddenPlaneStillLetsGo();
     void destroyingAHeldPlayerIsLoud();
     void destructionEmitsNoSettingChanges();
+    void videoProcessingAppliesOnFirstLoad();
+    void videoProcessingSurvivesACoreRelease();
+    void outputPixelSizeFollowsTheItem();
+    void targetWaitUsesTheNearerClock();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -596,6 +602,106 @@ void MpvVideoItemTest::destructionEmitsNoSettingChanges()
     delete player;
     QCOMPARE(speed.count(), 0);
     QCOMPARE(audioDelay.count(), 0);
+}
+
+void MpvVideoItemTest::videoProcessingAppliesOnFirstLoad()
+{
+    MpvPlayer player;
+    QVERIFY(player.supportsVideoShaders());
+    const VideoProcessing chain{{QStringLiteral("/strmqt-test/a.glsl")},
+                                QStringLiteral("ewa_lanczossharp"),
+                                QStringLiteral("ewa_lanczossharp")};
+    player.setVideoProcessing(chain); // before the core exists
+    player.load(kMissingMedia, 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+    QCOMPARE(stringProperty(handle, "glsl-shaders"), QStringLiteral("/strmqt-test/a.glsl"));
+    QCOMPARE(stringProperty(handle, "scale"), QStringLiteral("ewa_lanczossharp"));
+    QCOMPARE(stringProperty(handle, "cscale"), QStringLiteral("ewa_lanczossharp"));
+
+    // Empty filters mean mpv's own defaults, not "leave the last ones".
+    player.setVideoProcessing({});
+    QCOMPARE(stringProperty(handle, "glsl-shaders"), QString());
+    QCOMPARE(stringProperty(handle, "scale"), stringProperty(handle, "option-info/scale/default-value"));
+    QCOMPARE(stringProperty(handle, "cscale"), stringProperty(handle, "option-info/cscale/default-value"));
+    player.stop();
+}
+
+void MpvVideoItemTest::videoProcessingSurvivesACoreRelease()
+{
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    const VideoProcessing chain{{QStringLiteral("/strmqt-test/b.glsl")}, QString(), QString()};
+    QVERIFY(failLoad(player, 1));
+    player.setVideoProcessing(chain);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+
+    QVERIFY(failLoad(player, 2));
+    QCOMPARE(stringProperty(player.handle(), "glsl-shaders"), QStringLiteral("/strmqt-test/b.glsl"));
+    player.stop();
+}
+
+void MpvVideoItemTest::outputPixelSizeFollowsTheItem()
+{
+    QQuickWindow window;
+    window.resize(800, 600);
+    auto *item = new MpvVideoItem(window.contentItem());
+    QSignalSpy changed(item, &MpvVideoItem::outputPixelSizeChanged);
+    item->setSize(QSizeF(640, 360));
+    const qreal dpr = window.effectiveDevicePixelRatio();
+    QCOMPARE(item->outputPixelSize(), QSize(qRound(640 * dpr), qRound(360 * dpr)));
+    QVERIFY(changed.count() >= 1);
+    const int before = changed.count();
+    item->setSize(QSizeF(640, 360));
+    QCOMPARE(changed.count(), before); // no change, no signal
+    item->setSize(QSizeF(1280, 720));
+    QCOMPARE(item->outputPixelSize(), QSize(qRound(1280 * dpr), qRound(720 * dpr)));
+}
+
+void MpvVideoItemTest::targetWaitUsesTheNearerClock()
+{
+    // Readings taken from libmpv 2.5: target_time tracks mpv_get_time_ns(),
+    // although render.h documents the mpv_get_time_us() base.
+    const int64_t nowNs = 2'055'796'687;
+    const int64_t nowUs = 2'055'796;
+    bool decisive = false;
+    QCOMPARE(nearerMpvClock(2'090'000'000, nowNs, nowUs, &decisive), MpvClockBase::Nanoseconds);
+    QVERIFY(decisive);
+    QCOMPARE(targetWaitUs(2'090'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(34'203));
+
+    // The documented base, as an older libmpv would deliver it.
+    QCOMPARE(nearerMpvClock(2'090'000, nowNs, nowUs, &decisive), MpvClockBase::Microseconds);
+    QVERIFY(decisive);
+    QCOMPARE(targetWaitUs(2'090'000, MpvClockBase::Microseconds, nowNs, nowUs), int64_t(34'204));
+
+    // Within a frame of the clocks' origin both readings are close to zero and
+    // the choice is a guess: still the nearer clock, but not one to keep.
+    QCOMPARE(nearerMpvClock(40'000'000, 1'000'000, 1'000, &decisive), MpvClockBase::Nanoseconds);
+    QVERIFY(!decisive);
+
+    // ...and not one to wait on either. A frame 60 ms late in the ns base,
+    // 0.1 s into mpv's uptime, lies nearer the us clock; read as us it would
+    // be a far-future target, and the render thread would sleep the full 1 s.
+    MpvClockBase learned = MpvClockBase::Unknown;
+    QCOMPARE(nearerMpvClock(40'000'000, 100'000'000, 100'000, &decisive),
+             MpvClockBase::Microseconds);
+    QVERIFY(!decisive);
+    QCOMPARE(targetWaitUs(40'000'000, MpvClockBase::Microseconds, 100'000'000, 100'000),
+             kMaxTargetWaitUs); // what waiting on the guess would do
+    QCOMPARE(frameWaitUs(40'000'000, learned, 100'000'000, 100'000), int64_t(0));
+    QCOMPARE(learned, MpvClockBase::Unknown);
+    // A decisive reading is learned and waited on.
+    QCOMPARE(frameWaitUs(2'090'000'000, learned, nowNs, nowUs), int64_t(34'203));
+    QCOMPARE(learned, MpvClockBase::Nanoseconds);
+    // Once learned, the base is kept even for a frame that would not decide it.
+    QCOMPARE(frameWaitUs(140'000'000, learned, 100'000'000, 100'000), int64_t(40'000));
+
+    // No target, a target already past, and a runaway target.
+    QCOMPARE(targetWaitUs(0, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));
+    QCOMPARE(targetWaitUs(2'000'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));
+    QCOMPARE(targetWaitUs(9'000'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), kMaxTargetWaitUs);
+    QCOMPARE(targetWaitUs(9'000'000'000, MpvClockBase::Microseconds, nowNs, nowUs), kMaxTargetWaitUs);
 }
 
 QTEST_MAIN(MpvVideoItemTest)

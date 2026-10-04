@@ -1,23 +1,31 @@
 #include "MpvVideoItem.h"
 
+#include "GpuTimer.h"
 #include "MpvPlayer.h"
+#include "MpvTargetTime.h"
 #include "core/Log.h"
+#include "playback/upscale/GpuTimingSummary.h"
 
 #include <mpv/client.h>
 #include <mpv/render_gl.h>
 
+#include <QElapsedTimer>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
+#include <QOpenGLFunctions>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QThread>
 
 #include <atomic>
+#include <vector>
 
 namespace strmqt {
 
 namespace {
+
+constexpr qint64 kTimingSummaryIntervalMs = 500;
 
 void *glProcAddress(void *, const char *name)
 {
@@ -53,6 +61,28 @@ public:
         if (m_queued.exchange(true, std::memory_order_acq_rel))
             return;
         QMetaObject::invokeMethod(this, [this] { deliverUpdate(); }, Qt::QueuedConnection);
+    }
+
+    // Any thread. Both hop to the GUI thread; the item may be gone by then.
+    void postGpuTiming(double p95Ms, double meanMs, int samples)
+    {
+        QMetaObject::invokeMethod(
+            this,
+            [this, p95Ms, meanMs, samples] {
+                if (m_item)
+                    emit m_item->gpuTimingSampled(p95Ms, meanMs, samples);
+            },
+            Qt::QueuedConnection);
+    }
+    void postRenderer(const QString &renderer)
+    {
+        QMetaObject::invokeMethod(
+            this,
+            [this, renderer] {
+                if (m_item)
+                    m_item->deliverGpuRenderer(renderer);
+            },
+            Qt::QueuedConnection);
     }
 
     // GUI thread only. Set while this item's renderer lives on the GUI thread
@@ -129,23 +159,41 @@ public:
         ensureContext();
         if (!m_context)
             return;
-
-        QOpenGLFramebufferObject *fbo = framebufferObject();
-        mpv_opengl_fbo mpvFbo{static_cast<int>(fbo->handle()), fbo->width(), fbo->height(), 0};
-        int flipY = 0;
-
-        mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_OPENGL_FBO, &mpvFbo},
-            {MPV_RENDER_PARAM_FLIP_Y, &flipY},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-        };
         // mpv issues raw GL alongside the RHI — fence it off from Qt's own state.
         QQuickWindow *window = m_window.load(std::memory_order_acquire);
         if (!window)
             return;
+
+        QOpenGLFramebufferObject *fbo = framebufferObject();
+        mpv_opengl_fbo mpvFbo{static_cast<int>(fbo->handle()), fbo->width(), fbo->height(), 0};
+        int flipY = 0;
+        // StrmQt waits for the frame's display time itself, below. mpv's own
+        // wait would sit between the two timestamps and swamp the GPU time
+        // with ~40 ms of sleeping at 24 fps (spec §2.5).
+        int blockForTargetTime = 0;
+        mpv_render_param params[] = {
+            {MPV_RENDER_PARAM_OPENGL_FBO, &mpvFbo},
+            {MPV_RENDER_PARAM_FLIP_Y, &flipY},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &blockForTargetTime},
+            {MPV_RENDER_PARAM_INVALID, nullptr},
+        };
+        const int64_t targetTime = nextFrameTargetTime();
+
         window->beginExternalCommands();
+        m_gpuTimer.collect(m_gpuSamples);
+        // GL_TIMESTAMP pairs, never GL_TIME_ELAPSED: see GpuTimer.h.
+        const bool timed = m_gpuTimer.begin();
         mpv_render_context_render(m_context, params);
+        if (timed) {
+            m_gpuTimer.end();
+            // Submit the end timestamp now: left queued, it runs only after
+            // the wait below and the GPU time absorbs the sleep.
+            QOpenGLContext::currentContext()->functions()->glFlush();
+        }
         window->endExternalCommands();
+
+        waitUntil(targetTime);
+        postTimingSummary();
     }
 
 private:
@@ -158,6 +206,10 @@ private:
             win->beginExternalCommands();
         mpv_render_context_set_update_callback(m_context, nullptr, nullptr);
         mpv_render_context_free(m_context);
+        m_gpuTimer.release();
+        m_gpuSamples.clear();
+        m_summaryClock.invalidate();
+        m_clockBase = MpvClockBase::Unknown;
         if (win)
             win->endExternalCommands();
         m_context = nullptr;
@@ -203,6 +255,81 @@ private:
             return;
         }
         mpv_render_context_set_update_callback(m_context, onUpdate, m_bridge.get());
+
+        QOpenGLContext *gl = QOpenGLContext::currentContext();
+        const bool timed = m_gpuTimer.initialize(gl);
+        QString renderer;
+        if (gl) {
+            if (const auto *name = gl->functions()->glGetString(GL_RENDERER))
+                renderer = QString::fromLatin1(reinterpret_cast<const char *>(name));
+        }
+        qCInfo(logPlayback).noquote() << "video renderer:" << renderer
+                                      << (timed ? "(GPU timing on)" : "(no GPU timer queries)");
+        m_bridge->postRenderer(renderer);
+    }
+
+    // When the frame the next render call draws is due on screen, in mpv's
+    // clock (see MpvTargetTime.h for which one); 0 when mpv gives none (a redraw, or display-sync
+    // timing), which is also when mpv's own wait would not have waited.
+    int64_t nextFrameTargetTime()
+    {
+        mpv_render_frame_info info{};
+        if (mpv_render_context_get_info(m_context,
+                                        mpv_render_param{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &info})
+            < 0)
+            return 0;
+        if (!(info.flags & MPV_RENDER_FRAME_INFO_PRESENT)
+            || (info.flags & MPV_RENDER_FRAME_INFO_REDRAW))
+            return 0;
+        return info.target_time;
+    }
+
+    // The wait mpv does inside a blocking render call, done after the second
+    // timestamp instead (spec §4.4 step 5): the frame reaches Qt when it did
+    // before, so pacing and A/V sync are unchanged.
+    void waitUntil(int64_t targetTime)
+    {
+        if (targetTime <= 0 || !m_handle)
+            return;
+        const int64_t nowUs = mpv_get_time_us(m_handle);
+#if MPV_CLIENT_API_VERSION >= MPV_MAKE_VERSION(2, 2)
+        // mpv_get_time_ns() arrived with client API 2.2 (DOCS/client-api-changes.rst:
+        // "2.2 - add mpv_time_ns()", mpv 0.36/0.37); older libmpv has only the
+        // microsecond clock.
+        const int64_t nowNs = mpv_get_time_ns(m_handle);
+        // render.h documents target_time in mpv_get_time_us() time, but
+        // libmpv 2.5 gives mpv_get_time_ns() time: read it off the value. A
+        // frame that does not decide it is not waited on (MpvTargetTime.h).
+        const MpvClockBase before = m_clockBase;
+        const int64_t waitUs = frameWaitUs(targetTime, m_clockBase, nowNs, nowUs);
+        if (before == MpvClockBase::Unknown && m_clockBase != MpvClockBase::Unknown)
+            qCDebug(logPlayback) << "mpv frame target times are in"
+                                 << (m_clockBase == MpvClockBase::Nanoseconds ? "ns" : "us");
+#else
+        // Client API below 2.2: no nanosecond clock, so target_time is in the
+        // documented microseconds.
+        const int64_t waitUs = targetWaitUs(targetTime, MpvClockBase::Microseconds, 0, nowUs);
+#endif
+        if (waitUs > 0)
+            QThread::usleep(static_cast<unsigned long>(waitUs));
+    }
+
+    void postTimingSummary()
+    {
+        if (!m_summaryClock.isValid()) {
+            m_summaryClock.start();
+            return;
+        }
+        if (m_summaryClock.elapsed() < kTimingSummaryIntervalMs)
+            return;
+        m_summaryClock.restart();
+        if (!m_gpuTimer.available()) {
+            m_bridge->postGpuTiming(-1.0, -1.0, -1);
+            return;
+        }
+        const GpuTimingSummary summary = summarizeGpuTimes(std::move(m_gpuSamples));
+        m_gpuSamples.clear();
+        m_bridge->postGpuTiming(summary.p95Ms, summary.meanMs, summary.samples);
     }
 
     std::shared_ptr<MpvUpdateBridge> m_bridge;
@@ -210,6 +337,10 @@ private:
     mpv_handle *m_handle = nullptr;
     std::atomic<QQuickWindow *> m_window = nullptr;
     mpv_render_context *m_context = nullptr;
+    GpuTimer m_gpuTimer;
+    std::vector<double> m_gpuSamples;
+    QElapsedTimer m_summaryClock;
+    MpvClockBase m_clockBase = MpvClockBase::Unknown; // per render context
 };
 
 MpvVideoItem::MpvVideoItem(QQuickItem *parent)
@@ -241,6 +372,37 @@ MpvPlayer *MpvVideoItem::player() const
 void MpvVideoItem::requestRedrawForTests()
 {
     m_bridge->requestUpdate();
+}
+
+void MpvVideoItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickFramebufferObject::geometryChange(newGeometry, oldGeometry);
+    updateOutputPixelSize();
+}
+
+void MpvVideoItem::itemChange(ItemChange change, const ItemChangeData &value)
+{
+    QQuickFramebufferObject::itemChange(change, value);
+    if (change == ItemSceneChange || change == ItemDevicePixelRatioHasChanged)
+        updateOutputPixelSize();
+}
+
+void MpvVideoItem::updateOutputPixelSize()
+{
+    const qreal dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+    const QSize size(qRound(width() * dpr), qRound(height() * dpr));
+    if (size == m_outputPixelSize)
+        return;
+    m_outputPixelSize = size;
+    emit outputPixelSizeChanged();
+}
+
+void MpvVideoItem::deliverGpuRenderer(const QString &renderer)
+{
+    if (renderer == m_gpuRenderer)
+        return;
+    m_gpuRenderer = renderer;
+    emit gpuRendererChanged();
 }
 
 void MpvVideoItem::setPlayerObject(QObject *player)

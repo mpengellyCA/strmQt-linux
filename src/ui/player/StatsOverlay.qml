@@ -22,6 +22,7 @@ Item {
 
     signal closeRequested
 
+    readonly property var playerCtl: PlayerCtl
     readonly property var backend: PlayerCtl.backend
 
     readonly property var videoStats: {
@@ -97,6 +98,18 @@ Item {
         if (stats.has("audioBitrate"))
             audioBits.push(stats.formatBitrate(Number(s.audioBitrate)));
         push(qsTr("Audio"), audioBits.join("  ·  "));
+
+        // ── Upscaling (spec 2026-10-03 §4.5) ──
+        if (stats.playerCtl.upscaleAvailable === true) {
+            push(qsTr("Upscaling"), stats.playerCtl.upscaleActive);
+            const gpu = Number(stats.playerCtl.upscaleGpuMs);
+            const budget = Number(stats.playerCtl.upscaleBudgetMs);
+            if (gpu >= 0 && budget > 0)
+                push(qsTr("GPU per frame"), gpu.toFixed(2) + " / " + budget.toFixed(1) + " ms");
+            const ceiling = Number(stats.playerCtl.upscaleCeiling);
+            if (ceiling < 4)
+                push(qsTr("Upscale ceiling"), qsTr("rung %1 of 4").arg(ceiling));
+        }
 
         push(qsTr("Engine"), stats.backend.engineName);
         return out;

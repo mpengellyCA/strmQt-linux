@@ -141,6 +141,7 @@ src/ui/Theme.qml: Unqualified access [unqualified]	readonly property int wheelSt
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	const generation = CoverTint.revision;
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	return generation < 0 ? Qt.rgba(0, 0, 0, 0) : CoverTint.tintFor(wash.source);
 src/ui/components/CoverWash.qml: Unqualified access [unqualified]	visible: Prefs.backdropEnabled && wash.source.length > 0
+src/ui/components/MpvVideoPlane.qml: Unqualified access [unqualified]	readonly property var controller: PlayerCtl
 src/ui/controls/ItemMenu.qml: Unqualified access [unqualified]	Actions.performItemVerb(verb, item)
 src/ui/controls/ItemMenu.qml: Unqualified access [unqualified]	const policy = Actions.itemMenuPolicy(item, root.allowDetails,
 src/ui/controls/MappedShortcut.qml: Member "cursorPosition" not found on type "QQuickItem" [missing-property]	return item !== null && item.cursorPosition !== undefined;
@@ -1166,6 +1167,7 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.autoPlayNextEpisode = !Prefs.autoPlayNextEpisode
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property bool replayGainSupported: Session.playbackEngine === "mpv"
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property var playerCtl: PlayerCtl
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	return Prefs;
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	return WebRemoteCtl;
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
@@ -1245,6 +1247,7 @@ src/ui/player/PlaybackSettingsPanel.qml: Unqualified access [unqualified]	onTogg
 src/ui/player/PlaybackSettingsPanel.qml: Unqualified access [unqualified]	onValueRequested: requested => Prefs.subtitleBackground = Math.round(requested)
 src/ui/player/PlaybackSettingsPanel.qml: Unqualified access [unqualified]	onValueRequested: requested => Prefs.subtitlePosition = Math.round(requested)
 src/ui/player/PlaybackSettingsPanel.qml: Unqualified access [unqualified]	onValueRequested: requested => Prefs.subtitleScale = Math.round(requested)
+src/ui/player/PlaybackSettingsPanel.qml: Unqualified access [unqualified]	readonly property var playerCtl: PlayerCtl
 src/ui/player/PlayerOsd.qml: Unqualified access [unqualified]	+ "  /  " + osd.formatTime(PlayerCtl.durationMs)
 src/ui/player/PlayerOsd.qml: Unqualified access [unqualified]	- PlayerCtl.positionSeconds * 1000)) / 60000)
 src/ui/player/PlayerOsd.qml: Unqualified access [unqualified]	: PlayerCtl.positionSeconds * 1000)
@@ -1268,6 +1271,7 @@ src/ui/player/QueuePanel.qml: Unqualified access [unqualified]	const q = PlayerC
 src/ui/player/StatsOverlay.qml: Unqualified access [unqualified]	const source = PlayerCtl.currentSource;
 src/ui/player/StatsOverlay.qml: Unqualified access [unqualified]	push(qsTr("Play method"), PlayerCtl.streamMethod);
 src/ui/player/StatsOverlay.qml: Unqualified access [unqualified]	readonly property var backend: PlayerCtl.backend
+src/ui/player/StatsOverlay.qml: Unqualified access [unqualified]	readonly property var playerCtl: PlayerCtl
 src/ui/player/TrackPanel.qml: Unqualified access [unqualified]	PlayerCtl.setAudioTrack(trackId);
 src/ui/player/TrackPanel.qml: Unqualified access [unqualified]	PlayerCtl.setSubtitleTrack(trackId);
 src/ui/player/TrackPanel.qml: Unqualified access [unqualified]	readonly property var backend: PlayerCtl.backend

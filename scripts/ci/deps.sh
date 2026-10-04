@@ -82,10 +82,16 @@ case "$target" in
         (cd "$work" && TMPDIR="$work" mk-build-deps --install --remove \
             --tool 'apt-get -y --no-install-recommends' "$control")
         rm -rf "$work"
+        # Test-only: Qt's offscreen platform has GL only through GLX, so
+        # tst_mpv_shader_compile needs an X server to run instead of skipping
+        # (check.sh runs ctest under xvfb-run). Not a package dependency.
+        apt-get install -y --no-install-recommends xvfb xauth
         ;;
     fedora-*)
         dnf install -y --setopt=install_weak_deps=False dnf-plugins-core rpm-build rpmlint git-core
         dnf builddep -y --setopt=install_weak_deps=False \
             "$(cd "$(dirname "$0")/../.." && pwd)/packaging/rpm/strmqt.spec"
+        # Test-only, as for the Debian family: GLX for tst_mpv_shader_compile.
+        dnf install -y --setopt=install_weak_deps=False xorg-x11-server-Xvfb
         ;;
 esac

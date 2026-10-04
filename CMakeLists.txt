@@ -55,3 +55,14 @@ foreach(size IN ITEMS 32 48 64 128 256 512)
     install(FILES assets/icons/hicolor/${size}x${size}/apps/${STRMQT_APPID}.png
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps)
 endforeach()
+
+# Upscaling shaders (spec 2026-10-03 §3). mpv takes file paths, so these are
+# files on disk, each next to its licence text, not Qt resources. An explicit
+# list, as for the icons: a missing shader must be a hard install error.
+set(STRMQT_SHADER_FILES
+    FSR.glsl FSR.LICENSE
+    NVScaler.glsl NVScaler.LICENSE
+    FSRCNNX_x2_16-0-4-1.glsl FSRCNNX_x2_8-0-4-1.glsl FSRCNNX.LICENSE
+    Anime4K_Upscale_CNN_x2_VL.glsl Anime4K_Upscale_CNN_x2_M.glsl Anime4K.LICENSE)
+list(TRANSFORM STRMQT_SHADER_FILES PREPEND ${CMAKE_SOURCE_DIR}/shaders/)
+install(FILES ${STRMQT_SHADER_FILES} DESTINATION ${CMAKE_INSTALL_DATADIR}/strmqt/shaders)

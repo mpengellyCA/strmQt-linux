@@ -229,6 +229,17 @@ public:
     // HDR→SDR tone-mapping curve for the mpv engine (libplacebo name).
     QString toneMapping() const;
 
+    // Upscaling ceiling per GPU (spec 2026-10-03 §4.2), keyed by the
+    // GL_RENDERER string. -1 = never stepped down on this GPU.
+    int upscaleCeiling(const QString &glRenderer) const;
+    void setUpscaleCeiling(const QString &glRenderer, int ceiling);
+    void clearUpscaleCeiling(const QString &glRenderer);
+    // For "Re-test" before any video has told us the GPU.
+    void clearAllUpscaleCeilings();
+    // Debug knob with no UI: scales the governor's frame budget, so 0.01
+    // forces it to step down on any GPU (spec §6, manual check 4).
+    qreal upscaleBudgetScale() const;
+
     // ── Appearance (ARCHITECTURE.md) ───────────────────────────────────────
     // Theme.density multiplier selector: "compact" | "comfortable" | "tv".
     // Anything else on disk reads back as the default, "comfortable".

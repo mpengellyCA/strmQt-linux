@@ -61,6 +61,10 @@ if(_strmqt_have_sdl3)
     set_tests_properties(tst_gamepad_signals PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 strmqt_add_test(tst_fast_forward_ramp unit/tst_fast_forward_ramp.cpp)
+strmqt_add_test(tst_upscale_catalog unit/tst_upscale_catalog.cpp)
+target_compile_definitions(tst_upscale_catalog PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+strmqt_add_test(tst_upscale_policy unit/tst_upscale_policy.cpp)
+strmqt_add_test(tst_upscale_governor unit/tst_upscale_governor.cpp)
 strmqt_add_test(tst_vlc_frame_buffers unit/tst_vlc_frame_buffers.cpp)
 target_link_libraries(tst_vlc_frame_buffers PRIVATE Qt6::Gui)
 strmqt_add_test(tst_application_policy unit/tst_application_policy.cpp)
@@ -92,12 +96,25 @@ target_compile_definitions(tst_music_player_sources PRIVATE STRMQT_SOURCE_DIR="$
 strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/GpuTimer.cpp
 )
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
 target_link_libraries(tst_mpv_video_item PRIVATE
     Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
 set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Every bundled upscaling shader, compiled and run by a real libmpv render
+# context (spec 2026-10-03 §6). llvmpipe in CI; the host GPU on a dev box.
+strmqt_add_test(tst_mpv_shader_compile integration/tst_mpv_shader_compile.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/GpuTimer.cpp
+)
+target_link_libraries(tst_mpv_shader_compile PRIVATE
+    Qt6::Gui Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
+target_compile_definitions(tst_mpv_shader_compile PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_mpv_shader_compile PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180)
 
 # Integration: client/controllers against a local mock HTTP server replaying fixtures.
 strmqt_add_test(tst_emby_client
@@ -148,6 +165,7 @@ strmqt_add_test(tst_player_controller
     mocks/FakePlayerBackend.h
 )
 target_include_directories(tst_player_controller PRIVATE mocks)
+target_compile_definitions(tst_player_controller PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 strmqt_add_test(tst_item_actions
     integration/tst_item_actions.cpp

@@ -33,10 +33,20 @@ qt_add_library(strmqt_core STATIC
     platform/secrets/SecretServiceBackend.h platform/secrets/SecretServiceBackend.cpp
     playback/PlayerBackend.h playback/PlayerBackend.cpp
     playback/FastForwardRamp.h
+    playback/upscale/VideoProcessing.h
+    playback/upscale/UpscaleCatalog.h playback/upscale/UpscaleCatalog.cpp
+    playback/upscale/UpscalePolicy.h playback/upscale/UpscalePolicy.cpp
+    playback/upscale/GpuTimingSummary.h
+    playback/upscale/UpscaleGovernor.h playback/upscale/UpscaleGovernor.cpp
 )
 target_include_directories(strmqt_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(strmqt_core PUBLIC Qt6::Core Qt6::Network Qt6::DBus Qt6::WebSockets)
 target_compile_definitions(strmqt_core PUBLIC STRMQT_VERSION="${PROJECT_VERSION}")
+
+# A run from the build tree finds the shaders in the source tree
+# (UpscaleCatalog::installedShaderDirectory, after the installed location).
+set_source_files_properties(playback/upscale/UpscaleCatalog.cpp PROPERTIES
+    COMPILE_DEFINITIONS STRMQT_DEV_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders")
 
 # App services layer: QML-facing models and controllers (QtCore only, testable).
 qt_add_library(strmqt_app STATIC
@@ -114,6 +124,8 @@ qt_add_executable(strmqt
     app/CoverTintService.h app/CoverTintService.cpp
     playback/mpv/MpvPlayer.h playback/mpv/MpvPlayer.cpp
     playback/mpv/MpvVideoItem.h playback/mpv/MpvVideoItem.cpp
+    playback/mpv/GpuTimer.h playback/mpv/GpuTimer.cpp
+    playback/mpv/MpvTargetTime.h
 )
 if(LIBVLC_FOUND)
     target_sources(strmqt PRIVATE

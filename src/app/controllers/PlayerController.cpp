@@ -2,6 +2,8 @@
 
 #include "core/Log.h"
 #include "core/Settings.h"
+#include "playback/upscale/UpscaleGovernor.h"
+#include "server/dto/ItemDetails.h"
 #include "server/dto/MediaItem.h" // kTicksPerMs
 #include "server/emby/EmbyClient.h"
 
@@ -48,6 +50,9 @@ constexpr qint64 msToTicks(qint64 ms)
 {
     return ms * kTicksPerMs;
 }
+// A resize drag or a fullscreen animation sends dozens of sizes; only the one
+// it settles on is worth a chain change (spec 2026-10-03 §4.3).
+constexpr int kUpscaleDebounceMs = 250;
 } // namespace
 
 PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *backend,
@@ -55,6 +60,13 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     : QObject(parent), m_client(client), m_backend(backend), m_settings(settings),
       m_queue(new PlayQueue(this))
 {
+    m_governor = new UpscaleGovernor(m_settings, this);
+    m_upscaleDebounce.setSingleShot(true);
+    m_upscaleDebounce.setInterval(kUpscaleDebounceMs);
+    connect(&m_upscaleDebounce, &QTimer::timeout, this, &PlayerController::updateUpscale);
+    connect(m_governor, &UpscaleGovernor::ceilingChanged, this, &PlayerController::updateUpscale);
+    connect(m_governor, &UpscaleGovernor::timingChanged, this,
+            &PlayerController::upscaleTimingChanged);
     // The queue is the only thing that knows what plays next; the controller is
     // the only thing that starts playback. These four connections are the whole
     // contract between them.
@@ -119,6 +131,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
         // the hold's, not a setting (playbackSpeed() keeps the user's, and
         // endFastForward() announces the restore).
         connect(m_backend, &PlayerBackend::playbackSpeedChanged, this, [this] {
+            updateUpscaleHold();
             if (m_expectedLoadId != 0 && m_active && !m_fastForwarding)
                 emit playbackSpeedChanged();
         });
@@ -130,6 +143,14 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             if (m_expectedLoadId != 0 && m_active)
                 emit subtitleDelayChanged();
         });
+        connect(m_backend, &PlayerBackend::videoFormatChanged, this, [this] {
+            m_governor->setFrameRate(m_backend->videoFrameRate());
+            updateUpscale();
+        });
+        connect(m_backend, &PlayerBackend::frameDropCountsChanged, m_governor,
+                &UpscaleGovernor::addDropCounts);
+        connect(m_backend, &PlayerBackend::videoShaderFailed, this,
+                &PlayerController::onVideoShaderFailed);
     }
 
     connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::onQueueCurrentChanged);
@@ -154,6 +175,8 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(this, &PlayerController::sourceIndexChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::currentChanged, this, &PlayerController::updateIsAudio);
     connect(m_queue, &PlayQueue::queueChanged, this, &PlayerController::updateIsAudio);
+    // Cover art is a video stream to mpv; music is never upscaled.
+    connect(this, &PlayerController::isAudioChanged, this, &PlayerController::updateUpscale);
 
     // canSkipForward/canSkipBack read all of these. Over-announcing is free:
     // the MPRIS side drops a repeat of the answer it already published.
@@ -516,6 +539,12 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // leave the previous episode's series attached to this one.
     m_currentSeriesId.clear();
     m_currentItemType = itemType;
+    // Upscaling is decided per item: the override ends with the item it was
+    // chosen for, and the content type is learned again from this one's genres.
+    m_upscaleOverride.clear();
+    m_contentType = ContentType::Unknown;
+    m_governor->beginVideo();
+    updateUpscale();
     updateIsAudio();
     if (!itemId.isEmpty())
         fetchChapters(itemId, generation);
@@ -782,6 +811,7 @@ void PlayerController::startAttempt(qint64 startMs)
     emit streamMethodChanged();
     m_expectedLoadId = ++m_nextLoadId;
     m_backend->load(candidate.url, startMs, m_expectedLoadId, m_initiallyPaused);
+    m_governor->noteTransient();
     // Some engines reset their audio state per media; re-assert ours.
     applyVolume();
     applyReplayGain();
@@ -889,6 +919,7 @@ void PlayerController::escalateStall()
     case 0:
         qCWarning(logPlayback) << "watchdog: position stalled, nudge-seeking +1s";
         m_backend->seekTo(m_lastPositionMs + 1000);
+        m_governor->noteTransient();
         break;
     case 1:
         qCWarning(logPlayback) << "watchdog: still stalled, reloading current rung";
@@ -977,6 +1008,7 @@ void PlayerController::fetchChapters(const QString &itemId, int generation)
         // costs no extra request.
         m_currentSeriesId = result.value.item.seriesId;
         m_currentItemType = result.value.item.type;
+        resolveContentType(result.value, generation);
         // ...and the artwork, which a queue seeded from a bare play does not
         // have. Every now-playing surface reads the queue entry, so this is
         // what puts a cover on the docked bar, the lock screen and the
@@ -1226,6 +1258,7 @@ bool PlayerController::beginFastForward(qint64 nowMs)
     if (!fastForwardMaySeek() && m_backend->maximumPlaybackSpeed() <= userSpeed)
         return false;
     m_fastForwarding = true;
+    updateUpscaleHold();
     m_speedBeforeFastForward = userSpeed;
     m_fastForwardEngineSpeed = m_speedBeforeFastForward;
     m_lastFastForwardStepMs = nowMs;
@@ -1290,6 +1323,7 @@ void PlayerController::endFastForward(bool reportPosition)
     m_fastForwarding = false;
     if (m_backend->maximumPlaybackSpeed() > 1.0)
         m_backend->setPlaybackSpeed(m_speedBeforeFastForward);
+    updateUpscaleHold();
     m_fastForwardMuted = false;
     applyVolume();
     m_fastForwardTargetMs = -1;
@@ -1653,6 +1687,7 @@ void PlayerController::seekTo(qint64 positionMs)
     if (duration > 0)
         target = qMin(target, duration);
     m_backend->seekTo(target);
+    m_governor->noteTransient();
     // The engine publishes the new position asynchronously, so until it lands
     // m_lastPositionMs is where the playhead *was*. Adopting the target now is
     // what makes the report below carry the seek rather than the position it
@@ -2109,6 +2144,196 @@ void PlayerController::setError(const QString &message)
     emit errorMessageChanged();
     if (!message.isEmpty())
         qCWarning(logPlayback) << message;
+}
+
+void PlayerController::setUpscaleMode(const QString &mode)
+{
+    if (mode == m_upscaleOverride)
+        return;
+    m_upscaleOverride = mode;
+    updateUpscale();
+}
+
+QVariantList PlayerController::upscaleChoices() const
+{
+    QVariantList choices;
+    for (const UpscaleEntry &entry : m_upscaleCatalog.entries()) {
+        if (!entry.offeredFor(m_contentType) || m_brokenUpscalers.contains(entry.id))
+            continue;
+        choices.append(QVariantMap{{QStringLiteral("id"), entry.id},
+                                   {QStringLiteral("name"), entry.name}});
+    }
+    return choices;
+}
+
+QString PlayerController::upscaleActive() const
+{
+    return m_upscaleDecision.activeName;
+}
+
+QString PlayerController::upscaleReason() const
+{
+    if (!m_backend || !m_backend->supportsVideoShaders())
+        return tr("Not available with %1")
+            .arg(m_backend ? m_backend->engineName().toUpper() : QString());
+    return m_upscaleDecision.reason.isEmpty() ? tr("Off") : m_upscaleDecision.reason;
+}
+
+bool PlayerController::upscaleAvailable() const
+{
+    return m_backend && m_backend->supportsVideoShaders() && !m_softwareRenderer;
+}
+
+int PlayerController::upscaleCeiling() const
+{
+    return m_governor->ceiling();
+}
+
+qreal PlayerController::upscaleGpuMs() const
+{
+    return m_governor->timingAvailable() ? m_governor->lastP95Ms() : -1.0;
+}
+
+qreal PlayerController::upscaleBudgetMs() const
+{
+    return m_governor->budgetMs();
+}
+
+void PlayerController::setVideoOutputSize(int width, int height)
+{
+    // The video item reports -1×-1 until its first geometry change: unknown,
+    // not a reason to drop the chain.
+    if (width <= 0 || height <= 0)
+        return;
+    const QSize size(width, height);
+    if (size == m_videoOutputSize)
+        return;
+    m_videoOutputSize = size;
+    m_upscaleDebounce.start();
+}
+
+void PlayerController::setGpuRenderer(const QString &renderer)
+{
+    m_softwareRenderer = isSoftwareGlRenderer(renderer);
+    m_governor->setRenderer(renderer); // may emit ceilingChanged → updateUpscale
+    updateUpscale();
+}
+
+void PlayerController::reportGpuTiming(qreal p95Ms, qreal meanMs, int samples)
+{
+    m_governor->addTimingSummary(p95Ms, meanMs, samples);
+}
+
+void PlayerController::resetUpscaleCeiling()
+{
+    m_governor->resetCeiling();
+}
+
+void PlayerController::setUpscaleCatalogForTests(UpscaleCatalog catalog)
+{
+    m_upscaleCatalog = std::move(catalog);
+    updateUpscale();
+}
+
+void PlayerController::updateUpscale()
+{
+    if (!m_backend || !m_backend->supportsVideoShaders())
+        return;
+
+    UpscaleInput input;
+    input.source = m_isAudio ? QSize() : m_backend->videoSize();
+    input.output = m_videoOutputSize;
+    input.content = m_contentType;
+    input.ceiling = m_governor->ceiling();
+    input.hdr = m_backend->videoIsHdr();
+    input.softwareRenderer = m_softwareRenderer;
+    input.override = m_upscaleOverride;
+    input.broken = m_brokenUpscalers;
+    m_upscaleDecision = decideUpscale(m_upscaleCatalog, input);
+
+    m_governor->setActiveRung(m_upscaleDecision.rung);
+    m_governor->setManualOverride(!m_upscaleOverride.isEmpty());
+    if (m_upscaleDecision.chain != m_pushedChain) {
+        m_pushedChain = m_upscaleDecision.chain;
+        qCInfo(logPlayback).noquote() << "upscaling:" << m_upscaleDecision.reason;
+        m_backend->setVideoProcessing(m_pushedChain);
+        m_governor->noteTransient();
+    }
+
+    const QString signature = QStringList{
+        m_upscaleDecision.activeId, m_upscaleDecision.reason, m_upscaleOverride,
+        QString::number(m_governor->ceiling()), QString::number(int(m_contentType)),
+        QString::number(m_brokenUpscalers.size()), upscaleAvailable() ? QStringLiteral("1") : QString()}
+        .join(QChar(0x1f));
+    if (signature == m_upscaleSignature)
+        return;
+    m_upscaleSignature = signature;
+    emit upscaleChanged();
+}
+
+bool PlayerController::genresSayAnimation(const ItemDetails &details)
+{
+    QStringList names = details.genres;
+    for (const NamedId &genre : details.genreItems)
+        names.append(genre.name);
+    for (const QString &name : names) {
+        if (name.compare(QLatin1String("Anime"), Qt::CaseInsensitive) == 0
+            || name.compare(QLatin1String("Animation"), Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+void PlayerController::resolveContentType(const ItemDetails &details, int generation)
+{
+    const bool hasGenres = !details.genres.isEmpty() || !details.genreItems.isEmpty();
+    const bool episode =
+        details.item.type.compare(QLatin1String("Episode"), Qt::CaseInsensitive) == 0;
+    if (hasGenres || !episode || details.item.seriesId.isEmpty()) {
+        setContentType(genresSayAnimation(details) ? ContentType::Animation
+                                                   : ContentType::LiveAction);
+        return;
+    }
+    // Emby often leaves an episode's own genres empty; its series has them.
+    // One extra request, only for that case (spec §4.3).
+    m_client->itemDetails(details.item.seriesId)
+        .then(this, [this, generation](const Result<ItemDetails> &series) {
+            if (generation != m_generation || !m_active)
+                return;
+            setContentType(series.ok() && genresSayAnimation(series.value)
+                               ? ContentType::Animation
+                               : ContentType::LiveAction);
+        });
+}
+
+void PlayerController::setContentType(ContentType type)
+{
+    if (type == m_contentType)
+        return;
+    m_contentType = type;
+    updateUpscale();
+}
+
+void PlayerController::updateUpscaleHold()
+{
+    // The engine's speed, not the user's setting: mpv confirms a change
+    // asynchronously, and the hold ends only once it really plays at 1×.
+    m_governor->setHeld(m_fastForwarding || !qFuzzyCompare(m_backend->playbackSpeed(), 1.0));
+}
+
+void PlayerController::onVideoShaderFailed(const QString &path)
+{
+    bool added = false;
+    for (const QString &id : m_upscaleCatalog.idsUsingShader(path)) {
+        if (!m_brokenUpscalers.contains(id)) {
+            m_brokenUpscalers.insert(id);
+            added = true;
+        }
+    }
+    if (!added)
+        return;
+    qCWarning(logPlayback) << "upscaler failed to load, skipped until restart:" << path;
+    updateUpscale();
 }
 
 } // namespace strmqt

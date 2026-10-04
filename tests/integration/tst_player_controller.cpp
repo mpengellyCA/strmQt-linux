@@ -8,6 +8,8 @@
 #include "MockEmbyServer.h"
 #include "app/controllers/PlayerController.h"
 #include "core/Settings.h"
+#include "playback/upscale/UpscaleCatalog.h"
+#include "playback/upscale/UpscaleGovernor.h"
 #include "server/emby/EmbyClient.h"
 
 using namespace strmqt;
@@ -92,9 +94,23 @@ private slots:
     void reloadStreamRefetchesTicketInPlace();
     void sourceSurfaceExposesStreams();
     void unplayableSourceSelectionIsIgnored();
+    void upscaleFollowsLoadResizeAndOverride();
+    void overrideResetsOnTheNextItem();
+    void backendWithoutShadersIsUnavailable();
+    void softwareRendererIsUnavailable();
+    void animeGenresPickTheAnimationLadder();
+    void episodeWithoutGenresAsksItsSeries();
+    void shaderFailureSkipsTheEntry();
+    void pipShrinkDropsChainAndRestoresIt();
+    void audioAfterFilmClearsTheChain();
+    void resizeStormPushesOnce();
+    void seekStartsTheGovernorGrace();
+    void watchdogNudgeStartsTheGovernorGrace();
+    void playbackSpeedNeverStepsTheCeiling();
 
 private:
     void expectReport(const QString &path, const QString &method, bool paused = false);
+    void startUpscaling();
 
     MockEmbyServer *m_mock = nullptr;
     emby::EmbyClient *m_client = nullptr;
@@ -102,6 +118,7 @@ private:
     QTemporaryDir *m_dir = nullptr;
     Settings *m_settings = nullptr;
     PlayerController *m_controller = nullptr;
+    qint64 m_upscaleNow = 0;
 };
 
 void PlayerControllerTest::init()
@@ -1111,6 +1128,319 @@ void PlayerControllerTest::unplayableSourceSelectionIsIgnored()
     QCOMPARE(m_controller->sourceIndex(), 0);
     QCOMPARE(m_backend->loadedUrls.size(), 1);
     QVERIFY(m_controller->active());
+}
+
+// Shader support on, the real catalog, a 1440p window on a known GPU, and the
+// governor on a test clock well past its first grace period.
+void PlayerControllerTest::startUpscaling()
+{
+    m_backend->videoShadersSupported = true;
+    m_controller->setUpscaleCatalogForTests(
+        UpscaleCatalog::load(QStringLiteral(STRMQT_SOURCE_DIR "/shaders")));
+    m_controller->setUpscaleDebounceForTests(10);
+    m_upscaleNow = 0;
+    m_controller->upscaleGovernorForTests()->setClockForTests([this] { return m_upscaleNow; });
+    m_controller->setGpuRenderer(QStringLiteral("Test GPU"));
+    m_controller->setVideoOutputSize(2560, 1440);
+}
+
+void PlayerControllerTest::upscaleFollowsLoadResizeAndOverride()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QVERIFY(m_controller->upscaleAvailable());
+
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_VERIFY(!m_backend->processingRequests.isEmpty());
+    QVERIFY(m_backend->processingRequests.last().shaderPaths.constFirst().endsWith(
+        QStringLiteral("FSRCNNX_x2_16-0-4-1.glsl")));
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+    QCOMPARE(m_controller->upscaleReason(), QStringLiteral("FSRCNNX 16 · 720p → 1440p"));
+
+    // An identical decision pushes nothing.
+    const qsizetype pushes = m_backend->processingRequests.size();
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QCOMPARE(m_backend->processingRequests.size(), pushes);
+
+    // A resize, after the debounce: 1.1× is FSR, no doubler.
+    m_controller->setVideoOutputSize(1408, 792);
+    QCOMPARE(m_backend->processingRequests.size(), pushes);
+    QTRY_COMPARE(m_backend->processingRequests.size(), pushes + 1);
+    QVERIFY(m_backend->processingRequests.last().shaderPaths.constFirst().endsWith(
+        QStringLiteral("FSR.glsl")));
+
+    // An override applies at once, no debounce.
+    QSignalSpy changed(m_controller, &PlayerController::upscaleChanged);
+    m_controller->setUpscaleMode(QStringLiteral("nis"));
+    QCOMPARE(m_backend->processingRequests.size(), pushes + 2);
+    QVERIFY(m_backend->processingRequests.last().shaderPaths.constFirst().endsWith(
+        QStringLiteral("NVScaler.glsl")));
+    QCOMPARE(m_controller->upscaleMode(), QStringLiteral("nis"));
+    QVERIFY(changed.count() >= 1);
+
+    m_controller->setUpscaleMode(QStringLiteral("off"));
+    QVERIFY(m_backend->processingRequests.last().isDefault());
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("Off"));
+}
+
+void PlayerControllerTest::overrideResetsOnTheNextItem()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_controller->setUpscaleMode(QStringLiteral("nis"));
+    QCOMPARE(m_controller->upscaleMode(), QStringLiteral("nis"));
+
+    m_controller->playItem(QStringLiteral("4242"), QStringLiteral("Two Versions"), 0);
+    QCOMPARE(m_controller->upscaleMode(), QString());
+}
+
+void PlayerControllerTest::backendWithoutShadersIsUnavailable()
+{
+    startUpscaling();
+    m_backend->videoShadersSupported = false;
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTest::qWait(50);
+    QVERIFY(!m_controller->upscaleAvailable());
+    QCOMPARE(m_controller->upscaleReason(), QStringLiteral("Not available with FAKE"));
+    QVERIFY(m_backend->processingRequests.isEmpty());
+}
+
+void PlayerControllerTest::softwareRendererIsUnavailable()
+{
+    startUpscaling();
+    m_controller->setGpuRenderer(QStringLiteral("llvmpipe (LLVM 19.1.7, 256 bits)"));
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QVERIFY(!m_controller->upscaleAvailable());
+    QCOMPARE(m_controller->upscaleReason(), QStringLiteral("Needs a GPU"));
+    QVERIFY(m_backend->processingRequests.isEmpty());
+}
+
+void PlayerControllerTest::animeGenresPickTheAnimationLadder()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                     200, R"json({"Id": "301001", "Name": "Akira", "Type": "Movie",
+                                  "Genres": ["Action", "anime"]})json");
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("Akira"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("Anime4K CNN VL"));
+    QCOMPARE(m_controller->upscaleReason(),
+             QStringLiteral("Anime4K CNN VL · animation · 720p → 1440p"));
+    const QVariantList choices = m_controller->upscaleChoices();
+    QCOMPARE(choices.first().toMap().value(QStringLiteral("id")).toString(),
+             QStringLiteral("anime4k-vl"));
+    for (const QVariant &choice : choices)
+        QVERIFY(!choice.toMap().value(QStringLiteral("id")).toString().startsWith(u"fsrcnnx"));
+}
+
+void PlayerControllerTest::episodeWithoutGenresAsksItsSeries()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                     200, R"json({"Id": "301001", "Name": "Episode 1", "Type": "Episode",
+                                  "SeriesId": "9001", "Genres": []})json");
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/9001").arg(kUserId),
+                     200, R"json({"Id": "9001", "Name": "A Series", "Type": "Series",
+                                  "Genres": ["Animation"]})json");
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("Episode 1"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("Anime4K CNN VL"));
+    QVERIFY(!m_mock->lastRequestFor(QStringLiteral("GET"),
+                                    QStringLiteral("/Users/%1/Items/9001").arg(kUserId))
+                 .method.isEmpty());
+}
+
+void PlayerControllerTest::shaderFailureSkipsTheEntry()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    m_backend->simulateShaderFailure(m_backend->processingRequests.last().shaderPaths.constFirst());
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
+    QCOMPARE(m_controller->upscaleReason(),
+             QStringLiteral("FSRCNNX 16 failed to load — using FSRCNNX 8 · 720p → 1440p"));
+    QVERIFY(m_backend->processingRequests.last().shaderPaths.constFirst().endsWith(
+        QStringLiteral("FSRCNNX_x2_8-0-4-1.glsl")));
+    for (const QVariant &choice : m_controller->upscaleChoices())
+        QVERIFY(choice.toMap().value(QStringLiteral("id")).toString() != QLatin1String("fsrcnnx16"));
+}
+
+void PlayerControllerTest::pipShrinkDropsChainAndRestoresIt()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    m_controller->setVideoOutputSize(360, 203); // the picture-in-picture frame
+    QTRY_VERIFY(m_backend->processingRequests.last().isDefault());
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("Off"));
+
+    m_controller->setVideoOutputSize(2560, 1440); // back to the player page
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+    QVERIFY(!m_backend->processingRequests.last().isDefault());
+}
+
+void PlayerControllerTest::audioAfterFilmClearsTheChain()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    // The details reply must agree, or fetchChapters() resets the item type.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                     200, R"json({"Id": "301001", "Name": "A Song", "Type": "Audio"})json");
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("A Song"), 0, -1,
+                           QStringLiteral("Audio"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(m_controller->isAudio());
+    QVERIFY(m_backend->processingRequests.last().isDefault());
+    // mpv shows embedded cover art as a video stream; it is not upscaled.
+    m_backend->simulateVideoFormat(QSize(600, 600));
+    QTest::qWait(50);
+    QVERIFY(m_backend->processingRequests.last().isDefault());
+}
+
+void PlayerControllerTest::resizeStormPushesOnce()
+{
+    startUpscaling();
+    m_controller->setUpscaleDebounceForTests(100);
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+    const qsizetype pushes = m_backend->processingRequests.size();
+
+    for (int width = 2400; width >= 1400; width -= 100)
+        m_controller->setVideoOutputSize(width, width * 9 / 16);
+    // Nothing during the storm: only the debounce may push, not the sizes
+    // passing through (the chain dedupe alone would also give one push here).
+    QCOMPARE(m_backend->processingRequests.size(), pushes);
+    QTRY_COMPARE(m_backend->processingRequests.size(), pushes + 1);
+    QTest::qWait(250);
+    QCOMPARE(m_backend->processingRequests.size(), pushes + 1);
+    QVERIFY(m_backend->processingRequests.last().shaderPaths.constFirst().endsWith(
+        QStringLiteral("FSR.glsl"))); // 720p in 1400×787: 1.09×
+}
+
+void PlayerControllerTest::seekStartsTheGovernorGrace()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    // Frames render throughout, so a summary comes every 500 ms.
+    const auto rendering = [this](qint64 from, qint64 to) {
+        for (m_upscaleNow = from; m_upscaleNow <= to; m_upscaleNow += 500)
+            m_controller->reportGpuTiming(5.0, 4.0, 12);
+        m_upscaleNow = to;
+    };
+    rendering(9'000, 10'000); // well past every earlier grace period
+    m_backend->simulateFrameDrops(0);
+    m_controller->seekTo(300'000);
+    rendering(10'500, 10'500);
+    m_backend->simulateFrameDrops(4); // the seek's transient
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+    rendering(11'000, 13'000);
+    m_backend->simulateFrameDrops(5); // a real drop
+    QCOMPARE(m_controller->upscaleCeiling(), 3);
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
+}
+
+// The watchdog's nudge is a seek like any other: its transient is not the GPU's.
+void PlayerControllerTest::watchdogNudgeStartsTheGovernorGrace()
+{
+    startUpscaling();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+
+    m_upscaleNow = 10'000; // well past every earlier grace period
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(0);
+    m_backend->simulatePosition(100'000); // then frozen: the watchdog nudges
+    QTRY_VERIFY(m_backend->seeks.contains(Q_INT64_C(101000)));
+    m_upscaleNow = 10'500;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(4); // the nudge's transient
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+}
+
+// Frames dropped at 2–4× are the speed's, not the GPU's: neither a fast-forward
+// hold nor a user speed may lower the ceiling saved for this GPU.
+void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
+{
+    startUpscaling();
+    m_backend->maxSpeed = 4.0;
+    m_controller->setSkipHoldClockForTests([this] { return m_upscaleNow; });
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(600'000);
+    m_backend->simulateVideoFormat(QSize(1280, 720));
+    QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
+    const auto overBudget = [this](qint64 from, qint64 to) {
+        for (m_upscaleNow = from; m_upscaleNow <= to; m_upscaleNow += 500)
+            m_controller->reportGpuTiming(100.0, 90.0, 12);
+    };
+
+    // A fast-forward hold: the engine plays at 2×, no seek, no grace period.
+    m_upscaleNow = 10'000;
+    m_backend->simulateFrameDrops(0);
+    m_controller->skipForwardPressed();
+    m_upscaleNow = 10'400;
+    m_controller->tickSkipHoldForTests();
+    QCOMPARE(m_backend->playbackSpeed(), 2.0);
+    // Frames render (summaries keep coming), so only the hold keeps the drop
+    // from counting.
+    overBudget(13'000, 17'000);
+    m_backend->simulateFrameDrops(3);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_backend->playbackSpeed(), 1.0);
+
+    // A user speed of 2×.
+    m_upscaleNow = 17'500;
+    m_controller->setPlaybackSpeed(2.0);
+    overBudget(20'000, 24'000);
+    m_backend->simulateFrameDrops(6);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+
+    // Back at 1×: the change is a transient, and after it a drop steps as usual.
+    // Frames keep rendering throughout, so summaries keep coming.
+    m_upscaleNow = 25'000;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_controller->setPlaybackSpeed(1.0);
+    m_upscaleNow = 26'000;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(7);
+    QCOMPARE(m_controller->upscaleCeiling(), 4);
+    m_upscaleNow = 27'500;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
+    m_backend->simulateFrameDrops(8);
+    QCOMPARE(m_controller->upscaleCeiling(), 3);
+    QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
 }
 
 QTEST_GUILESS_MAIN(PlayerControllerTest)

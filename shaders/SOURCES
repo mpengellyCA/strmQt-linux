@@ -1,0 +1,15 @@
+# Upscaling shaders vendored for StrmQt (spec 2026-10-03 §3). Each entry is a
+# "# file: upstream @ revision" line, then a sha256sum line for that file.
+# Verify:  grep -v '^#' shaders/SOURCES | (cd shaders && sha256sum -c -)
+# FSR.glsl: https://gist.github.com/agyild/82219c545228d70c5604f865ce0b0ce5 @ 2623d743b9c23f500ba086f05b385dcb1557e15d
+56d8597fc6b7bf6d13f8c3b2bdf1cdc43b06175d51746aab44cf1dca16929b9e  FSR.glsl
+# NVScaler.glsl: https://gist.github.com/agyild/7e8951915b2bf24526a9343d951db214 @ 05f00864228871ffd157daa9beb2db8fa7412cfa
+bac778ec0108d272e4dad97794a3c257e65bbebd52aa762f95bce930cbd6b73c  NVScaler.glsl
+# FSRCNNX_x2_16-0-4-1.glsl: https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1 @ 1.1
+d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965  FSRCNNX_x2_16-0-4-1.glsl
+# FSRCNNX_x2_8-0-4-1.glsl: https://github.com/igv/FSRCNN-TensorFlow/releases/tag/1.1 @ 1.1
+e800dbc5c1c95185cc82216c597724533ff5f2880179f256eef600f03e8dc2ae  FSRCNNX_x2_8-0-4-1.glsl
+# Anime4K_Upscale_CNN_x2_VL.glsl: https://github.com/bloc97/Anime4K/tree/v4.0.1 @ v4.0.1
+5638fe31c37c151a3443fea3451a3ef91af073f4dbb9615f6c0d1e29db11493d  Anime4K_Upscale_CNN_x2_VL.glsl
+# Anime4K_Upscale_CNN_x2_M.glsl: https://github.com/bloc97/Anime4K/tree/v4.0.1 @ v4.0.1
+716e02098a68f0d648761f2b96b4dd139e1cb09b174bb369fca3aa34328fff7e  Anime4K_Upscale_CNN_x2_M.glsl

@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 
 #include <clocale>
+#include <vector>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -63,6 +64,14 @@ QVariant variantFromNode(const mpv_node &node)
     default:
         return {};
     }
+}
+
+QByteArray readStringProperty(mpv_handle *mpv, const char *name)
+{
+    char *raw = mpv_get_property_string(mpv, name);
+    const QByteArray value(raw ? raw : "");
+    mpv_free(raw);
+    return value;
 }
 
 } // namespace
@@ -167,7 +176,12 @@ bool MpvPlayer::ensureInitialized()
     // bitrates) are read on demand by videoStats() instead of signalled.
     mpv_observe_property(m_mpv, 0, "video-params", MPV_FORMAT_NODE);
     mpv_observe_property(m_mpv, 0, "frame-drop-count", MPV_FORMAT_INT64);
+    // Frames vo_gpu presented late. With frame-drop-count, the governor's
+    // signal that the upscaler is costing frames (spec 2026-10-03 §4.2).
+    mpv_observe_property(m_mpv, 0, "vo-delayed-frame-count", MPV_FORMAT_INT64);
     mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
+    m_defaultScale = readStringProperty(m_mpv, "scale");
+    m_defaultCscale = readStringProperty(m_mpv, "cscale");
     applyDeferredSettings();
     emit renderHandleChanged();
     return true;
@@ -186,6 +200,7 @@ void MpvPlayer::applyDeferredSettings()
     setSubtitleStyle(m_subtitleFont, m_subtitleScale, m_subtitleColor,
                      m_subtitleBackground, m_subtitlePosition);
     setReplayGain(m_replayGainMode);
+    applyVideoProcessing();
 }
 
 MpvPlayer::~MpvPlayer()
@@ -386,6 +401,14 @@ void MpvPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
     if (!m_hwdecCurrent.isEmpty()) {
         m_hwdecCurrent.clear();
         emit decoderInfoChanged();
+    }
+    m_frameDrops = 0;
+    m_delayedFrames = 0;
+    if (!m_videoSize.isEmpty() || m_videoHdr || m_videoFps != 0.0) {
+        m_videoSize = {};
+        m_videoHdr = false;
+        m_videoFps = 0.0;
+        emit videoFormatChanged();
     }
     emit videoStatsChanged();
 }
@@ -671,6 +694,89 @@ void MpvPlayer::setAbLoop(qint64 aMs, qint64 bMs)
     apply("ab-loop-b", bMs);
 }
 
+void MpvPlayer::setVideoProcessing(const VideoProcessing &chain)
+{
+    m_videoProcessing = chain;
+    // A failure is reported once per chain; the next chain reports its own.
+    // Known limitation: mpv log events are drained asynchronously, so a stale
+    // compile-failure line from the previous chain can arrive after this reset
+    // and be blamed on the new chain.
+    m_shaderFailureReported = false;
+    applyVideoProcessing();
+}
+
+void MpvPlayer::applyVideoProcessing()
+{
+    if (!m_mpv)
+        return;
+    // Runtime properties, not a reload: vo_gpu picks all three up on the next
+    // frame, which is what makes the picker immediate (spec §4.1). A node list
+    // rather than a joined string, so no path is re-split on mpv's separator.
+    QList<QByteArray> paths;
+    paths.reserve(m_videoProcessing.shaderPaths.size());
+    for (const QString &path : m_videoProcessing.shaderPaths)
+        paths.append(path.toUtf8());
+    std::vector<mpv_node> items(static_cast<std::size_t>(paths.size()));
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        items[static_cast<std::size_t>(i)].format = MPV_FORMAT_STRING;
+        items[static_cast<std::size_t>(i)].u.string = const_cast<char *>(paths[i].constData());
+    }
+    mpv_node_list list{};
+    list.num = static_cast<int>(items.size());
+    list.values = items.data();
+    mpv_node node{};
+    node.format = MPV_FORMAT_NODE_ARRAY;
+    node.u.list = &list;
+    if (const int rc = mpv_set_property(m_mpv, "glsl-shaders", MPV_FORMAT_NODE, &node); rc < 0)
+        qCWarning(logPlayback) << "mpv set glsl-shaders failed:" << mpv_error_string(rc);
+
+    const auto setFilter = [this](const char *name, const QString &wanted,
+                                  const QByteArray &fallback) {
+        const QByteArray value = wanted.isEmpty() ? fallback : wanted.toUtf8();
+        // An empty value is legitimate: mpv's own cscale default is "" (follow scale).
+        if (const int rc = mpv_set_property_string(m_mpv, name, value.constData()); rc < 0)
+            qCWarning(logPlayback) << "mpv set" << name << "failed:" << mpv_error_string(rc);
+    };
+    setFilter("scale", m_videoProcessing.scale, m_defaultScale);
+    setFilter("cscale", m_videoProcessing.cscale, m_defaultCscale);
+}
+
+void MpvPlayer::updateVideoFormat(const QVariantMap &params)
+{
+    // dw/dh, not w/h: the display size with the sample aspect applied, which
+    // is what the picture is scaled from on an anamorphic source.
+    QSize size(params.value(QStringLiteral("dw")).toInt(),
+               params.value(QStringLiteral("dh")).toInt());
+    if (size.isEmpty())
+        size = {};
+    const QString gamma = params.value(QStringLiteral("gamma")).toString();
+    const bool hdr = gamma == QLatin1String("pq") || gamma == QLatin1String("hlg");
+    double fps = 0.0;
+    if (!m_mpv || mpv_get_property(m_mpv, "container-fps", MPV_FORMAT_DOUBLE, &fps) < 0)
+        fps = 0.0;
+    if (size == m_videoSize && hdr == m_videoHdr && qFuzzyCompare(1.0 + fps, 1.0 + m_videoFps))
+        return;
+    m_videoSize = size;
+    m_videoHdr = hdr;
+    m_videoFps = fps;
+    emit videoFormatChanged();
+}
+
+void MpvPlayer::noteLogForShaderFailure(const QString &text)
+{
+    // vo_gpu names neither the file nor the hook when a user shader fails, so
+    // the failure is laid on the chain that is running. Every catalog chain
+    // is one file today, which makes that exact (spec §5).
+    if (m_shaderFailureReported || m_videoProcessing.shaderPaths.isEmpty())
+        return;
+    if (!text.contains(QLatin1String("compile log (status=0)"))
+        && !text.contains(QLatin1String("Hook tried to")))
+        return;
+    m_shaderFailureReported = true;
+    for (const QString &path : m_videoProcessing.shaderPaths)
+        emit videoShaderFailed(path);
+}
+
 bool MpvPlayer::screenshotToFile(const QString &path)
 {
     const QByteArray target = path.toUtf8();
@@ -879,9 +985,21 @@ void MpvPlayer::drainEvents()
                     m_subtitleDelayMs = ms;
                     emit subtitleDelayChanged();
                 }
-            } else if (qstrcmp(change->name, "video-params") == 0 ||
-                       qstrcmp(change->name, "frame-drop-count") == 0) {
+            } else if (qstrcmp(change->name, "video-params") == 0) {
+                updateVideoFormat(change->format == MPV_FORMAT_NODE
+                                      ? variantFromNode(*static_cast<mpv_node *>(change->data)).toMap()
+                                      : QVariantMap());
                 emit videoStatsChanged();
+            } else if (qstrcmp(change->name, "frame-drop-count") == 0 ||
+                       qstrcmp(change->name, "vo-delayed-frame-count") == 0) {
+                const bool drops = change->name[0] == 'f';
+                const qint64 count = change->format == MPV_FORMAT_INT64
+                    ? *static_cast<int64_t *>(change->data)
+                    : 0;
+                (drops ? m_frameDrops : m_delayedFrames) = count;
+                emit frameDropCountsChanged(m_frameDrops, m_delayedFrames);
+                if (drops)
+                    emit videoStatsChanged();
             } else if (qstrcmp(change->name, "paused-for-cache") == 0 &&
                        change->format == MPV_FORMAT_FLAG) {
                 const bool buffering = *static_cast<int *>(change->data) != 0;
@@ -898,9 +1016,11 @@ void MpvPlayer::drainEvents()
         }
         case MPV_EVENT_LOG_MESSAGE: {
             const auto *msg = static_cast<mpv_event_log_message *>(event->data);
+            const QString text = QString::fromUtf8(msg->text).trimmed();
             qCWarning(logPlayback).noquote()
                 << "mpv:" << redactSensitiveText(QString::fromUtf8(msg->prefix))
-                << redactSensitiveText(QString::fromUtf8(msg->text).trimmed());
+                << redactSensitiveText(text);
+            noteLogForShaderFailure(text);
             break;
         }
         default:

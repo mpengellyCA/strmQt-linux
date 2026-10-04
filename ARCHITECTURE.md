@@ -285,6 +285,70 @@ of the app and moves it between the page's slot and the picture-in-picture frame
 that floats above the docked bar; reparenting and hiding both keep the renderer
 alive, which is what makes that safe.
 
+### Upscaling
+
+When the picture is smaller than its window, mpv upscales it with a bundled
+user shader (spec `docs/superpowers/specs/2026-10-03-video-upscaling-design.md`).
+The parts, and where they live:
+
+- **The shaders** are vendored in `shaders/` at pinned revisions (`shaders/SOURCES`)
+  and installed to `share/strmqt/shaders/` next to their licences. mpv takes
+  file paths, so they cannot be Qt resources.
+- **`UpscaleCatalog`, `UpscalePolicy`, `UpscaleGovernor`** (`src/playback/upscale/`,
+  QtCore only). Two ladders, best first:
+
+  | Rung | Live action | Animation |
+  |---|---|---|
+  | 4 | FSRCNNX 16 | Anime4K CNN x2 VL |
+  | 3 | FSRCNNX 8 | Anime4K CNN x2 M |
+  | 2 | FSR1 | FSR1 |
+  | 1 | `ewa_lanczossharp` | `ewa_lanczossharp` |
+  | 0 | off | off |
+
+  The 2x neural rungs are used only from a 1.5x scale factor up. NIS is
+  offered in the picker but never chosen by Auto. Animation is any item whose
+  genres (or, for an episode without any, its series') include "Anime" or
+  "Animation".
+- **The governor** owns a ceiling per GPU (`GL_RENDERER`, saved in Settings).
+  It lowers it one rung after 3 s of p95 GPU time over half the frame
+  interval, or at once on a dropped frame outside a 2 s grace period after a
+  load, seek or chain change, and ignores drops while the picture is not being
+  rendered, e.g. a minimised window (no GPU-time summary in the last 1.5 s, or
+  none yet this video; the first summary back starts a grace period). It never steps down while playback
+  speed is not 1x (a fast-forward hold or a user speed); returning to 1x starts
+  a fresh grace period. It never raises the ceiling mid-video;
+  Settings -> Playback -> "Re-test upscaling" resets the current GPU's ceiling,
+  or every GPU's if no video has rendered yet this session.
+- **`PlayerController`** re-runs the policy whenever an input moves (a resize
+  is debounced 250 ms) and calls `PlayerBackend::setVideoProcessing()` only when
+  the chain changes. `MpvPlayer` sets `glsl-shaders`, `scale` and `cscale` as
+  runtime properties, so a change shows on the next frame with no reload.
+
+**Why StrmQt times mpv itself.** mpv's `vo-passes` is unavailable through the
+render API, so `MpvVideoItem` brackets `mpv_render_context_render()` with a pair
+of `GL_TIMESTAMP` queries from a four-slot ring, read back without stalling.
+
+**`GL_TIME_ELAPSED` is forbidden.** mpv already uses that query type around its
+own passes; a second one around the render call is a nested begin, which GL
+forbids, and the shaders then silently stop running while every frame logs
+`INVALID_OPERATION`.
+
+**The target-time wait moved.** The render call no longer blocks
+(`BLOCK_FOR_TARGET_TIME = 0`), because mpv's wait would land between the two
+timestamps. The item waits until the frame's target time itself, after the
+second timestamp, so pacing and A/V sync are what they were. libmpv's render
+API delivers `target_time` in the `mpv_get_time_ns()` base on current libmpv
+(2.5), not microseconds as `render.h` documents, so the item picks the clock at
+runtime (`src/playback/mpv/MpvTargetTime.h`) when the libmpv client API is 2.2 or newer; older libmpv (Debian 12's 0.35) is
+microseconds-only and uses `mpv_get_time_us()`. It also calls `glFlush()` after
+the end timestamp, so the wait is not counted as GPU time.
+
+`tst_mpv_shader_compile` renders every chain through a real libmpv render
+context on Mesa's software renderer in every CI container, which is what proves
+the shaders compile on each distro's libmpv. Qt's offscreen platform only has GL
+through GLX, so `scripts/ci/check.sh` runs it under `xvfb-run -a`; Xvfb is a
+test-only CI dependency.
+
 ---
 
 ## 4. User interface
@@ -523,7 +587,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 76 suites
+ctest --preset dev                     # 80 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
@@ -693,6 +757,14 @@ assertion catches the rot.
   still works via `vulkan-copy`; this costs a copy, not the feature.
 - **VLC video output** is broken (`STRMQT_WITH_VLC` builds only). Suspected forced
   `RV32` chroma with no fallback.
+- **Upscaling is mpv-only, and `gpu-next`-only shaders are out.** libmpv's render
+  API offers OpenGL, which runs the older `vo_gpu` renderer; ArtCNN and other
+  shaders that need `gpu-next` fail to compile there. They become possible
+  when libmpv exposes `gpu-next` to embedders. VLC shows the feature as
+  unavailable.
+- **The upscaling governor's thresholds are reasoned, not measured, on weak
+  GPUs.** The debug setting `upscale/budgetScale` exercises the mechanism; a
+  real laptop or iGPU measurement is still owed.
 - **No gapless audio advance.** mpv gapless wants a playlist handed to the engine,
   not per-item loads.
 - **Forgotten favourites is not least-recently-played.** The Music Home shelf asks

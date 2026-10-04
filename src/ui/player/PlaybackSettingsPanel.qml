@@ -12,7 +12,7 @@ import StrmQt
 // becomes a wall of controls.
 //
 //   Playback   speed (0.25×–4×), audio delay, subtitle delay   — all live
-//   Quality    which version of the item, bitrate cap, mode
+//   Quality    which version, bitrate cap, mode, upscaling — upscaling is live
 //   Subtitles  size, colour, background, vertical position     — all live
 //
 // Three things are worth stating because they are the parts that would
@@ -103,6 +103,41 @@ FocusScope {
     readonly property int subtitlePosition: {
         const value = Prefs.subtitlePosition;
         return value !== undefined ? Number(value) : 100;
+    }
+
+    // ── Upscaling (spec 2026-10-03 §4.5) ────────────────────────────────────
+    // Applies to the frame on screen at once, unlike bitrate and mode above.
+    readonly property var playerCtl: PlayerCtl
+    readonly property bool upscaleAvailable: {
+        const value = panel.playerCtl.upscaleAvailable;
+        return value !== undefined ? Boolean(value) : false;
+    }
+    readonly property string upscaleMode: {
+        const value = panel.playerCtl.upscaleMode;
+        return value !== undefined ? String(value) : "";
+    }
+    readonly property string upscaleReason: {
+        const value = panel.playerCtl.upscaleReason;
+        return value !== undefined ? String(value) : "";
+    }
+    readonly property var upscaleOptions: {
+        const out = [
+            ({ "text": qsTr("Auto"), "value": "" }),
+            ({ "text": qsTr("Off"), "value": "off" })
+        ];
+        const list = panel.playerCtl.upscaleChoices;
+        if (list !== undefined && list !== null) {
+            for (let i = 0; i < list.length; ++i)
+                out.push({ "text": String(list[i].name), "value": String(list[i].id) });
+        }
+        return out;
+    }
+    readonly property int upscaleIndex: {
+        for (let i = 0; i < panel.upscaleOptions.length; ++i) {
+            if (panel.upscaleOptions[i].value === panel.upscaleMode)
+                return i;
+        }
+        return 0;
     }
 
     // ── Option ladders ──────────────────────────────────────────────────────
@@ -953,6 +988,7 @@ FocusScope {
                                 onToggled: Prefs.playbackMode = "auto"
 
                                 KeyNavigation.up: bitrateSelect
+                                KeyNavigation.down: upscaleSelect
                                 KeyNavigation.right: modeDirect
                             }
 
@@ -964,6 +1000,7 @@ FocusScope {
                                 onToggled: Prefs.playbackMode = "directPlay"
 
                                 KeyNavigation.up: bitrateSelect
+                                KeyNavigation.down: upscaleSelect
                                 KeyNavigation.left: modeAuto
                                 KeyNavigation.right: modeTranscode
                             }
@@ -976,6 +1013,7 @@ FocusScope {
                                 onToggled: Prefs.playbackMode = "transcode"
 
                                 KeyNavigation.up: bitrateSelect
+                                KeyNavigation.down: upscaleSelect
                                 KeyNavigation.left: modeDirect
                             }
                         }
@@ -983,6 +1021,45 @@ FocusScope {
                         HintText {
                             width: parent.width
                             text: qsTr("Direct play refuses to transcode and fails instead; transcode makes the server re-encode even when it need not.")
+                        }
+
+                        Item {
+                            width: 1
+                            height: Theme.spacingTight
+                        }
+
+                        SectionLabel {
+                            width: parent.width
+                            text: qsTr("Upscaling")
+                        }
+
+                        StrmSelect {
+                            id: upscaleSelect
+
+                            width: parent.width
+                            enabled: panel.upscaleAvailable
+                            model: panel.upscaleOptions
+                            currentIndex: panel.upscaleIndex
+                            accessibleName: qsTr("Upscaling")
+
+                            KeyNavigation.up: modeAuto
+
+                            // Live: the controller pushes the chain and the
+                            // frame under the sheet changes within a frame or two.
+                            onActivated: index => panel.playerCtl.setUpscaleMode(
+                                             String(panel.upscaleOptions[index].value))
+                        }
+
+                        // What is running and why, or why the row is disabled
+                        // ("Not available with VLC", "Needs a GPU").
+                        Text {
+                            width: parent.width
+                            visible: text.length > 0
+                            text: panel.upscaleReason
+                            color: Theme.textSecondaryColor
+                            font.family: Theme.fontMono
+                            font.pixelSize: Theme.fontCaption
+                            elide: Text.ElideRight
                         }
                     }
 
