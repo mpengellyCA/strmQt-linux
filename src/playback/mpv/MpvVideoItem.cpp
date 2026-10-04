@@ -297,25 +297,19 @@ private:
         // "2.2 - add mpv_time_ns()", mpv 0.36/0.37); older libmpv has only the
         // microsecond clock.
         const int64_t nowNs = mpv_get_time_ns(m_handle);
-        MpvClockBase base = m_clockBase;
-        if (base == MpvClockBase::Unknown) {
-            // render.h documents target_time in mpv_get_time_us() time, but
-            // libmpv 2.5 gives mpv_get_time_ns() time: read it off the value.
-            bool decisive = false;
-            base = nearerMpvClock(targetTime, nowNs, nowUs, &decisive);
-            if (decisive) {
-                m_clockBase = base;
-                qCDebug(logPlayback) << "mpv frame target times are in"
-                                     << (base == MpvClockBase::Nanoseconds ? "ns" : "us");
-            }
-        }
+        // render.h documents target_time in mpv_get_time_us() time, but
+        // libmpv 2.5 gives mpv_get_time_ns() time: read it off the value. A
+        // frame that does not decide it is not waited on (MpvTargetTime.h).
+        const MpvClockBase before = m_clockBase;
+        const int64_t waitUs = frameWaitUs(targetTime, m_clockBase, nowNs, nowUs);
+        if (before == MpvClockBase::Unknown && m_clockBase != MpvClockBase::Unknown)
+            qCDebug(logPlayback) << "mpv frame target times are in"
+                                 << (m_clockBase == MpvClockBase::Nanoseconds ? "ns" : "us");
 #else
         // Client API below 2.2: no nanosecond clock, so target_time is in the
         // documented microseconds.
-        const int64_t nowNs = 0;
-        const MpvClockBase base = MpvClockBase::Microseconds;
+        const int64_t waitUs = targetWaitUs(targetTime, MpvClockBase::Microseconds, 0, nowUs);
 #endif
-        const int64_t waitUs = targetWaitUs(targetTime, base, nowNs, nowUs);
         if (waitUs > 0)
             QThread::usleep(static_cast<unsigned long>(waitUs));
     }

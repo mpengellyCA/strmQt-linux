@@ -680,6 +680,23 @@ void MpvVideoItemTest::targetWaitUsesTheNearerClock()
     QCOMPARE(nearerMpvClock(40'000'000, 1'000'000, 1'000, &decisive), MpvClockBase::Nanoseconds);
     QVERIFY(!decisive);
 
+    // ...and not one to wait on either. A frame 60 ms late in the ns base,
+    // 0.1 s into mpv's uptime, lies nearer the us clock; read as us it would
+    // be a far-future target, and the render thread would sleep the full 1 s.
+    MpvClockBase learned = MpvClockBase::Unknown;
+    QCOMPARE(nearerMpvClock(40'000'000, 100'000'000, 100'000, &decisive),
+             MpvClockBase::Microseconds);
+    QVERIFY(!decisive);
+    QCOMPARE(targetWaitUs(40'000'000, MpvClockBase::Microseconds, 100'000'000, 100'000),
+             kMaxTargetWaitUs); // what waiting on the guess would do
+    QCOMPARE(frameWaitUs(40'000'000, learned, 100'000'000, 100'000), int64_t(0));
+    QCOMPARE(learned, MpvClockBase::Unknown);
+    // A decisive reading is learned and waited on.
+    QCOMPARE(frameWaitUs(2'090'000'000, learned, nowNs, nowUs), int64_t(34'203));
+    QCOMPARE(learned, MpvClockBase::Nanoseconds);
+    // Once learned, the base is kept even for a frame that would not decide it.
+    QCOMPARE(frameWaitUs(140'000'000, learned, 100'000'000, 100'000), int64_t(40'000));
+
     // No target, a target already past, and a runaway target.
     QCOMPARE(targetWaitUs(0, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));
     QCOMPARE(targetWaitUs(2'000'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));

@@ -45,4 +45,24 @@ inline int64_t targetWaitUs(int64_t targetTime, MpvClockBase base, int64_t nowNs
     return std::clamp<int64_t>(waitUs, 0, kMaxTargetWaitUs);
 }
 
+// The wait for one frame while the base may still be unknown. An unknown
+// `base` is read off this frame and kept in `base` once the reading is
+// decisive. An undecided frame is not waited on: a frame running late reads
+// as a far-future target in the wrong base, and would hold the render thread
+// for kMaxTargetWaitUs. An on-time frame decides the base as soon as mpv's
+// clock is past its first fraction of a second, so pacing is unaffected.
+inline int64_t frameWaitUs(int64_t targetTime, MpvClockBase &base, int64_t nowNs, int64_t nowUs)
+{
+    if (targetTime <= 0)
+        return 0;
+    if (base == MpvClockBase::Unknown) {
+        bool decisive = false;
+        const MpvClockBase guess = nearerMpvClock(targetTime, nowNs, nowUs, &decisive);
+        if (!decisive)
+            return 0;
+        base = guess;
+    }
+    return targetWaitUs(targetTime, base, nowNs, nowUs);
+}
+
 } // namespace strmqt
