@@ -299,14 +299,17 @@ The parts, and where they live:
 
   | Rung | Live action | Animation |
   |---|---|---|
-  | 4 | FSRCNNX 16 | Anime4K CNN x2 VL |
+  | 4 | ArtCNN DS (SD sources) / FSRCNNX 16 | Anime4K CNN x2 VL |
   | 3 | FSRCNNX 8 | Anime4K CNN x2 M |
   | 2 | FSR1 | FSR1 |
   | 1 | `ewa_lanczossharp` | `ewa_lanczossharp` |
   | 0 | off | off |
 
   The 2x neural rungs are used only from a 1.5x scale factor up. NIS is
-  offered in the picker but never chosen by Auto. Animation is any item whose
+  offered in the picker but never chosen by Auto. ArtCNN DS is `sdOnly`: Auto
+  picks it only when the source is under 720 lines, where it cleans DVD-era
+  compression noise; HD and unknown-size sources get FSRCNNX 16, and the
+  picker offers it for any source. Animation is any item whose
   genres (or, for an episode without any, its series') include "Anime" or
   "Animation".
 - **The governor** owns a ceiling per GPU (`GL_RENDERER`, saved in Settings).
@@ -758,10 +761,11 @@ assertion catches the rot.
 - **VLC video output** is broken (`STRMQT_WITH_VLC` builds only). Suspected forced
   `RV32` chroma with no fallback.
 - **Upscaling is mpv-only, and `gpu-next`-only shaders are out.** libmpv's render
-  API offers OpenGL, which runs the older `vo_gpu` renderer; ArtCNN and other
-  shaders that need `gpu-next` fail to compile there. They become possible
-  when libmpv exposes `gpu-next` to embedders. VLC shows the feature as
-  unavailable.
+  API offers OpenGL, which runs the older `vo_gpu` renderer. Upstream ArtCNN
+  needs `gpu-next`; StrmQt vendors a copy of ArtCNN C4F16 DS patched for
+  `vo_gpu` (`shaders/ArtCNN_C4F16_DS.vo_gpu.patch`). Other shaders that need
+  `gpu-next` remain out until libmpv exposes it to embedders. VLC shows the
+  feature as unavailable.
 - **The upscaling governor's thresholds are reasoned, not measured, on weak
   GPUs.** The debug setting `upscale/budgetScale` exercises the mechanism; a
   real laptop or iGPU measurement is still owed.

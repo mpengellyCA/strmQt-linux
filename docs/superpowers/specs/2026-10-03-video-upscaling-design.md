@@ -119,6 +119,14 @@ the ceiling one rung at a time.
 | 1 | `ewa_lanczossharp` (no shader) | `ewa_lanczossharp` |
 | 0 | mpv's default scaler (off) | the same |
 
+> **Amendment 2026-10-04.** On SD sources (display height under 720 lines), live-action
+> rung 4 is ArtCNN C4F16 DS, vendored with a `vo_gpu` compatibility patch
+> (`shaders/ArtCNN_C4F16_DS.vo_gpu.patch`). HD and unknown-size sources keep FSRCNNX 16;
+> rung 3 and below are unchanged, and the picker offers ArtCNN DS for any source. A
+> broken ArtCNN DS steps down to rung 3, like any other rung. `MpvPlayer` also reports
+> user shaders that mpv fails to parse (e.g. `Unrecognized command '…'!`), not only
+> compile failures.
+
 **Neural rungs.**
 - Rungs 4 and 3 are 2× doublers. They are only chosen when the scale factor is at
   least 1.5.

@@ -35,7 +35,8 @@ picture-in-picture frame; leave a record and it carries on in a docked bar with 
 still on it.
 
 - Upscaling of video below the window's resolution: FSRCNNX and FSR1 for live
-  action, Anime4K for animation, chosen automatically per item and stepped
+  action (ArtCNN for SD sources such as DVDs, which also cleans up compression
+  noise), Anime4K for animation, chosen automatically per item and stepped
   down on GPUs that cannot keep up; overridable live from the player's Quality tab (mpv engine).
 
 ### Music treated as music
