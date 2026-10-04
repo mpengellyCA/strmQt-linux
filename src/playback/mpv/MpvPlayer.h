@@ -205,6 +205,11 @@ public:
     bool supportsFrameStep() const override { return true; }
     void frameStep(int direction) override;
     void setAbLoop(qint64 aMs, qint64 bMs) override;
+    bool supportsVideoShaders() const override { return true; }
+    void setVideoProcessing(const VideoProcessing &chain) override;
+    QSize videoSize() const override { return m_videoSize; }
+    bool videoIsHdr() const override { return m_videoHdr; }
+    qreal videoFrameRate() const override { return m_videoFps; }
 
     State state() const override { return m_state; }
     bool buffering() const override { return m_buffering; }
@@ -249,6 +254,9 @@ private:
     // Re-read `track-list` and rebuild both lists; emits tracksChanged on change.
     void refreshTracks();
     void setTrackProperty(const char *name, int id);
+    void applyVideoProcessing();
+    void updateVideoFormat(const QVariantMap &params);
+    void noteLogForShaderFailure(const QString &text);
 
     mpv_handle *m_mpv = nullptr;
     QString m_toneMapping;
@@ -281,6 +289,17 @@ private:
     qreal m_speed = 1.0;
     int m_audioDelayMs = 0;
     int m_subtitleDelayMs = 0;
+    VideoProcessing m_videoProcessing;
+    // mpv's own scalers, read when a core starts: an empty filter in a
+    // VideoProcessing means these, not "whatever the last chain left".
+    QByteArray m_defaultScale;
+    QByteArray m_defaultCscale;
+    bool m_shaderFailureReported = false;
+    QSize m_videoSize;
+    bool m_videoHdr = false;
+    qreal m_videoFps = 0.0;
+    qint64 m_frameDrops = 0;
+    qint64 m_delayedFrames = 0;
     mpvdetail::WakeupGate m_wakeupGate;
     std::shared_ptr<mpvdetail::RenderLink> m_renderLink;
     QTimer m_idleRelease;

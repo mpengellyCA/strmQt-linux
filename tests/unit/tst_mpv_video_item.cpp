@@ -2,6 +2,7 @@
 
 #include "playback/mpv/MpvPlayer.h"
 #include "playback/mpv/MpvVideoItem.h"
+#include "playback/upscale/VideoProcessing.h"
 
 #include <QOpenGLContext>
 #include <QProcess>
@@ -86,6 +87,8 @@ private slots:
     void hiddenPlaneStillLetsGo();
     void destroyingAHeldPlayerIsLoud();
     void destructionEmitsNoSettingChanges();
+    void videoProcessingAppliesOnFirstLoad();
+    void videoProcessingSurvivesACoreRelease();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -596,6 +599,44 @@ void MpvVideoItemTest::destructionEmitsNoSettingChanges()
     delete player;
     QCOMPARE(speed.count(), 0);
     QCOMPARE(audioDelay.count(), 0);
+}
+
+void MpvVideoItemTest::videoProcessingAppliesOnFirstLoad()
+{
+    MpvPlayer player;
+    QVERIFY(player.supportsVideoShaders());
+    const VideoProcessing chain{{QStringLiteral("/strmqt-test/a.glsl")},
+                                QStringLiteral("ewa_lanczossharp"),
+                                QStringLiteral("ewa_lanczossharp")};
+    player.setVideoProcessing(chain); // before the core exists
+    player.load(kMissingMedia, 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+    QCOMPARE(stringProperty(handle, "glsl-shaders"), QStringLiteral("/strmqt-test/a.glsl"));
+    QCOMPARE(stringProperty(handle, "scale"), QStringLiteral("ewa_lanczossharp"));
+    QCOMPARE(stringProperty(handle, "cscale"), QStringLiteral("ewa_lanczossharp"));
+
+    // Empty filters mean mpv's own defaults, not "leave the last ones".
+    player.setVideoProcessing({});
+    QCOMPARE(stringProperty(handle, "glsl-shaders"), QString());
+    QCOMPARE(stringProperty(handle, "scale"), stringProperty(handle, "option-info/scale/default-value"));
+    QCOMPARE(stringProperty(handle, "cscale"), stringProperty(handle, "option-info/cscale/default-value"));
+    player.stop();
+}
+
+void MpvVideoItemTest::videoProcessingSurvivesACoreRelease()
+{
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    const VideoProcessing chain{{QStringLiteral("/strmqt-test/b.glsl")}, QString(), QString()};
+    QVERIFY(failLoad(player, 1));
+    player.setVideoProcessing(chain);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+
+    QVERIFY(failLoad(player, 2));
+    QCOMPARE(stringProperty(player.handle(), "glsl-shaders"), QStringLiteral("/strmqt-test/b.glsl"));
+    player.stop();
 }
 
 QTEST_MAIN(MpvVideoItemTest)

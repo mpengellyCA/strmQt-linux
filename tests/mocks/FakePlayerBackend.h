@@ -114,6 +114,14 @@ public:
         screenshots.append(path);
         return screenshotSucceeds;
     }
+    bool supportsVideoShaders() const override { return videoShadersSupported; }
+    void setVideoProcessing(const strmqt::VideoProcessing &chain) override
+    {
+        processingRequests.append(chain);
+    }
+    QSize videoSize() const override { return m_videoSize; }
+    bool videoIsHdr() const override { return m_videoHdr; }
+    qreal videoFrameRate() const override { return m_videoFps; }
 
     // Build a track map shaped exactly like a real engine's, so tests and the
     // OSD see the same keys without hand-writing them each time.
@@ -232,6 +240,18 @@ public:
         emit videoStatsChanged();
     }
     void simulateTrackDescription(const QString &description) { emit trackChanged(description); }
+    void simulateVideoFormat(QSize size, bool hdr = false, qreal fps = 24.0)
+    {
+        m_videoSize = size;
+        m_videoHdr = hdr;
+        m_videoFps = fps;
+        emit videoFormatChanged();
+    }
+    void simulateFrameDrops(qint64 dropped, qint64 delayed = 0)
+    {
+        emit frameDropCountsChanged(dropped, delayed);
+    }
+    void simulateShaderFailure(const QString &path) { emit videoShaderFailed(path); }
 
     QList<QUrl> loadedUrls;
     QList<qint64> loadedStarts;
@@ -253,6 +273,8 @@ public:
     int stopCalls = 0;
     bool deferTrackReadback = false;
     bool deferPlaybackSettingsReadback = false;
+    bool videoShadersSupported = false; // like VLC until a test says otherwise
+    QList<strmqt::VideoProcessing> processingRequests;
 
 private:
     LoadId resolvedLoadId(LoadId loadId) const { return loadId == 0 ? m_loadId : loadId; }
@@ -285,6 +307,12 @@ private:
         if (!m_videoStats.isEmpty()) {
             m_videoStats.clear();
             emit videoStatsChanged();
+        }
+        if (!m_videoSize.isEmpty()) {
+            m_videoSize = {};
+            m_videoHdr = false;
+            m_videoFps = 0.0;
+            emit videoFormatChanged();
         }
     }
 
@@ -328,5 +356,8 @@ private:
     qreal m_speed = 1.0;
     int m_audioDelayMs = 0;
     int m_subtitleDelayMs = 0;
+    QSize m_videoSize;
+    bool m_videoHdr = false;
+    qreal m_videoFps = 0.0;
     QVariantMap m_videoStats;
 };
