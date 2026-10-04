@@ -33,6 +33,7 @@ FocusScope {
     // The try/catch is the only way to ask "is it there?" without a
     // ReferenceError, and it keeps this page loadable in a harness that does
     // not publish it.
+    readonly property var playerCtl: PlayerCtl
     readonly property var prefs: {
         try {
             return Prefs;
@@ -928,6 +929,21 @@ FocusScope {
                                 if (page.prefsAvailable)
                                     page.prefs.replayGainMode = page.replayGainOptions[index].value;
                             }
+                        }
+                    }
+
+                    // ── Upscaling (spec 2026-10-03 §4.2) ────────────────────
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Re-test upscaling")
+                        hint: page.replayGainSupported
+                              ? qsTr("If a GPU could not keep up, StrmQt lowered the upscaling quality and remembered it. Re-testing starts again from the best and steps down only if playback stutters.")
+                              : qsTr("Only the mpv engine upscales. The VLC engine plays at its own scaling.")
+
+                        StrmButton {
+                            enabled: page.replayGainSupported
+                            text: qsTr("Re-test")
+                            onClicked: page.playerCtl.resetUpscaleCeiling()
                         }
                     }
 
