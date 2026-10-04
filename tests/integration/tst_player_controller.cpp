@@ -1348,13 +1348,19 @@ void PlayerControllerTest::seekStartsTheGovernorGrace()
     m_backend->simulateVideoFormat(QSize(1280, 720));
     QTRY_COMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 16"));
 
-    m_upscaleNow = 10'000; // well past every earlier grace period
+    // Frames render throughout, so a summary comes every 500 ms.
+    const auto rendering = [this](qint64 from, qint64 to) {
+        for (m_upscaleNow = from; m_upscaleNow <= to; m_upscaleNow += 500)
+            m_controller->reportGpuTiming(5.0, 4.0, 12);
+        m_upscaleNow = to;
+    };
+    rendering(9'000, 10'000); // well past every earlier grace period
     m_backend->simulateFrameDrops(0);
     m_controller->seekTo(300'000);
-    m_upscaleNow = 10'500;
+    rendering(10'500, 10'500);
     m_backend->simulateFrameDrops(4); // the seek's transient
     QCOMPARE(m_controller->upscaleCeiling(), 4);
-    m_upscaleNow = 13'000;
+    rendering(11'000, 13'000);
     m_backend->simulateFrameDrops(5); // a real drop
     QCOMPARE(m_controller->upscaleCeiling(), 3);
     QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));

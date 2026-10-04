@@ -313,8 +313,8 @@ The parts, and where they live:
   It lowers it one rung after 3 s of p95 GPU time over half the frame
   interval, or at once on a dropped frame outside a 2 s grace period after a
   load, seek or chain change, and ignores drops while the picture is not being
-  rendered, e.g. a minimised window (no GPU-time summary for 1.5 s; the first
-  summary back starts a grace period). It never steps down while playback
+  rendered, e.g. a minimised window (no GPU-time summary in the last 1.5 s, or
+  none yet this video; the first summary back starts a grace period). It never steps down while playback
   speed is not 1x (a fast-forward hold or a user speed); returning to 1x starts
   a fresh grace period. It never raises the ceiling mid-video;
   Settings -> Playback -> "Re-test upscaling" resets the current GPU's ceiling,

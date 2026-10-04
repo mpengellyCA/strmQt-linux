@@ -52,8 +52,8 @@ public:
     // mpv's cumulative frame-drop-count and vo-delayed-frame-count. Ignored
     // (the baseline still follows) while no summary has come for a while: a
     // minimised window stops rendering, and libmpv counts each frame it could
-    // not hand over as dropped. Before a video's first summary, drops are
-    // judged as always, under the load's grace period.
+    // not hand over as dropped. Before a video's first summary nothing is
+    // rendering either, as far as drops go.
     void addDropCounts(qint64 dropped, qint64 delayed);
 
     // Settings → Playback → "Re-test upscaling on this GPU".
@@ -87,6 +87,7 @@ private:
     qint64 m_lastDropped = -1;
     qint64 m_lastDelayed = -1;
     qint64 m_lastSummaryAt = -1; // -1: none yet this video
+    bool m_ignoredDrops = false;  // drops rose while not rendering
     qreal m_lastP95Ms = -1.0;
     bool m_timingAvailable = true;
 };

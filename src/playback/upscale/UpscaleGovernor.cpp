@@ -65,6 +65,7 @@ void UpscaleGovernor::beginVideo()
     m_lastDropped = -1;
     m_lastDelayed = -1;
     m_lastSummaryAt = -1;
+    m_ignoredDrops = false;
     m_overBudgetSince = -1;
     noteTransient();
     const int ceiling = savedCeiling();
@@ -110,9 +111,11 @@ bool UpscaleGovernor::mayStep() const
 
 bool UpscaleGovernor::rendering() const
 {
-    // Before the first summary this is the normal start of a video, which the
-    // load's grace period already covers.
-    return m_lastSummaryAt < 0 || now() - m_lastSummaryAt <= kNotRenderingAfterMs;
+    // No summary yet this video counts as not rendering: a video that starts
+    // in a minimised window never renders. A normal start loses nothing, as
+    // the first summary comes about 0.5 s after the first frame, inside the
+    // load's grace period, and a GPU without timer queries still sends them.
+    return m_lastSummaryAt >= 0 && now() - m_lastSummaryAt <= kNotRenderingAfterMs;
 }
 
 void UpscaleGovernor::addTimingSummary(qreal p95Ms, qreal meanMs, int samples)
@@ -120,9 +123,12 @@ void UpscaleGovernor::addTimingSummary(qreal p95Ms, qreal meanMs, int samples)
     Q_UNUSED(meanMs);
     if (samples != 0) {
         // Frames are being rendered. After a gap (a window restored), the
-        // first of them are a transient, like a seek's.
-        const bool resumed = !rendering();
+        // first of them are a transient, like a seek's. A video's first
+        // summary is the normal start, unless drops were already being
+        // ignored (a video that started minimised).
+        const bool resumed = !rendering() && (m_lastSummaryAt >= 0 || m_ignoredDrops);
         m_lastSummaryAt = now();
+        m_ignoredDrops = false;
         if (resumed)
             noteTransient();
     }
@@ -158,7 +164,9 @@ void UpscaleGovernor::addDropCounts(qint64 dropped, qint64 delayed)
                       && (dropped > m_lastDropped || delayed > m_lastDelayed);
     m_lastDropped = dropped;
     m_lastDelayed = delayed;
-    if (rose && rendering() && mayStep())
+    if (rose && !rendering())
+        m_ignoredDrops = true;
+    else if (rose && mayStep())
         stepDown("frames dropped");
 }
 

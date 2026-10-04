@@ -37,10 +37,14 @@ private slots:
     void noSteppingWhileHeld();
     void dropsWhileNotRenderingAreIgnored();
     void resumedRenderingStartsAGrace();
+    void noSummaryYetIsNotRendering();
 
 private:
     // Feeds an over-budget summary every stepMs over [fromMs, toMs].
     void feedOverBudget(qint64 fromMs, qint64 toMs, qint64 stepMs = 500);
+    // Frames are rendering: an under-budget summary every 500 ms over
+    // [fromMs, toMs], leaving the clock at toMs. Drops count only then.
+    void rendering(qint64 fromMs, qint64 toMs);
 
     QTemporaryDir *m_dir = nullptr;
     Settings *m_settings = nullptr;
@@ -77,6 +81,13 @@ void UpscaleGovernorTest::feedOverBudget(qint64 fromMs, qint64 toMs, qint64 step
         m_governor->addTimingSummary(30.0, 25.0, 12); // budget at 24 fps is 20.8
 }
 
+void UpscaleGovernorTest::rendering(qint64 fromMs, qint64 toMs)
+{
+    for (m_now = fromMs; m_now <= toMs; m_now += 500)
+        m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_now = toMs;
+}
+
 void UpscaleGovernorTest::threeSecondsOverBudgetStepsOnce()
 {
     QSignalSpy changed(m_governor, &UpscaleGovernor::ceilingChanged);
@@ -100,12 +111,12 @@ void UpscaleGovernorTest::underThreeSecondsDoesNot()
 
 void UpscaleGovernorTest::dropOutsideGraceStepsAtOnce()
 {
-    m_now = 2500;
+    rendering(500, 2500);
     m_governor->addDropCounts(0, 0); // baseline
     m_now = 2600;
     m_governor->addDropCounts(1, 0);
     QCOMPARE(m_governor->ceiling(), 3);
-    m_now = 5000;
+    rendering(3000, 5000);
     m_governor->addDropCounts(1, 1); // vo-delayed-frame-count counts too
     QCOMPARE(m_governor->ceiling(), 2);
 }
@@ -140,7 +151,7 @@ void UpscaleGovernorTest::neverUpMidVideo()
 
 void UpscaleGovernorTest::ceilingPersistsPerRenderer()
 {
-    m_now = 2500;
+    rendering(500, 2500);
     m_governor->addDropCounts(0, 0);
     m_governor->addDropCounts(1, 0);
     QCOMPARE(m_governor->ceiling(), 3);
@@ -155,7 +166,7 @@ void UpscaleGovernorTest::ceilingPersistsPerRenderer()
 
 void UpscaleGovernorTest::resetCeilingClearsIt()
 {
-    m_now = 2500;
+    rendering(500, 2500);
     m_governor->addDropCounts(0, 0);
     m_governor->addDropCounts(1, 0);
     QCOMPARE(m_governor->ceiling(), 3);
@@ -182,7 +193,7 @@ void UpscaleGovernorTest::stepsFromTheActiveRungNotTheCeiling()
     // Below 1.5× the policy runs rung 2 under a ceiling of 4. A step must
     // change the picture, so it lands on 1, not on a no-op 3.
     m_governor->setActiveRung(2);
-    m_now = 2500;
+    rendering(500, 2500);
     m_governor->addDropCounts(0, 0);
     m_governor->addDropCounts(1, 0);
     QCOMPARE(m_governor->ceiling(), 1);
@@ -265,13 +276,13 @@ void UpscaleGovernorTest::resetCeilingWithoutRendererClearsEveryGpu()
 
 void UpscaleGovernorTest::counterResetIsANewBaseline()
 {
-    m_now = 2500;
+    rendering(500, 2500);
     m_governor->addDropCounts(0, 0); // baseline
     m_now = 2600;
     m_governor->addDropCounts(5, 0); // a drop outside grace
     QCOMPARE(m_governor->ceiling(), 3);
     // A stream reload restarts mpv's counters. Wait out the new grace period.
-    m_now = 6000;
+    rendering(3000, 6000);
     m_governor->addDropCounts(0, 0);
     QCOMPARE(m_governor->ceiling(), 3);
     m_now = 6100;
@@ -344,6 +355,46 @@ void UpscaleGovernorTest::resumedRenderingStartsAGrace()
         m_governor->addTimingSummary(-1.0, -1.0, -1);
     m_governor->addDropCounts(42, 0);
     QCOMPARE(m_governor->ceiling(), 3);
+}
+
+void UpscaleGovernorTest::noSummaryYetIsNotRendering()
+{
+    // The next episode starts in a window that is already minimised: no frame
+    // is ever rendered, so no summary comes, and libmpv counts drops.
+    m_now = 100;
+    m_governor->addDropCounts(0, 0);
+    qint64 drops = 0;
+    for (m_now = 2100; m_now <= 20'000; m_now += 200)
+        m_governor->addDropCounts(++drops, 0);
+    QCOMPARE(m_governor->ceiling(), 4);
+
+    // Restored: the first summary, long after the load, starts a grace period...
+    m_now = 30'000;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_now = 31'000;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(++drops, 0);
+    QCOMPARE(m_governor->ceiling(), 4);
+    // ...and after it a drop is the GPU's.
+    m_now = 32'500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(++drops, 0);
+    QCOMPARE(m_governor->ceiling(), 3);
+
+    // A video's first summary inside the load grace is the normal start: no
+    // extra grace, so a drop right after the load grace steps.
+    m_governor->setActiveRung(3);
+    m_now = 40'000;
+    m_governor->beginVideo(); // grace until 42'000; the old summary no longer counts
+    m_governor->addDropCounts(0, 0);
+    m_now = 40'500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_now = 41'500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_now = 42'100;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(1, 0);
+    QCOMPARE(m_governor->ceiling(), 2);
 }
 
 QTEST_GUILESS_MAIN(UpscaleGovernorTest)
