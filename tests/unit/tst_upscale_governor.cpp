@@ -35,6 +35,8 @@ private slots:
     void resetCeilingWithoutRendererClearsEveryGpu();
     void counterResetIsANewBaseline();
     void noSteppingWhileHeld();
+    void dropsWhileNotRenderingAreIgnored();
+    void resumedRenderingStartsAGrace();
 
 private:
     // Feeds an over-budget summary every stepMs over [fromMs, toMs].
@@ -288,15 +290,59 @@ void UpscaleGovernorTest::noSteppingWhileHeld()
     QCOMPARE(m_governor->ceiling(), 4);
     QCOMPARE(m_governor->lastP95Ms(), 30.0); // still recorded
 
-    // Back at 1×: the speed change itself is a transient...
+    // Back at 1×: the speed change itself is a transient... (frames keep
+    // rendering, so summaries keep coming)
     m_now = 9000;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
     m_governor->setHeld(false);
     m_now = 10000;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
     m_governor->addDropCounts(51, 50);
     QCOMPARE(m_governor->ceiling(), 4);
     // ...and after it the governor judges as usual.
     m_now = 11500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
     m_governor->addDropCounts(52, 50);
+    QCOMPARE(m_governor->ceiling(), 3);
+}
+
+void UpscaleGovernorTest::dropsWhileNotRenderingAreIgnored()
+{
+    // A minimised window: Qt stops rendering, so MpvVideoItem posts no
+    // summaries, and libmpv counts every frame it could not hand over as
+    // dropped, about five a second. That is not the GPU.
+    m_now = 2500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(0, 0);
+    qint64 drops = 0;
+    for (m_now = 4100; m_now <= 30'000; m_now += 200)
+        m_governor->addDropCounts(++drops, 0);
+    QCOMPARE(m_governor->ceiling(), 4);
+    QCOMPARE(m_settings->upscaleCeiling(QStringLiteral("Test GPU")), -1);
+}
+
+void UpscaleGovernorTest::resumedRenderingStartsAGrace()
+{
+    m_now = 2500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(0, 0);
+    m_now = 10'000; // minimised since 2500: drops climb, the baseline follows
+    m_governor->addDropCounts(40, 0);
+    QCOMPARE(m_governor->ceiling(), 4);
+
+    // Restored: summaries resume. The first frames back are a transient.
+    m_now = 20'000;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_now = 20'500;
+    m_governor->addTimingSummary(10.0, 8.0, 12);
+    m_governor->addDropCounts(41, 0);
+    QCOMPARE(m_governor->ceiling(), 4);
+
+    // After the grace, with frames rendering (no timer queries counts too),
+    // a drop is the GPU's again.
+    for (m_now = 21'000; m_now <= 22'500; m_now += 500)
+        m_governor->addTimingSummary(-1.0, -1.0, -1);
+    m_governor->addDropCounts(42, 0);
     QCOMPARE(m_governor->ceiling(), 3);
 }
 

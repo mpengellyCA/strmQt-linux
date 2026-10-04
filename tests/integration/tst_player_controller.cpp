@@ -1400,12 +1400,16 @@ void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
     QCOMPARE(m_controller->upscaleCeiling(), 4);
 
     // Back at 1×: the change is a transient, and after it a drop steps as usual.
+    // Frames keep rendering throughout, so summaries keep coming.
     m_upscaleNow = 25'000;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
     m_controller->setPlaybackSpeed(1.0);
     m_upscaleNow = 26'000;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
     m_backend->simulateFrameDrops(7);
     QCOMPARE(m_controller->upscaleCeiling(), 4);
     m_upscaleNow = 27'500;
+    m_controller->reportGpuTiming(5.0, 4.0, 12);
     m_backend->simulateFrameDrops(8);
     QCOMPARE(m_controller->upscaleCeiling(), 3);
     QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));

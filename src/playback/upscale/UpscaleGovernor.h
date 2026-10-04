@@ -44,10 +44,16 @@ public:
     // is a transient of its own.
     void setHeld(bool held);
 
-    // From MpvVideoItem, twice a second. samples < 0 means the GPU has no
-    // timer queries; 0 means no frames were rendered (paused).
+    // From MpvVideoItem, twice a second while it renders. samples < 0 means
+    // the GPU has no timer queries; 0 means no frames were rendered (paused).
+    // Any summary with frames is also the sign that the picture is being
+    // rendered; the first after a gap starts a grace period.
     void addTimingSummary(qreal p95Ms, qreal meanMs, int samples);
-    // mpv's cumulative frame-drop-count and vo-delayed-frame-count.
+    // mpv's cumulative frame-drop-count and vo-delayed-frame-count. Ignored
+    // (the baseline still follows) while no summary has come for a while: a
+    // minimised window stops rendering, and libmpv counts each frame it could
+    // not hand over as dropped. Before a video's first summary, drops are
+    // judged as always, under the load's grace period.
     void addDropCounts(qint64 dropped, qint64 delayed);
 
     // Settings → Playback → "Re-test upscaling on this GPU".
@@ -65,6 +71,7 @@ private:
     qint64 now() const;
     int savedCeiling() const;
     bool mayStep() const;
+    bool rendering() const;
     void stepDown(const char *why);
 
     Settings *m_settings;
@@ -79,6 +86,7 @@ private:
     qint64 m_overBudgetSince = -1;
     qint64 m_lastDropped = -1;
     qint64 m_lastDelayed = -1;
+    qint64 m_lastSummaryAt = -1; // -1: none yet this video
     qreal m_lastP95Ms = -1.0;
     bool m_timingAvailable = true;
 };

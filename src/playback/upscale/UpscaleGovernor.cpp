@@ -16,6 +16,9 @@ namespace {
 constexpr qreal kBudgetShare = 0.5;
 constexpr qint64 kOverBudgetForMs = 3000;
 constexpr qint64 kGraceMs = 2000;
+// Summaries come twice a second while MpvVideoItem renders. Three missed in a
+// row means the render thread is not presenting (a minimised or hidden window).
+constexpr qint64 kNotRenderingAfterMs = 1500;
 // A stream that reports no rate. 30 fps is stricter than a film's 24 and
 // looser than a broadcast's 60, so a wrong guess errs towards smoothness.
 constexpr qreal kFallbackFps = 30.0;
@@ -61,6 +64,7 @@ void UpscaleGovernor::beginVideo()
 {
     m_lastDropped = -1;
     m_lastDelayed = -1;
+    m_lastSummaryAt = -1;
     m_overBudgetSince = -1;
     noteTransient();
     const int ceiling = savedCeiling();
@@ -104,9 +108,24 @@ bool UpscaleGovernor::mayStep() const
     return !m_manual && !m_held && m_activeRung > 0 && now() >= m_graceUntil;
 }
 
+bool UpscaleGovernor::rendering() const
+{
+    // Before the first summary this is the normal start of a video, which the
+    // load's grace period already covers.
+    return m_lastSummaryAt < 0 || now() - m_lastSummaryAt <= kNotRenderingAfterMs;
+}
+
 void UpscaleGovernor::addTimingSummary(qreal p95Ms, qreal meanMs, int samples)
 {
     Q_UNUSED(meanMs);
+    if (samples != 0) {
+        // Frames are being rendered. After a gap (a window restored), the
+        // first of them are a transient, like a seek's.
+        const bool resumed = !rendering();
+        m_lastSummaryAt = now();
+        if (resumed)
+            noteTransient();
+    }
     if (samples < 0) {
         m_timingAvailable = false; // dropped frames alone decide from now on
         emit timingChanged();
@@ -139,7 +158,7 @@ void UpscaleGovernor::addDropCounts(qint64 dropped, qint64 delayed)
                       && (dropped > m_lastDropped || delayed > m_lastDelayed);
     m_lastDropped = dropped;
     m_lastDelayed = delayed;
-    if (rose && mayStep())
+    if (rose && rendering() && mayStep())
         stepDown("frames dropped");
 }
 
