@@ -96,6 +96,7 @@ target_compile_definitions(tst_music_player_sources PRIVATE STRMQT_SOURCE_DIR="$
 strmqt_add_test(tst_mpv_video_item unit/tst_mpv_video_item.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvPlayer.cpp
     ${CMAKE_SOURCE_DIR}/src/playback/mpv/MpvVideoItem.cpp
+    ${CMAKE_SOURCE_DIR}/src/playback/mpv/GpuTimer.cpp
 )
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
