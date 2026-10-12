@@ -62,6 +62,19 @@
   </requires>
 
   <releases>
+    <release version="0.8.0" date="2026-10-12" type="development">
+      <description>
+        <p>The input release: every way of driving StrmQt now goes through one input layer.</p>
+        <ul>
+          <li>With a keyboard, controller or remote, an arrow always goes to the nearest control in that direction, and every on-screen control can be reached, the player's Back button included.</li>
+          <li>Films and shows can be filtered by genre, year, studio or network, age rating and score, and films by resolution, HDR format, video codec and audio layout.</li>
+          <li>A pointer left idle for five seconds hides and stops highlighting what it rests on.</li>
+          <li>The phone remote can do anything a key can, and switches between the full player and the mini player.</li>
+          <li>Video below the window's resolution is upscaled, with the method chosen per title and stepped down on GPUs that cannot keep up.</li>
+          <li>Episodes are listed in season and episode order, and the first one is offered as Next Up on a show you have not started.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.5" date="2026-10-01" type="development">
       <description>
         <p>A compatibility release: StrmQt now runs well beyond Arch.</p>

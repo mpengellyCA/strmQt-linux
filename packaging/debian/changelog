@@ -1,3 +1,13 @@
+strmqt (0.8.0-1) unstable; urgency=medium
+
+  * One input layer for keyboard, mouse, controller, remote and phone: an
+    arrow always has somewhere to go, and every control can be reached.
+  * Films and shows can be filtered by genre, year, studio, rating and, for
+    films, resolution, HDR format, codec and audio layout.
+  * An idle pointer hides and stops hovering; video upscaling (mpv engine).
+
+ -- Mike Pengelly <mike@leadrix.io>  Mon, 12 Oct 2026 12:00:00 +0000
+
 strmqt (0.7.5-1) unstable; urgency=medium
 
   * Distro compatibility release: native packages for Ubuntu 24.04 and 26.04,

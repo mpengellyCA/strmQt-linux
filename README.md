@@ -21,8 +21,10 @@ or the keyboard alone.
 ### A ten-foot interface that was designed as one
 
 Home opens on rails of what you are part-way through and what is next. A library is a grid
-you can re-shape — posters, wide art, or a list — with sorting, filters, and an A–Z jump
-for the times you know exactly what you are looking for. Series drill down to seasons and
+you can re-shape — posters, wide art, or a list — with sorting, an A–Z jump for the times
+you know exactly what you are looking for, and a **Filters** sheet that narrows films and
+shows by what the server knows about them: genre, year, studio or network, age rating and
+score, and for films the resolution, HDR format, video codec and audio layout. Series drill down to seasons and
 put the cursor on the next unwatched episode, so arriving and pressing play does the
 obvious thing. Nothing here is a desktop control scaled up.
 
@@ -60,6 +62,13 @@ goes back, Home goes Home, and the number pad opens your libraries. ⏮ and ⏭ 
 chapter and then by track, and holding ⏭ fast-forwards. Every binding is remappable in
 Settings, and the on-screen shortcut sheet always shows the real one.
 
+All of them go through one input layer, so they behave the same. An arrow always goes to
+the nearest thing in that direction — every control a mouse can click, a pad can walk to,
+the player's on-screen buttons included — a menu or a sheet keeps the keys until it is
+closed, and focus is never left on nothing. Leave the mouse alone for five seconds and the
+pointer hides and stops highlighting what it rests on, in the whole app and not only over
+a video; move it and it is back.
+
 ### Your phone is already the remote
 
 A full MPRIS2 interface, so KDE Connect and the Plasma media applet control it with no
@@ -69,7 +78,9 @@ playback target.
 There is also a built-in Web Remote: switch it on in Settings (or accept the one-time
 offer after signing in) and open the address it shows in your phone's browser. It is
 served over HTTPS on your local network only, and a PIN keeps other devices on the
-network from taking over playback.
+network from taking over playback. Anything a key or a controller button can do, the phone
+can ask for too, and its Remote screen switches between the full player and the mini
+player.
 
 ### Your credentials stay yours
 
@@ -92,15 +103,15 @@ Qt. Install it from its local path so the package manager pulls in the dependenc
 
 | Distro | Format | Command |
 |---|---|---|
-| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1.ubuntu24.04_amd64.deb` |
-| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.7.5-1.ubuntu26.04_amd64.deb` |
-| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.7.5-1.deb12_amd64.deb` |
-| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.7.5-1.deb13_amd64.deb` |
-| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc43.x86_64.rpm` |
-| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.7.5-1.fc44.x86_64.rpm` |
-| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.7.5-1-x86_64.pkg.tar.zst` |
+| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.0-1.ubuntu24.04_amd64.deb` |
+| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.0-1.ubuntu26.04_amd64.deb` |
+| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.8.0-1.deb12_amd64.deb` |
+| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.8.0-1.deb13_amd64.deb` |
+| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.8.0-1.fc43.x86_64.rpm` |
+| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.8.0-1.fc44.x86_64.rpm` |
+| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.8.0-1-x86_64.pkg.tar.zst` |
 | everyone | Flatpak | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
-| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.7.5-x86_64.AppImage` and run it |
+| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.8.0-x86_64.AppImage` and run it |
 
 A keyring is recommended, not required: the `.deb` recommends
 `kwalletmanager | gnome-keyring | keepassxc`, the `.rpm` recommends
@@ -198,8 +209,15 @@ Defaults — all of them remappable, and `?` shows the current set at any time.
 | Volume | `+` · `-` | right stick |
 | Leave, keep playing | Esc · Backspace | **View** |
 | Stop | `S` | — |
+| Previous / next item | Shift+`P` · Shift+`N` | — |
+| Previous / next chapter | `[` · `]` | — |
+| Playback statistics | Ctrl+`I` | — |
 | Previous / next chapter, else item | Media Previous · Media Next | — |
 | Fast-forward 2× → 32× | hold Media Next | — |
+
+Left and Right seek while nothing on screen is selected. Once a control is, the arrows
+move between controls instead — Up from the bar reaches the on-screen Back button, so you
+can return to the library without stopping — and Select presses the one you are on.
 
 **With a remote.** OK is Select and Back is Back, anywhere — Back closes a menu or a
 panel as well as leaving a page. ⏭ and ⏮ act while anything plays, a record under the
@@ -217,16 +235,17 @@ without them, so a password never reaches the log). For the Flatpak, pass it wit
 
 ## Where it stands
 
-Version **0.7.5**, a pre-release: the distro compatibility release. StrmQt now builds
-and runs on Qt 6.4 and up, ships native `.deb` and `.rpm` packages for current Ubuntu,
-Debian and Fedora, keeps sign-in tokens in GNOME Keyring or KeePassXC as well as
-KWallet, and fixes two skip bugs: the Web Remote's Next/Previous now step by chapter
-like every other control, and Previous is offered as soon as it would restart an item.
+Version **0.8.0**, a pre-release: the input release. Keyboard, mouse, controller, remote
+and phone now go through one input layer, so an arrow always has somewhere to go and no
+control is out of reach; libraries of films and shows can be filtered by their metadata;
+an idle pointer hides everywhere; and video below the window's resolution is upscaled.
+The new input layer and the filters are covered by tests but have had very little time
+in the hand on a real controller, remote or phone.
 The core of it has been exercised against a live Emby 4.9 server: browsing, search,
 playback of video and audio, live updates over a WebSocket, playlists, favourites,
 resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 80/80 on Qt 6.4.2, 6.8.2, 6.10 and
+The build is clean under `-Werror`, `ctest` passes 85/85 on Qt 6.4.2, 6.8.2, 6.10 and
 6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
 page-construction self-test builds all 15 screens on every release.
 
