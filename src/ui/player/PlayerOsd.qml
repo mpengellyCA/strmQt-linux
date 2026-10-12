@@ -304,10 +304,13 @@ Item {
                 GradientStop { position: 1.0; color: "transparent" }
             }
 
-            // Back, where every full-screen surface puts it. Pointer-only on
-            // purpose: the keyboard already has Esc and Backspace, and a tab
-            // stop here would sit in front of the transport row that the OSD's
-            // Down-arrow contract hands the keyboard to.
+            // Back, where every full-screen surface puts it. Not a Tab stop:
+            // one here would sit in front of the transport row that the OSD's
+            // Down-arrow contract hands the keyboard to. It is somewhere an
+            // arrow can go, though (`navStop`): it was pointer-only on the
+            // grounds that the keyboard has Esc, and a remote with no Back key
+            // then had no way off this page except Stop. Up off the top of the
+            // bottom bar lands here; Down goes back.
             StrmIconButton {
                 id: leaveButton
 
@@ -319,6 +322,8 @@ Item {
                 tooltip: qsTr("Back")
                 accessibleName: qsTr("Leave the player, keep playing")
                 activeFocusOnTab: false
+                property bool navStop: true
+                property Item navDown: scrubber.enabled ? scrubber : buttons
                 onClicked: osd.leaveRequested()
             }
 
@@ -395,6 +400,17 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             height: bottomBlock.implicitHeight + osd.safeMargin
+
+            // Up off the top of the controls — the scrubber, or the button
+            // row while there is no scrubber to stop at — reaches Back. Said
+            // here because the page answers every Up this declines before the
+            // navigator is asked. From Back, Up is the page's again: it rests
+            // the keyboard.
+            Keys.onUpPressed: event => {
+                event.accepted = true;
+                if (!event.isAutoRepeat)
+                    leaveButton.forceActiveFocus(Qt.BacktabFocusReason);
+            }
 
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "transparent" }
