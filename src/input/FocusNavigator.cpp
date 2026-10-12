@@ -258,20 +258,19 @@ QRectF FocusNavigator::sceneRect(QQuickItem *item) const
     return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
 }
 
-QQuickItem *FocusNavigator::explicitNeighbour(QQuickItem *from, QQuickItem *scope,
+// The neighbour `item` names for `dir`, if it leads anywhere. A named
+// neighbour that is hidden or disabled is not a dead end: its own link in the
+// same direction is followed, the way a chain of buttons skips the one that
+// is not on screen in this mode. Null when the chain runs out.
+QQuickItem *FocusNavigator::explicitNeighbour(QQuickItem *item, QQuickItem *from,
                                               NavDirection dir) const
 {
     const char *name = neighbourProperty(dir);
-    for (QQuickItem *p = from; p; p = p->parentItem()) {
-        if (QQuickItem *target = duckItem(p, name)) {
-            // A neighbour that is hidden or disabled is not a dead end, it is
-            // simply not there: geometry answers instead.
-            if (target != from && isLive(target) && target->opacity() > 0)
-                return target;
-            return nullptr;
-        }
-        if (p == scope)
-            break;
+    QQuickItem *target = duckItem(item, name);
+    for (int hops = 0; target && hops < 16; ++hops) {
+        if (target != from && isLive(target) && target->opacity() > 0)
+            return target;
+        target = duckItem(target, name);
     }
     return nullptr;
 }
@@ -296,6 +295,13 @@ bool FocusNavigator::isViewEdgeRepeat(QQuickItem *focus, NavDirection dir) const
 
 void FocusNavigator::give(QQuickItem *target, Qt::FocusReason reason)
 {
+    // A composite control says which of its parts takes the keyboard when it
+    // is entered; without that a focus scope hands it to whichever child had
+    // it last, which may be a part the user never meant to return to.
+    if (QQuickItem *entry = duckItem(target, "navEntry")) {
+        if (isLive(entry) && !target->hasActiveFocus())
+            target = entry;
+    }
     m_giving = true;
     target->forceActiveFocus(reason);
     m_giving = false;
@@ -369,8 +375,10 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
         (dir == NavDirection::Left || dir == NavDirection::Up) ? Qt::BacktabFocusReason
                                                                 : Qt::TabFocusReason;
 
-    if (QQuickItem *target = explicitNeighbour(focus, scope, dir)) {
-        qCDebug(logFocus) << "move" << qtKey << "explicit" << focus << "->" << target;
+    // What the focused item itself names comes first: it is the most
+    // specific thing anybody said about this key.
+    if (QQuickItem *target = explicitNeighbour(focus, focus, dir)) {
+        qCDebug(logFocus) << "move" << qtKey << "named" << focus << "->" << target;
         give(target, reason);
         return true;
     }
@@ -398,18 +406,51 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
         }
     }
 
+    QQuickItem *self = owner ? owner : focus;
     QList<QQuickItem *> candidates;
     QList<QRectF> rects;
     for (QQuickItem *stop : std::as_const(stops)) {
         // What the focused control contains is its own business, and what
         // contains it is where the keyboard already is.
-        QQuickItem *self = owner ? owner : focus;
         if (stop == self || isAncestorOf(self, stop) || isAncestorOf(stop, self))
             continue;
         candidates.append(stop);
         rects.append(sceneRect(stop));
     }
-    const QRectF source = sceneRect(cursorItem(owner ? owner : focus));
+    const QRectF source = sceneRect(cursorItem(self));
+
+    // A region that names a neighbour is saying where its EDGE leads. So
+    // geometry is tried inside the region first, and the name is used only
+    // when the region has nothing further that way — innermost region first.
+    for (QQuickItem *region = focus->parentItem(); region; region = region->parentItem()) {
+        if (duck(region, neighbourProperty(dir)).isValid()) {
+            QList<int> within;
+            QList<QRectF> withinRects;
+            for (int i = 0; i < candidates.size(); ++i) {
+                if (isAncestorOf(region, candidates.at(i))) {
+                    within.append(i);
+                    withinRects.append(rects.at(i));
+                }
+            }
+            const int inner = pickSpatialTarget(source, withinRects, dir);
+            if (inner >= 0) {
+                QQuickItem *target = candidates.at(within.at(inner));
+                qCDebug(logFocus) << "move" << qtKey << focus << "->" << target << "inside" << region;
+                give(target, reason);
+                return true;
+            }
+            if (QQuickItem *target = explicitNeighbour(region, focus, dir)) {
+                if (!isAncestorOf(target, focus)) {
+                    qCDebug(logFocus) << "move" << qtKey << "edge of" << region << "->" << target;
+                    give(target, reason);
+                    return true;
+                }
+            }
+        }
+        if (region == scope)
+            break;
+    }
+
     const int picked = pickSpatialTarget(source, rects, dir);
     if (picked < 0) {
         qCDebug(logFocus) << "move" << qtKey << "nothing that way from" << focus;
@@ -593,7 +634,12 @@ bool FocusNavigator::eventFilter(QObject *watched, QEvent *event)
     auto *boundary = qobject_cast<QQuickItem *>(watched);
     if (!boundary || !boundary->isVisible())
         return QObject::eventFilter(watched, event);
-    if (isPopupItem(boundary)) {
+    const bool popup = isPopupItem(boundary);
+    // Asked again each time: a sheet fading out is still visible and no
+    // longer modal.
+    if (!popup && !duck(boundary, "navModal").toBool())
+        return QObject::eventFilter(watched, event);
+    if (popup) {
         // The popup itself answers Esc and Tab and has no use for an arrow.
         if (isDirection) {
             move(key->key(), key->isAutoRepeat());

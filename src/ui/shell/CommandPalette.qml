@@ -23,6 +23,8 @@ Item {
     id: palette
 
     property bool opened: false
+    // Nothing under the palette is reachable while it is up (FocusNavigator).
+    property bool navModal: palette.opened
     // How many results each source may contribute, so one source with hundreds
     // of matches cannot bury the other two.
     property int perSourceLimit: 6

@@ -67,6 +67,7 @@ private slots:
     void hiddenAndDisabledControlsAreSkipped();
     void explicitNeighbourWinsWhileItIsLive();
     void regionStatesWhereItsEdgeLeads();
+    void namedChainSkipsWhatIsNotThere();
     void containerFocusStepsInside();
     void hiddenFocusRecoversToTheNearestControl();
     void destroyedFocusRecovers();
@@ -169,24 +170,62 @@ void FocusNavigatorTest::explicitNeighbourWinsWhileItIsLive()
 
 void FocusNavigatorTest::regionStatesWhereItsEdgeLeads()
 {
+    // The page says "below me is the docked bar". That is about the page's
+    // bottom edge: Down from a control with more page under it stays in the
+    // page, and only the last one leaves.
     Scene s(R"(
         import QtQuick
         Item {
             width: 800; height: 600
             Item {
-                width: 400; height: 100
-                property Item navRight: side
-                Item { objectName: "a"; width: 100; height: 40; activeFocusOnTab: true }
-                Item { objectName: "b"; x: 150; width: 100; height: 40; activeFocusOnTab: true
-                       property bool navStop: false }
+                objectName: "page"
+                width: 800; height: 400
+                property Item navDown: bar
+                Item { objectName: "hero";  x: 600; y: 0;   width: 100; height: 40; activeFocusOnTab: true }
+                Item { objectName: "shelf"; x: 0;   y: 200; width: 100; height: 40; activeFocusOnTab: true }
             }
-            Item { objectName: "closer"; x: 420; width: 100; height: 40; activeFocusOnTab: true }
-            Item { id: side; objectName: "side"; x: 600; y: 300; width: 100; height: 40; activeFocusOnTab: true }
+            Item { objectName: "nearer"; x: 600; y: 420; width: 100; height: 40; activeFocusOnTab: true }
+            FocusScope {
+                id: bar
+                objectName: "bar"
+                y: 500; width: 800; height: 60
+                activeFocusOnTab: true
+                property Item navEntry: play
+                Item { objectName: "stop"; width: 60; height: 60; focus: true }
+                Item { id: play; objectName: "play"; x: 100; width: 60; height: 60 }
+            }
+        })");
+    QVERIFY(s.root);
+    s.focus("hero");
+    s.press(Qt::Key_Down);
+    QCOMPARE(s.focused(), QStringLiteral("shelf"));
+    // The edge: the named neighbour beats what geometry alone would pick, and
+    // the bar is entered by the part it names rather than the part it had last.
+    s.press(Qt::Key_Down);
+    QCOMPARE(s.focused(), QStringLiteral("play"));
+}
+
+void FocusNavigatorTest::namedChainSkipsWhatIsNotThere()
+{
+    Scene s(R"(
+        import QtQuick
+        Item {
+            width: 800; height: 600
+            Item { objectName: "a"; width: 60; height: 40; property Item navRight: b }
+            Item { id: b; objectName: "b"; x: 100; width: 60; height: 40; visible: false
+                   property Item navRight: c }
+            Item { id: c; objectName: "c"; x: 200; width: 60; height: 40 }
+            Item { objectName: "stopFarRight"; x: 600; width: 60; height: 40; activeFocusOnTab: true }
         })");
     QVERIFY(s.root);
     s.focus("a");
     s.press(Qt::Key_Right);
-    QCOMPARE(s.focused(), QStringLiteral("side"));
+    QCOMPARE(s.focused(), QStringLiteral("c"));
+    // Nothing named beyond the end of the chain: geometry takes over.
+    s.item("c")->setVisible(false);
+    s.focus("a");
+    s.press(Qt::Key_Right);
+    QCOMPARE(s.focused(), QStringLiteral("stopFarRight"));
 }
 
 void FocusNavigatorTest::containerFocusStepsInside()

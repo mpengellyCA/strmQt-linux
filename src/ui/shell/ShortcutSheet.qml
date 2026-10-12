@@ -20,6 +20,8 @@ Item {
     id: sheet
 
     property bool opened: false
+    // Nothing under the sheet is reachable while it is up (FocusNavigator).
+    property bool navModal: sheet.opened
 
     signal closed
 

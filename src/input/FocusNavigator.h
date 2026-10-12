@@ -51,15 +51,19 @@ namespace strmqt {
 //
 //   property bool navStop        override "is a Tab stop" either way
 //   property Item navUp/navDown/navLeft/navRight
-//                                an explicit neighbour; used when it is live,
-//                                ignored (geometry decides) when it is not.
-//                                Looked up on the focused item and then on
-//                                each ancestor, so a region can state where
-//                                its edge leads.
+//                                a named neighbour. On the focused item it
+//                                is where that key goes. On an ancestor it is
+//                                where the ancestor's EDGE leads: geometry is
+//                                tried inside it first. A neighbour that is
+//                                hidden or disabled is skipped by following
+//                                its own link the same way, and when the
+//                                chain runs out geometry decides.
 //   property bool navModal       confine navigation to this item while it is
 //                                visible
-//   property Item navEntry       where a modal surface, or recovery inside
-//                                it, puts focus first
+//   property Item navEntry       the part of this item that takes the
+//                                keyboard when it is entered: a composite
+//                                control's first stop, a modal surface's
+//                                default button
 //   property Item navCursor      the item whose rectangle stands for this
 //                                one's position (a view's current delegate is
 //                                found without it)
@@ -114,7 +118,7 @@ private:
     QQuickItem *ownerOf(QQuickItem *focus, QQuickItem *scope) const;
     bool isView(QQuickItem *item) const;
     QRectF sceneRect(QQuickItem *item) const;
-    QQuickItem *explicitNeighbour(QQuickItem *from, QQuickItem *scope, NavDirection dir) const;
+    QQuickItem *explicitNeighbour(QQuickItem *item, QQuickItem *from, NavDirection dir) const;
     QQuickItem *recoveryTarget(QQuickItem *scope) const;
     bool isViewEdgeRepeat(QQuickItem *focus, NavDirection dir) const;
     void give(QQuickItem *target, Qt::FocusReason reason);

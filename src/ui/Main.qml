@@ -53,8 +53,13 @@ ApplicationWindow {
     // stands down while one is showing.
     readonly property bool shortcutSheetOpened: shortcutSheetLoader.opened
     readonly property bool commandPaletteOpened: commandPaletteLoader.opened
+    // A menu, a dropdown or a page's own sheet counts too (App.navigationModal,
+    // from FocusNavigator): a shoulder button used to push a page underneath
+    // an open menu, and R3 moved the keyboard out of a popup that could then
+    // no longer be closed with Back.
     readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
                                         || resumePrompt.visible || remoteOffer.visible
+                                        || App.navigationModal === true
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 
     function toggleShortcutSheet(): void {
@@ -838,6 +843,13 @@ ApplicationWindow {
         // in Settings has to move this too. Key events reach here only after the
         // focused page has declined them, so a page that wants Esc for itself
         // (the player does) still wins.
+        // The bottom edge of a page leads to the docked bar. It took focus
+        // by a click, by Tab or by a dedicated button (R3 / "N") and by
+        // nothing else, which made it the one surface a D-pad could not walk
+        // to. Named on the stack, so it is the page's EDGE: Down still goes
+        // to whatever the page has further down first (FocusNavigator).
+        property Item navDown: miniPlayer.shown ? miniPlayer : null
+
         Keys.onPressed: event => {
             Input.noteInput("keyboard");
             if (event.isAutoRepeat)
@@ -1144,6 +1156,10 @@ ApplicationWindow {
         z: 18
         playerOnTop: root.playerOnTop
         sleeveInFlight: sleeveFlight.active
+
+        // Up off the bar goes back to the page, to wherever in it the
+        // keyboard was (the stack is a focus scope and remembers).
+        navUp: stack
 
         onExpandRequested: {
             root.showPlayer(true)
@@ -1801,6 +1817,7 @@ ApplicationWindow {
         id: resumePrompt
 
         property var info: ({})
+        property bool navModal: true
 
         visible: false
         anchors.fill: parent
@@ -1897,6 +1914,7 @@ ApplicationWindow {
         id: remoteOffer
 
         readonly property var remote: typeof WebRemoteCtl !== "undefined" ? WebRemoteCtl : null
+        property bool navModal: true
 
         visible: remoteOffer.remote !== null && remoteOffer.remote.offerSetup
                  && !resumePrompt.visible && !root.playerOnTop

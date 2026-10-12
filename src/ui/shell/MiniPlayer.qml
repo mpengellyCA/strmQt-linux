@@ -139,6 +139,10 @@ FocusScope {
     // to whichever control it was last left on (playPause to begin with), and
     // Left/Right walks the rest without ever leaving the stop.
     activeFocusOnTab: true
+    // Entered by an arrow, the bar starts on play/pause whatever it was left
+    // on, and Up leaves it for whatever its owner names (FocusNavigator).
+    property Item navEntry: playPause
+    property Item navUp: null
 
     Accessible.role: Accessible.Pane
     Accessible.name: qsTr("Now playing")
@@ -755,7 +759,7 @@ FocusScope {
                             onActivated: mini.openArtist()
 
                             KeyNavigation.right: albumLink
-                            KeyNavigation.up: scrubber
+                            property Item navUp: scrubber
                         }
 
                         Text {
@@ -783,7 +787,7 @@ FocusScope {
 
                             KeyNavigation.left: artistLink
                             KeyNavigation.right: shuffleButton
-                            KeyNavigation.up: scrubber
+                            property Item navUp: scrubber
                         }
                     }
 
@@ -828,7 +832,7 @@ FocusScope {
 
                     KeyNavigation.left: albumLink
                     KeyNavigation.right: prevButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -847,7 +851,7 @@ FocusScope {
 
                     KeyNavigation.left: shuffleButton
                     KeyNavigation.right: playPause
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -866,7 +870,7 @@ FocusScope {
 
                     KeyNavigation.left: prevButton
                     KeyNavigation.right: nextButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -885,7 +889,7 @@ FocusScope {
 
                     KeyNavigation.left: playPause
                     KeyNavigation.right: repeatButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -908,7 +912,7 @@ FocusScope {
 
                     KeyNavigation.left: nextButton
                     KeyNavigation.right: stopButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 // Stop in the transport for video; the audio bar keeps it on
@@ -928,7 +932,7 @@ FocusScope {
 
                     KeyNavigation.left: repeatButton
                     KeyNavigation.right: favoriteButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
             }
 
@@ -973,7 +977,7 @@ FocusScope {
 
                     KeyNavigation.left: stopButton
                     KeyNavigation.right: muteButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 // Mute only: the level lives in the full player (and the
@@ -998,7 +1002,7 @@ FocusScope {
 
                     KeyNavigation.left: favoriteButton
                     KeyNavigation.right: queueButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1021,7 +1025,7 @@ FocusScope {
 
                     KeyNavigation.left: muteButton
                     KeyNavigation.right: audioStopButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1038,7 +1042,7 @@ FocusScope {
 
                     KeyNavigation.left: queueButton
                     KeyNavigation.right: expandButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1053,7 +1057,7 @@ FocusScope {
                     onClicked: mini.expandRequested()
 
                     KeyNavigation.left: audioStopButton
-                    KeyNavigation.up: scrubber
+                    property Item navUp: scrubber
                 }
             }
         }
