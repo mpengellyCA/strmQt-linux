@@ -393,6 +393,16 @@ never move keyboard focus** — a pointer passing over a rail must not steal the
 place a gamepad user was holding. `FocusRing` is a purely visual component that
 declares no input handling, precisely so it cannot be wired to a hover state.
 
+**A pointer nobody is moving is not hovering anything.** Qt Quick re-tests hover
+every frame the scene moves, so a mouse left on screen while the user picked up
+a pad lit cards as rows scrolled under it, raised tooltips and opened the rail.
+After five seconds without movement, a button or the wheel, `PointerIdle`
+(`src/input`) blanks the cursor and tells the window the pointer left — Qt's own
+way of saying nothing is hovered, and with no last position to re-test, nothing
+becomes hovered as the page scrolls. A few pixels of real travel bring both
+back. It is the player page's "hide the pointer over a film" made the rule for
+the whole window.
+
 ### Controls
 
 Everything is built from `src/ui/controls/` — buttons, cards, rails, grids, menus,

@@ -112,6 +112,7 @@ qt_add_executable(strmqt
     app/EmbyImageProvider.h app/EmbyImageProvider.cpp
     app/WindowFocusKeeper.h
     input/KeyDelivery.h
+    input/PointerIdle.h
     input/RemoteOkKeyFilter.h
     input/RemoteBackKeyFilter.h
     input/KeyEventLogger.h

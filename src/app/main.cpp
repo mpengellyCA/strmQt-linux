@@ -26,6 +26,7 @@
 #include "input/InputMap.h"
 #include "input/KeyEventLogger.h"
 #include "input/KeyDelivery.h"
+#include "input/PointerIdle.h"
 #include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
 #include "input/SkipKeyFilter.h"
@@ -119,6 +120,9 @@ int main(int argc, char *argv[])
     // and its Back as Qt::Key_Back, which only the page history listened for.
     if (auto *window = qobject_cast<QWindow *>(roots.value(0))) {
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
+        // A pointer left where it was while the user picked up a pad stops
+        // hovering things and is no longer drawn (input/PointerIdle.h).
+        new strmqt::PointerIdle(window, window);
         // Answers the arrow no control claimed and re-seats focus that is on
         // nothing (ARCHITECTURE.md §5, "Where an arrow goes").
         if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {

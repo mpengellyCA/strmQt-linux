@@ -48,6 +48,11 @@ strmqt_add_test(tst_focus_navigator unit/tst_focus_navigator.cpp
 target_include_directories(tst_focus_navigator PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_focus_navigator PRIVATE Qt6::Quick Qt6::QuickControls2)
 set_tests_properties(tst_focus_navigator PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+strmqt_add_test(tst_pointer_idle unit/tst_pointer_idle.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/PointerIdle.h)
+target_include_directories(tst_pointer_idle PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_pointer_idle PRIVATE Qt6::Quick)
+set_tests_properties(tst_pointer_idle PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 # The real controls under the navigator, staged from the source tree.
 strmqt_add_test(tst_navigation_controls unit/tst_navigation_controls.cpp
                 ${CMAKE_SOURCE_DIR}/src/input/FocusNavigator.cpp)
