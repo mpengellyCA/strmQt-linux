@@ -275,6 +275,22 @@ FocusScope {
                 rail._cancelNavigationFocusForUser()
                 rail.moreRequested()
             }
+            // Past the last card is "the rest of this shelf", so Right off the
+            // end of the row lands here (see the list's Right) and Left goes
+            // back. It was drawn for a focused shelf and no arrow led to it.
+            Keys.onLeftPressed: event => {
+                event.accepted = list.count > 0
+                if (event.accepted)
+                    list.forceActiveFocus(Qt.BacktabFocusReason)
+            }
+            property Item navDown: list
+            // The shelf is a focus scope and would hand the keyboard back to
+            // this button the next time it is entered. It is entered on its
+            // cards.
+            onActiveFocusChanged: {
+                if (!moreButton.activeFocus && !rail.activeFocus)
+                    list.focus = true
+            }
 
             Behavior on opacity {
                 NumberAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
@@ -527,6 +543,11 @@ FocusScope {
                 event.accepted = rail.requestMenuForCurrent()
                 return
             }
+            if (event.key === Qt.Key_Right && !event.isAutoRepeat && rail.showMore
+                    && list.count > 0 && list.currentIndex === list.count - 1) {
+                moreButton.forceActiveFocus(Qt.TabFocusReason)
+                event.accepted = moreButton.activeFocus
+            }
         }
     }
 
@@ -594,6 +615,10 @@ FocusScope {
     // ── Hover chevrons (ARCHITECTURE.md) ──────────────────────────────────────
     StrmIconButton {
         id: leftChevron
+        // A click gives a button the keyboard, and at the end of the shelf
+        // this one then disables itself and drops it on the bare scope, where
+        // no arrow does anything. The keyboard belongs on the cards.
+        onActiveFocusChanged: if (activeFocus) list.forceActiveFocus(Qt.OtherFocusReason)
         objectName: "railChevronLeft"
         // Mouse affordance only: the spec gives a shelf exactly one Tab stop,
         // and a hovered rail must not slip its chevrons into the Tab chain.
@@ -617,6 +642,10 @@ FocusScope {
 
     StrmIconButton {
         id: rightChevron
+        // A click gives a button the keyboard, and at the end of the shelf
+        // this one then disables itself and drops it on the bare scope, where
+        // no arrow does anything. The keyboard belongs on the cards.
+        onActiveFocusChanged: if (activeFocus) list.forceActiveFocus(Qt.OtherFocusReason)
         objectName: "railChevronRight"
         activeFocusOnTab: false
         anchors.right: listClip.right

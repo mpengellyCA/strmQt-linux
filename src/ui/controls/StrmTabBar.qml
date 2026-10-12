@@ -52,8 +52,20 @@ FocusScope {
     // Arrows may auto-repeat — holding Right should walk the bar. Only
     // activation is auto-repeat guarded, and there is no separate activation
     // key here because moving the selection *is* the activation.
-    Keys.onLeftPressed: bar.select(Math.max(0, bar.currentIndex - 1))
-    Keys.onRightPressed: bar.select(Math.min(bar.tabs.length - 1, bar.currentIndex + 1))
+    //
+    // At either end the key is declined rather than swallowed: Left on the
+    // first tab is the page's left edge, and whatever sits beside the bar is
+    // reached the way anything else is (FocusNavigator).
+    Keys.onLeftPressed: event => {
+        event.accepted = bar.currentIndex > 0;
+        if (event.accepted)
+            bar.select(bar.currentIndex - 1);
+    }
+    Keys.onRightPressed: event => {
+        event.accepted = bar.currentIndex < bar.tabs.length - 1;
+        if (event.accepted)
+            bar.select(bar.currentIndex + 1);
+    }
 
     Row {
         id: row

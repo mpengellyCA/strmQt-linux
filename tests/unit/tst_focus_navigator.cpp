@@ -76,6 +76,7 @@ private slots:
     void heldDirectionStopsAtAViewEdge();
     void focusedControlIsScrolledIntoView();
     void viewCursorIsTheSource();
+    void listsAreSomewhereToGoWithoutBeingTabStops();
 };
 
 void FocusNavigatorTest::declinedArrowMovesToTheNearestControl()
@@ -478,6 +479,51 @@ void FocusNavigatorTest::viewCursorIsTheSource()
     s.item("list")->setProperty("currentIndex", 0);
     s.press(Qt::Key_Up);
     QCOMPARE(s.focused(), QStringLiteral("left"));
+}
+
+void FocusNavigatorTest::listsAreSomewhereToGoWithoutBeingTabStops()
+{
+    Scene s(R"(
+        import QtQuick
+        Item {
+            width: 800; height: 600
+            Item { objectName: "button"; width: 100; height: 40; activeFocusOnTab: true }
+            ListView {
+                objectName: "empty"
+                y: 60; width: 800; height: 60
+                orientation: ListView.Horizontal
+                model: 0
+                delegate: Item { width: 100; height: 60 }
+            }
+            ListView {
+                objectName: "decoration"
+                y: 130; width: 800; height: 60
+                orientation: ListView.Horizontal
+                property bool navStop: false
+                model: 4
+                delegate: Item { width: 100; height: 60 }
+            }
+            FocusScope {
+                // A table whose focus scope last held its footer button.
+                y: 200; width: 800; height: 200
+                ListView {
+                    id: shelf
+                    objectName: "shelf"
+                    width: 800; height: 100
+                    orientation: ListView.Horizontal
+                    model: 4
+                    delegate: Item { width: 100; height: 100 }
+                }
+            }
+        })");
+    QVERIFY(s.root);
+    s.focus("button");
+    s.press(Qt::Key_Down);
+    QQuickItem *shelf = s.item("shelf");
+    QVERIFY(shelf->hasActiveFocus());
+    QCOMPARE(s.window.activeFocusItem(), shelf->property("currentItem").value<QQuickItem *>());
+    s.press(Qt::Key_Up);
+    QCOMPARE(s.focused(), QStringLiteral("button"));
 }
 
 QTEST_MAIN(FocusNavigatorTest)

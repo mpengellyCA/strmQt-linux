@@ -49,6 +49,12 @@ FocusScope {
     // declaratively, rather than passing it per show().
     property string mediaType: ""
     property bool opened: false
+    // Arrows and Back stop at the picker's edge: Left in the empty field used
+    // to open the destination rail behind the scrim (FocusNavigator).
+    property bool navModal: picker.opened
+    property Item navEntry: pickerField
+    // Where the pointer last was, in the scene; (-1, -1) until it is seen.
+    property point _hoverAt: Qt.point(-1, -1)
     property var records: []
     property var rows: []
     // A write of this page's is in flight, so PlaylistCtl's global results
@@ -67,6 +73,7 @@ FocusScope {
         picker.subject = subject ? subject : ""
         picker.targetIds = ids
         picker.opened = true
+        picker._hoverAt = Qt.point(-1, -1)
         pickerField.text = ""
         // Always ask: the controller's own verb is a resume, so a complete list
         // costs nothing and one that stopped on an error is retried from the
@@ -309,21 +316,21 @@ FocusScope {
 
                 // Hover previews the row; it never commits, and it never
                 // takes the caret out of the field being typed in.
+                // Only a pointer that MOVED previews: a row scrolling under
+                // a stationary one is hovered too, and that used to snatch the
+                // cursor back from the arrow keys (StrmMenu has the same rule).
                 HoverHandler {
                     id: pickerHover
                     cursorShape: Qt.PointingHandCursor
-                    onHoveredChanged: {
-                        if (pickerHover.hovered)
+                    onPointChanged: {
+                        const at = pickerHover.point.scenePosition
+                        if (at.x === picker._hoverAt.x && at.y === picker._hoverAt.y)
+                            return
+                        const first = picker._hoverAt.x < 0
+                        picker._hoverAt = at
+                        if (!first && pickerHover.hovered)
                             pickerList.currentIndex = pickerRow.index
                     }
-                }
-
-                // Hover previews by mutating view state rather than by a pure
-                // binding. Re-assert the new index if a hovered cell is reused
-                // underneath a stationary pointer.
-                ListView.onReused: {
-                    if (pickerHover.hovered)
-                        pickerList.currentIndex = pickerRow.index
                 }
 
                 TapHandler {

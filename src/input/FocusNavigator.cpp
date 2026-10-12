@@ -151,7 +151,15 @@ bool FocusNavigator::isStop(QQuickItem *item) const
     const QVariant declared = duck(item, "navStop");
     if (declared.isValid() && declared.typeId() == QMetaType::Bool)
         return declared.toBool();
-    return item->activeFocusOnTab();
+    if (item->activeFocusOnTab())
+        return true;
+    // A list or a grid with something in it is somewhere to be, whether or
+    // not anybody remembered to make it a Tab stop — and the shelves, grids
+    // and track tables this app is made of mostly are not. A list that is
+    // only decoration says so with `navStop: false`.
+    if (item->inherits("QQuickItemView"))
+        return duck(item, "count").toInt() > 0;
+    return false;
 }
 
 // Can a key be answered from here? Visible and enabled are both effective
@@ -301,6 +309,18 @@ void FocusNavigator::give(QQuickItem *target, Qt::FocusReason reason)
     if (QQuickItem *entry = duckItem(target, "navEntry")) {
         if (isLive(entry) && !target->hasActiveFocus())
             target = entry;
+    }
+    // A view is entered on its cursor. Focusing the view itself hands the
+    // keyboard to whichever child of its focus scope had it last, and a
+    // table's footer or header control can be that child.
+    if (isView(target) && target->inherits("QQuickItemView")) {
+        QQuickItem *current = duckItem(target, "currentItem");
+        if (!current && duck(target, "count").toInt() > 0) {
+            target->setProperty("currentIndex", 0);
+            current = duckItem(target, "currentItem");
+        }
+        if (current && isLive(current))
+            target = current;
     }
     m_giving = true;
     target->forceActiveFocus(reason);

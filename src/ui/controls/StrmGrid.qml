@@ -812,38 +812,50 @@ FocusScope {
             return Math.max(1, rows) * Math.max(1, grid.columns);
         }
 
-        // ── The edges of a row are edges, not wraps ────────────────────────
-        // GridView's own Left/Right walk the model, so Left in the first column
-        // lands on the LAST card of the row above and Right in the last column
-        // on the first card of the row below. On a page of artwork that reads
-        // as the selection leaping across the screen, and it is the opposite of
-        // what `keyNavigationWraps: false` is set here to say. Both are claimed
-        // before the view sees them: Right stops, and Left leaves the grid the
-        // way a ten-foot interface expects — for the destination rail, which
-        // otherwise only opens by a key nobody was told about.
-        Keys.onLeftPressed: event => {
-            const columns = Math.max(1, grid.columns);
-            if (view.count > 0 && view.currentIndex % columns !== 0) {
-                // Somewhere inside a row: the view's own handling moves one
-                // cell, which is exactly what it is for.
-                event.accepted = false;
-                return;
-            }
-            event.accepted = true;
-            // A HELD Left must not bounce. The rail hands the keyboard back on
-            // its own Left, so a repeating one would swap the two surfaces
-            // several times a second for as long as the stick is pushed over.
-            // The edge is a gesture, not a direction to keep travelling in.
-            if (event.isAutoRepeat)
-                return;
-            grid.escapeLeft();
-        }
+        // ── The edges of the grid are edges ────────────────────────────────
+        // GridView's own arrows walk the MODEL: Left in the first column lands
+        // on the last card of the row above, Right in the last column on the
+        // first card of the row below, and Down from a card with nothing
+        // under it in a short last row does nothing at all. So the view's key
+        // navigation is off and the four arrows are answered here, in cells.
+        //
+        // At an edge the key is DECLINED, not swallowed. What lies beyond the
+        // grid is not the grid's to know: the page's own left-hand pane if it
+        // names one, otherwise whatever the shell and the navigator find that
+        // way — the destination rail to the left, a side column to the right,
+        // the filter bar above (FocusNavigator).
+        keyNavigationEnabled: false
 
-        Keys.onRightPressed: event => {
+        function _arrow(event): bool {
             const columns = Math.max(1, grid.columns);
-            // Stop at the right-hand edge instead of wrapping onto the next row.
-            event.accepted = view.count === 0
-                             || view.currentIndex % columns === columns - 1;
+            const index = view.currentIndex;
+            const count = view.count;
+            if (count === 0 || index < 0)
+                return false;
+            if (event.key === Qt.Key_Left) {
+                if (index % columns === 0)
+                    return false;
+                view.currentIndex = index - 1;
+            } else if (event.key === Qt.Key_Right) {
+                if (index % columns === columns - 1 || index === count - 1)
+                    return false;
+                view.currentIndex = index + 1;
+            } else if (event.key === Qt.Key_Up) {
+                if (index < columns)
+                    return false;
+                view.currentIndex = index - columns;
+            } else {
+                if (index + columns < count) {
+                    view.currentIndex = index + columns;
+                } else if (Math.floor(index / columns) < Math.floor((count - 1) / columns)) {
+                    // A short last row: there is a row below, just not a card
+                    // straight under this one. Its last card is the nearest.
+                    view.currentIndex = count - 1;
+                } else {
+                    return false;
+                }
+            }
+            return true;
         }
 
         Keys.onPressed: event => {
@@ -855,6 +867,20 @@ FocusScope {
             NavigationColumn.noteFromKey(view, event.key)
             if (event.key === Qt.Key_Menu && !event.isAutoRepeat) {
                 event.accepted = grid.requestMenuForCurrent();
+                return;
+            }
+            if (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                    || event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+                if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier)
+                    return;
+                if (view._arrow(event)) {
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Left && !event.isAutoRepeat
+                           && grid.leftEdgeTarget && grid.leftEdgeTarget.visible
+                           && grid.leftEdgeTarget.enabled) {
+                    grid.leftEdgeTarget.forceActiveFocus(Qt.BacktabFocusReason);
+                    event.accepted = true;
+                }
                 return;
             }
             if (view.count === 0)

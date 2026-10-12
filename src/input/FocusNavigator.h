@@ -49,7 +49,9 @@ namespace strmqt {
 // duck-typed convention `navigationFocusKey`, `cycleTab` and `pageBy` use, so
 // no QML has to import anything and every test harness sees the same types:
 //
-//   property bool navStop        override "is a Tab stop" either way
+//   property bool navStop        override "is somewhere focus can go" either
+//                                way. By default that is any Tab stop, and
+//                                any ListView or GridView that has items
 //   property Item navUp/navDown/navLeft/navRight
 //                                a named neighbour. On the focused item it
 //                                is where that key goes. On an ancestor it is
