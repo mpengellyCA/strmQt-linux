@@ -125,8 +125,15 @@ QString GamepadManager::actionForButton(int sdlButton) const
     // A while browsing is handled by handleSelectButton() instead, which needs
     // to tell a tap from a hold; this is the answer for the contexts that have
     // no hold gesture.
+    //
+    // A is Select everywhere, the player included. It used to be play/pause
+    // there by id, which never reached the focused control: the ring could be
+    // walked onto the Settings button and A paused the film instead of
+    // opening the panel, so nothing in the on-screen controls could be used
+    // from a pad at all. With nothing focused the player page answers Select
+    // itself — as play/pause (PlayerPage.qml).
     case SDL_GAMEPAD_BUTTON_SOUTH: // A
-        return player ? QStringLiteral("player.togglePause") : QStringLiteral("nav.select");
+        return QStringLiteral("nav.select");
     case SDL_GAMEPAD_BUTTON_EAST: // B
         return QStringLiteral("nav.back");
     case SDL_GAMEPAD_BUTTON_WEST: // X
@@ -159,9 +166,11 @@ QString GamepadManager::actionForButton(int sdlButton) const
         if (restricted)
             return {};
         return player ? QStringLiteral("player.toggleOsd") : QStringLiteral("app.toggleMenu");
-    // Back is "View" on an Xbox One pad.
+    // Back is "View" on an Xbox One pad. In the player it leaves and keeps
+    // playing, which is what its hint in the catalogue has always said; it
+    // was wired to Stop, the one destructive verb on the pad.
     case SDL_GAMEPAD_BUTTON_BACK:
-        return player ? QStringLiteral("player.stop") : QStringLiteral("nav.back");
+        return player ? QStringLiteral("player.minimize") : QStringLiteral("nav.back");
     case SDL_GAMEPAD_BUTTON_GUIDE:
         if (restricted)
             return {};

@@ -233,12 +233,16 @@ Popup {
     // aboutToShow, not onOpened: the popup takes focus when its enter
     // transition finishes, so by `opened` the item worth remembering is already
     // the one we would be trying to restore it from.
+    // Where the pointer last was, in the scene; (-1, -1) until it is seen.
+    property point _hoverAt: Qt.point(-1, -1)
+
     onAboutToShow: {
         // Catches a density change (Theme.scale) between one open and the next,
         // which the actions themselves would not report.
         menu._remeasureWidth()
         const host = menu.parent
         menu._focusEscrow = host ? host.Window.activeFocusItem : null
+        menu._hoverAt = Qt.point(-1, -1)
     }
 
     onOpened: menu.currentIndex = menu._step(-1, 1)
@@ -438,7 +442,20 @@ Popup {
                 enabled: row.rowEnabled
                 cursorShape: Qt.PointingHandCursor
                 // Preview only — hover moves the highlight, it never commits.
-                onHoveredChanged: if (hovered) menu.currentIndex = row.index
+                //
+                // And only a pointer that MOVED moves it. A row scrolling
+                // under a stationary pointer is hovered too, so walking a long
+                // menu with the arrows had the cursor snatched back to
+                // wherever the mouse happened to be resting.
+                onPointChanged: {
+                    const at = point.scenePosition;
+                    if (at.x === menu._hoverAt.x && at.y === menu._hoverAt.y)
+                        return;
+                    const first = menu._hoverAt.x < 0;
+                    menu._hoverAt = at;
+                    if (!first && hovered)
+                        menu.currentIndex = row.index;
+                }
             }
 
             TapHandler {

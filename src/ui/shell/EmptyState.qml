@@ -21,6 +21,14 @@ import StrmQt
 Item {
     id: empty
 
+    // A page hands the keyboard to its empty state (`focus: true`) so that
+    // Retry is one press away, and the state itself answers no key: it has to
+    // pass the keyboard on to the one thing in it that does.
+    onActiveFocusChanged: {
+        if (empty.activeFocus && actionButton.visible && actionButton.enabled)
+            actionButton.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
     property string iconName: "info"
     property string headline: ""
     property string body: ""

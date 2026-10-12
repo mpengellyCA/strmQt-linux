@@ -3,7 +3,7 @@
 
 import { post } from './api.js';
 import { store, subscribe, playback } from './store.js';
-import { togglePause, seekRelative, command } from './player.js';
+import { togglePause, seekRelative, command, playerView, viewToggleLabel } from './player.js';
 import { h, icon, setIcon, haptic, segmented, toast } from './ui.js';
 
 const CONTEXT_TEXT = {
@@ -235,6 +235,14 @@ export function remoteView(node, params, ctx) {
     h('button', { class: 'key', type: 'button', 'aria-label': 'Volume up', onClick: () => { haptic(); command.volume('up'); } }, h('span', { class: 'key-glyph mono', text: '+' })));
   const muteKey = h('button', { class: 'key', type: 'button', 'aria-label': 'Mute', onClick: () => { haptic(); command.volume('toggleMute'); } }, muteIcon, h('span', { text: 'Mute' }));
 
+  // Full player ↔ docked bar: the same action L3 and "V" reach on the desktop.
+  const viewIcon = icon('fullscreen');
+  const viewLabel = h('span');
+  const viewKey = h('button', {
+    class: 'key key-view', type: 'button',
+    onClick: () => { haptic(); command.action('player.toggleView'); },
+  }, viewIcon, viewLabel);
+
   const primaryKeys = h('div', { class: 'keys keys-primary' },
     keyButton('Back', 'back', () => sendKey('back')),
     keyButton('Home', 'home', () => sendDestination('home')),
@@ -249,6 +257,8 @@ export function remoteView(node, params, ctx) {
     keyButton('Page down', 'page-down', () => sendKey('pageDown')),
     keyButton('Prev tab', 'tab-prev', () => sendKey('prevTab')),
     keyButton('Next tab', 'tab-next', () => sendKey('nextTab')),
+    keyButton('Prev letter', 'up', () => command.action('nav.previousLetter')),
+    keyButton('Next letter', 'down', () => command.action('nav.nextLetter')),
     keyButton('Full screen', 'fullscreen', () => sendKey('fullscreen')),
     muteKey);
 
@@ -257,6 +267,10 @@ export function remoteView(node, params, ctx) {
     const p = playback();
     contextLine.textContent = store.connected ? (CONTEXT_TEXT[context] || 'Connected to the TV') : 'Waiting for the TV';
     transport.hidden = !p.active;
+    // Not while a menu is open on the TV: the toggle stands down there.
+    viewKey.hidden = playerView() === 'none' || context === 'overlay' || context === 'login';
+    setIcon(viewIcon, playerView() === 'full' ? 'down' : 'fullscreen');
+    viewLabel.textContent = viewToggleLabel();
     setIcon(playIcon, p.paused ? 'play' : 'pause');
     setIcon(muteIcon, p.muted ? 'mute' : 'volume');
     muteKey.querySelector('span').textContent = p.muted ? 'Unmute' : 'Mute';
@@ -268,6 +282,7 @@ export function remoteView(node, params, ctx) {
       surface,
       primaryKeys,
       transport,
+      viewKey,
       h('details', { class: 'more-keys' },
         h('summary', null, h('span', { text: 'More buttons' }), icon('down')),
         moreKeys)));

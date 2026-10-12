@@ -43,6 +43,10 @@ Item {
     // The pointer's way off the player, mirroring Esc/Backspace. Until this
     // existed the only exits were keys with nothing on screen naming them.
     signal leaveRequested
+    // The Up Next card takes the keyboard only from a page that is not using
+    // it, and hands it back when the offer goes.
+    property bool keyboardIdle: false
+    signal keyboardRestRequested
 
     // Auto-hide. `requested` is what the timer and toggleOsd() move; everything
     // else reads `shown`.
@@ -253,10 +257,10 @@ Item {
         }
     }
 
-    // Focus moving IS input. Arrow/D-pad moves between the controls go through
-    // KeyNavigation, which accepts the key before any page-level handler can
-    // see it — so without this, navigating the chrome does not count as
-    // activity and the OSD fades out from under the user mid-move.
+    // Focus moving IS input. Arrow/D-pad moves between the controls are
+    // answered by the navigator, after the page has declined the key rather
+    // than acted on it — so without this, navigating the chrome does not count
+    // as activity and the OSD fades out from under the user mid-move.
     Connections {
         target: osd.Window.window
 
@@ -300,10 +304,13 @@ Item {
                 GradientStop { position: 1.0; color: "transparent" }
             }
 
-            // Back, where every full-screen surface puts it. Pointer-only on
-            // purpose: the keyboard already has Esc and Backspace, and a tab
-            // stop here would sit in front of the transport row that the OSD's
-            // Down-arrow contract hands the keyboard to.
+            // Back, where every full-screen surface puts it. Not a Tab stop:
+            // one here would sit in front of the transport row that the OSD's
+            // Down-arrow contract hands the keyboard to. It is somewhere an
+            // arrow can go, though (`navStop`): it was pointer-only on the
+            // grounds that the keyboard has Esc, and a remote with no Back key
+            // then had no way off this page except Stop. Up off the top of the
+            // bottom bar lands here; Down goes back.
             StrmIconButton {
                 id: leaveButton
 
@@ -315,6 +322,8 @@ Item {
                 tooltip: qsTr("Back")
                 accessibleName: qsTr("Leave the player, keep playing")
                 activeFocusOnTab: false
+                property bool navStop: true
+                property Item navDown: scrubber.enabled ? scrubber : buttons
                 onClicked: osd.leaveRequested()
             }
 
@@ -392,6 +401,17 @@ Item {
             anchors.right: parent.right
             height: bottomBlock.implicitHeight + osd.safeMargin
 
+            // Up off the top of the controls — the scrubber, or the button
+            // row while there is no scrubber to stop at — reaches Back. Said
+            // here because the page answers every Up this declines before the
+            // navigator is asked. From Back, Up is the page's again: it rests
+            // the keyboard.
+            Keys.onUpPressed: event => {
+                event.accepted = true;
+                if (!event.isAutoRepeat)
+                    leaveButton.forceActiveFocus(Qt.BacktabFocusReason);
+            }
+
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "transparent" }
                 GradientStop { position: 1.0; color: Theme.scrimColor }
@@ -432,8 +452,7 @@ Item {
                                            .arg(osd.formatTime(value))
                                            .arg(osd.formatTime(to))
 
-                    KeyNavigation.down: buttons
-                    KeyNavigation.up: null
+                    property Item navDown: buttons
 
                     // Live readout while dragging; the seek itself waits for the
                     // release, which is what keeps one scrub from becoming
@@ -581,6 +600,8 @@ Item {
             }
         }
 
+        keyboardIdle: osd.keyboardIdle
+        onKeyboardReleased: osd.keyboardRestRequested()
         onDismissed: osd.wake()
     }
 

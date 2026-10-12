@@ -657,6 +657,18 @@ StackView {
         navigation.cancelFocusRetry();
         navigation.cancelLiveFocusRestores();
         navigation.focusCurrentPage();
+        // A locator is where the cursor was when this route was LEFT, and it
+        // is spent on the return. Kept, it was replayed by everything else
+        // that asks for the page's focus back — closing the shortcut sheet or
+        // the palette, Esc in the header's search — and the ring jumped to a
+        // card the user had walked away from since. With nothing remembered,
+        // focusCurrentPage() above is the whole answer: the page's own focus
+        // scope still holds wherever the keyboard last was.
+        if (locator.length > 0) {
+            const next = Object.assign({}, navigation.focusMemory);
+            delete next[key];
+            navigation.focusMemory = next;
+        }
         if (navigation.restoreFocusLocator(locator))
             return;
         if (route && locator.length > 0) {

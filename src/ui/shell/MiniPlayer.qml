@@ -42,9 +42,10 @@ import StrmQt
 // exactly as the alphabet bar and the season tabs do. This is what stopped the
 // audio bar from putting six dead stops between a grid and whatever is after it.
 //
-// KeyNavigation does the mode switching by itself: the chain is declared once,
-// straight through every control in visual order, and Qt skips the links that
-// have no id and the buttons the current mode hides.
+// The chain does the mode switching by itself: it is declared once, straight
+// through every control in visual order (`navLeft` / `navRight`, read by
+// FocusNavigator), and a link to a control the current mode hides or disables
+// is followed on to the next one that is there.
 //
 // Two things this file will not do, both deliberate:
 //
@@ -139,6 +140,10 @@ FocusScope {
     // to whichever control it was last left on (playPause to begin with), and
     // Left/Right walks the rest without ever leaving the stop.
     activeFocusOnTab: true
+    // Entered by an arrow, the bar starts on play/pause whatever it was left
+    // on, and Up leaves it for whatever its owner names (FocusNavigator).
+    property Item navEntry: playPause
+    property Item navUp: null
 
     Accessible.role: Accessible.Pane
     Accessible.name: qsTr("Now playing")
@@ -536,7 +541,7 @@ FocusScope {
             value: mini.positionMs
             buffered: mini.bufferedPosition
             stepSize: 10000
-            // Reached by KeyNavigation from the transport row: armed before
+            // Reached by Up from the transport row: armed before
             // the arrows scrub, same as the full-player scrubbers.
             armToScrub: true
             accessibleName: qsTr("Playback position")
@@ -546,7 +551,7 @@ FocusScope {
 
             onCommitted: v => PlayerCtl.seekTo(Math.round(v))
 
-            KeyNavigation.down: playPause
+            property Item navDown: playPause
         }
 
         Item {
@@ -754,8 +759,8 @@ FocusScope {
 
                             onActivated: mini.openArtist()
 
-                            KeyNavigation.right: albumLink
-                            KeyNavigation.up: scrubber
+                            property Item navRight: albumLink
+                            property Item navUp: scrubber
                         }
 
                         Text {
@@ -781,9 +786,9 @@ FocusScope {
 
                             onActivated: mini.openAlbum()
 
-                            KeyNavigation.left: artistLink
-                            KeyNavigation.right: shuffleButton
-                            KeyNavigation.up: scrubber
+                            property Item navLeft: artistLink
+                            property Item navRight: shuffleButton
+                            property Item navUp: scrubber
                         }
                     }
 
@@ -801,7 +806,7 @@ FocusScope {
 
             // ── Centre: transport ───────────────────────────────────────────
             // Declared in one order and shown in two: a Row skips its invisible
-            // children, and so does KeyNavigation, so the chain below runs
+            // children, and so does the navigator, so the chain below runs
             // straight through both modes without a ternary in sight.
             Row {
                 id: transport
@@ -826,9 +831,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(shuffleButton)
 
-                    KeyNavigation.left: albumLink
-                    KeyNavigation.right: prevButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: albumLink
+                    property Item navRight: prevButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -845,9 +850,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(prevButton)
 
-                    KeyNavigation.left: shuffleButton
-                    KeyNavigation.right: playPause
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: shuffleButton
+                    property Item navRight: playPause
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -864,9 +869,9 @@ FocusScope {
 
                     onClicked: PlayerCtl.togglePause()
 
-                    KeyNavigation.left: prevButton
-                    KeyNavigation.right: nextButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: prevButton
+                    property Item navRight: nextButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -883,9 +888,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(nextButton)
 
-                    KeyNavigation.left: playPause
-                    KeyNavigation.right: repeatButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: playPause
+                    property Item navRight: repeatButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -906,9 +911,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(repeatButton)
 
-                    KeyNavigation.left: nextButton
-                    KeyNavigation.right: stopButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: nextButton
+                    property Item navRight: stopButton
+                    property Item navUp: scrubber
                 }
 
                 // Stop in the transport for video; the audio bar keeps it on
@@ -926,9 +931,9 @@ FocusScope {
 
                     onClicked: PlayerCtl.stop()
 
-                    KeyNavigation.left: repeatButton
-                    KeyNavigation.right: favoriteButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: repeatButton
+                    property Item navRight: favoriteButton
+                    property Item navUp: scrubber
                 }
             }
 
@@ -971,9 +976,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(favoriteButton)
 
-                    KeyNavigation.left: stopButton
-                    KeyNavigation.right: muteButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: stopButton
+                    property Item navRight: muteButton
+                    property Item navUp: scrubber
                 }
 
                 // Mute only: the level lives in the full player (and the
@@ -996,9 +1001,9 @@ FocusScope {
 
                     onActiveFocusChanged: mini.rescueFocusFrom(muteButton)
 
-                    KeyNavigation.left: favoriteButton
-                    KeyNavigation.right: queueButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: favoriteButton
+                    property Item navRight: queueButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1019,9 +1024,9 @@ FocusScope {
                             queuePeek.open();
                     }
 
-                    KeyNavigation.left: muteButton
-                    KeyNavigation.right: audioStopButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: muteButton
+                    property Item navRight: audioStopButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1036,9 +1041,9 @@ FocusScope {
 
                     onClicked: PlayerCtl.stop()
 
-                    KeyNavigation.left: queueButton
-                    KeyNavigation.right: expandButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: queueButton
+                    property Item navRight: expandButton
+                    property Item navUp: scrubber
                 }
 
                 StrmIconButton {
@@ -1052,8 +1057,8 @@ FocusScope {
 
                     onClicked: mini.expandRequested()
 
-                    KeyNavigation.left: audioStopButton
-                    KeyNavigation.up: scrubber
+                    property Item navLeft: audioStopButton
+                    property Item navUp: scrubber
                 }
             }
         }
@@ -1252,7 +1257,7 @@ FocusScope {
     // Qt does not take the keyboard off an item it has just hidden: a hidden
     // control keeps activeFocus (measured, Qt 6.11), so the focus ring vanishes
     // from the screen while Space still activates whatever it was on. Arrow
-    // keys do walk out of it — KeyNavigation skips invisible links — so this is
+    // keys do walk out of it — the chain skips invisible links — so this is
     // a ring nobody can find rather than a dead strip, but it is the same
     // hazard PlayerPage re-seats for at PlayerPage.qml:72: the keyboard must
     // not be left inside chrome that has just become invisible.

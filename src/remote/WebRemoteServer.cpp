@@ -537,6 +537,19 @@ void WebRemoteServer::setInteractionContext(const QString &context)
     scheduleStatus();
 }
 
+void WebRemoteServer::setPlayerOnTop(bool onTop)
+{
+    if (m_playerOnTop == onTop)
+        return;
+    m_playerOnTop = onTop;
+    scheduleStatus();
+}
+
+void WebRemoteServer::setActions(const QStringList &actionIds)
+{
+    m_actionIds = QSet<QString>(actionIds.cbegin(), actionIds.cend());
+}
+
 namespace {
 
 struct NavigationKey {
@@ -953,6 +966,10 @@ bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
         handleApiNavigate(socket, body);
         return true;
     }
+    if (path == QLatin1String("/api/action")) {
+        handleApiAction(socket, body);
+        return true;
+    }
     // /api/item/{id}/favorite and /api/item/{id}/played
     if (parts.size() == 4 && parts.at(1) == QLatin1String("item") && isSafeId(parts.at(2))
         && (parts.at(3) == QLatin1String("favorite") || parts.at(3) == QLatin1String("played"))) {
@@ -1167,6 +1184,11 @@ QJsonObject WebRemoteServer::currentStatusJson() const
     app[QStringLiteral("accent")] =
         accentHex(m_settings ? m_settings->themeAccent() : QString());
     app[QStringLiteral("signedIn")] = m_client && m_client->hasSession();
+    // "none" | "full" | "mini": playback can carry on under a browse page, so
+    // the context alone cannot say whether there is a view to toggle.
+    app[QStringLiteral("playerView")] = !(m_player && m_player->active()) ? QStringLiteral("none")
+                                        : m_playerOnTop ? QStringLiteral("full")
+                                                        : QStringLiteral("mini");
     obj[QStringLiteral("app")] = app;
 
     if (m_settings) {
@@ -2020,6 +2042,19 @@ void WebRemoteServer::handleApiNavigate(QSslSocket *socket, const QJsonObject &b
         return;
     }
 
+    sendOk(socket);
+}
+
+// An action by its InputMap id — the same thing a key or a pad button resolves
+// to. The catalogue is the allowlist: nothing outside it is forwarded.
+void WebRemoteServer::handleApiAction(QSslSocket *socket, const QJsonObject &body)
+{
+    const QString action = body.value(QLatin1String("action")).toString();
+    if (action.isEmpty() || !m_actionIds.contains(action)) {
+        sendError(socket, 400, QStringLiteral("Unknown action"));
+        return;
+    }
+    emit actionRequested(action);
     sendOk(socket);
 }
 

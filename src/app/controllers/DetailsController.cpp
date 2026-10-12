@@ -280,6 +280,18 @@ void DetailsController::bindLiveUpdates(LiveUpdateService *service)
             });
 }
 
+namespace {
+
+// The rail shows a dozen. More are fetched so that specials, which the server
+// sorts first, can be moved out of the lead without emptying it.
+QList<MediaItem> upcomingRail(QList<MediaItem> items)
+{
+    moveSpecialsLast(items);
+    return items.mid(0, 12);
+}
+
+} // namespace
+
 void DetailsController::refreshUpcomingEpisodes()
 {
     if (!m_isSeries || m_itemId.isEmpty()) {
@@ -299,15 +311,16 @@ void DetailsController::refreshUpcomingEpisodes()
     query.recursive = true;
     query.includeItemTypes = {QStringLiteral("Episode")};
     query.filters = {QStringLiteral("IsUnplayed")};
-    query.sortBy = episodeAirOrderSort();
-    query.limit = 12;
+    query.sortBy = episodeOrderSort();
+    query.limit = kEpisodeLeadFetch;
 
     m_client->items(query, &m_upcomingEpisodesRequest)
         .then(this, [this, generation](const Result<ItemsPage> &result) {
             if (generation != m_upcomingEpisodesGeneration)
                 return;
             if (result.ok() && !result.value.items.isEmpty()) {
-                m_upcomingEpisodes->setItems(result.value.items, result.value.totalRecordCount);
+                m_upcomingEpisodes->setItems(upcomingRail(result.value.items),
+                                             result.value.totalRecordCount);
                 m_nextEpisode = m_upcomingEpisodes->get(0);
                 m_upcomingEpisodesLoading = false;
                 emit upcomingEpisodesChanged();
@@ -320,15 +333,15 @@ void DetailsController::refreshUpcomingEpisodes()
             fallbackQuery.parentId = m_itemId;
             fallbackQuery.recursive = true;
             fallbackQuery.includeItemTypes = {QStringLiteral("Episode")};
-            fallbackQuery.sortBy = episodeAirOrderSort();
-            fallbackQuery.limit = 12;
+            fallbackQuery.sortBy = episodeOrderSort();
+            fallbackQuery.limit = kEpisodeLeadFetch;
 
             m_client->items(fallbackQuery, &m_upcomingEpisodesRequest)
                 .then(this, [this, generation](const Result<ItemsPage> &fallbackResult) {
                     if (generation != m_upcomingEpisodesGeneration)
                         return;
                     if (fallbackResult.ok() && !fallbackResult.value.items.isEmpty()) {
-                        m_upcomingEpisodes->setItems(fallbackResult.value.items,
+                        m_upcomingEpisodes->setItems(upcomingRail(fallbackResult.value.items),
                                                      fallbackResult.value.totalRecordCount);
                         m_nextEpisode = m_upcomingEpisodes->get(0);
                     } else {

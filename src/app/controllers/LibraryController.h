@@ -3,7 +3,9 @@
 #include "app/models/MediaItemModel.h"
 #include "server/dto/ItemsQuery.h"
 
+#include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
@@ -54,6 +56,17 @@ class LibraryController : public QObject
     Q_PROPERTY(QString nameStartsWith READ nameStartsWith NOTIFY queryChanged)
     // True when anything narrows the view, so the UI can offer one "clear".
     Q_PROPERTY(bool filtered READ filtered NOTIFY queryChanged)
+    // ── Metadata filters ──────────────────────────────────────────────────────
+    // The axes this view can be narrowed by — genre, year, studio, age rating,
+    // resolution and so on — as one list, so the sheet that renders them is a
+    // loop and a new axis is a row in a table here, not a control there. Which
+    // axes exist depends on the kind of library: a series has no picture of
+    // its own, so resolution and codec are offered for films only.
+    // One QVariantMap per facet: {key, label, multi, count, summary}, where
+    // `count` is how many values are picked and `summary` names them.
+    Q_PROPERTY(QVariantList facets READ facets NOTIFY facetsChanged)
+    // How many facets have something picked; the bar's badge.
+    Q_PROPERTY(int activeFacetCount READ activeFacetCount NOTIFY facetsChanged)
     // Stable identity for the view on screen, for per-library preferences
     // (ARCHITECTURE.md). A title is not an identity: renaming a library on the
     // server would lose its settings, and two libraries may share a name.
@@ -80,6 +93,19 @@ public:
     QString nameStartsWith() const { return m_nameStartsWith; }
     bool filtered() const;
     QString scopeKey() const;
+    QVariantList facets() const;
+    int activeFacetCount() const;
+
+    // The values one facet offers: {value, label, selected}. Lists that come
+    // from the server (genres, years, studios…) are fetched on first ask,
+    // scoped to what is on screen, and announced by facetOptionsChanged(key);
+    // until then this is empty and facetLoading(key) is true.
+    Q_INVOKABLE QVariantList facetOptions(const QString &key);
+    Q_INVOKABLE bool facetLoading(const QString &key) const;
+    // Each re-runs the query from page 0, as every filter change does. A
+    // single-choice facet replaces its value; picking the active one clears it.
+    Q_INVOKABLE void toggleFacetValue(const QString &key, const QString &value);
+    Q_INVOKABLE void clearFacet(const QString &key);
 
     // Each of these re-runs the query from page 0 — a sort or filter change is
     // a new result set, not a modification of the one on screen. They no-op when
@@ -130,6 +156,10 @@ signals:
     // The *scope* changed (a different library, genre, person): the set of
     // sensible sort keys may differ.
     void scopeChanged();
+    // The facet list or what is picked in it changed.
+    void facetsChanged();
+    // One facet's option list arrived (or failed and stays empty).
+    void facetOptionsChanged(const QString &key);
     void loadingChanged();
     void errorMessageChanged();
     void pendingChanged();
@@ -145,6 +175,9 @@ private:
     // rather than inheriting the last view's genre or person.
     void clearScope();
     void applyQueryChange();
+    void applyFacets(ItemsQuery &query) const;
+    void loadFacetOptions(const QString &key);
+    void resetFacets();
     void setPending(bool pending, int newCount);
     bool hasQuery() const
     {
@@ -169,6 +202,14 @@ private:
     bool m_sortDescending = false;
     QString m_watchedFilter = QStringLiteral("all");
     QString m_nameStartsWith;
+    // Picked values per facet key, in the order they were picked.
+    QHash<QString, QStringList> m_facetSelection;
+    // Fetched option lists per facet key: {value, label} maps.
+    QHash<QString, QVariantList> m_facetOptions;
+    QSet<QString> m_facetLoading;
+    // Bumped whenever the scope changes, so a list fetched for the last
+    // library cannot land in this one.
+    int m_facetGeneration = 0;
     QString m_errorMessage;
     bool m_loading = false;
     int m_generation = 0;

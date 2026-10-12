@@ -102,6 +102,15 @@ FocusScope {
                                            : favoriteChip
     // Right out of that same set. Named once because several controls want it.
     readonly property Item clearOrNothing: clearButton.visible ? clearButton : null
+    // The metadata filters (genre, year, studio…) live in a sheet the page
+    // hosts; the bar only carries the way in and says how many are on. Not
+    // every controller has them, and not every scope of one that does.
+    readonly property bool hasFacets: bar.hasController && bar.controller.facets !== undefined
+                                      && bar.controller.facets.length > 0
+    readonly property int facetCount: bar.hasFacets ? bar.controller.activeFacetCount : 0
+    readonly property Item afterWatched: filterButton.visible ? filterButton : bar.clearOrNothing
+    readonly property Item filterEntry: filterButton
+    signal filtersRequested
 
     // A–Z then "#", which is the bucket Emby files everything non-alphabetic in.
     readonly property var letters: {
@@ -273,9 +282,14 @@ FocusScope {
                 // writes it, so this push is the only thing that does — asking
                 // the controller below is how a pick gets back here.
 
-                KeyNavigation.right: directionButton
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                // Neighbours are named for the navigator (FocusNavigator.h),
+                // here and on every control below: the chip row changes shape
+                // with the width and the filters, and a name that is hidden or
+                // null is somewhere geometry decides instead of a key that
+                // does nothing.
+                property Item navRight: directionButton
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
                     if (!bar.hasController)
@@ -305,12 +319,12 @@ FocusScope {
                 text: bar.compact ? ""
                     : bar.activeDescending ? qsTr("Descending") : qsTr("Ascending")
 
-                KeyNavigation.left: sortSelect
-                KeyNavigation.right: bar.hasWatchedFilter
-                                     ? (bar.compact ? watchedSelect : unwatchedChip)
-                                     : bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: sortSelect
+                property Item navRight: bar.hasWatchedFilter
+                                        ? (bar.compact ? watchedSelect : unwatchedChip)
+                                        : bar.afterWatched
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onClicked: {
                     if (bar.hasController)
@@ -351,10 +365,10 @@ FocusScope {
                 iconName: "eye-off"
                 checked: bar.watchedValue === "unplayed"
 
-                KeyNavigation.left: directionButton
-                KeyNavigation.right: watchedChip
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: directionButton
+                property Item navRight: watchedChip
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(unwatchedChip.checked ? "all"
                                                                                  : "unplayed")
@@ -369,10 +383,10 @@ FocusScope {
                 iconName: "eye"
                 checked: bar.watchedValue === "played"
 
-                KeyNavigation.left: unwatchedChip
-                KeyNavigation.right: favoriteChip
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: unwatchedChip
+                property Item navRight: favoriteChip
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(watchedChip.checked ? "all" : "played")
             }
@@ -386,10 +400,10 @@ FocusScope {
                 iconName: "heart"
                 checked: bar.watchedValue === "favorites"
 
-                KeyNavigation.left: watchedChip
-                KeyNavigation.right: bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: watchedChip
+                property Item navRight: bar.afterWatched
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(favoriteChip.checked ? "all"
                                                                                 : "favorites")
@@ -408,16 +422,39 @@ FocusScope {
                 // which is also what keeps it agreeing with the three chips it
                 // stands in for at wider widths.
 
-                KeyNavigation.left: directionButton
-                KeyNavigation.right: bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: directionButton
+                property Item navRight: bar.afterWatched
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
                     const value = watchedSelect.valueAt(index);
                     if (value !== undefined)
                         bar.controller.setWatchedFilter(String(value));
                 }
+            }
+
+            // The way into the filter sheet. It says how many axes are narrowing
+            // the view without being opened, as the watched select does.
+            StrmButton {
+                id: filterButton
+                objectName: "filterBarFilters"
+
+                anchors.verticalCenter: parent.verticalCenter
+                visible: bar.hasFacets
+                variant: bar.facetCount > 0 ? "secondary" : "ghost"
+                iconName: "filter"
+                text: bar.facetCount > 0 ? (bar.compact ? String(bar.facetCount)
+                                                        : qsTr("Filters · %1").arg(bar.facetCount))
+                                         : (bar.compact ? "" : qsTr("Filters"))
+                accessibleName: qsTr("Filters")
+
+                property Item navLeft: bar.lastFixedControl
+                property Item navRight: bar.clearOrNothing
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+
+                onClicked: bar.filtersRequested()
             }
 
             // Last in the row on purpose: appearing and disappearing then moves
@@ -431,9 +468,9 @@ FocusScope {
                 iconName: "close"
                 text: bar.compact ? "" : qsTr("Clear filters")
 
-                KeyNavigation.left: bar.lastFixedControl
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: filterButton.visible ? filterButton : bar.lastFixedControl
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onClicked: {
                     if (bar.hasController)
@@ -590,13 +627,19 @@ FocusScope {
                 return;
             }
             switch (event.key) {
+            // At either end a fresh press is declined rather than swallowed:
+            // Left of A is the page's left edge, and what lies beyond the
+            // strip is not the strip's to know (FocusNavigator). A HELD key
+            // still stops here — walking the alphabet must not spill into
+            // whatever is beside it.
             case Qt.Key_Left:
+                event.accepted = alphaStrip.currentIndex > 0 || event.isAutoRepeat;
                 alphaStrip.moveCursor(alphaStrip.currentIndex - 1);
-                event.accepted = true;
                 return;
             case Qt.Key_Right:
+                event.accepted = alphaStrip.currentIndex < bar.letters.length - 1
+                                 || event.isAutoRepeat;
                 alphaStrip.moveCursor(alphaStrip.currentIndex + 1);
-                event.accepted = true;
                 return;
             case Qt.Key_Home:
                 alphaStrip.moveCursor(0);
@@ -646,8 +689,8 @@ FocusScope {
                 event.accepted = true;
         }
 
-        KeyNavigation.up: sortSelect
-        KeyNavigation.down: bar.downTarget
+        property Item navUp: sortSelect
+        property Item navDown: bar.downTarget
 
         Flickable {
             id: flick

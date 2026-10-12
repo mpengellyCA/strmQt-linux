@@ -75,6 +75,41 @@ FocusScope {
         }
     }
 
+    // The card is an offer with a countdown, and it was a FocusScope nothing
+    // ever focused: Cancel could only be clicked. It takes the keyboard when
+    // it appears, but only from someone who is not using it — never out of a
+    // panel or off a button — and gives it back when it goes.
+    property bool keyboardIdle: false
+    signal keyboardReleased
+
+    // Remembered rather than asked of activeFocus on the way out: the card is
+    // disabled by the same change that hides it, and a disabled item has
+    // already been stripped of focus by the time anyone is told.
+    property bool _heldKeyboard: false
+    onActiveFocusChanged: {
+        if (card.activeFocus)
+            card._heldKeyboard = true;
+        else if (card.active)
+            card._heldKeyboard = false; // walked off it; nothing to give back
+    }
+
+    onActiveChanged: {
+        if (card.active) {
+            if (card.keyboardIdle)
+                playButton.forceActiveFocus(Qt.OtherFocusReason);
+        } else if (card._heldKeyboard) {
+            card._heldKeyboard = false;
+            card.keyboardReleased();
+        }
+    }
+
+    // Back declines the offer rather than leaving the film.
+    Keys.onEscapePressed: event => {
+        event.accepted = card.active;
+        if (card.active)
+            card.cancel();
+    }
+
     function playNow(): void {
         card.dismissed();
         PlayerCtl.playNext();
@@ -181,7 +216,7 @@ FocusScope {
                     variant: "ghost"
                     onClicked: card.cancel()
 
-                    KeyNavigation.right: playButton
+                    property Item navRight: playButton
                 }
 
                 StrmButton {
@@ -194,7 +229,7 @@ FocusScope {
                     iconName: "play"
                     onClicked: card.playNow()
 
-                    KeyNavigation.left: cancelButton
+                    property Item navLeft: cancelButton
                 }
             }
         }

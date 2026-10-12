@@ -81,6 +81,22 @@ Item {
             rail.pinned = false;
     }
 
+    // Where the navigator puts the keyboard when a page's left edge leads here
+    // (FocusNavigator.h): the same entry focusCurrent() picks.
+    readonly property Item navEntry: {
+        let first = null;
+        for (let i = 0; i < column.children.length; ++i) {
+            const child = column.children[i];
+            if (child === null || child.activeFocusOnTab !== true || !child.enabled)
+                continue;
+            if (child.active === true)
+                return child;
+            if (first === null)
+                first = child;
+        }
+        return first;
+    }
+
     // Move focus into the rail, onto the entry for the page already on screen so
     // the first D-pad press moves from where the user actually is.
     function focusCurrent(): void {
@@ -148,10 +164,11 @@ Item {
         activeFocusOnTab: true
 
         onActiveFocusChanged: {
-            if (entry.activeFocus)
+            if (entry.activeFocus) {
                 rail.focusedEntry = entry;
-            else if (rail.focusedEntry === entry)
+            } else if (rail.focusedEntry === entry) {
                 rail.focusedEntry = null;
+            }
         }
 
         readonly property color glyphColor: entry.active ? Theme.accentColor
@@ -273,36 +290,27 @@ Item {
         Keys.onSpacePressed: event => entry.choose(event)
         // Escape leaves the rail without navigating; without this a gamepad user
         // who opened it with Menu has no way out but to pick something.
-        Keys.onEscapePressed: event => {
-            if (rail.pinned) {
-                rail.pinned = false;
-                rail.dismissed();
-                event.accepted = true;
-            }
-        }
+        Keys.onEscapePressed: event => entry.leave(event)
 
         Keys.onUpPressed: event => { event.accepted = rail.focusStep(entry, -1); }
         Keys.onDownPressed: event => { event.accepted = rail.focusStep(entry, 1); }
-        // The rail is on the left edge, so Right leaves it for the page and Left
-        // closes it. Both only while pinned: while it is merely hovered or
-        // tabbed into, horizontal arrows belong to whatever the user was doing.
-        // isAutoRepeat, because the page's own left-hand edge sends the
-        // keyboard HERE: a held horizontal direction would otherwise swap the
-        // rail and the page several times a second for as long as it is pushed.
-        Keys.onRightPressed: event => {
-            if (rail.pinned && !event.isAutoRepeat) {
-                rail.pinned = false;
-                rail.dismissed();
-                event.accepted = true;
-            }
+        // The rail is on the left edge, so Right leaves it for the page, and so
+        // do Left and Back. However the keyboard got here: these used to act
+        // only while the rail was pinned and accepted the key regardless, so a
+        // rail entered any other way held the keyboard with no arrow out.
+        // A held key is swallowed: the page's own left-hand edge sends the
+        // keyboard HERE, and a held direction would otherwise swap the rail
+        // and the page several times a second for as long as it is pushed.
+        function leave(event) {
+            event.accepted = true;
+            if (event.isAutoRepeat)
+                return;
+            rail.pinned = false;
+            rail.dismissed();
         }
-        Keys.onLeftPressed: event => {
-            if (rail.pinned && !event.isAutoRepeat) {
-                rail.pinned = false;
-                rail.dismissed();
-                event.accepted = true;
-            }
-        }
+
+        Keys.onRightPressed: event => entry.leave(event)
+        Keys.onLeftPressed: event => entry.leave(event)
     }
 
     component NavDivider: Item {

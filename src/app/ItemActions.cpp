@@ -189,7 +189,7 @@ QString containerCollectionType(ItemKind kind)
 QString playAllSortFor(const QStringList &types)
 {
     if (types.size() == 1 && types.first() == QLatin1String("Episode"))
-        return episodeAirOrderSort();
+        return episodeOrderSort();
     // Music plays in TRACK order. SortName would play an album alphabetically
     // by title, which is never what anyone means.
     //
@@ -677,7 +677,8 @@ void ItemActions::fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool ra
 
     const quint64 generation = beginPlaybackIntent();
 
-    m_client->items(query).then(this, [this, shuffled, randomStart,
+    const bool episodeOrder = query.sortBy == episodeOrderSort();
+    m_client->items(query).then(this, [this, shuffled, randomStart, episodeOrder,
                                       generation](const Result<ItemsPage> &result) {
         if (generation != m_playbackIntentGeneration)
             return;
@@ -691,10 +692,13 @@ void ItemActions::fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool ra
             emit actionFailed(tr("There is nothing to play here."));
             return;
         }
-        const int count = static_cast<int>(result.value.items.size());
+        QList<MediaItem> items = result.value.items;
+        if (episodeOrder)
+            moveSpecialsLast(items); // season 0 sorts first (ItemsQuery.h)
+        const int count = static_cast<int>(items.size());
         const int startIndex =
             randomStart && count > 1 ? int(QRandomGenerator::global()->bounded(count)) : 0;
-        m_player->playQueueItems(result.value.items, startIndex, shuffled);
+        m_player->playQueueItems(items, startIndex, shuffled);
         emit queueChanged();
     });
 }
@@ -769,7 +773,7 @@ void ItemActions::continueCollectionWalk(const std::shared_ptr<CollectionWalk> &
         query.parentId = member.id;
         query.recursive = true;
         query.includeItemTypes = {QStringLiteral("Episode")};
-        query.sortBy = episodeAirOrderSort();
+        query.sortBy = episodeOrderSort();
         query.limit = kQueueFetchLimit - walk->playable.size();
         m_client->items(query, &m_collectionRequest)
             .then(this, [this, walk](const Result<ItemsPage> &result) {
@@ -780,7 +784,9 @@ void ItemActions::continueCollectionWalk(const std::shared_ptr<CollectionWalk> &
                         tr("Could not expand a collection member: %1").arg(result.error));
                     return;
                 }
-                for (const MediaItem &child : result.value.items) {
+                QList<MediaItem> children = result.value.items;
+                moveSpecialsLast(children);
+                for (const MediaItem &child : std::as_const(children)) {
                     if (walk->playable.size() >= kQueueFetchLimit)
                         break;
                     if (itemKindFor(child.type) == ItemKind::Episode)

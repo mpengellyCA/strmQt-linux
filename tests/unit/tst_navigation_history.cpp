@@ -2346,11 +2346,14 @@ void NavigationHistoryTest::pendingRestoreIsNotResurrected()
 
     const QVariantMap route = history->property("currentEntry").toMap();
     const QString token = QString::number(route.value(QStringLiteral("token")).toInt());
-    QVERIFY(history->property("focusMemory").toMap().contains(token));
+    // The locator is spent on the return itself: the pending restore carries
+    // its own copy, and nothing else that asks for the page's focus back
+    // (a closing overlay) may replay it.
+    QVERIFY(!history->property("focusMemory").toMap().contains(token));
 
     // Leaving while the old locator is still waiting is an explicit
-    // cancellation. It must delete, rather than retain, the previous visit's
-    // token or a later Back would revive a choice the user abandoned.
+    // cancellation. It must not put the previous visit's token back, or a
+    // later Back would revive a choice the user abandoned.
     QVERIFY(invoke(root, "pushRoute", 92));
     QVERIFY(!history->property("focusMemory").toMap().contains(token));
     QVERIFY(invoke(root, "goBack"));

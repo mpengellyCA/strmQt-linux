@@ -86,7 +86,12 @@ Item {
     function invokeAction(actionId: string, autoRepeat: bool): bool {
         if (actionId !== mapped.actionId || !mapped.active || !mapped.visible)
             return false;
-        mapped.activated();
+        // A command, not a movement: a held button is still one press. Held
+        // shoulders pushed a page per repeat, and a held Menu, View or
+        // fullscreen flipped back and forth for as long as it was down.
+        // Answered (true) all the same, so the repeat goes nowhere else.
+        if (!autoRepeat)
+            mapped.activated();
         return true;
     }
 
@@ -96,6 +101,7 @@ Item {
     Shortcut {
         sequences: mapped._sequences.filter(s => !Input.isTypableSequence(s))
         enabled: mapped.active
+        autoRepeat: false
         onActivated: {
             Input.noteInput("keyboard");
             mapped.activated();
@@ -105,6 +111,7 @@ Item {
     Shortcut {
         sequences: mapped._sequences.filter(s => Input.isTypableSequence(s))
         enabled: mapped.active && !mapped._editingText
+        autoRepeat: false
         onActivated: {
             Input.noteInput("keyboard");
             mapped.activated();

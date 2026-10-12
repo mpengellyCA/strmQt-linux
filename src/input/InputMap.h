@@ -158,6 +158,9 @@ public:
     bool gamepadActive() const { return m_lastInputDevice == QLatin1String("gamepad"); }
     // Reported by the UI on every real input event; unknown devices are ignored.
     Q_INVOKABLE void noteInput(const QString &device);
+    // While held, "keyboard" is not accepted as the device in use: the key
+    // being handled was delivered for a pad or a phone (KeyDelivery.h).
+    void setKeyboardStampHeld(bool held) { m_keyboardStampHeld = held; }
 
 signals:
     void actionsChanged();
@@ -179,6 +182,7 @@ private:
     QSettings m_store;
     QHash<QString, QStringList> m_overrides; // actionId → current sequences
     QString m_lastInputDevice = QStringLiteral("keyboard");
+    bool m_keyboardStampHeld = false;
     QList<QPointer<QObject>> m_handlers; // oldest first
 };
 

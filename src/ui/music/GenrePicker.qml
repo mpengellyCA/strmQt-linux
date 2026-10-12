@@ -28,6 +28,10 @@ FocusScope {
     property bool opened: false
     property var picked: []
     property var rows: []
+    // Arrows and Back stop at the picker's edge instead of reaching the page
+    // behind the scrim (FocusNavigator).
+    property bool navModal: picker.opened
+    property Item navEntry: field
 
     signal genresChosen(var ids)
     signal dismissed
@@ -170,14 +174,27 @@ FocusScope {
                 onEscapePressed: picker.close()
 
                 KeyNavigation.tab: applyButton
+                // Apply was a Tab stop and nothing else: the field answered
+                // every Up and Down itself, so a pad could tick genres and
+                // never commit them. Down past the last row now leaves for
+                // the buttons, and so does Right off the end of the text —
+                // which, with nothing typed, is the first press. 289 rows is a
+                // long way down.
+                property Item navDown: applyButton
+                property Item navRight: applyButton
 
                 Keys.onUpPressed: {
                     if (list.count > 0)
                         list.currentIndex = Math.max(0, list.currentIndex - 1);
                 }
-                Keys.onDownPressed: {
-                    if (list.count > 0)
-                        list.currentIndex = Math.min(list.count - 1, list.currentIndex + 1);
+                Keys.onDownPressed: event => {
+                    if (list.count > 0 && list.currentIndex < list.count - 1) {
+                        list.currentIndex = list.currentIndex + 1;
+                        return;
+                    }
+                    // A held Down stops on the last row; leaving takes a
+                    // fresh press.
+                    event.accepted = event.isAutoRepeat;
                 }
                 Keys.onReturnPressed: event => {
                     if (!event.isAutoRepeat)
@@ -202,6 +219,9 @@ FocusScope {
             model: picker.rows
             currentIndex: -1
             keyNavigationEnabled: false
+            // The rows are ticked from the field and never hold the keyboard,
+            // so the list is not somewhere an arrow can land.
+            property bool navStop: false
             boundsBehavior: Flickable.StopAtBounds
             reuseItems: true
 
@@ -374,8 +394,8 @@ FocusScope {
                 enabled: picker.picked.length > 0
                 onClicked: picker.picked = []
 
-                KeyNavigation.right: applyButton
-                KeyNavigation.up: field
+                property Item navRight: applyButton
+                property Item navUp: field
             }
 
             StrmButton {
@@ -387,8 +407,8 @@ FocusScope {
                 variant: "primary"
                 onClicked: picker.apply()
 
-                KeyNavigation.left: clearButton
-                KeyNavigation.up: field
+                property Item navLeft: clearButton
+                property Item navUp: field
                 KeyNavigation.tab: field
             }
         }

@@ -330,34 +330,37 @@ Item {
     // The arm/disarm keys. Each declines the event when arming is off so the
     // page's own bindings (pause on Space, back on Esc) keep working for the
     // volume sliders and any other ungated use.
-    Keys.onReturnPressed: event => {
-        if (!slider.armToScrub)
+    //
+    // Declining has to be said out loud: a handler for a named key starts out
+    // ACCEPTED, so returning early swallowed Return and Esc on every slider
+    // that does not arm — Back was dead while a volume slider held focus.
+    function _armKey(event): void {
+        if (!slider.armToScrub) {
+            event.accepted = false;
             return;
-        slider.armed = !slider.armed;
-        event.accepted = true;
-    }
-    Keys.onEnterPressed: event => {
-        if (!slider.armToScrub)
-            return;
-        slider.armed = !slider.armed;
-        event.accepted = true;
-    }
-    Keys.onSpacePressed: event => {
-        if (!slider.armToScrub)
-            return;
-        slider.armed = !slider.armed;
-        event.accepted = true;
-    }
-    Keys.onEscapePressed: event => {
-        if (slider.armed) {
-            slider.armed = false;
-            event.accepted = true;
         }
+        // One arm per press: a held key flipped it for as long as it was down.
+        if (!event.isAutoRepeat)
+            slider.armed = !slider.armed;
+        event.accepted = true;
+    }
+    Keys.onReturnPressed: event => slider._armKey(event)
+    Keys.onEnterPressed: event => slider._armKey(event)
+    Keys.onSpacePressed: event => slider._armKey(event)
+    Keys.onEscapePressed: event => {
+        event.accepted = slider.armed;
+        if (slider.armed)
+            slider.armed = false;
     }
 
     // Focus leaving is a disarm: an armed bar nobody can see is a seek trap.
     onActiveFocusChanged: {
-        if (!slider.activeFocus)
+        if (!slider.activeFocus) {
             slider.armed = false;
+            // The release that would have ended a key scrub goes to whatever
+            // has focus now. Without this the bar stayed "scrubbing" for good
+            // and froze on its own guess.
+            slider._keyScrub = false;
+        }
     }
 }

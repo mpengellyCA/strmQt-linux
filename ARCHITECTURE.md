@@ -393,6 +393,16 @@ never move keyboard focus** — a pointer passing over a rail must not steal the
 place a gamepad user was holding. `FocusRing` is a purely visual component that
 declares no input handling, precisely so it cannot be wired to a hover state.
 
+**A pointer nobody is moving is not hovering anything.** Qt Quick re-tests hover
+every frame the scene moves, so a mouse left on screen while the user picked up
+a pad lit cards as rows scrolled under it, raised tooltips and opened the rail.
+After five seconds without movement, a button or the wheel, `PointerIdle`
+(`src/input`) blanks the cursor and tells the window the pointer left — Qt's own
+way of saying nothing is hovered, and with no last position to re-test, nothing
+becomes hovered as the page scrolls. A few pixels of real travel bring both
+back. It is the player page's "hide the pointer over a film" made the rule for
+the whole window.
+
 ### Controls
 
 Everything is built from `src/ui/controls/` — buttons, cards, rails, grids, menus,
@@ -437,13 +447,16 @@ jumping about rather than being walked.
   above. Both edges are claimed before the view sees them.
 
 - **The edges of a page reach the chrome.** Left off the left-hand edge opens and
-  focuses the destination rail; Up off the top reaches the header. Both are
-  fallbacks on the `StackView` (plus one in `StrmGrid`, which has to claim Left
-  itself to stop the wrap), so they only fire once every control between the
-  keyboard and the shell has declined the key — a grid mid-row, an armed
-  scrubber, a filter chain and the two-pane playlist all answer first. Both are
-  auto-repeat guarded: the rail hands the keyboard back on its own Left, so a
-  held direction would otherwise swap the two surfaces several times a second.
+  focuses the destination rail; Up off the top reaches the header; Down off the
+  bottom reaches the docked player bar. They are named on the `StackView`
+  (`navLeft` / `navUp` / `navDown`) rather than claimed by a key handler there,
+  and the difference is the point: a handler on the stack runs before anything
+  is asked whether the *page* has something that way, so a control nobody had
+  wired an arrow to could not be reached from one side. A named edge is used
+  only once the page has nothing further in that direction (§5, *Where an arrow
+  goes*). A held direction stops at a named edge: the rail hands the keyboard
+  back on its own Left, so a held one would otherwise swap the two surfaces
+  several times a second.
 
 This is what makes the shell reachable without a pointer at all. The rail expands
 on hover or focus and a gamepad has neither; the header carries Back, Forward and
@@ -460,6 +473,24 @@ the page's normal empty-state focus) without fetching extra pages.
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Search ·
 Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·
 Music Playlist.
+
+**A film or TV library is narrowed by its metadata** — genre, year, studio (or
+network), age rating, community rating, series status, and for films resolution,
+dynamic range, video codec and audio channels. `LibraryController` owns a table
+of these axes and publishes it as `facets`; `FilterSheet` renders whatever is in
+it, so a new axis is a row in that table and a parameter in `ItemsQuery`, not a
+control. Values come from the server's own lists (`/Genres`, `/Years`,
+`/Studios`, …) scoped to the library on screen, fetched on first use. A pick
+applies at once: the grid behind the sheet is the preview.
+
+Every axis was measured before it was added, because this server ignores a
+parameter it does not know and returns the whole library — a filter that is not
+honoured looks exactly like one that matched everything. That is why there is
+**no runtime filter**: the server has no runtime bound under any spelling tried,
+only a sort key, which the sort menu offers. It is also why resolution is a
+width range rather than the server's `IsHD` / `Is4K`, which overlap, and why the
+video axes are withheld from a TV library: a series has no streams of its own
+and matches nothing. `strmqt-cli get` is the tool for the next one.
 
 A music library opens on **Music Home**, a page of independently loading shelves
 (pick up where you left off, recently played, new in the crate, stations, genre
@@ -499,6 +530,74 @@ that actually fires. A navigation action with a gamepad hint must resolve to
 exactly one key — asserted in tests, because a hint without a working binding is
 worse than no hint. Keys posted to a background window still land because
 `WindowFocusKeeper` stops Qt clearing the focus chain on deactivation.
+
+### Where an arrow goes
+
+Every device that is not a pointer ends as an arrow key delivered to the focused
+item, so how dependable a pad or a remote feels comes down to one question: what
+happens to an arrow the focused control has no use for. That used to be answered
+page by page — a `KeyNavigation` chain, an index walk over a list of sections, a
+handler on the stack — and each answer was right on the day it was written and
+wrong the day a region was hidden, loaded late, or was a Tab stop nobody had
+wired an arrow to. `KeyNavigation` in particular accepts the key whenever its
+target is non-null, including when the target is hidden or disabled, so a link
+to something that is not there silently eats the press.
+
+`FocusNavigator` (`src/input`) answers it once. An event filter on the window's
+root item sees only the keys every item between the keyboard and the window
+declined, and for a direction key it looks, in this order, at:
+
+1. **What the focused control names.** `property Item navUp` / `navDown` /
+   `navLeft` / `navRight` on the control itself.
+2. **The regions it is in.** The same property on an *ancestor* says where that
+   ancestor's edge leads. Geometry is tried inside it first; the name is used
+   only when the region has nothing further that way.
+3. **Geometry.** The nearest control in that direction — Android's FocusFinder
+   rule, as a pure function in `input/SpatialDecision.h`. A control is any
+   visible, enabled Tab stop, and any `ListView` / `GridView` that has items;
+   so everything a keyboard can Tab to, a pad can walk to.
+
+A named neighbour that is hidden or disabled is never a dead end: the search
+simply carries on. That one rule is why new code names neighbours with `nav*`
+properties and does not use `KeyNavigation`.
+
+The consequence for a control is a single obligation: **decline what you do not
+use.** A grid at its last column, a tab bar at its last tab, a slider that is not
+armed and a page-level `Keys` handler with nothing to do all set
+`event.accepted = false`, and the key goes on to the navigator. A named handler
+(`Keys.onLeftPressed`) accepts by default — forgetting to decline is how an
+ancestor quietly takes a direction away from everything inside it.
+
+Three more things live in the same object because they are the same question
+asked at other moments:
+
+- **Modality.** While focus is inside a `Popup`, or an item with
+  `navModal: true`, only controls inside it are candidates and an unclaimed key
+  stops at its edge — neither an arrow nor Back reaches the page under a scrim.
+  `navEntry` names the part that takes the keyboard when a surface is entered.
+  The shell folds `App.navigationModal` into its interaction context, so a
+  shoulder button cannot change the page under an open sheet.
+- **Recovery.** If the focused item is hidden, disabled or destroyed, or focus is
+  found outside a visible modal surface, focus moves to the nearest live control
+  to where it was. Nothing is left "focused on nothing", which is the state in
+  which a pad appears dead.
+- **Visibility.** The focused control is scrolled into view inside any plain
+  `Flickable` containing it. Item views follow their own current item.
+
+The properties are read by name — the convention `navigationFocusKey` and
+`cycleTab` already use — so no QML imports anything and a test stages a real
+control against the real navigator (`tst_focus_navigator`,
+`tst_navigation_controls`). `QT_LOGGING_RULES="strmqt.input.focus.debug=true"`
+logs every move with the rule that decided it.
+
+**The player is the one page where arrows mean something else**, and only while
+nothing is selected: the keyboard "rests" on an item of its own, and from rest
+Left/Right seek and Down enters the controls. From anywhere
+else an arrow a control declined is a request to move, and the page declines it
+too. Select with nothing selected is play/pause — which is how A can be Select
+everywhere, the player included, and still pause the film.
+
+### Devices
 
 The layout targets Xbox 360 / Xbox One, which is the PC standard and the layout
 SDL's own gamepad abstraction is modelled on. Mapping is context-dependent, so one
@@ -580,6 +679,15 @@ target; declaring capabilities without handling them means it appears as a targe
 that silently does nothing. **The declared command list is generated from the same
 place the handlers live**, and only commands with a real verb behind them are
 declared.
+
+**The phone remote invokes actions by id.** The built-in web remote
+(`WebRemoteServer`, served to a phone on the LAN) posts `/api/action` with an
+action id, and the server accepts exactly the ids in the `InputMap` catalogue —
+the same allowlist, by construction, as the shortcut sheet. So anything a key
+can do the phone can do, a new action reaches the phone without touching the
+server, and the phone never needs to know what a key is bound to. Its status
+feed carries `app.playerView` (`none` / `full` / `mini`), which is what lets it
+offer "minimise" or "expand" as the one that applies.
 
 Capabilities are re-sent on every reconnect: a resumed socket is a new session to
 the server, so a single announcement at startup is forgotten the first time the

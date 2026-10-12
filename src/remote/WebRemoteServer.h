@@ -77,6 +77,14 @@ public:
     // What the desktop is showing ("browse", "player", "music", ...), so the
     // phone's controller can offer the buttons that mean something right now.
     void setInteractionContext(const QString &context);
+    // Whether the full player is the page on screen. With playback active this
+    // is what tells the phone "full" from "mini" (status app.playerView), so a
+    // view toggle can say which way it will go.
+    void setPlayerOnTop(bool onTop);
+    // The InputMap catalogue: every id /api/action accepts. The phone invokes
+    // an action by the same id a key or a pad button resolves to, so an action
+    // added to the catalogue exists for the phone without a table edit here.
+    void setActions(const QStringList &actionIds);
 
     // Key names /api/navigate accepts; anything else is refused with 400.
     static QStringList navigationKeys();
@@ -99,9 +107,9 @@ signals:
     void connectedClientsChanged(int count);
     // "home" | "search" | "settings" | "back"
     void navigationRequested(const QString &destination);
-    // An InputMap action id: a navigation key resolved through
-    // actionForNavigationKey(), or "player.toggleOsd". Application invokes it
-    // by id (InputMap::trigger) — nothing is turned into a key here.
+    // An InputMap action id: named outright by /api/action, or a legacy
+    // navigation key resolved through actionForNavigationKey(). Application
+    // invokes it by id (InputMap::trigger) — nothing is turned into a key here.
     void actionRequested(const QString &actionId);
 
 private slots:
@@ -154,6 +162,7 @@ private:
     void handleApiQuality(QSslSocket *socket, const QJsonObject &body);
     void handleApiSubtitleStyle(QSslSocket *socket, const QJsonObject &body);
     void handleApiNavigate(QSslSocket *socket, const QJsonObject &body);
+    void handleApiAction(QSslSocket *socket, const QJsonObject &body);
     void handleApiEvents(QSslSocket *socket, const HttpRequest &req);
     void handleApiAuthPin(QSslSocket *socket, const QJsonObject &body);
 
@@ -203,6 +212,8 @@ private:
     std::function<QHostAddress(const QString &)> m_bindResolver;
     QString m_error;
     QString m_interactionContext;
+    bool m_playerOnTop = false;
+    QSet<QString> m_actionIds;
     int m_requestTimeoutMs = 20000;
     int m_idleTimeoutMs = 60000;
 

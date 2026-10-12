@@ -127,12 +127,13 @@ FocusScope {
 
     onMemberCountChanged: Qt.callLater(page.recoverIfStranded)
 
-    // The page being given the keyboard is its own case: a FocusScope opened on
-    // an empty playlist has no `focus: true` child to forward to, so it parks
-    // the keyboard on itself and `focusParked` never CHANGES — it was already
-    // true when nothing in the window was focused. Measured, not assumed: an
-    // offscreen probe of this page opened on an empty list left the keyboard on
-    // the scope until this trigger existed.
+    // The page being given the keyboard is its own case: this FocusScope has no
+    // `focus: true` child to forward to, so it parks the keyboard on itself and
+    // `focusParked` never CHANGES — it was already true when nothing in the
+    // window was focused. Measured, not assumed: an offscreen probe of this
+    // page opened on an empty list left the keyboard on the scope until this
+    // trigger existed. It is also how the table gets the keyboard on a fresh
+    // open, now that it no longer claims it with a `focus:` binding.
     onActiveFocusChanged: Qt.callLater(page.recoverIfStranded)
 
     // Nearest-useful-thing first: the member table when it has rows, then the
@@ -155,9 +156,8 @@ FocusScope {
     }
 
     function recoverIfStranded(): void {
-        // Mid-refill the answer is not knowable yet — the rows are on their way
-        // and the table takes the keyboard back itself when they land — so every
-        // trigger fires again on the falling edge of `loading`.
+        // Mid-refill the answer is not knowable yet — the rows are on their
+        // way — so every trigger fires again on the falling edge of `loading`.
         if (PlaylistCtl.loading || !page.activeFocus || !page.focusParked)
             return
         page.recoverFocus()
@@ -361,8 +361,8 @@ FocusScope {
                         enabled: page.memberCount > 0
                         onClicked: PlaylistCtl.requestPlayFrom(0)
 
-                        KeyNavigation.right: shuffleButton
-                        KeyNavigation.down: memberList
+                        property Item navRight: shuffleButton
+                        property Item navDown: memberList
                     }
 
                     StrmButton {
@@ -373,9 +373,9 @@ FocusScope {
                         enabled: page.memberCount > 0
                         onClicked: PlaylistCtl.requestShuffle()
 
-                        KeyNavigation.left: playButton
-                        KeyNavigation.right: renameButton
-                        KeyNavigation.down: memberList
+                        property Item navLeft: playButton
+                        property Item navRight: renameButton
+                        property Item navDown: memberList
                     }
 
                     StrmIconButton {
@@ -389,9 +389,9 @@ FocusScope {
                             renameSheet.open()
                         }
 
-                        KeyNavigation.left: shuffleButton
-                        KeyNavigation.right: reloadButton
-                        KeyNavigation.down: memberList
+                        property Item navLeft: shuffleButton
+                        property Item navRight: reloadButton
+                        property Item navDown: memberList
                     }
 
                     StrmIconButton {
@@ -402,9 +402,9 @@ FocusScope {
                         enabled: PlaylistCtl.currentId.length > 0
                         onClicked: PlaylistCtl.reload()
 
-                        KeyNavigation.left: renameButton
-                        KeyNavigation.right: deleteButton
-                        KeyNavigation.down: memberList
+                        property Item navLeft: renameButton
+                        property Item navRight: deleteButton
+                        property Item navDown: memberList
                     }
 
                     StrmIconButton {
@@ -418,8 +418,8 @@ FocusScope {
                         enabled: PlaylistCtl.currentId.length > 0
                         onClicked: confirmDelete.open()
 
-                        KeyNavigation.left: reloadButton
-                        KeyNavigation.down: memberList
+                        property Item navLeft: reloadButton
+                        property Item navDown: memberList
                     }
                 }
             }
@@ -466,19 +466,25 @@ FocusScope {
             anchors.bottom: parent.bottom
             anchors.topMargin: Theme.spacingTight
             clip: true
-            focus: page.memberCount > 0
+            // No `focus:` here. It was `focus: page.memberCount > 0`, and a
+            // binding seats focus again every time it turns true: Reload empties
+            // and refills the model, and the refill pulled the keyboard off the
+            // Reload button it had just been pressed on. The first landing does
+            // not need it — the page parks the keyboard on itself until the rows
+            // arrive and recoverFocus() puts it here.
+            //
             // Ruling P4-R23. A table with no rows is a fourth shape of stranded
             // focus that a `visible`/null/scope predicate cannot see: the page
             // fades the table with `opacity` rather than hiding it (below), so an
             // empty table is a real, visible, focusable item that answers no key.
             // It was reachable — Rename, Reload and Delete stay enabled on an
-            // empty playlist and all three name this table as their
-            // `KeyNavigation.down` stop, and KeyNavigation declines only DISABLED
-            // or invisible targets. Disabling it is better than widening the
-            // predicate twice over: KeyNavigation now refuses the target outright
-            // instead of landing on it and being rescued a turn later, and if
-            // focus does arrive some other way, Qt clears it onto this
-            // FocusScope, which is shape 2 and already seen.
+            // empty playlist and all three name this table as their Down stop
+            // (`navDown`, once `KeyNavigation.down`), which only a DISABLED or
+            // invisible target turns away. Disabling it is better than widening
+            // the predicate twice over: the name is refused outright instead of
+            // landing here and being rescued a turn later, and if focus does
+            // arrive some other way, Qt clears it onto this FocusScope, which
+            // is shape 2 and already seen.
             enabled: page.memberCount > 0
             model: PlaylistCtl.items
             rowHeight: Theme.scale(56)
@@ -496,7 +502,9 @@ FocusScope {
                 NumberAnimation { duration: Theme.animFastMs; easing.type: Theme.easeStandard }
             }
 
-            KeyNavigation.up: playButton
+            // The table's top edge: the ListView keeps Up for the row cursor
+            // and declines it on the first row (FocusNavigator).
+            property Item navUp: playButton
 
             onActivated: index => PlaylistCtl.requestPlayFrom(index)
 
@@ -741,6 +749,10 @@ FocusScope {
         visible: false
         z: 900
         title: qsTr("Rename playlist")
+        // A sheet over the page, not a Popup: arrows and Back stop at its edge
+        // instead of walking the page underneath (FocusNavigator).
+        property bool navModal: renameSheet.visible
+        property Item navEntry: renameField
 
         function open() {
             visible = true
@@ -813,6 +825,8 @@ FocusScope {
         visible: false
         z: 900
         title: qsTr("Delete this playlist?")
+        property bool navModal: confirmDelete.visible
+        property Item navEntry: cancelDelete
 
         function open() {
             visible = true
@@ -849,7 +863,7 @@ FocusScope {
                     text: qsTr("Cancel")
                     variant: "ghost"
                     onClicked: confirmDelete.close()
-                    KeyNavigation.right: confirmDeleteButton
+                    property Item navRight: confirmDeleteButton
                 }
 
                 StrmButton {
@@ -861,7 +875,7 @@ FocusScope {
                         PlaylistCtl.remove(PlaylistCtl.currentId)
                         confirmDelete.close()
                     }
-                    KeyNavigation.left: cancelDelete
+                    property Item navLeft: cancelDelete
                 }
             }
         }

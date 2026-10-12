@@ -34,6 +34,10 @@ private slots:
     void scopeChangeDoesNotInheritFilters();
     void redundantSetterDoesNotRefetch();
     void collectionScopeListsDirectMembers();
+    void facetsFollowTheKindOfLibrary();
+    void facetValuesComeFromTheScopeOnScreen();
+    void facetPicksReachTheWire();
+    void facetsDoNotOutliveTheirScope();
 
 private:
     QUrlQuery lastQuery() const
@@ -235,6 +239,196 @@ void LibraryQueryTest::collectionScopeListsDirectMembers()
 
     m_library->openCollection(QString(), QStringLiteral("nothing"));
     QCOMPARE(m_library->title(), QStringLiteral("Movies"));
+}
+
+namespace {
+
+QStringList facetKeys(const LibraryController *library)
+{
+    QStringList out;
+    for (const QVariant &entry : library->facets())
+        out.append(entry.toMap().value(QStringLiteral("key")).toString());
+    return out;
+}
+
+QVariantMap facetNamed(const LibraryController *library, const QString &key)
+{
+    for (const QVariant &entry : library->facets()) {
+        if (entry.toMap().value(QStringLiteral("key")).toString() == key)
+            return entry.toMap();
+    }
+    return {};
+}
+
+} // namespace
+
+void LibraryQueryTest::facetsFollowTheKindOfLibrary()
+{
+    m_library->open(QStringLiteral("4"), QStringLiteral("Movies"), QStringLiteral("movies"));
+    settle();
+    QStringList keys = facetKeys(m_library);
+    QVERIFY(keys.contains(QStringLiteral("genre")));
+    QVERIFY(keys.contains(QStringLiteral("resolution")));
+    QVERIFY(keys.contains(QStringLiteral("videoCodec")));
+    QVERIFY(!keys.contains(QStringLiteral("status")));
+    QCOMPARE(facetNamed(m_library, QStringLiteral("studio")).value(QStringLiteral("label")),
+             QVariant(QStringLiteral("Studio")));
+
+    // A series has no picture of its own: the server matches nothing on a
+    // width or a codec there, so those are not offered.
+    m_library->open(QStringLiteral("6"), QStringLiteral("TV"), QStringLiteral("tvshows"));
+    settle();
+    keys = facetKeys(m_library);
+    QVERIFY(keys.contains(QStringLiteral("status")));
+    QVERIFY(!keys.contains(QStringLiteral("resolution")));
+    QVERIFY(!keys.contains(QStringLiteral("range")));
+    QCOMPARE(facetNamed(m_library, QStringLiteral("studio")).value(QStringLiteral("label")),
+             QVariant(QStringLiteral("Network")));
+
+    // The axis a view is pinned to is not also a filter on it.
+    m_library->openGenre(QStringLiteral("8120"), QStringLiteral("Adventure"));
+    settle();
+    QVERIFY(!facetKeys(m_library).contains(QStringLiteral("genre")));
+    QVERIFY(facetKeys(m_library).contains(QStringLiteral("year")));
+
+    m_library->open(QStringLiteral("1868998"), QStringLiteral("Music"), QStringLiteral("music"));
+    settle();
+    QVERIFY(m_library->facets().isEmpty());
+}
+
+void LibraryQueryTest::facetValuesComeFromTheScopeOnScreen()
+{
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"8120\",\"Name\":\"Adventure\"},"
+                                       "{\"Id\":\"8121\",\"Name\":\"Horror\"},"
+                                       "{\"Name\":\"No id\"}],\"TotalRecordCount\":3}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Years"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Name\":\"1999\"},{\"Name\":\"2020\"}]}"));
+    m_library->open(QStringLiteral("4"), QStringLiteral("Movies"), QStringLiteral("movies"));
+    settle();
+
+    QSignalSpy arrived(m_library, &LibraryController::facetOptionsChanged);
+    // Asked for on first use, not with the page.
+    QVERIFY(m_library->facetOptions(QStringLiteral("genre")).isEmpty());
+    QVERIFY(m_library->facetLoading(QStringLiteral("genre")));
+    QTRY_COMPARE_WITH_TIMEOUT(arrived.count(), 1, 5000);
+    QVERIFY(!m_library->facetLoading(QStringLiteral("genre")));
+
+    const QVariantList genres = m_library->facetOptions(QStringLiteral("genre"));
+    QCOMPARE(genres.size(), 2); // a genre with no id cannot be asked for
+    QCOMPARE(genres.at(1).toMap().value(QStringLiteral("value")).toString(),
+             QStringLiteral("8121"));
+    QCOMPARE(genres.at(1).toMap().value(QStringLiteral("label")).toString(),
+             QStringLiteral("Horror"));
+    QCOMPARE(genres.at(1).toMap().value(QStringLiteral("selected")).toBool(), false);
+
+    const QUrlQuery asked(
+        m_mock->lastRequestFor(QStringLiteral("GET"), QStringLiteral("/Genres")).query);
+    QCOMPARE(asked.queryItemValue(QStringLiteral("ParentId")), QStringLiteral("4"));
+    QCOMPARE(asked.queryItemValue(QStringLiteral("IncludeItemTypes")), QStringLiteral("Movie"));
+    QCOMPARE(asked.queryItemValue(QStringLiteral("UserId")), kUserId);
+
+    // Years read newest first.
+    (void)m_library->facetOptions(QStringLiteral("year"));
+    QTRY_COMPARE_WITH_TIMEOUT(arrived.count(), 2, 5000);
+    QCOMPARE(m_library->facetOptions(QStringLiteral("year"))
+                 .first().toMap().value(QStringLiteral("value")).toString(),
+             QStringLiteral("2020"));
+
+    // Fixed lists need no request.
+    QCOMPARE(m_library->facetOptions(QStringLiteral("resolution")).size(), 4);
+}
+
+void LibraryQueryTest::facetPicksReachTheWire()
+{
+    m_library->open(QStringLiteral("4"), QStringLiteral("Movies"), QStringLiteral("movies"));
+    settle();
+    QVERIFY(!m_library->filtered());
+
+    m_library->toggleFacetValue(QStringLiteral("genre"), QStringLiteral("8120"));
+    settle();
+    m_library->toggleFacetValue(QStringLiteral("genre"), QStringLiteral("8121"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("GenreIds")), QStringLiteral("8120,8121"));
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("StartIndex")), QStringLiteral("0"));
+    QVERIFY(m_library->filtered());
+    QCOMPARE(m_library->activeFacetCount(), 1);
+    QCOMPARE(facetNamed(m_library, QStringLiteral("genre")).value(QStringLiteral("count")).toInt(),
+             2);
+
+    // Age ratings are OR-ed with a pipe: this server matches nothing on a comma.
+    m_library->toggleFacetValue(QStringLiteral("rating"), QStringLiteral("R"));
+    settle();
+    m_library->toggleFacetValue(QStringLiteral("rating"), QStringLiteral("PG-13"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("OfficialRatings"),
+                                        QUrl::FullyDecoded),
+             QStringLiteral("R|PG-13"));
+
+    m_library->toggleFacetValue(QStringLiteral("year"), QStringLiteral("2020"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("Years")), QStringLiteral("2020"));
+
+    // Resolution is one band of widths, and picking another replaces it.
+    m_library->toggleFacetValue(QStringLiteral("resolution"), QStringLiteral("1080"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("MinWidth")), QStringLiteral("1900"));
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("MaxWidth")), QStringLiteral("3799"));
+    m_library->toggleFacetValue(QStringLiteral("resolution"), QStringLiteral("4k"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("MinWidth")), QStringLiteral("3800"));
+    QVERIFY(!lastQuery().hasQueryItem(QStringLiteral("MaxWidth")));
+    // Picking the active one clears it.
+    m_library->toggleFacetValue(QStringLiteral("resolution"), QStringLiteral("4k"));
+    settle();
+    QVERIFY(!lastQuery().hasQueryItem(QStringLiteral("MinWidth")));
+
+    m_library->toggleFacetValue(QStringLiteral("range"), QStringLiteral("Hdr10"));
+    settle();
+    m_library->toggleFacetValue(QStringLiteral("score"), QStringLiteral("8"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("ExtendedVideoTypes")),
+             QStringLiteral("Hdr10"));
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("MinCommunityRating")),
+             QStringLiteral("8"));
+
+    m_library->clearFacet(QStringLiteral("genre"));
+    settle();
+    QVERIFY(!lastQuery().hasQueryItem(QStringLiteral("GenreIds")));
+    QVERIFY(lastQuery().hasQueryItem(QStringLiteral("Years")));
+
+    // One "clear" takes the facets with the letter and the watched chips.
+    m_library->clearFilters();
+    settle();
+    QVERIFY(!m_library->filtered());
+    QCOMPARE(m_library->activeFacetCount(), 0);
+    for (const char *name : {"Years", "OfficialRatings", "ExtendedVideoTypes",
+                             "MinCommunityRating"})
+        QVERIFY2(!lastQuery().hasQueryItem(QLatin1String(name)), name);
+
+    // An unknown axis or an empty value is not a query.
+    const int before = m_mock->requestCount();
+    m_library->toggleFacetValue(QStringLiteral("runtime"), QStringLiteral("90"));
+    m_library->toggleFacetValue(QStringLiteral("genre"), QString());
+    QCOMPARE(m_mock->requestCount(), before);
+}
+
+void LibraryQueryTest::facetsDoNotOutliveTheirScope()
+{
+    m_library->open(QStringLiteral("4"), QStringLiteral("Movies"), QStringLiteral("movies"));
+    settle();
+    m_library->toggleFacetValue(QStringLiteral("resolution"), QStringLiteral("4k"));
+    settle();
+    QVERIFY(lastQuery().hasQueryItem(QStringLiteral("MinWidth")));
+
+    m_library->open(QStringLiteral("6"), QStringLiteral("TV"), QStringLiteral("tvshows"));
+    settle();
+    QVERIFY(!lastQuery().hasQueryItem(QStringLiteral("MinWidth")));
+    QVERIFY(!m_library->filtered());
+
+    m_library->toggleFacetValue(QStringLiteral("status"), QStringLiteral("Ended"));
+    settle();
+    QCOMPARE(lastQuery().queryItemValue(QStringLiteral("SeriesStatus")), QStringLiteral("Ended"));
 }
 
 QTEST_MAIN(LibraryQueryTest)

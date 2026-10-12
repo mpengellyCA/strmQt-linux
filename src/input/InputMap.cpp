@@ -504,6 +504,43 @@ const QList<InputMap::ActionDef> &catalogue()
          QString::fromLatin1(InputMap::kContextPlayer),
          {QStringLiteral("Ctrl+S")},
          QString()},
+        // The player's own verbs that only a keyboard could reach. The page
+        // answered them through a fallback key and an id the catalogue did
+        // not hold, and trigger() refuses an id it does not know — so no pad,
+        // phone or command palette could ask for them, and none could be
+        // rebound. Mute is not among them yet: its key is "M", which is
+        // the menu globally, and an action here must have a default that does
+        // not conflict. It stays the player page's own fallback.
+        {QStringLiteral("player.next"),
+         QObject::tr("Next item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextPlayer),
+         {QStringLiteral("Shift+N")},
+         QString()},
+        {QStringLiteral("player.previous"),
+         QObject::tr("Previous item"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextPlayer),
+         {QStringLiteral("Shift+P")},
+         QString()},
+        {QStringLiteral("player.nextChapter"),
+         QObject::tr("Next chapter"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextPlayer),
+         {QStringLiteral("]")},
+         QString()},
+        {QStringLiteral("player.previousChapter"),
+         QObject::tr("Previous chapter"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextPlayer),
+         {QStringLiteral("[")},
+         QString()},
+        {QStringLiteral("player.stats"),
+         QObject::tr("Playback statistics"),
+         QStringLiteral("Playback"),
+         QString::fromLatin1(InputMap::kContextPlayer),
+         {QStringLiteral("Ctrl+I")},
+         QString()},
         {QStringLiteral("player.markLoop"),
          QObject::tr("Mark A–B loop point"),
          QStringLiteral("Playback"),
@@ -1151,6 +1188,8 @@ void InputMap::noteInput(const QString &device)
         return;
     }
     if (device == m_lastInputDevice)
+        return;
+    if (m_keyboardStampHeld && device == QLatin1String("keyboard"))
         return;
     m_lastInputDevice = device;
     m_store.setValue(kLastDeviceKey, device);

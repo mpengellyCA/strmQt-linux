@@ -1,19 +1,42 @@
 #pragma once
 
+#include <algorithm>
+
+#include "MediaItem.h"
+
 #include <QList>
 #include <QString>
 #include <QStringList>
 
 namespace strmqt {
 
-// Episodes in air order, across seasons. PremiereDate leads because every Emby
-// 4.x server accepts it and it orders a multi-season play-all correctly, but
-// episodes can share a date — a double premiere — and a SortName tiebreak then
-// orders them by title: Murderbot played "Eye Contact" (S1E2) before
-// "FreeCommerce" (S1E1). Season and episode number break the tie instead.
-inline QString episodeAirOrderSort()
+// Episodes in order, across seasons: by season number, then episode number.
+//
+// PremiereDate used to lead, on the grounds that every Emby 4.x server accepts
+// it and it orders a multi-season play-all. It is also the one field of the
+// four that is routinely wrong. Episodes share a date (a double premiere, a
+// whole season dropped at once), and one with no date, or the day before in
+// the server's time zone, sorts ahead of the rest — a series nobody had
+// started offered S1E6 as "next up" and listed it before S1E1. The numbers are
+// what the episode grid already shows, and an episode always has them.
+//
+// The one thing the date did that the numbers do not is keep specials out of
+// the lead: season 0 sorts first. moveSpecialsLast() below puts them back, and
+// a caller that wants "the first episode" asks for enough rows to see past
+// them (kEpisodeLeadFetch).
+inline QString episodeOrderSort()
 {
-    return QStringLiteral("PremiereDate,ParentIndexNumber,IndexNumber,SortName");
+    return QStringLiteral("ParentIndexNumber,IndexNumber,PremiereDate,SortName");
+}
+
+inline constexpr int kEpisodeLeadFetch = 48;
+
+// Specials (season 0) after everything else, order otherwise kept.
+inline void moveSpecialsLast(QList<MediaItem> &items)
+{
+    std::stable_partition(items.begin(), items.end(), [](const MediaItem &item) {
+        return !(item.type == QLatin1String("Episode") && item.parentIndexNumber == 0);
+    });
 }
 
 // Backend-neutral item query (PLAN §3.3): parent, filters, sort, search, paging.
@@ -73,6 +96,29 @@ struct ItemsQuery
     QString minDateCreated;
     QString minPremiereDate;
     QString maxPremiereDate;
+    // Library filter axes. Each was measured against Emby 4.9.5 before it was
+    // given a field, because this server ignores a parameter it does not know
+    // and returns everything: a filter that is not honoured looks exactly
+    // like one that matched the whole library. What was tried and is NOT
+    // here: a runtime bound under eight spellings (no effect; runtime is a
+    // sort key only) and MinCriticRating (no effect).
+    //   OfficialRatings     OR-ed with '|' (a comma matches nothing)
+    //   VideoCodecs, AudioLayouts, ExtendedVideoTypes
+    //                       OR-ed with ','; ExtendedVideoTypes takes the ids
+    //                       /ExtendedVideoTypes lists (None, Hdr10, DolbyVision)
+    //   MinWidth, MaxWidth  picture width in pixels; 0 is unset. The server's
+    //                       own IsHD/Is4K overlap, so resolution is a range
+    //   SeriesStatus        Continuing | Ended
+    //   MinCommunityRating  0 is unset
+    // The video ones match nothing on a Series: it has no streams of its own.
+    QStringList officialRatings;
+    QStringList videoCodecs;
+    QStringList audioLayouts;
+    QStringList extendedVideoTypes;
+    int minWidth = 0;
+    int maxWidth = 0;
+    QString seriesStatus;
+    double minCommunityRating = 0;
     // Explicit id list ("Ids"); the server returns them in its own sort order.
     QStringList ids;
     bool recursive = false;

@@ -5,7 +5,13 @@
 #include "core/Log.h"
 #include "server/emby/EmbyClient.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrlQuery>
 #include <QVariantMap>
+
+#include <algorithm>
 
 namespace strmqt {
 
@@ -36,6 +42,99 @@ QStringList itemTypesFor(const QString &collectionType)
     return {}; // unclassified: let the server return whatever the folder holds
 }
 
+// ── Metadata filters ────────────────────────────────────────────────────────
+// One row per axis. `path` is the server list the values come from, scoped by
+// the same ParentId / IncludeItemTypes as the grid so a library is only offered
+// what it holds; an empty path means the values are the fixed `choices` below.
+// `byId` says which field of a listed value the items query wants back.
+//
+// Every axis here was measured against the server before it was added
+// (ItemsQuery.h). Runtime is absent on purpose: the server has no runtime
+// bound under any spelling, only a sort key — which the sort menu has.
+enum class FacetKinds { Any, Films, Shows };
+
+struct FacetSpec
+{
+    const char *key;
+    const char *label;
+    bool multi;
+    FacetKinds kinds;
+    const char *path;
+    bool byId;
+};
+
+const FacetSpec kFacets[] = {
+    {"genre", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Genre"), true, FacetKinds::Any,
+     "/Genres", true},
+    {"year", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Year"), true, FacetKinds::Any,
+     "/Years", false},
+    {"studio", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Studio"), true, FacetKinds::Any,
+     "/Studios", true},
+    {"rating", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Age rating"), true,
+     FacetKinds::Any, "/OfficialRatings", false},
+    {"score", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Community rating"), false,
+     FacetKinds::Any, "", false},
+    {"status", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Status"), false, FacetKinds::Shows,
+     "", false},
+    {"resolution", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Resolution"), false,
+     FacetKinds::Films, "", false},
+    {"range", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Dynamic range"), true,
+     FacetKinds::Films, "/ExtendedVideoTypes", true},
+    {"videoCodec", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Video codec"), true,
+     FacetKinds::Films, "/VideoCodecs", false},
+    {"audio", QT_TRANSLATE_NOOP("strmqt::LibraryController", "Audio channels"), true,
+     FacetKinds::Films, "/AudioLayouts", false},
+};
+
+const FacetSpec *facetSpec(const QString &key)
+{
+    for (const FacetSpec &spec : kFacets) {
+        if (key == QLatin1String(spec.key))
+            return &spec;
+    }
+    return nullptr;
+}
+
+QVariant facetOption(const QString &value, const QString &label)
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("value"), value);
+    map.insert(QStringLiteral("label"), label);
+    return map;
+}
+
+// Width, not the server's IsHD / Is4K: those overlap (every 4K film is also
+// HD), so they cannot say "1080p and nothing else". The thresholds sit under
+// the nominal widths because a cropped or anamorphic encode is narrower than
+// its name.
+struct WidthBand
+{
+    const char *value;
+    int min;
+    int max;
+};
+const WidthBand kWidthBands[] = {
+    {"4k", 3800, 0}, {"1080", 1900, 3799}, {"720", 1200, 1899}, {"sd", 0, 1199}};
+
+// What a codec or layout is called on a box, where the server's own name is a
+// lower-case ffmpeg identifier.
+QString prettyStreamName(const QString &name)
+{
+    static const QHash<QString, QString> known{
+        {QStringLiteral("h264"), QStringLiteral("H.264")},
+        {QStringLiteral("hevc"), QStringLiteral("HEVC (H.265)")},
+        {QStringLiteral("av1"), QStringLiteral("AV1")},
+        {QStringLiteral("vc1"), QStringLiteral("VC-1")},
+        {QStringLiteral("vp9"), QStringLiteral("VP9")},
+        {QStringLiteral("mpeg2video"), QStringLiteral("MPEG-2")},
+        {QStringLiteral("mpeg4"), QStringLiteral("MPEG-4")},
+        {QStringLiteral("mono"), QStringLiteral("Mono")},
+        {QStringLiteral("stereo"), QStringLiteral("Stereo")},
+        {QStringLiteral("DolbyVision"), QStringLiteral("Dolby Vision")},
+    };
+    return known.value(name, name);
+}
+
 } // namespace
 
 LibraryController::LibraryController(emby::EmbyClient *client, QObject *parent)
@@ -61,6 +160,7 @@ void LibraryController::resetSessionState()
     m_sortDescending = false;
     m_watchedFilter = QStringLiteral("all");
     m_nameStartsWith.clear();
+    resetFacets();
 
     setLoading(false);
     setError({});
@@ -71,6 +171,7 @@ void LibraryController::resetSessionState()
     }
     emit titleChanged();
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
 }
 
@@ -154,8 +255,243 @@ ItemsQuery LibraryController::currentQuery() const
         query.filters.append(QStringLiteral("IsFavorite"));
 
     query.nameStartsWith = m_nameStartsWith;
+    applyFacets(query);
     query.fields = {QStringLiteral("Overview")};
     return query;
+}
+
+void LibraryController::applyFacets(ItemsQuery &query) const
+{
+    const auto picked = [this](const char *key) {
+        return m_facetSelection.value(QLatin1String(key));
+    };
+    // Appended, not assigned: a genre or studio VIEW already carries its own
+    // id, and that facet is not offered there (facets()).
+    query.genreIds += picked("genre");
+    query.studioIds += picked("studio");
+    for (const QString &year : picked("year")) {
+        bool ok = false;
+        const int value = year.toInt(&ok);
+        if (ok)
+            query.years.append(value);
+    }
+    query.officialRatings = picked("rating");
+    query.extendedVideoTypes = picked("range");
+    query.videoCodecs = picked("videoCodec");
+    query.audioLayouts = picked("audio");
+    query.seriesStatus = picked("status").value(0);
+    query.minCommunityRating = picked("score").value(0).toDouble();
+    const QString resolution = picked("resolution").value(0);
+    for (const WidthBand &band : kWidthBands) {
+        if (resolution == QLatin1String(band.value)) {
+            query.minWidth = band.min;
+            query.maxWidth = band.max;
+        }
+    }
+}
+
+// ── Metadata filters ────────────────────────────────────────────────────────
+
+QVariantList LibraryController::facets() const
+{
+    QVariantList out;
+    // A collection lists its direct members in the server's own order and is
+    // a handful of titles; music browses through pages of its own.
+    if (!hasQuery() || m_collectionScope || m_collectionType == QLatin1String("music"))
+        return out;
+    const bool films = m_collectionType == QLatin1String("movies");
+    const bool shows = m_collectionType == QLatin1String("tvshows");
+    for (const FacetSpec &spec : kFacets) {
+        if (spec.kinds == FacetKinds::Films && !films)
+            continue;
+        if (spec.kinds == FacetKinds::Shows && !shows)
+            continue;
+        const QString key = QLatin1String(spec.key);
+        // The axis a scoped view is already pinned to is not also a filter.
+        if ((key == QLatin1String("genre") && !m_genreId.isEmpty())
+            || (key == QLatin1String("studio") && !m_studioId.isEmpty()))
+            continue;
+        const QStringList picked = m_facetSelection.value(key);
+        QStringList names;
+        const QVariantList options = m_facetOptions.value(key);
+        for (const QString &value : picked) {
+            QString label = value;
+            for (const QVariant &option : options) {
+                const QVariantMap map = option.toMap();
+                if (map.value(QStringLiteral("value")).toString() == value) {
+                    label = map.value(QStringLiteral("label")).toString();
+                    break;
+                }
+            }
+            names.append(label);
+        }
+        QVariantMap map;
+        map.insert(QStringLiteral("key"), key);
+        // Television files a show under the network that aired it.
+        map.insert(QStringLiteral("label"), key == QLatin1String("studio") && shows
+                                                ? tr("Network")
+                                                : tr(spec.label));
+        map.insert(QStringLiteral("multi"), spec.multi);
+        map.insert(QStringLiteral("count"), static_cast<int>(picked.size()));
+        map.insert(QStringLiteral("summary"), names.join(QStringLiteral(", ")));
+        out.append(map);
+    }
+    return out;
+}
+
+int LibraryController::activeFacetCount() const
+{
+    int count = 0;
+    for (auto it = m_facetSelection.cbegin(); it != m_facetSelection.cend(); ++it) {
+        if (!it.value().isEmpty())
+            ++count;
+    }
+    return count;
+}
+
+QVariantList LibraryController::facetOptions(const QString &key)
+{
+    const FacetSpec *spec = facetSpec(key);
+    if (!spec)
+        return {};
+    if (!m_facetOptions.contains(key)) {
+        if (spec->path[0] != '\0') {
+            loadFacetOptions(key);
+            return {};
+        }
+        QVariantList fixed;
+        if (key == QLatin1String("resolution")) {
+            fixed = {facetOption(QStringLiteral("4k"), tr("4K")),
+                     facetOption(QStringLiteral("1080"), tr("1080p")),
+                     facetOption(QStringLiteral("720"), tr("720p")),
+                     facetOption(QStringLiteral("sd"), tr("SD"))};
+        } else if (key == QLatin1String("status")) {
+            fixed = {facetOption(QStringLiteral("Continuing"), tr("Continuing")),
+                     facetOption(QStringLiteral("Ended"), tr("Ended"))};
+        } else if (key == QLatin1String("score")) {
+            for (int floor = 9; floor >= 5; --floor)
+                fixed.append(facetOption(QString::number(floor), tr("%1 and up").arg(floor)));
+        }
+        m_facetOptions.insert(key, fixed);
+    }
+    const QStringList picked = m_facetSelection.value(key);
+    QVariantList out;
+    const QVariantList options = m_facetOptions.value(key);
+    out.reserve(options.size());
+    for (const QVariant &option : options) {
+        QVariantMap map = option.toMap();
+        map.insert(QStringLiteral("selected"),
+                   picked.contains(map.value(QStringLiteral("value")).toString()));
+        out.append(map);
+    }
+    return out;
+}
+
+bool LibraryController::facetLoading(const QString &key) const
+{
+    return m_facetLoading.contains(key);
+}
+
+void LibraryController::loadFacetOptions(const QString &key)
+{
+    const FacetSpec *spec = facetSpec(key);
+    if (!spec || !m_client || m_facetLoading.contains(key))
+        return;
+    m_facetLoading.insert(key);
+
+    // The same scope as the grid, so a library is offered only what it holds.
+    const ItemsQuery scope = currentQuery();
+    QUrlQuery params;
+    params.addQueryItem(QStringLiteral("UserId"), QStringLiteral("{uid}"));
+    if (!scope.parentId.isEmpty())
+        params.addQueryItem(QStringLiteral("ParentId"), scope.parentId);
+    if (!scope.includeItemTypes.isEmpty())
+        params.addQueryItem(QStringLiteral("IncludeItemTypes"),
+                            scope.includeItemTypes.join(QLatin1Char(',')));
+    params.addQueryItem(QStringLiteral("Recursive"), QStringLiteral("true"));
+    params.addQueryItem(QStringLiteral("SortBy"), QStringLiteral("SortName"));
+    // Names only: a studio list is well over a thousand rows on a film
+    // library and each would otherwise carry its artwork tags and user data.
+    params.addQueryItem(QStringLiteral("EnableImages"), QStringLiteral("false"));
+    params.addQueryItem(QStringLiteral("EnableUserData"), QStringLiteral("false"));
+
+    const int generation = m_facetGeneration;
+    const bool byId = spec->byId;
+    m_client->getJson(QLatin1String(spec->path), params)
+        .then(this, [this, key, generation, byId](const Result<QJsonDocument> &result) {
+            if (generation != m_facetGeneration)
+                return;
+            m_facetLoading.remove(key);
+            QVariantList options;
+            if (result.ok()) {
+                const QJsonArray items =
+                    result.value.object().value(QLatin1String("Items")).toArray();
+                options.reserve(items.size());
+                for (const QJsonValue &entry : items) {
+                    const QJsonObject object = entry.toObject();
+                    const QString name = object.value(QLatin1String("Name")).toString();
+                    const QJsonValue idValue = object.value(QLatin1String("Id"));
+                    const QString id = idValue.isString() ? idValue.toString()
+                                       : idValue.isDouble()
+                                           ? QString::number(idValue.toVariant().toLongLong())
+                                           : QString();
+                    const QString value = byId ? id : name;
+                    if (name.isEmpty() || value.isEmpty())
+                        continue;
+                    options.append(facetOption(value, prettyStreamName(name)));
+                }
+                // Newest first: nobody opens a year list looking for 1938.
+                if (key == QLatin1String("year"))
+                    std::reverse(options.begin(), options.end());
+                m_facetOptions.insert(key, options);
+            } else {
+                // Not cached, so opening the facet again asks again.
+                qCWarning(logApp) << "filter values for" << key << "failed:" << result.error;
+            }
+            emit facetOptionsChanged(key);
+            // A summary names what is picked, and may have had only ids.
+            if (!m_facetSelection.value(key).isEmpty())
+                emit facetsChanged();
+        });
+}
+
+void LibraryController::toggleFacetValue(const QString &key, const QString &value)
+{
+    const FacetSpec *spec = facetSpec(key);
+    if (!spec || value.isEmpty())
+        return;
+    QStringList picked = m_facetSelection.value(key);
+    if (picked.contains(value))
+        picked.removeAll(value);
+    else if (spec->multi)
+        picked.append(value);
+    else
+        picked = {value};
+    if (picked.isEmpty())
+        m_facetSelection.remove(key);
+    else
+        m_facetSelection.insert(key, picked);
+    emit facetsChanged();
+    emit facetOptionsChanged(key);
+    applyQueryChange();
+}
+
+void LibraryController::clearFacet(const QString &key)
+{
+    if (!m_facetSelection.contains(key))
+        return;
+    m_facetSelection.remove(key);
+    emit facetsChanged();
+    emit facetOptionsChanged(key);
+    applyQueryChange();
+}
+
+void LibraryController::resetFacets()
+{
+    ++m_facetGeneration;
+    m_facetSelection.clear();
+    m_facetOptions.clear();
+    m_facetLoading.clear();
 }
 
 QVariantList LibraryController::availableSorts() const
@@ -207,7 +543,8 @@ QString LibraryController::scopeKey() const
 
 bool LibraryController::filtered() const
 {
-    return m_watchedFilter != QLatin1String("all") || !m_nameStartsWith.isEmpty();
+    return m_watchedFilter != QLatin1String("all") || !m_nameStartsWith.isEmpty()
+           || !m_facetSelection.isEmpty();
 }
 
 void LibraryController::setSort(const QString &key, bool descending)
@@ -245,6 +582,11 @@ void LibraryController::clearFilters()
         return;
     m_watchedFilter = QStringLiteral("all");
     m_nameStartsWith.clear();
+    const QStringList keys = m_facetSelection.keys();
+    m_facetSelection.clear();
+    emit facetsChanged();
+    for (const QString &key : keys)
+        emit facetOptionsChanged(key);
     applyQueryChange();
 }
 
@@ -270,6 +612,8 @@ void LibraryController::clearScope()
     // Holland" still filtered to unplayed titles beginning with Q looks broken.
     m_nameStartsWith.clear();
     m_watchedFilter = QStringLiteral("all");
+    // The lists go too: they were fetched for the library being left.
+    resetFacets();
 }
 
 void LibraryController::open(const QString &libraryId, const QString &title,
@@ -283,6 +627,7 @@ void LibraryController::open(const QString &libraryId, const QString &title,
     m_sortBy = QStringLiteral("SortName");
     m_sortDescending = false;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(title);
     fetchPage(0);
@@ -293,6 +638,7 @@ void LibraryController::openFavorites()
     clearScope();
     m_favoritesOnly = true;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(tr("Favorites"));
     fetchPage(0);
@@ -305,6 +651,7 @@ void LibraryController::openGenre(const QString &genreId, const QString &name)
     clearScope();
     m_genreId = genreId;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(name);
     fetchPage(0);
@@ -321,6 +668,7 @@ void LibraryController::openPerson(const QString &personId, const QString &name)
     m_sortBy = QStringLiteral("PremiereDate");
     m_sortDescending = true;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(name);
     fetchPage(0);
@@ -339,6 +687,7 @@ void LibraryController::openCollection(const QString &collectionId, const QStrin
     m_sortBy.clear();
     m_sortDescending = false;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(name);
     fetchPage(0);
@@ -353,6 +702,7 @@ void LibraryController::openStudio(const QString &studioId, const QString &name)
     m_sortBy = QStringLiteral("PremiereDate");
     m_sortDescending = true;
     emit scopeChanged();
+    emit facetsChanged();
     emit queryChanged();
     resetFor(name);
     fetchPage(0);

@@ -49,6 +49,13 @@ class Application : public QGuiApplication
     Q_OBJECT
     Q_PROPERTY(QString interactionContext READ interactionContext WRITE setInteractionContext
                    NOTIFY interactionContextChanged)
+    // Whether the full player page is the one on screen, published by Main.qml.
+    // The phone remote needs it to tell the full player from the docked bar.
+    Q_PROPERTY(bool playerOnTop READ playerOnTop WRITE setPlayerOnTop NOTIFY playerOnTopChanged)
+    // True while a popup or a modal surface holds the keyboard (FocusNavigator,
+    // set from main.cpp once the window exists). Main.qml folds it into the
+    // interaction context.
+    Q_PROPERTY(bool navigationModal READ navigationModal NOTIFY navigationModalChanged)
     // How far one mouse-wheel notch moves a scrollable surface, in pixels.
     // Published so the horizontal rails — which handle the wheel themselves —
     // move by exactly as much as the vertical views Qt scrolls for us.
@@ -86,9 +93,15 @@ public:
     QString interactionContext() const { return m_interactionContext; }
     int wheelStepPx() const { return m_wheelStepPx; }
     void setInteractionContext(const QString &context);
+    bool playerOnTop() const { return m_playerOnTop; }
+    void setPlayerOnTop(bool onTop);
+    bool navigationModal() const { return m_navigationModal; }
+    void setNavigationModal(bool modal);
 
 signals:
     void interactionContextChanged();
+    void playerOnTopChanged();
+    void navigationModalChanged();
 
 private:
     void shutdown();
@@ -145,6 +158,8 @@ private:
     // with. Playback activity is deliberately not an input context: playback
     // may continue underneath an ordinary browse page.
     QString m_interactionContext = QStringLiteral("login");
+    bool m_playerOnTop = false;
+    bool m_navigationModal = false;
     int m_wheelStepPx = 0;
     bool m_lastPlaybackActive = false;
     bool m_shuttingDown = false;

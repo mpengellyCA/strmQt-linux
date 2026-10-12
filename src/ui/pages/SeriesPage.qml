@@ -626,6 +626,10 @@ FocusScope {
                 // ── Verbs ──────────────────────────────────────────────────
                 // Every one is reachable by click and by keyboard, and the
                 // Left/Right chain skips whatever this series does not show.
+                // The neighbours are names for the navigator (FocusNavigator.h),
+                // not KeyNavigation links: a link accepts the key whether or
+                // not its target is there, and a name that is not is somewhere
+                // the layout answers for instead.
                 Row {
                     id: verbRow
                     spacing: Theme.spacingTight
@@ -644,8 +648,8 @@ FocusScope {
                         iconName: "play"
                         variant: "primary"
                         onClicked: Actions.play(SeriesCtl.nextUnwatched)
-                        KeyNavigation.right: page.verbAfter(0)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navRight: page.verbAfter(0)
+                        property Item navDown: page.sectionBelow(0)
                     }
 
                     StrmButton {
@@ -654,9 +658,9 @@ FocusScope {
                         text: qsTr("Play all")
                         iconName: "playlist"
                         onClicked: Actions.playAll(SeriesCtl.seriesId, "tvshows")
-                        KeyNavigation.left: page.verbBefore(1)
-                        KeyNavigation.right: page.verbAfter(1)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navLeft: page.verbBefore(1)
+                        property Item navRight: page.verbAfter(1)
+                        property Item navDown: page.sectionBelow(0)
                     }
 
                     // shuffleSeries() spans every season rather than just the
@@ -667,9 +671,9 @@ FocusScope {
                         text: qsTr("Shuffle")
                         iconName: "shuffle"
                         onClicked: Actions.shuffleSeries(SeriesCtl.seriesId)
-                        KeyNavigation.left: page.verbBefore(2)
-                        KeyNavigation.right: page.verbAfter(2)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navLeft: page.verbBefore(2)
+                        property Item navRight: page.verbAfter(2)
+                        property Item navDown: page.sectionBelow(0)
                     }
 
                     StrmButton {
@@ -679,9 +683,9 @@ FocusScope {
                         // The verb, not a local flip: Actions owns the value and
                         // tells every view about the change.
                         onClicked: Actions.setPlayed(SeriesCtl.seriesId, !page.seriesPlayed)
-                        KeyNavigation.left: page.verbBefore(3)
-                        KeyNavigation.right: page.verbAfter(3)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navLeft: page.verbBefore(3)
+                        property Item navRight: page.verbAfter(3)
+                        property Item navDown: page.sectionBelow(0)
                     }
 
                     StrmButton {
@@ -689,9 +693,9 @@ FocusScope {
                         text: page.seriesFavorite ? qsTr("Favourite") : qsTr("Add favourite")
                         iconName: page.seriesFavorite ? "heart-filled" : "heart"
                         onClicked: Actions.setFavorite(SeriesCtl.seriesId, !page.seriesFavorite)
-                        KeyNavigation.left: page.verbBefore(4)
-                        KeyNavigation.right: page.verbAfter(4)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navLeft: page.verbBefore(4)
+                        property Item navRight: page.verbAfter(4)
+                        property Item navDown: page.sectionBelow(0)
                     }
 
                     StrmIconButton {
@@ -699,8 +703,8 @@ FocusScope {
                         iconName: "more-horizontal"
                         tooltip: qsTr("More actions")
                         onClicked: page.openSeriesMenu(moreButton, 0, moreButton.height)
-                        KeyNavigation.left: page.verbBefore(5)
-                        KeyNavigation.down: page.sectionBelow(0)
+                        property Item navLeft: page.verbBefore(5)
+                        property Item navDown: page.sectionBelow(0)
                     }
                 }
 
@@ -790,8 +794,8 @@ FocusScope {
             // previews (StrmTabBar draws that line, it is not redrawn here).
             onTabSelected: index => page.selectSeason(index)
 
-            KeyNavigation.up: page.heroButton
-            KeyNavigation.down: page.sectionBelow(1)
+            property Item navUp: page.heroButton
+            property Item navDown: page.sectionBelow(1)
 
             // Kept as a harmless confirm so muscle memory from the old page
             // still works; selectSeason() on the loaded season just reloads it.

@@ -21,6 +21,10 @@ import StrmQt
 ApplicationWindow {
     id: root
 
+    // Where the keyboard belongs when focus has to be put back and nothing
+    // says where (FocusNavigator): the page, not the chrome around it.
+    property Item navHome: stack
+
     width: 1600
     height: 900
     minimumWidth: 960
@@ -53,8 +57,13 @@ ApplicationWindow {
     // stands down while one is showing.
     readonly property bool shortcutSheetOpened: shortcutSheetLoader.opened
     readonly property bool commandPaletteOpened: commandPaletteLoader.opened
+    // A menu, a dropdown or a page's own sheet counts too (App.navigationModal,
+    // from FocusNavigator): a shoulder button used to push a page underneath
+    // an open menu, and R3 moved the keyboard out of a popup that could then
+    // no longer be closed with Back.
     readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
                                         || resumePrompt.visible || remoteOffer.visible
+                                        || App.navigationModal === true
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 
     function toggleShortcutSheet(): void {
@@ -82,6 +91,12 @@ ApplicationWindow {
         target: App
         property: "interactionContext"
         value: root.interactionContext
+    }
+
+    Binding {
+        target: App
+        property: "playerOnTop"
+        value: root.playerOnTop
     }
 
     readonly property var currentEntry: stack.currentEntry
@@ -832,6 +847,24 @@ ApplicationWindow {
         // in Settings has to move this too. Key events reach here only after the
         // focused page has declined them, so a page that wants Esc for itself
         // (the player does) still wins.
+        // The bottom edge of a page leads to the docked bar. It took focus
+        // by a click, by Tab or by a dedicated button (R3 / "N") and by
+        // nothing else, which made it the one surface a D-pad could not walk
+        // to. Named on the stack, so it is the page's EDGE: Down still goes
+        // to whatever the page has further down first (FocusNavigator).
+        property Item navDown: miniPlayer.shown ? miniPlayer : null
+        // Entered — by an edge, or by recovery (root.navHome) — on the page
+        // that is up, whose own focus scope then says where inside it.
+        property Item navEntry: stack.currentItem
+        // The other two edges reach the chrome: Left to the destination rail,
+        // Up to the header. These were claimed here, as key handlers — which
+        // run before the navigator is asked, so on every page Left and Up
+        // went to the chrome even when the page had something of its own that
+        // way which nobody had wired an arrow to. As named edges the page is
+        // searched first.
+        property Item navLeft: root.chromeVisible && !root.overlayOpen ? navRail : null
+        property Item navUp: root.chromeVisible && !root.overlayOpen ? topBar : null
+
         Keys.onPressed: event => {
             Input.noteInput("keyboard");
             if (event.isAutoRepeat)
@@ -842,18 +875,7 @@ ApplicationWindow {
                 event.accepted = true;
                 return;
             }
-            // The page edges. A key only reaches the stack once every control
-            // between it and here has declined it, which is exactly what makes
-            // these edges rather than a hijack: a grid mid-row, an armed
-            // scrubber, a filter chain and a two-pane playlist all answer Left
-            // first, and a list with somewhere above it answers Up.
-            if (event.key === Qt.Key_Left && root.focusNavigationRail()) {
-                event.accepted = true;
-                return;
-            }
-            if (event.key === Qt.Key_Up && root.focusTopBar()) {
-                event.accepted = true;
-            }
+            event.accepted = false;
         }
 
         pushEnter: Transition {
@@ -1138,6 +1160,10 @@ ApplicationWindow {
         z: 18
         playerOnTop: root.playerOnTop
         sleeveInFlight: sleeveFlight.active
+
+        // Up off the bar goes back to the page, to wherever in it the
+        // keyboard was (the stack is a focus scope and remembers).
+        navUp: stack
 
         onExpandRequested: {
             root.showPlayer(true)
@@ -1795,6 +1821,7 @@ ApplicationWindow {
         id: resumePrompt
 
         property var info: ({})
+        property bool navModal: true
 
         visible: false
         anchors.fill: parent
@@ -1891,6 +1918,7 @@ ApplicationWindow {
         id: remoteOffer
 
         readonly property var remote: typeof WebRemoteCtl !== "undefined" ? WebRemoteCtl : null
+        property bool navModal: true
 
         visible: remoteOffer.remote !== null && remoteOffer.remote.offerSetup
                  && !resumePrompt.visible && !root.playerOnTop

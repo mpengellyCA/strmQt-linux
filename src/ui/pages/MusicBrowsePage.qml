@@ -179,6 +179,47 @@ FocusScope {
             page.activeView.forceActiveFocus(Qt.TabFocusReason);
     }
 
+    // ── Seating the keyboard in the content ────────────────────────────────
+    // The content is owed the keyboard once per section: when the page opens
+    // and each time the section changes, as soon as the view has something to
+    // stand on. This used to be two bindings — `focus: !contentFocusable` on
+    // the strip and `focus: contentFocusable` on the Loader — and a binding
+    // cannot know WHY its input changed. Toggling a filter empties the lane
+    // before it refills, so the keyboard left the pill that had just been
+    // pressed for the strip and then dropped into the grid; a letter chosen on
+    // the dividers did the same.
+    property bool contentSeatPending: true
+
+    onLoadedSectionChanged: {
+        page.contentSeatPending = true;
+        // The outgoing view is about to be destroyed under the keyboard. The
+        // strip holds it while the new section fills, as it does on open.
+        if (viewLoader.activeFocus)
+            strip.forceActiveFocus(Qt.OtherFocusReason);
+    }
+
+    function seatContent(): void {
+        if (!page.contentSeatPending || !page.contentFocusable || !page.activeView)
+            return;
+        page.contentSeatPending = false;
+        if (!page.activeFocus) {
+            // The keyboard is somewhere else altogether (the rail, the header,
+            // the docked bar). Only say where it lands when it comes back.
+            viewLoader.focus = true;
+            return;
+        }
+        // Waiting on the strip, or parked: the content takes it. Anywhere
+        // else, the user put it there, and it stays.
+        if (strip.activeFocus || page.focusParked)
+            page.activeView.forceActiveFocus(Qt.OtherFocusReason);
+    }
+
+    onContentFocusableChanged: page.seatContent()
+    // `contentFocusable` does not move when one view with rows replaces
+    // another, nor on Playlists, which always has its tile — so the view
+    // arriving asks as well.
+    onActiveViewChanged: Qt.callLater(page.seatContent)
+
     // Focus is stranded: something held the keyboard and then stopped being a
     // place the keyboard can be. That happens in four measured shapes at Qt
     // 6.11.2, all four reproduced on this page in an offscreen probe, and Qt
@@ -195,9 +236,11 @@ FocusScope {
     //     off the button. A `focused === page` test is enough for a page with
     //     no inner scope; here it would miss this entirely.
     //  3. The focused item goes `focus: false` — the views' `focus: count > 0`.
-    //     Also parks on a scope, but StrmGrid's own NavigationFocusRestorer
-    //     fallback already lands it on `navigationFocusFallbackItem` (`strip`),
-    //     so this one is the control's to handle and is left to it.
+    //     That parks on the Loader, which is a scope too. A refill that brings
+    //     rows back hands the keyboard straight back to the view (the same
+    //     binding, turning true inside a scope that still has it); one that
+    //     comes back empty leaves it here, which is why `viewLoader` is in the
+    //     test below.
     //  4. The keyboard is inside a view that is perfectly visible and EMPTY:
     //     not null, not a scope, not invisible, so none of the tests above can
     //     see it. `focusInEmptyView()` asks the one question they cannot.
@@ -209,7 +252,7 @@ FocusScope {
     readonly property bool focusParked: {
         const focused = page.Window.activeFocusItem;
         return focused === null || focused === page || focused === pillBar
-            || focused.visible === false;
+            || focused === viewLoader || focused.visible === false;
     }
 
     // Shape 4. `contentFocusable` is the page's own answer to "is there anything
@@ -270,9 +313,9 @@ FocusScope {
             Qt.callLater(page.recoverIfStranded);
     }
 
-    // The page being handed the keyboard is its own case: a FocusScope opened on
-    // an empty section has no `focus: true` child to forward to, so it parks the
-    // keyboard on itself and `focusParked` never CHANGES — it was already true
+    // The page being handed the keyboard is its own case: when the focus child
+    // it forwards to is the Loader and the view in it is empty, the keyboard
+    // parks on a scope and `focusParked` never CHANGES — it was already true
     // while nothing in the window was focused at all.
     onActiveFocusChanged: Qt.callLater(page.recoverIfStranded)
 
@@ -460,8 +503,9 @@ FocusScope {
         anchors.rightMargin: Theme.pageMarginValue
         anchors.topMargin: Theme.spacingTight
         currentKey: MusicBrowseCtl.section
-        // Empty or loading, the strip holds the keyboard (see the Loader).
-        focus: !page.contentFocusable
+        // The page's resting focus: on open, and while a section fills, the
+        // strip holds the keyboard until seatContent() hands it to the view.
+        focus: true
 
         onSectionChosen: key => {
             if (key === "home")
@@ -471,10 +515,9 @@ FocusScope {
         }
 
         Keys.onDownPressed: event => {
-            if (pillBar.entryItem) {
+            event.accepted = pillBar.entryItem !== null;
+            if (event.accepted)
                 pillBar.entryItem.forceActiveFocus(Qt.TabFocusReason);
-                event.accepted = true;
-            }
         }
     }
 
@@ -538,9 +581,13 @@ FocusScope {
             strip.forceActiveFocus(Qt.TabFocusReason);
             event.accepted = true;
         }
+        // Declined when the view has nothing to stand on: an empty section
+        // still has something below the pills — its Retry, or the chips that
+        // undo a filter — and accepting the key here left those to Tab alone.
         Keys.onDownPressed: event => {
-            page.focusContent();
-            event.accepted = true;
+            event.accepted = page.contentFocusable && page.activeView !== null;
+            if (event.accepted)
+                page.focusContent();
         }
 
         // A pill grows on focus, so the first one's ring used to be cut at the
@@ -889,7 +936,7 @@ FocusScope {
             emptyText: ""
             prefetchThreshold: 30
             focus: albumsGrid.count > 0
-            KeyNavigation.up: pillBar.entryItem
+            property Item navUp: pillBar.entryItem
             onNearEnd: MusicBrowseCtl.loadMore()
             onItemActivated: index => page.openItem(index)
             onItemPlayRequested: index => page.playItem(index)
@@ -929,7 +976,7 @@ FocusScope {
             emptyText: ""
             prefetchThreshold: 30
             focus: artistsGrid.count > 0
-            KeyNavigation.up: pillBar.entryItem
+            property Item navUp: pillBar.entryItem
             onNearEnd: MusicBrowseCtl.loadMore()
             onItemActivated: index => page.openItem(index)
             // CratePortrait declares no playRequested signal (no ▶ on an
@@ -970,7 +1017,7 @@ FocusScope {
             alwaysShowArtist: true
             multiSelect: true
             prefetchThreshold: 30
-            KeyNavigation.up: pillBar.entryItem
+            property Item navUp: pillBar.entryItem
             onActivated: index => page.playSongFrom(index)
             onMenuRequested: (index, mx, my) => songMenu.popupForItemNoDetails(page.itemAt(index), mx, my)
             onNearEnd: MusicBrowseCtl.loadMore()
@@ -1047,7 +1094,7 @@ FocusScope {
             emptyText: ""
             prefetchThreshold: 24
             focus: genresGrid.count > 0
-            KeyNavigation.up: pillBar.entryItem
+            property Item navUp: pillBar.entryItem
             onNearEnd: MusicBrowseCtl.loadMore()
             onItemActivated: index => page.openItem(index)
 
@@ -1086,6 +1133,10 @@ FocusScope {
         // API the Loader's other items do.
         FocusScope {
             id: playlistsScope
+
+            // The Loader's only child, so always its focus child: without this
+            // the Loader being given the keyboard kept it.
+            focus: true
 
             readonly property alias count: playlistsGrid.count
             readonly property alias currentIndex: playlistsGrid.currentIndex
@@ -1165,11 +1216,13 @@ FocusScope {
                         createPrompt.show();
                 }
                 Keys.onUpPressed: event => {
-                    if (pillBar.entryItem)
+                    event.accepted = pillBar.entryItem !== null;
+                    if (event.accepted)
                         pillBar.entryItem.forceActiveFocus(Qt.TabFocusReason);
-                    event.accepted = true;
                 }
-                KeyNavigation.down: playlistsGrid
+                // Only while there are playlists: an empty grid is visible and
+                // enabled, and would take the keyboard and answer nothing.
+                property Item navDown: playlistsGrid.count > 0 ? playlistsGrid : null
             }
 
             Text {
@@ -1200,7 +1253,7 @@ FocusScope {
                 emptyText: ""
                 prefetchThreshold: 30
                 focus: playlistsGrid.count > 0
-                KeyNavigation.up: newTile
+                property Item navUp: newTile
                 onNearEnd: MusicBrowseCtl.loadMore()
                 onItemActivated: index => page.openItem(index)
                 // The inline playlist card below declares no playRequested
@@ -1293,9 +1346,8 @@ FocusScope {
         anchors.rightMargin: page.songsShown ? Theme.spacingValue : 0
         anchors.bottomMargin: page.songsShown ? Theme.spacingValue : 0
         active: page.viewReady
-        // A Loader is a focus scope. Its claim follows the strip's, so the
-        // keyboard is never parked in an empty view (see the deleted MusicPage.qml's history).
-        focus: page.contentFocusable
+        // A Loader is a focus scope, and it makes no standing claim on the
+        // keyboard: seatContent() gives it the view once per section.
         sourceComponent: page.loadedSection === "artists" ? artistsComponent
                        : page.loadedSection === "songs" ? songsComponent
                        : page.loadedSection === "genres" ? genresComponent
@@ -1592,6 +1644,10 @@ FocusScope {
         id: createPrompt
 
         property bool opened: false
+        // Arrows and Back stop at the prompt's edge instead of reaching the
+        // page behind the scrim (FocusNavigator).
+        property bool navModal: createPrompt.opened
+        property Item navEntry: nameField
 
         function show(): void {
             nameField.text = "";
@@ -1655,7 +1711,7 @@ FocusScope {
                 placeholderText: qsTr("Name")
                 onAccepted: createPrompt.commit()
                 onEscapePressed: createPrompt.dismiss()
-                KeyNavigation.down: createButton
+                property Item navDown: createButton
             }
 
             Row {
@@ -1668,8 +1724,8 @@ FocusScope {
                     variant: "primary"
                     enabled: nameField.text.trim().length > 0
                     onClicked: createPrompt.commit()
-                    KeyNavigation.up: nameField
-                    KeyNavigation.right: cancelButton
+                    property Item navUp: nameField
+                    property Item navRight: cancelButton
                 }
 
                 StrmButton {
@@ -1677,8 +1733,8 @@ FocusScope {
                     text: qsTr("Cancel")
                     variant: "ghost"
                     onClicked: createPrompt.dismiss()
-                    KeyNavigation.up: nameField
-                    KeyNavigation.left: createButton
+                    property Item navUp: nameField
+                    property Item navLeft: createButton
                 }
             }
         }

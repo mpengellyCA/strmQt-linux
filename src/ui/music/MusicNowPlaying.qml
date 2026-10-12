@@ -152,6 +152,15 @@ FocusScope {
             width: Math.max(0, Math.min(stageZone.width - 2 * Theme.pageMarginValue, Theme.scale(640)))
             spacing: Theme.spacingValue
 
+            // One control to the navigator, as the docked bar is: none of the
+            // stage's buttons is a Tab stop, so between them the neighbours
+            // they name (`navLeft` / `navRight` / `navDown`) are all there is,
+            // and a link to one that is disabled just now — ⏮ on the first
+            // track, the scrubber before a duration is known — is followed on
+            // to the next (FocusNavigator.h).
+            property bool navStop: true
+            property Item navEntry: playPause
+
             CrateKicker {
                 id: kicker
 
@@ -245,8 +254,8 @@ FocusScope {
                     // the page, where it would seek.
                     Keys.onLeftPressed: event => event.accepted = true
 
-                    KeyNavigation.right: prevButton
-                    KeyNavigation.down: scrubber
+                    property Item navRight: prevButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -264,9 +273,9 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(prevButton)
 
-                    KeyNavigation.left: shuffleButton
-                    KeyNavigation.right: playPause
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: shuffleButton
+                    property Item navRight: playPause
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -281,9 +290,9 @@ FocusScope {
                     tooltip: PlayerCtl.paused === true ? qsTr("Play") : qsTr("Pause")
                     onClicked: PlayerCtl.togglePause()
 
-                    KeyNavigation.left: prevButton
-                    KeyNavigation.right: nextButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: prevButton
+                    property Item navRight: nextButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -299,9 +308,9 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(nextButton)
 
-                    KeyNavigation.left: playPause
-                    KeyNavigation.right: repeatButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: playPause
+                    property Item navRight: repeatButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -320,9 +329,9 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(repeatButton)
 
-                    KeyNavigation.left: nextButton
-                    KeyNavigation.right: favouriteButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: nextButton
+                    property Item navRight: favouriteButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -340,9 +349,9 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(favouriteButton)
 
-                    KeyNavigation.left: repeatButton
-                    KeyNavigation.right: addButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: repeatButton
+                    property Item navRight: addButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -358,9 +367,9 @@ FocusScope {
 
                     onActiveFocusChanged: view.rescueFocusFrom(addButton)
 
-                    KeyNavigation.left: favouriteButton
-                    KeyNavigation.right: moreButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: favouriteButton
+                    property Item navRight: moreButton
+                    property Item navDown: scrubber
                 }
 
                 StrmIconButton {
@@ -376,8 +385,8 @@ FocusScope {
                         moreMenu.popupAt(corner.x, corner.y);
                     }
 
-                    KeyNavigation.left: addButton
-                    KeyNavigation.down: scrubber
+                    property Item navLeft: addButton
+                    property Item navDown: scrubber
                     Keys.onRightPressed: event => {
                         panel.focusTabs();
                         event.accepted = true;
@@ -390,6 +399,14 @@ FocusScope {
 
                 width: parent.width
                 height: Theme.controlHeight
+
+                // Up is said by hand in the two rows that have somewhere to
+                // go: the page answers every Up this view declines before the
+                // navigator is asked, so a `navUp` would never be read.
+                Keys.onUpPressed: event => {
+                    playPause.forceActiveFocus(Qt.BacktabFocusReason);
+                    event.accepted = true;
+                }
 
                 StrmSlider {
                     id: scrubber
@@ -411,8 +428,7 @@ FocusScope {
 
                     onCommitted: v => PlayerCtl.seekTo(Math.round(v))
 
-                    KeyNavigation.up: playPause
-                    KeyNavigation.down: muteButton
+                    property Item navDown: muteButton
                 }
 
                 // StrmSlider has an activeFocus handler of its own (the
@@ -447,6 +463,11 @@ FocusScope {
                 // The bottom row: Down stays put rather than falling through to
                 // the page, which would send the keyboard back up to ⏯.
                 Keys.onDownPressed: event => event.accepted = true
+                // Back up to the scrubber, or past it while it is disabled.
+                Keys.onUpPressed: event => {
+                    (scrubber.enabled ? scrubber : playPause).forceActiveFocus(Qt.BacktabFocusReason);
+                    event.accepted = true;
+                }
 
                 Text {
                     id: readout
@@ -503,14 +524,13 @@ FocusScope {
                         // the page, where it would seek.
                         Keys.onLeftPressed: event => event.accepted = true
 
-                        KeyNavigation.right: volumeSlider
-                        KeyNavigation.up: scrubber
+                        property Item navRight: volumeSlider
                     }
 
                     // In the chain, last in its row: once focused, Left/Right
                     // are the level (StrmSlider owns them, and a volume step is
                     // harmless where a seek is not, so it is not armToScrub),
-                    // and Up leaves.
+                    // and Up leaves (the footer's handler).
                     StrmSlider {
                         id: volumeSlider
 
@@ -530,8 +550,6 @@ FocusScope {
                             PlayerCtl.setVolume(Math.round(value));
                         }
                         onCommitted: value => PlayerCtl.setVolume(Math.round(value))
-
-                        KeyNavigation.up: scrubber
                     }
                 }
             }

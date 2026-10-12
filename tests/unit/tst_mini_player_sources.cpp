@@ -66,10 +66,10 @@ void MiniPlayerSourcesTest::audioBarMutes()
     QVERIFY(button.contains("\"volume-mute\""));
     QVERIFY(button.contains("onActiveFocusChanged: mini.rescueFocusFrom(muteButton)"));
     // In the chain between ♡ and the queue, both ways.
-    QVERIFY(button.contains("KeyNavigation.left: favoriteButton"));
-    QVERIFY(button.contains("KeyNavigation.right: queueButton"));
-    QVERIFY(mini.contains("KeyNavigation.right: muteButton"));
-    QVERIFY(mini.contains("KeyNavigation.left: muteButton"));
+    QVERIFY(button.contains("property Item navLeft: favoriteButton"));
+    QVERIFY(button.contains("property Item navRight: queueButton"));
+    QVERIFY(mini.contains("property Item navRight: muteButton"));
+    QVERIFY(mini.contains("property Item navLeft: muteButton"));
 }
 
 QTEST_GUILESS_MAIN(MiniPlayerSourcesTest)

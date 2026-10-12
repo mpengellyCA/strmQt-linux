@@ -74,6 +74,54 @@ FocusScope {
         grid.restoreNavigationCursor(Number(state.index))
     }
 
+    // ── Where the keyboard starts ──────────────────────────────────────────
+    // Decided here, once per scope, and not by `focus:` bindings on the grid
+    // and the two empty states. Those were re-run by every change in the row
+    // count, so sorting, filtering or picking a letter from the bar took the
+    // keyboard out of the bar and dropped it in the grid the moment the new
+    // rows landed.
+    //
+    // After the first seat only two things move it: the empty state the
+    // keyboard was standing on going away (its own Retry / Clear filters did
+    // that, and the rows it asked for are where the user is headed), and an
+    // empty state appearing while the keyboard sits in a grid with no rows.
+    // Everything else is the user's, or the navigator's to recover
+    // (FocusNavigator.h). `focus`, not forceActiveFocus(): this is the page's
+    // default, and must not take the keyboard off the shell's chrome.
+    property bool focusSeated: false
+
+    function holdsKeyboard(item) {
+        for (let f = page.Window.activeFocusItem; f; f = f.parent) {
+            if (f === item)
+                return true
+        }
+        return false
+    }
+
+    function seatFocus() {
+        // A covered page has no rows by design (above), which is not "empty".
+        if (!page.gridReady)
+            return
+        const empty = !page.isEmpty ? null : page.failed ? errorState : emptyState
+        if (empty) {
+            if (!page.focusSeated || page.holdsKeyboard(grid)) {
+                empty.focus = true
+                page.focusSeated = true
+            }
+            return
+        }
+        if (page.holdsKeyboard(errorState) || page.holdsKeyboard(emptyState)
+                || (grid.count > 0 && !page.focusSeated)) {
+            grid.focus = true
+            page.focusSeated = true
+        }
+    }
+
+    // Deferred: the states read above hang off the same properties, and the
+    // order they are updated in is not this page's to rely on.
+    onIsEmptyChanged: Qt.callLater(page.seatFocus)
+    onGridReadyChanged: Qt.callLater(page.seatFocus)
+
     // ── View modes (ARCHITECTURE.md) ──────────────────────────────────────────
     // Three shapes of the same query: 2:3 posters, 16:9 wide art, or one row
     // per item. StrmGrid renders all three from one GridView, so switching is
@@ -192,7 +240,12 @@ FocusScope {
 
     // The page outlives one library: opening a genre or Favorites through the
     // same controller changes the scope without rebuilding this page.
-    onScopeKeyChanged: page.loadViewPrefs()
+    onScopeKeyChanged: {
+        page.loadViewPrefs()
+        // A different library is a different visit: its first rows take the
+        // keyboard the way this page's first rows did.
+        page.focusSeated = false
+    }
     Component.onCompleted: {
         page.loadViewPrefs()
         Qt.callLater(page.syncGridContent)
@@ -275,8 +328,8 @@ FocusScope {
             checked: LibraryCtl.watchedFilter === "unplayed"
             onToggled: LibraryCtl.setWatchedFilter(unwatchedChip.checked ? "all" : "unplayed")
 
-            KeyNavigation.right: shuffleButton
-            KeyNavigation.down: viewSelect
+            property Item navRight: shuffleButton
+            property Item navDown: viewSelect
         }
 
         StrmButton {
@@ -289,9 +342,9 @@ FocusScope {
             enabled: page.itemCount > 0
             onClicked: Actions.shuffle(page.collectionId, "boxsets")
 
-            KeyNavigation.left: unwatchedChip
-            KeyNavigation.right: playAllButton
-            KeyNavigation.down: viewSelect
+            property Item navLeft: unwatchedChip
+            property Item navRight: playAllButton
+            property Item navDown: viewSelect
         }
 
         StrmButton {
@@ -310,8 +363,8 @@ FocusScope {
             // shows the server's curated release order.
             onClicked: Actions.playCollection(page.collectionId)
 
-            KeyNavigation.left: shuffleButton
-            KeyNavigation.down: viewSelect
+            property Item navLeft: shuffleButton
+            property Item navDown: viewSelect
         }
     }
 
@@ -345,6 +398,7 @@ FocusScope {
 
         // Down out of the bar lands back in the content it governs.
         downTarget: viewSelect
+        onFiltersRequested: filterSheet.open()
     }
 
     // ── View controls (ARCHITECTURE.md) ───────────────────────────────────────
@@ -386,23 +440,29 @@ FocusScope {
                 spacing: Theme.scale(2)
                 activeFocusOnTab: true
 
-                KeyNavigation.up: page.viewBarUp
-                KeyNavigation.right: sizeDown
-                KeyNavigation.down: grid
+                // Named for the navigator (FocusNavigator.h), which is asked
+                // only once the handlers below have declined: Right walks the
+                // segments first and leaves for the steppers from the last one.
+                // An empty grid is not somewhere to send Down; the layout finds
+                // the empty state's action instead.
+                property Item navUp: page.viewBarUp
+                property Item navRight: sizeDown
+                property Item navDown: grid.count > 0 ? grid : null
 
+                // Declined explicitly at either end. A per-key handler accepts
+                // by default, and an accepted key is one the navigator never
+                // hears about.
                 Keys.onLeftPressed: event => {
                     const next = page.viewModeIndex - 1;
-                    if (next >= 0) {
+                    event.accepted = next >= 0;
+                    if (event.accepted)
                         page.setViewMode(page.viewModes[next].value);
-                        event.accepted = true;
-                    }
                 }
                 Keys.onRightPressed: event => {
                     const next = page.viewModeIndex + 1;
-                    if (next < page.viewModes.length) {
+                    event.accepted = next < page.viewModes.length;
+                    if (event.accepted)
                         page.setViewMode(page.viewModes[next].value);
-                        event.accepted = true;
-                    }
                 }
 
                 Repeater {
@@ -448,10 +508,10 @@ FocusScope {
                 tooltip: qsTr("Smaller cards")
                 onClicked: page.setSizeStep(page.sizeStep - 1)
 
-                KeyNavigation.up: page.viewBarUp
-                KeyNavigation.left: viewSelect
-                KeyNavigation.right: sizeUp
-                KeyNavigation.down: grid
+                property Item navUp: page.viewBarUp
+                property Item navLeft: viewSelect
+                property Item navRight: sizeUp
+                property Item navDown: grid.count > 0 ? grid : null
             }
 
             // Tabular, so stepping through XS…XL does not shuffle the two
@@ -475,9 +535,9 @@ FocusScope {
                 tooltip: qsTr("Larger cards")
                 onClicked: page.setSizeStep(page.sizeStep + 1)
 
-                KeyNavigation.up: page.viewBarUp
-                KeyNavigation.left: sizeDown
-                KeyNavigation.down: grid
+                property Item navUp: page.viewBarUp
+                property Item navLeft: sizeDown
+                property Item navDown: grid.count > 0 ? grid : null
             }
         }
 
@@ -537,11 +597,11 @@ FocusScope {
         // strip. The GridView only lets Up through when it cannot move within
         // itself, so this costs nothing while the cursor is anywhere below the
         // first row.
-        KeyNavigation.up: viewSelect
-        // Focus follows content rather than visibility: hiding an item clears
-        // its active focus and does not hand it back when it reappears, so the
-        // grid stays visible-but-empty and only the focus moves.
-        focus: grid.count > 0
+        property Item navUp: viewSelect
+        // Never hidden when it is empty: hiding an item does not hand its
+        // focus back when it reappears, so the grid stays visible-but-empty
+        // and only the focus moves (seatFocus() above).
+        onCountChanged: Qt.callLater(page.seatFocus)
         gridModel: page.gridReady ? LibraryCtl.model : null
         cardVariant: "poster"
         viewMode: page.viewMode
@@ -597,13 +657,14 @@ FocusScope {
     // empty-because-the-library-is-empty: before LibraryCtl.errorMessage existed
     // a failed page load left an empty grid and no explanation at all.
     EmptyState {
+        id: errorState
+
         anchors.top: viewBar.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         visible: page.isEmpty && page.failed
-        focus: page.isEmpty && page.failed
-        KeyNavigation.up: viewSelect
+        property Item navUp: viewSelect
         severity: "error"
         iconName: "info"
         headline: qsTr("Couldn't load %1").arg(LibraryCtl.title)
@@ -623,13 +684,14 @@ FocusScope {
     // back out, so it gets its own headline and the action that undoes it
     // (ARCHITECTURE.md).
     EmptyState {
+        id: emptyState
+
         anchors.top: viewBar.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         visible: page.isEmpty && !page.failed
-        focus: page.isEmpty && !page.failed
-        KeyNavigation.up: viewSelect
+        property Item navUp: viewSelect
         iconName: LibraryCtl.filtered ? "filter" : "library"
         headline: LibraryCtl.filtered ? qsTr("Nothing matches these filters")
                                       : qsTr("Nothing in this library")
@@ -698,5 +760,17 @@ FocusScope {
                 onClicked: LibraryCtl.loadMore()
             }
         }
+    }
+
+    // ── Metadata filters ─────────────────────────────────────────────────────
+    // Last, so it draws over the grid and the bars. It narrows the same query
+    // the bar does and the grid behind the scrim refills as values are ticked.
+    FilterSheet {
+        id: filterSheet
+
+        z: 20
+        controller: LibraryCtl
+        // Back to the button that opened it, which is where the user was.
+        onDismissed: filterBar.filterEntry.forceActiveFocus(Qt.OtherFocusReason)
     }
 }

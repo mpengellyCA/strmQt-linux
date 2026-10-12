@@ -471,6 +471,26 @@ QUrlQuery EmbyClient::itemsParams(const ItemsQuery &query)
         params.addQueryItem(QStringLiteral("MinPremiereDate"), query.minPremiereDate);
     if (!query.maxPremiereDate.isEmpty())
         params.addQueryItem(QStringLiteral("MaxPremiereDate"), query.maxPremiereDate);
+    if (!query.officialRatings.isEmpty())
+        params.addQueryItem(QStringLiteral("OfficialRatings"),
+                            query.officialRatings.join(QLatin1Char('|')));
+    if (!query.videoCodecs.isEmpty())
+        params.addQueryItem(QStringLiteral("VideoCodecs"), query.videoCodecs.join(QLatin1Char(',')));
+    if (!query.audioLayouts.isEmpty())
+        params.addQueryItem(QStringLiteral("AudioLayouts"),
+                            query.audioLayouts.join(QLatin1Char(',')));
+    if (!query.extendedVideoTypes.isEmpty())
+        params.addQueryItem(QStringLiteral("ExtendedVideoTypes"),
+                            query.extendedVideoTypes.join(QLatin1Char(',')));
+    if (query.minWidth > 0)
+        params.addQueryItem(QStringLiteral("MinWidth"), QString::number(query.minWidth));
+    if (query.maxWidth > 0)
+        params.addQueryItem(QStringLiteral("MaxWidth"), QString::number(query.maxWidth));
+    if (!query.seriesStatus.isEmpty())
+        params.addQueryItem(QStringLiteral("SeriesStatus"), query.seriesStatus);
+    if (query.minCommunityRating > 0)
+        params.addQueryItem(QStringLiteral("MinCommunityRating"),
+                            QString::number(query.minCommunityRating));
     if (!query.ids.isEmpty())
         params.addQueryItem(QStringLiteral("Ids"), query.ids.join(QLatin1Char(',')));
     if (query.recursive)

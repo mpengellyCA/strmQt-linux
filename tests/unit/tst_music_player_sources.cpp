@@ -112,9 +112,11 @@ void MusicPlayerSourcesTest::nowPlayingHasVolumeAndMute()
     QVERIFY(view.contains("value: PlayerCtl.muted === true ? 0 : PlayerCtl.volume"));
     QVERIFY(view.contains("PlayerCtl.setVolume(Math.round(value))"));
     // Reachable: scrubber → mute → level, and back up.
-    QVERIFY(view.contains("KeyNavigation.down: muteButton"));
-    QVERIFY(view.contains("KeyNavigation.right: volumeSlider"));
-    QVERIFY(view.contains("KeyNavigation.up: scrubber"));
+    QVERIFY(view.contains("property Item navDown: muteButton"));
+    QVERIFY(view.contains("property Item navRight: volumeSlider"));
+    // Up is a handler on the row, not a name: PlayerPage answers Up before
+    // the navigator would read one.
+    QVERIFY(view.contains("(scrubber.enabled ? scrubber : playPause).forceActiveFocus(Qt.BacktabFocusReason)"));
 }
 
 QTEST_GUILESS_MAIN(MusicPlayerSourcesTest)

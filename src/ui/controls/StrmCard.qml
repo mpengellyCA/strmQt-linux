@@ -282,6 +282,8 @@ Item {
                 }
 
                 StrmIconButton {
+                    // Pointer-only (see above): never a stop for Tab or an arrow.
+                    activeFocusOnTab: false
                     id: playButton
                     anchors.centerIn: parent
                     iconName: "play"
@@ -299,6 +301,8 @@ Item {
                     spacing: Theme.spacingTight
 
                     StrmIconButton {
+                        // Pointer-only (see above): never a stop for Tab or an arrow.
+                        activeFocusOnTab: false
                         iconName: "check"
                         round: true
                         checked: card.played
@@ -307,6 +311,8 @@ Item {
                     }
 
                     StrmIconButton {
+                        // Pointer-only (see above): never a stop for Tab or an arrow.
+                        activeFocusOnTab: false
                         iconName: card.favorite ? "heart-filled" : "heart"
                         round: true
                         checked: card.favorite
@@ -316,6 +322,8 @@ Item {
                     }
 
                     StrmIconButton {
+                        // Pointer-only (see above): never a stop for Tab or an arrow.
+                        activeFocusOnTab: false
                         id: moreButton
                         iconName: "more-horizontal"
                         round: true

@@ -181,7 +181,7 @@ FocusScope {
             ]
             currentIndex: panel.tab
 
-            KeyNavigation.down: list
+            property Item navDown: list
 
             onTabSelected: index => panel.tabRequested(index)
         }
