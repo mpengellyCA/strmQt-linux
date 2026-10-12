@@ -201,6 +201,9 @@ void FocusNavigatorTest::regionStatesWhereItsEdgeLeads()
     s.focus("hero");
     s.press(Qt::Key_Down);
     QCOMPARE(s.focused(), QStringLiteral("shelf"));
+    // A held direction stops at the edge; crossing it takes a fresh press.
+    QVERIFY(!s.navigator->move(Qt::Key_Down, true));
+    QCOMPARE(s.focused(), QStringLiteral("shelf"));
     // The edge: the named neighbour beats what geometry alone would pick, and
     // the bar is entered by the part it names rather than the part it had last.
     s.press(Qt::Key_Down);

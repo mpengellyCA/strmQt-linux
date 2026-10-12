@@ -380,11 +380,6 @@ FocusScope {
         property real to: 100
         property real stepSize: 1
         property real value: 0
-        property Item navUp: null
-        property Item navDown: null
-
-        // The tab stop, for callers building the vertical chain.
-        readonly property alias focusItem: rowSlider
 
         signal valueRequested(real requested)
 
@@ -454,11 +449,6 @@ FocusScope {
         property int maxValue: 5000
         property string minusTooltip: ""
         property string plusTooltip: ""
-        property Item navUp: null
-        property Item navDown: null
-
-        readonly property alias focusItem: delayMinus
-        readonly property alias tailItem: delaySlider
 
         signal delayRequested(int ms)
 
@@ -790,8 +780,6 @@ FocusScope {
                             value: panel.audioDelay
                             minusTooltip: qsTr("Audio 50 ms earlier")
                             plusTooltip: qsTr("Audio 50 ms later")
-                            navUp: speedMinus
-                            navDown: subtitleSyncRow.focusItem
 
                             onDelayRequested: ms => PlayerCtl.setAudioDelayMs(ms)
                         }
@@ -804,8 +792,6 @@ FocusScope {
                             value: panel.subtitleDelay
                             minusTooltip: qsTr("Subtitles 50 ms earlier")
                             plusTooltip: qsTr("Subtitles 50 ms later")
-                            navUp: audioRow.tailItem
-                            navDown: playbackReset
 
                             onDelayRequested: ms => PlayerCtl.setSubtitleDelayMs(ms)
                         }
@@ -1095,8 +1081,6 @@ FocusScope {
                             to: 300
                             stepSize: 5
                             value: panel.subtitleScale
-                            navUp: tabs
-                            navDown: colorSelect
 
                             onValueRequested: requested => Prefs.subtitleScale = Math.round(requested)
                         }
@@ -1145,8 +1129,6 @@ FocusScope {
                             to: 100
                             stepSize: 5
                             value: panel.subtitleBackground
-                            navUp: colorSelect
-                            navDown: positionRow.focusItem
 
                             onValueRequested: requested => Prefs.subtitleBackground = Math.round(requested)
                         }
@@ -1166,8 +1148,6 @@ FocusScope {
                             to: 150
                             stepSize: 5
                             value: panel.subtitlePosition
-                            navUp: backgroundRow.focusItem
-                            navDown: subtitleReset
 
                             onValueRequested: requested => Prefs.subtitlePosition = Math.round(requested)
                         }

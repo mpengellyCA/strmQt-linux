@@ -76,6 +76,16 @@ Item {
     // back out sideways, and the input this bar's arrows exist for cannot type
     // into it anyway. It keeps Tab, the pointer, and the `/` that opens the
     // search page proper.
+    // The same answer for the navigator, when a page's top edge leads here.
+    readonly property Item navEntry: {
+        const order = [backButton, forwardButton, settingsButton, remoteButton, avatar];
+        for (let i = 0; i < order.length; ++i) {
+            if (order[i].enabled && order[i].visible)
+                return order[i];
+        }
+        return null;
+    }
+
     function focusFirst(): bool {
         const order = [backButton, forwardButton, settingsButton, remoteButton, avatar];
         for (let i = 0; i < order.length; ++i) {

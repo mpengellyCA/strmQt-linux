@@ -849,6 +849,14 @@ ApplicationWindow {
         // to. Named on the stack, so it is the page's EDGE: Down still goes
         // to whatever the page has further down first (FocusNavigator).
         property Item navDown: miniPlayer.shown ? miniPlayer : null
+        // The other two edges reach the chrome: Left to the destination rail,
+        // Up to the header. These were claimed here, as key handlers — which
+        // run before the navigator is asked, so on every page Left and Up
+        // went to the chrome even when the page had something of its own that
+        // way which nobody had wired an arrow to. As named edges the page is
+        // searched first.
+        property Item navLeft: root.chromeVisible && !root.overlayOpen ? navRail : null
+        property Item navUp: root.chromeVisible && !root.overlayOpen ? topBar : null
 
         Keys.onPressed: event => {
             Input.noteInput("keyboard");
@@ -860,18 +868,7 @@ ApplicationWindow {
                 event.accepted = true;
                 return;
             }
-            // The page edges. A key only reaches the stack once every control
-            // between it and here has declined it, which is exactly what makes
-            // these edges rather than a hijack: a grid mid-row, an armed
-            // scrubber, a filter chain and a two-pane playlist all answer Left
-            // first, and a list with somewhere above it answers Up.
-            if (event.key === Qt.Key_Left && root.focusNavigationRail()) {
-                event.accepted = true;
-                return;
-            }
-            if (event.key === Qt.Key_Up && root.focusTopBar()) {
-                event.accepted = true;
-            }
+            event.accepted = false;
         }
 
         pushEnter: Transition {

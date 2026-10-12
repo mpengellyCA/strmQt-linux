@@ -468,6 +468,13 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
             }
             if (QQuickItem *target = explicitNeighbour(region, focus, dir, true)) {
                 if (!isAncestorOf(target, focus)) {
+                    // A named edge leads to another surface — the page to
+                    // the rail, the page to the docked bar — and a held
+                    // direction stops there. The far side often hands the
+                    // keyboard straight back on the same key, and a held
+                    // one would swap the two several times a second.
+                    if (autoRepeat)
+                        return false;
                     qCDebug(logFocus) << "move" << qtKey << "edge of" << region << "->" << target;
                     give(target, reason);
                     return true;

@@ -81,6 +81,22 @@ Item {
             rail.pinned = false;
     }
 
+    // Where the navigator puts the keyboard when a page's left edge leads here
+    // (FocusNavigator.h): the same entry focusCurrent() picks.
+    readonly property Item navEntry: {
+        let first = null;
+        for (let i = 0; i < column.children.length; ++i) {
+            const child = column.children[i];
+            if (child === null || child.activeFocusOnTab !== true || !child.enabled)
+                continue;
+            if (child.active === true)
+                return child;
+            if (first === null)
+                first = child;
+        }
+        return first;
+    }
+
     // Move focus into the rail, onto the entry for the page already on screen so
     // the first D-pad press moves from where the user actually is.
     function focusCurrent(): void {
@@ -148,10 +164,15 @@ Item {
         activeFocusOnTab: true
 
         onActiveFocusChanged: {
-            if (entry.activeFocus)
+            if (entry.activeFocus) {
+                // Arriving from the page by an arrow pins the rail, as the
+                // Menu button does: Right and Back then mean "close it".
+                if (rail.focusedEntry === null && entry.focusReason === Qt.BacktabFocusReason)
+                    rail.pinned = true;
                 rail.focusedEntry = entry;
-            else if (rail.focusedEntry === entry)
+            } else if (rail.focusedEntry === entry) {
                 rail.focusedEntry = null;
+            }
         }
 
         readonly property color glyphColor: entry.active ? Theme.accentColor
