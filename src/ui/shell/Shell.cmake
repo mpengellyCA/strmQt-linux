@@ -8,6 +8,7 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/shell/EmptyState.qml
     ui/shell/LoadingState.qml
     ui/shell/FilterBar.qml
+    ui/shell/FilterSheet.qml
     ui/shell/UpdateBanner.qml
     ui/shell/MiniPlayer.qml
     ui/shell/SleeveFlight.qml

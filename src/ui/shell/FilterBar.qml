@@ -102,6 +102,15 @@ FocusScope {
                                            : favoriteChip
     // Right out of that same set. Named once because several controls want it.
     readonly property Item clearOrNothing: clearButton.visible ? clearButton : null
+    // The metadata filters (genre, year, studio…) live in a sheet the page
+    // hosts; the bar only carries the way in and says how many are on. Not
+    // every controller has them, and not every scope of one that does.
+    readonly property bool hasFacets: bar.hasController && bar.controller.facets !== undefined
+                                      && bar.controller.facets.length > 0
+    readonly property int facetCount: bar.hasFacets ? bar.controller.activeFacetCount : 0
+    readonly property Item afterWatched: filterButton.visible ? filterButton : bar.clearOrNothing
+    readonly property Item filterEntry: filterButton
+    signal filtersRequested
 
     // A–Z then "#", which is the bucket Emby files everything non-alphabetic in.
     readonly property var letters: {
@@ -313,7 +322,7 @@ FocusScope {
                 property Item navLeft: sortSelect
                 property Item navRight: bar.hasWatchedFilter
                                         ? (bar.compact ? watchedSelect : unwatchedChip)
-                                        : bar.clearOrNothing
+                                        : bar.afterWatched
                 property Item navUp: bar.upTarget
                 property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
@@ -392,7 +401,7 @@ FocusScope {
                 checked: bar.watchedValue === "favorites"
 
                 property Item navLeft: watchedChip
-                property Item navRight: bar.clearOrNothing
+                property Item navRight: bar.afterWatched
                 property Item navUp: bar.upTarget
                 property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
@@ -414,7 +423,7 @@ FocusScope {
                 // stands in for at wider widths.
 
                 property Item navLeft: directionButton
-                property Item navRight: bar.clearOrNothing
+                property Item navRight: bar.afterWatched
                 property Item navUp: bar.upTarget
                 property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
@@ -423,6 +432,29 @@ FocusScope {
                     if (value !== undefined)
                         bar.controller.setWatchedFilter(String(value));
                 }
+            }
+
+            // The way into the filter sheet. It says how many axes are narrowing
+            // the view without being opened, as the watched select does.
+            StrmButton {
+                id: filterButton
+                objectName: "filterBarFilters"
+
+                anchors.verticalCenter: parent.verticalCenter
+                visible: bar.hasFacets
+                variant: bar.facetCount > 0 ? "secondary" : "ghost"
+                iconName: "filter"
+                text: bar.facetCount > 0 ? (bar.compact ? String(bar.facetCount)
+                                                        : qsTr("Filters · %1").arg(bar.facetCount))
+                                         : (bar.compact ? "" : qsTr("Filters"))
+                accessibleName: qsTr("Filters")
+
+                property Item navLeft: bar.lastFixedControl
+                property Item navRight: bar.clearOrNothing
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+
+                onClicked: bar.filtersRequested()
             }
 
             // Last in the row on purpose: appearing and disappearing then moves
@@ -436,7 +468,7 @@ FocusScope {
                 iconName: "close"
                 text: bar.compact ? "" : qsTr("Clear filters")
 
-                property Item navLeft: bar.lastFixedControl
+                property Item navLeft: filterButton.visible ? filterButton : bar.lastFixedControl
                 property Item navUp: bar.upTarget
                 property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 

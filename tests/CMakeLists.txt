@@ -55,6 +55,12 @@ target_include_directories(tst_navigation_controls PRIVATE ${CMAKE_SOURCE_DIR}/s
 target_link_libraries(tst_navigation_controls PRIVATE Qt6::Gui Qt6::Quick)
 target_compile_definitions(tst_navigation_controls PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_navigation_controls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+strmqt_add_test(tst_filter_sheet unit/tst_filter_sheet.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/FocusNavigator.cpp)
+target_include_directories(tst_filter_sheet PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_filter_sheet PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_filter_sheet PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_filter_sheet PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 # GamepadManager is SDL and lives in the executable, so it is compiled straight
 # into the test, against the SDL3 src/ resolved (cmake/StrmQtSdl3.cmake). The
 # bundled SDL3::SDL3-static is visible here; pkg-config's imported target is

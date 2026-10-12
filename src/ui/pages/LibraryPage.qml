@@ -398,6 +398,7 @@ FocusScope {
 
         // Down out of the bar lands back in the content it governs.
         downTarget: viewSelect
+        onFiltersRequested: filterSheet.open()
     }
 
     // ── View controls (ARCHITECTURE.md) ───────────────────────────────────────
@@ -759,5 +760,17 @@ FocusScope {
                 onClicked: LibraryCtl.loadMore()
             }
         }
+    }
+
+    // ── Metadata filters ─────────────────────────────────────────────────────
+    // Last, so it draws over the grid and the bars. It narrows the same query
+    // the bar does and the grid behind the scrim refills as values are ticked.
+    FilterSheet {
+        id: filterSheet
+
+        z: 20
+        controller: LibraryCtl
+        // Back to the button that opened it, which is where the user was.
+        onDismissed: filterBar.filterEntry.forceActiveFocus(Qt.OtherFocusReason)
     }
 }

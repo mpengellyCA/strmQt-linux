@@ -464,6 +464,24 @@ Pages: Login · Home · Library · Details · Series · Person · Playlist · Se
 Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·
 Music Playlist.
 
+**A film or TV library is narrowed by its metadata** — genre, year, studio (or
+network), age rating, community rating, series status, and for films resolution,
+dynamic range, video codec and audio channels. `LibraryController` owns a table
+of these axes and publishes it as `facets`; `FilterSheet` renders whatever is in
+it, so a new axis is a row in that table and a parameter in `ItemsQuery`, not a
+control. Values come from the server's own lists (`/Genres`, `/Years`,
+`/Studios`, …) scoped to the library on screen, fetched on first use. A pick
+applies at once: the grid behind the sheet is the preview.
+
+Every axis was measured before it was added, because this server ignores a
+parameter it does not know and returns the whole library — a filter that is not
+honoured looks exactly like one that matched everything. That is why there is
+**no runtime filter**: the server has no runtime bound under any spelling tried,
+only a sort key, which the sort menu offers. It is also why resolution is a
+width range rather than the server's `IsHD` / `Is4K`, which overlap, and why the
+video axes are withheld from a TV library: a series has no streams of its own
+and matches nothing. `strmqt-cli get` is the tool for the next one.
+
 A music library opens on **Music Home**, a page of independently loading shelves
 (pick up where you left off, recently played, new in the crate, stations, genre
 bins, artists you play, forgotten favourites, pull one out). Each shelf is its own
