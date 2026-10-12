@@ -107,7 +107,7 @@ FocusScope {
     onAudioModeChanged: {
         osd.closePanel();
         osd.wake();
-        page.forceActiveFocus(Qt.OtherFocusReason);
+        page.restKeyboard();
         Qt.callLater(page.settleAudioFocus);
     }
 
@@ -119,8 +119,25 @@ FocusScope {
     // change, so it never fights the change still being delivered, and so
     // MusicNowPlaying is already enabled when it runs.
     function settleAudioFocus(): void {
-        if (page.audioMode && page.visible && page.Window.activeFocusItem === page)
+        if (page.audioMode && page.visible
+                && (page.Window.activeFocusItem === page || page.keyboardAtRest))
             nowPlaying.focusTransport();
+    }
+
+    // Where the keyboard is when it is on none of the controls: watching the
+    // film. `page.forceActiveFocus()` could not put it there — the page is a
+    // focus scope, and forcing focus onto a scope hands it straight back to
+    // whichever control inside held it last. So Up off the scrubber did
+    // nothing, and a controls bar that hid and woke again came back with the
+    // ring on the button it was left on: a second Space meant for pause
+    // pressed Stop. Focusing this item makes IT the scope's focused child.
+    readonly property bool keyboardAtRest: page.Window.activeFocusItem === keyboardRest
+    function restKeyboard(): void {
+        keyboardRest.forceActiveFocus(Qt.OtherFocusReason);
+    }
+    Item {
+        id: keyboardRest
+        anchors.fill: parent
     }
 
     Window.onActiveFocusItemChanged: Qt.callLater(page.settleAudioFocus)
@@ -285,6 +302,8 @@ FocusScope {
         // that the OSD would have owned.
         visible: !page.audioMode
 
+        keyboardIdle: page.keyboardAtRest
+        onKeyboardRestRequested: page.restKeyboard()
         onFullscreenRequested: page.toggleFullscreen()
         onLeaveRequested: page.minimizeRequested()
     }
@@ -298,7 +317,7 @@ FocusScope {
 
         function onShownChanged(): void {
             if (!osd.shown)
-                page.forceActiveFocus(Qt.OtherFocusReason);
+                page.restKeyboard();
         }
     }
 
@@ -334,19 +353,38 @@ FocusScope {
 
     // ── Keyboard / gamepad ──────────────────────────────────────────────────
     Keys.onPressed: event => {
+        // An arrow one of the OSD's controls declined is a request to move,
+        // not to seek: the arrows are transport keys only while the keyboard
+        // is at rest. Declined here, it reaches the navigator.
+        if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right
+             || event.key === Qt.Key_Up || event.key === Qt.Key_Down)
+                && !page.keyboardAtRest && page.Window.activeFocusItem !== page) {
+            event.accepted = false;
+            return;
+        }
+
         Input.noteInput("keyboard");
 
         // The press that wakes a hidden OSD is spent on the wake and goes no
         // further. Without this the waking key also runs its action — a Right
         // that meant "show me the controls" seeks the film instead, which is
         // exactly the jump users reported. Repeat presses act normally.
-        if (!page.audioMode && !osd.shown) {
+        let action = Input.actionForKey(event.key, event.modifiers, "player");
+        // Select with nothing selected is play/pause. A key only gets here
+        // once the focused control has declined it, so this is OK on a remote
+        // and A on a pad while watching — on a button they press the button.
+        if (action.length === 0
+                && Input.actionForKey(event.key, event.modifiers, "browse") === "nav.select")
+            action = "player.togglePause";
+
+        // Pausing is the exception: it is what the key was for, it loses
+        // nothing, and making it take two presses whenever the controls had
+        // faded was the one place the rule cost more than it saved.
+        if (!page.audioMode && !osd.shown && action !== "player.togglePause") {
             osd.wake();
             event.accepted = true;
             return;
         }
-
-        const action = Input.actionForKey(event.key, event.modifiers, "player");
 
         // Auto-repeat is the *wanted* behaviour for seek and volume — holding
         // Right must scrub — and is a bug everywhere else, where a held key
@@ -472,7 +510,7 @@ FocusScope {
         function invokeAction(actionId: string, autoRepeat: bool): bool {
             if (!page.visible || !PlayerCtl.active || page.playerVerbs.indexOf(actionId) < 0)
                 return false;
-            if (!page.audioMode && !osd.shown) {
+            if (!page.audioMode && !osd.shown && actionId !== "player.togglePause") {
                 osd.wake();
                 return true;
             }
@@ -489,7 +527,17 @@ FocusScope {
     // keyboard to the OSD's own controls, which then own the arrow keys until
     // Up walks back off the top of them. Handled here rather than in the map
     // for the same reason StrmTabBar owns Left/Right itself.
+    //
+    // Only from rest. This used to answer EVERY Down nothing else had: Down
+    // from the button row went UP to the scrubber, a held Down bounced between
+    // the two, and Down past the last row of an open panel threw the keyboard
+    // out of the panel with no arrow route back. From anywhere else Down is
+    // declined, and the navigator finds what is actually below.
     Keys.onDownPressed: event => {
+        if (!page.keyboardAtRest && page.Window.activeFocusItem !== page) {
+            event.accepted = false;
+            return;
+        }
         if (page.audioMode)
             nowPlaying.focusTransport(); // the transport sits above the scrubber
         else
@@ -506,7 +554,7 @@ FocusScope {
             event.accepted = false;
             return;
         }
-        page.forceActiveFocus(Qt.BacktabFocusReason);
+        page.restKeyboard();
         osd.wake();
         event.accepted = true;
     }

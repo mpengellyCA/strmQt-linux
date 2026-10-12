@@ -57,9 +57,11 @@ namespace strmqt {
 //                                is where that key goes. On an ancestor it is
 //                                where the ancestor's EDGE leads: geometry is
 //                                tried inside it first. A neighbour that is
-//                                hidden or disabled is skipped by following
-//                                its own link the same way, and when the
-//                                chain runs out geometry decides.
+//                                hidden or disabled is never a dead end:
+//                                geometry decides instead (between the parts
+//                                of one composite control, where geometry
+//                                has no candidates, its own link the same
+//                                way is followed first).
 //   property bool navModal       confine navigation to this item while it is
 //                                visible
 //   property Item navEntry       the part of this item that takes the
@@ -120,7 +122,8 @@ private:
     QQuickItem *ownerOf(QQuickItem *focus, QQuickItem *scope) const;
     bool isView(QQuickItem *item) const;
     QRectF sceneRect(QQuickItem *item) const;
-    QQuickItem *explicitNeighbour(QQuickItem *item, QQuickItem *from, NavDirection dir) const;
+    QQuickItem *explicitNeighbour(QQuickItem *item, QQuickItem *from, NavDirection dir,
+                                  bool followChain) const;
     QQuickItem *recoveryTarget(QQuickItem *scope) const;
     bool isViewEdgeRepeat(QQuickItem *focus, NavDirection dir) const;
     void give(QQuickItem *target, Qt::FocusReason reason);

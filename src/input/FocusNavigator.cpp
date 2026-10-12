@@ -267,17 +267,21 @@ QRectF FocusNavigator::sceneRect(QQuickItem *item) const
 }
 
 // The neighbour `item` names for `dir`, if it leads anywhere. A named
-// neighbour that is hidden or disabled is not a dead end: its own link in the
-// same direction is followed, the way a chain of buttons skips the one that
-// is not on screen in this mode. Null when the chain runs out.
+// neighbour that is hidden or disabled is not a dead end. With `followChain`
+// its own link in the same direction is followed, the way a row of buttons
+// inside one control skips the one that is not on screen in this mode;
+// without it the answer is null and geometry decides, which is right between
+// controls — a chain written for one layout skips whole rows in another.
 QQuickItem *FocusNavigator::explicitNeighbour(QQuickItem *item, QQuickItem *from,
-                                              NavDirection dir) const
+                                              NavDirection dir, bool followChain) const
 {
     const char *name = neighbourProperty(dir);
     QQuickItem *target = duckItem(item, name);
     for (int hops = 0; target && hops < 16; ++hops) {
         if (target != from && isLive(target) && target->opacity() > 0)
             return target;
+        if (!followChain)
+            return nullptr;
         target = duckItem(target, name);
     }
     return nullptr;
@@ -397,7 +401,10 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
 
     // What the focused item itself names comes first: it is the most
     // specific thing anybody said about this key.
-    if (QQuickItem *target = explicitNeighbour(focus, focus, dir)) {
+    // The parts of a composite control (the docked bar's buttons) are not
+    // candidates for geometry, so between them the chain is all there is.
+    const bool insideComposite = owner && owner != focus && !isStop(focus);
+    if (QQuickItem *target = explicitNeighbour(focus, focus, dir, insideComposite)) {
         qCDebug(logFocus) << "move" << qtKey << "named" << focus << "->" << target;
         give(target, reason);
         return true;
@@ -459,7 +466,7 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
                 give(target, reason);
                 return true;
             }
-            if (QQuickItem *target = explicitNeighbour(region, focus, dir)) {
+            if (QQuickItem *target = explicitNeighbour(region, focus, dir, true)) {
                 if (!isAncestorOf(target, focus)) {
                     qCDebug(logFocus) << "move" << qtKey << "edge of" << region << "->" << target;
                     give(target, reason);

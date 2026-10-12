@@ -43,6 +43,10 @@ Item {
     // The pointer's way off the player, mirroring Esc/Backspace. Until this
     // existed the only exits were keys with nothing on screen naming them.
     signal leaveRequested
+    // The Up Next card takes the keyboard only from a page that is not using
+    // it, and hands it back when the offer goes.
+    property bool keyboardIdle: false
+    signal keyboardRestRequested
 
     // Auto-hide. `requested` is what the timer and toggleOsd() move; everything
     // else reads `shown`.
@@ -581,6 +585,8 @@ Item {
             }
         }
 
+        keyboardIdle: osd.keyboardIdle
+        onKeyboardReleased: osd.keyboardRestRequested()
         onDismissed: osd.wake()
     }
 

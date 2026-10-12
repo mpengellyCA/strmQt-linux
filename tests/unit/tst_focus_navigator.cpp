@@ -68,6 +68,7 @@ private slots:
     void explicitNeighbourWinsWhileItIsLive();
     void regionStatesWhereItsEdgeLeads();
     void namedChainSkipsWhatIsNotThere();
+    void deadNeighbourBetweenControlsIsGeometry();
     void containerFocusStepsInside();
     void hiddenFocusRecoversToTheNearestControl();
     void destroyedFocusRecovers();
@@ -208,14 +209,21 @@ void FocusNavigatorTest::regionStatesWhereItsEdgeLeads()
 
 void FocusNavigatorTest::namedChainSkipsWhatIsNotThere()
 {
+    // Inside one control — a bar that is a single stop — the parts name each
+    // other, and a part that is hidden in this mode is stepped over.
     Scene s(R"(
         import QtQuick
         Item {
             width: 800; height: 600
-            Item { objectName: "a"; width: 60; height: 40; property Item navRight: b }
-            Item { id: b; objectName: "b"; x: 100; width: 60; height: 40; visible: false
-                   property Item navRight: c }
-            Item { id: c; objectName: "c"; x: 200; width: 60; height: 40 }
+            FocusScope {
+                objectName: "bar"
+                width: 400; height: 40
+                activeFocusOnTab: true
+                Item { objectName: "a"; width: 60; height: 40; focus: true; property Item navRight: b }
+                Item { id: b; objectName: "b"; x: 100; width: 60; height: 40; visible: false
+                       property Item navRight: c }
+                Item { id: c; objectName: "c"; x: 200; width: 60; height: 40 }
+            }
             Item { objectName: "stopFarRight"; x: 600; width: 60; height: 40; activeFocusOnTab: true }
         })");
     QVERIFY(s.root);
@@ -227,6 +235,27 @@ void FocusNavigatorTest::namedChainSkipsWhatIsNotThere()
     s.focus("a");
     s.press(Qt::Key_Right);
     QCOMPARE(s.focused(), QStringLiteral("stopFarRight"));
+}
+
+void FocusNavigatorTest::deadNeighbourBetweenControlsIsGeometry()
+{
+    // A tab bar that names "the first control of the first row" below it. When
+    // that control disables, following its own link would skip the whole row.
+    Scene s(R"(
+        import QtQuick
+        Item {
+            width: 800; height: 600
+            Item { objectName: "tabs"; width: 400; height: 40; activeFocusOnTab: true
+                   property Item navDown: minus }
+            Item { id: minus; objectName: "minus"; y: 60; width: 40; height: 40; activeFocusOnTab: true
+                   enabled: false; property Item navDown: nextRow }
+            Item { objectName: "select"; x: 60; y: 60; width: 100; height: 40; activeFocusOnTab: true }
+            Item { id: nextRow; objectName: "nextRow"; y: 120; width: 100; height: 40; activeFocusOnTab: true }
+        })");
+    QVERIFY(s.root);
+    s.focus("tabs");
+    s.press(Qt::Key_Down);
+    QCOMPARE(s.focused(), QStringLiteral("select"));
 }
 
 void FocusNavigatorTest::containerFocusStepsInside()

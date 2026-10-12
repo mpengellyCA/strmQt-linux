@@ -327,6 +327,16 @@ FocusScope {
                                                   && panel.subtitleBackground === 0
                                                   && panel.subtitlePosition === 100
 
+    // Arrows inside the sheet are the navigator's (FocusNavigator.h): it reads
+    // the layout, so a stepper that is disabled at its limit is stepped past
+    // instead of being the dead end a hand-written chain made of it. Declaring
+    // the four edges, to nothing, is what makes the sheet a region — an arrow
+    // looks for somewhere to go in here before it looks at the transport bar.
+    property Item navUp: null
+    property Item navDown: null
+    property Item navLeft: null
+    property Item navRight: null
+
     // Esc closes the sheet; PlayerPage only stops playback once nothing is open.
     Keys.onEscapePressed: event => {
         panel.closeRequested();
@@ -420,8 +430,6 @@ FocusScope {
             stepSize: sliderRow.stepSize
             value: sliderRow.value
 
-            KeyNavigation.up: sliderRow.navUp
-            KeyNavigation.down: sliderRow.navDown
 
             // Both, deliberately: `moved` is what makes a drag visible on the
             // frame underneath, and `committed` catches the wheel and the
@@ -503,9 +511,6 @@ FocusScope {
                     enabled: delayRow.value > delayRow.minValue
                     onClicked: delayRow.bump(-delayRow.step)
 
-                    KeyNavigation.up: delayRow.navUp
-                    KeyNavigation.right: delayPlus
-                    KeyNavigation.down: delaySlider
                 }
 
                 Text {
@@ -530,9 +535,6 @@ FocusScope {
                     enabled: delayRow.value < delayRow.maxValue
                     onClicked: delayRow.bump(delayRow.step)
 
-                    KeyNavigation.up: delayRow.navUp
-                    KeyNavigation.left: delayMinus
-                    KeyNavigation.down: delaySlider
                 }
             }
         }
@@ -550,8 +552,6 @@ FocusScope {
             stepSize: delayRow.step
             value: delayRow.value
 
-            KeyNavigation.up: delayMinus
-            KeyNavigation.down: delayRow.navDown
 
             onMoved: dragged => delayRow.delayRequested(delayRow.snap(dragged))
             onCommitted: dragged => delayRow.delayRequested(delayRow.snap(dragged))
@@ -602,7 +602,6 @@ FocusScope {
                 // Esc closes the sheet from anywhere, but a gamepad has to be
                 // able to reach the button itself, so it sits above the tabs in
                 // the vertical chain rather than only in the Tab order.
-                KeyNavigation.down: tabs
             }
         }
 
@@ -617,12 +616,6 @@ FocusScope {
                 ({ "text": qsTr("Subtitles") })
             ]
             currentIndex: panel.tab
-
-            KeyNavigation.up: closeButton
-            // Down lands on the first control of whichever tab is showing.
-            KeyNavigation.down: panel.tab === 0 ? speedMinus
-                              : panel.tab === 1 ? (panel.hasVersions ? versionSelect : bitrateSelect)
-                              : sizeRow.focusItem
 
             onTabSelected: index => {
                 panel.tab = index;
@@ -735,9 +728,6 @@ FocusScope {
                                     enabled: panel.speed > 0.25
                                     onClicked: panel.stepSpeed(-1)
 
-                                    KeyNavigation.up: tabs
-                                    KeyNavigation.right: speedSelect
-                                    KeyNavigation.down: audioRow.focusItem
                                 }
 
                                 StrmSelect {
@@ -756,10 +746,6 @@ FocusScope {
                                     // "nothing chosen".
                                     placeholder: panel.formatSpeed(panel.speed)
 
-                                    KeyNavigation.up: tabs
-                                    KeyNavigation.left: speedMinus
-                                    KeyNavigation.right: speedPlus
-                                    KeyNavigation.down: audioRow.focusItem
 
                                     // Asks the player, and lets the binding
                                     // above answer: the control shows the
@@ -777,9 +763,6 @@ FocusScope {
                                     enabled: panel.speed < 4.0
                                     onClicked: panel.stepSpeed(1)
 
-                                    KeyNavigation.up: tabs
-                                    KeyNavigation.left: speedSelect
-                                    KeyNavigation.down: audioRow.focusItem
                                 }
                             }
                         }
@@ -841,7 +824,6 @@ FocusScope {
                             enabled: !panel.playbackIsDefault
                             onClicked: panel.resetPlayback()
 
-                            KeyNavigation.up: subtitleSyncRow.tailItem
                         }
                     }
 
@@ -866,8 +848,6 @@ FocusScope {
                             currentIndex: panel.sourceIndex
                             placeholder: qsTr("Choose a version")
 
-                            KeyNavigation.up: tabs
-                            KeyNavigation.down: bitrateSelect
 
                             // The controlled currentIndex matters most here: the
                             // controller refuses to switch to an unplayable
@@ -916,8 +896,6 @@ FocusScope {
                                        ? qsTr("%1 Mbps").arg((panel.maxBitrateKbps / 1000).toFixed(1))
                                        : qsTr("Auto — no cap")
 
-                            KeyNavigation.up: panel.hasVersions ? versionSelect : tabs
-                            KeyNavigation.down: modeAuto
 
                             // Settings clamps a cap it will not take, so the
                             // preference — not the click — is what the binding
@@ -987,9 +965,6 @@ FocusScope {
                                 checked: panel.playbackMode === "auto"
                                 onToggled: Prefs.playbackMode = "auto"
 
-                                KeyNavigation.up: bitrateSelect
-                                KeyNavigation.down: upscaleSelect
-                                KeyNavigation.right: modeDirect
                             }
 
                             StrmChip {
@@ -999,10 +974,6 @@ FocusScope {
                                 checked: panel.playbackMode === "directPlay"
                                 onToggled: Prefs.playbackMode = "directPlay"
 
-                                KeyNavigation.up: bitrateSelect
-                                KeyNavigation.down: upscaleSelect
-                                KeyNavigation.left: modeAuto
-                                KeyNavigation.right: modeTranscode
                             }
 
                             StrmChip {
@@ -1012,9 +983,6 @@ FocusScope {
                                 checked: panel.playbackMode === "transcode"
                                 onToggled: Prefs.playbackMode = "transcode"
 
-                                KeyNavigation.up: bitrateSelect
-                                KeyNavigation.down: upscaleSelect
-                                KeyNavigation.left: modeDirect
                             }
                         }
 
@@ -1042,7 +1010,6 @@ FocusScope {
                             currentIndex: panel.upscaleIndex
                             accessibleName: qsTr("Upscaling")
 
-                            KeyNavigation.up: modeAuto
 
                             // Live: the controller pushes the chain and the
                             // frame under the sheet changes within a frame or two.
@@ -1159,8 +1126,6 @@ FocusScope {
                                 // rather than as an empty control.
                                 placeholder: panel.subtitleColor
 
-                                KeyNavigation.up: sizeRow.focusItem
-                                KeyNavigation.down: backgroundRow.focusItem
 
                                 // Settings refuses anything that is not #RRGGBB,
                                 // so the stored colour is the one that answers.
@@ -1221,7 +1186,6 @@ FocusScope {
                             enabled: !panel.subtitleLookIsDefault
                             onClicked: panel.resetSubtitleLook()
 
-                            KeyNavigation.up: positionRow.focusItem
                         }
                     }
                 }
