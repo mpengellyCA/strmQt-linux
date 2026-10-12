@@ -257,10 +257,10 @@ Item {
         }
     }
 
-    // Focus moving IS input. Arrow/D-pad moves between the controls go through
-    // KeyNavigation, which accepts the key before any page-level handler can
-    // see it — so without this, navigating the chrome does not count as
-    // activity and the OSD fades out from under the user mid-move.
+    // Focus moving IS input. Arrow/D-pad moves between the controls are
+    // answered by the navigator, after the page has declined the key rather
+    // than acted on it — so without this, navigating the chrome does not count
+    // as activity and the OSD fades out from under the user mid-move.
     Connections {
         target: osd.Window.window
 
@@ -436,8 +436,7 @@ Item {
                                            .arg(osd.formatTime(value))
                                            .arg(osd.formatTime(to))
 
-                    KeyNavigation.down: buttons
-                    KeyNavigation.up: null
+                    property Item navDown: buttons
 
                     // Live readout while dragging; the seek itself waits for the
                     // release, which is what keeps one scrub from becoming

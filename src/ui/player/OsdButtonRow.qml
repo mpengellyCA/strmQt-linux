@@ -14,7 +14,8 @@ import StrmQt
 //
 // A FocusScope with `focus: true` on play/pause, so the OSD can hand the
 // keyboard to the row as a whole and land somewhere sensible. Left/Right walk
-// the row through KeyNavigation; Up leaves it for `focusAbove` (the scrubber).
+// the row by the neighbours each button names (`navLeft` / `navRight`, read by
+// FocusNavigator); Up leaves it for `focusAbove` (the scrubber).
 FocusScope {
     id: row
 
@@ -66,6 +67,22 @@ FocusScope {
         playPause.forceActiveFocus(Qt.OtherFocusReason);
     }
 
+    // Up from any button. Said once here rather than as a `navUp` on each of
+    // them: the page answers every Up its controls decline (that is how the
+    // keyboard gets back to rest) before the navigator is ever asked, so a
+    // name would not be read. A scrubber that cannot take focus — a stream
+    // with no duration — is declined rather than swallowed, and Up then does
+    // from here what it does from the scrubber.
+    Keys.onUpPressed: event => {
+        const above = row.focusAbove;
+        if (above === null || !above.visible || !above.enabled) {
+            event.accepted = false;
+            return;
+        }
+        above.forceActiveFocus(Qt.BacktabFocusReason);
+        event.accepted = true;
+    }
+
     // Chapter navigation is being added to PlayerController by another agent in
     // this same wave. Guarded so a half-landed contract disables a button
     // instead of throwing inside a click handler.
@@ -113,8 +130,7 @@ FocusScope {
                 PlayerCtl.playPrevious();
             }
 
-            KeyNavigation.right: rewindButton
-            KeyNavigation.up: row.focusAbove
+            property Item navRight: rewindButton
         }
 
         StrmIconButton {
@@ -129,9 +145,8 @@ FocusScope {
                 PlayerCtl.seekRelative(-10000);
             }
 
-            KeyNavigation.left: previousButton
-            KeyNavigation.right: playPause
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: previousButton
+            property Item navRight: playPause
         }
 
         // The primary. Round, accent-filled, and the one button in the row that
@@ -152,9 +167,8 @@ FocusScope {
                 PlayerCtl.togglePause();
             }
 
-            KeyNavigation.left: rewindButton
-            KeyNavigation.right: forwardButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: rewindButton
+            property Item navRight: forwardButton
         }
 
         StrmIconButton {
@@ -169,9 +183,8 @@ FocusScope {
                 PlayerCtl.seekRelative(10000);
             }
 
-            KeyNavigation.left: playPause
-            KeyNavigation.right: nextButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: playPause
+            property Item navRight: nextButton
         }
 
         StrmIconButton {
@@ -187,9 +200,8 @@ FocusScope {
                 PlayerCtl.playNext();
             }
 
-            KeyNavigation.left: forwardButton
-            KeyNavigation.right: stopButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: forwardButton
+            property Item navRight: stopButton
         }
 
         // Stop is part of the transport, not a panel verb, so it stays in the
@@ -206,9 +218,8 @@ FocusScope {
                 PlayerCtl.stop();
             }
 
-            KeyNavigation.left: nextButton
-            KeyNavigation.right: row.compact ? muteButton : chapterPrevious
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: nextButton
+            property Item navRight: row.compact ? muteButton : chapterPrevious
         }
 
         Item {
@@ -228,9 +239,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.jumpChapter(false)
 
-            KeyNavigation.left: stopButton
-            KeyNavigation.right: chapterNext
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: stopButton
+            property Item navRight: chapterNext
         }
 
         StrmIconButton {
@@ -244,9 +254,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.jumpChapter(true)
 
-            KeyNavigation.left: chapterPrevious
-            KeyNavigation.right: muteButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: chapterPrevious
+            property Item navRight: muteButton
         }
     }
 
@@ -259,7 +268,7 @@ FocusScope {
         spacing: Theme.spacingTight
 
         // Volume: the mute button is the tab stop, the slider is the pointer's
-        // affordance. It is deliberately OUT of the KeyNavigation chain —
+        // affordance. It is deliberately OUT of the arrow chain —
         // StrmSlider consumes Left/Right for its own value, so leaving it in
         // would trap arrow navigation halfway along the row. The keyboard
         // adjusts volume with the player.volumeUp / player.volumeDown bindings
@@ -301,9 +310,8 @@ FocusScope {
                     PlayerCtl.toggleMute();
                 }
 
-                KeyNavigation.left: row.compact ? stopButton : chapterNext
-                KeyNavigation.right: row.compact ? fullscreenButton : audioButton
-                KeyNavigation.up: row.focusAbove
+                property Item navLeft: row.compact ? stopButton : chapterNext
+                property Item navRight: row.compact ? fullscreenButton : audioButton
             }
 
             StrmSlider {
@@ -347,9 +355,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.panelRequested("tracks", audioButton, 0)
 
-            KeyNavigation.left: muteButton
-            KeyNavigation.right: subtitleButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: muteButton
+            property Item navRight: subtitleButton
         }
 
         StrmIconButton {
@@ -363,9 +370,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.panelRequested("tracks", subtitleButton, 1)
 
-            KeyNavigation.left: audioButton
-            KeyNavigation.right: chaptersButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: audioButton
+            property Item navRight: chaptersButton
         }
 
         StrmIconButton {
@@ -379,9 +385,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.panelRequested("chapters", chaptersButton, 0)
 
-            KeyNavigation.left: subtitleButton
-            KeyNavigation.right: queueButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: subtitleButton
+            property Item navRight: queueButton
         }
 
         StrmIconButton {
@@ -394,9 +399,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.panelRequested("queue", queueButton, 0)
 
-            KeyNavigation.left: chaptersButton
-            KeyNavigation.right: settingsButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: chaptersButton
+            property Item navRight: settingsButton
         }
 
         StrmIconButton {
@@ -409,9 +413,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.panelRequested("settings", settingsButton, 0)
 
-            KeyNavigation.left: queueButton
-            KeyNavigation.right: statsButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: queueButton
+            property Item navRight: statsButton
         }
 
         StrmIconButton {
@@ -425,9 +428,8 @@ FocusScope {
             visible: !row.compact
             onClicked: row.statsRequested()
 
-            KeyNavigation.left: settingsButton
-            KeyNavigation.right: fullscreenButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: settingsButton
+            property Item navRight: fullscreenButton
         }
 
         StrmIconButton {
@@ -439,9 +441,8 @@ FocusScope {
             shortcut: row.shortcutFor("app.fullscreen", "F11")
             onClicked: row.fullscreenRequested()
 
-            KeyNavigation.left: row.compact ? muteButton : statsButton
-            KeyNavigation.right: row.compact ? moreButton : null
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: row.compact ? muteButton : statsButton
+            property Item navRight: row.compact ? moreButton : null
         }
 
         StrmIconButton {
@@ -457,8 +458,7 @@ FocusScope {
                 compactMenu.popupAt(p.x, p.y);
             }
 
-            KeyNavigation.left: fullscreenButton
-            KeyNavigation.up: row.focusAbove
+            property Item navLeft: fullscreenButton
         }
     }
 

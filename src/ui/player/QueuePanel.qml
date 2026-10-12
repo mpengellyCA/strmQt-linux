@@ -98,8 +98,8 @@ FocusScope {
                     enabled: panel.queue !== null
                     onClicked: panel.toggleShuffle()
 
-                    KeyNavigation.right: repeatButton
-                    KeyNavigation.down: list
+                    property Item navRight: repeatButton
+                    property Item navDown: list
                 }
 
                 StrmIconButton {
@@ -115,9 +115,9 @@ FocusScope {
                     enabled: panel.queue !== null
                     onClicked: panel.cycleRepeat()
 
-                    KeyNavigation.left: shuffleButton
-                    KeyNavigation.right: closeButton
-                    KeyNavigation.down: list
+                    property Item navLeft: shuffleButton
+                    property Item navRight: closeButton
+                    property Item navDown: list
                 }
 
                 StrmIconButton {
@@ -129,8 +129,8 @@ FocusScope {
                     tooltip: qsTr("Close")
                     onClicked: panel.closeRequested()
 
-                    KeyNavigation.left: repeatButton
-                    KeyNavigation.down: list
+                    property Item navLeft: repeatButton
+                    property Item navDown: list
                 }
             }
         }
