@@ -160,13 +160,16 @@ FocusScope {
             page.focusSeated = true
             return
         }
-        const target = personError.visible ? personError
-                     : bioToggle.visible ? bioToggle
-                     : (filmGrid.visible && filmGrid.count > 0) ? filmGrid
-                     : null
-        if (!target)
+        // Spelled as branches, not as one conditional choosing between the
+        // three: Qt 6.4's qmlcachegen crashes merging their types.
+        if (personError.visible)
+            personError.focus = true
+        else if (bioToggle.visible)
+            bioToggle.focus = true
+        else if (filmGrid.visible && filmGrid.count > 0)
+            filmGrid.focus = true
+        else
             return
-        target.focus = true
         page.focusSeated = true
     }
 

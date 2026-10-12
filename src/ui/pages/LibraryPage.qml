@@ -102,10 +102,14 @@ FocusScope {
         // A covered page has no rows by design (above), which is not "empty".
         if (!page.gridReady)
             return
-        const empty = !page.isEmpty ? null : page.failed ? errorState : emptyState
-        if (empty) {
+        if (page.isEmpty) {
             if (!page.focusSeated || page.holdsKeyboard(grid)) {
-                empty.focus = true
+                // Two branches, not one conditional choosing between the
+                // states: Qt 6.4's qmlcachegen crashes merging their types.
+                if (page.failed)
+                    errorState.focus = true
+                else
+                    emptyState.focus = true
                 page.focusSeated = true
             }
             return
