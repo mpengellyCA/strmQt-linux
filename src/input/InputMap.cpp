@@ -1189,6 +1189,8 @@ void InputMap::noteInput(const QString &device)
     }
     if (device == m_lastInputDevice)
         return;
+    if (m_keyboardStampHeld && device == QLatin1String("keyboard"))
+        return;
     m_lastInputDevice = device;
     m_store.setValue(kLastDeviceKey, device);
     emit lastInputDeviceChanged();

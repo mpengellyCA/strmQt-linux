@@ -4,7 +4,10 @@
 #include <QGuiApplication>
 #include <QInputMethodQueryEvent>
 #include <QKeyEvent>
+#include <QTimer>
 #include <QWindow>
+
+#include "input/InputMap.h"
 
 // Delivering a key on behalf of an input that is not the keyboard — the web
 // remote and the gamepad — to the app window, whether or not it is active.
@@ -41,13 +44,54 @@ inline bool textInputFocused(QWindow *window)
     return query.value(Qt::ImEnabled).toBool();
 }
 
+// A key that did not come from a keyboard. Its own type so that it can be told
+// apart where it lands (DeliveredKeyStamp below) without guessing from timing.
+class DeliveredKey final : public QKeyEvent
+{
+public:
+    using QKeyEvent::QKeyEvent;
+};
+
 // The text is deliberately empty: this is a command, not typing.
 inline void postKey(QWindow *window, int key, int modifiers, bool pressed, bool autoRepeat)
 {
     QCoreApplication::postEvent(window,
-                                new QKeyEvent(pressed ? QEvent::KeyPress : QEvent::KeyRelease, key,
-                                              static_cast<Qt::KeyboardModifiers>(modifiers),
-                                              QString(), autoRepeat));
+                                new DeliveredKey(pressed ? QEvent::KeyPress : QEvent::KeyRelease,
+                                                 key, static_cast<Qt::KeyboardModifiers>(modifiers),
+                                                 QString(), autoRepeat));
 }
+
+// The shell and the player stamp "keyboard" as the device in use from their
+// key handlers, and a key delivered here arrives in those same handlers — so
+// every D-pad press was stamped "gamepad" by the pad and "keyboard" a moment
+// later by the page it landed on. The on-screen hints followed, and each flip
+// was a settings write. While a delivered key is being handled, a "keyboard"
+// stamp is not believed.
+class DeliveredKeyStamp final : public QObject
+{
+public:
+    DeliveredKeyStamp(InputMap *input, QObject *parent)
+        : QObject(parent), m_input(input)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)
+            && m_input && dynamic_cast<DeliveredKey *>(event)) {
+            m_input->setKeyboardStampHeld(true);
+            // Delivery is synchronous from here; the next turn of the loop is
+            // after every handler has run.
+            QTimer::singleShot(0, m_input, [input = m_input] {
+                input->setKeyboardStampHeld(false);
+            });
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    InputMap *m_input = nullptr;
+};
 
 } // namespace strmqt::keydelivery

@@ -546,6 +546,12 @@ void InputMapTest::lastInputDeviceTracksTheUser()
     QCOMPARE(spy.count(), 1);
     QCOMPARE(m_map->lastInputDevice(), QStringLiteral("gamepad"));
 
+    // A key delivered for the pad lands in handlers that say "keyboard".
+    m_map->setKeyboardStampHeld(true);
+    m_map->noteInput(QStringLiteral("keyboard"));
+    QCOMPARE(m_map->lastInputDevice(), QStringLiteral("gamepad"));
+    m_map->setKeyboardStampHeld(false);
+
     m_map->noteInput(QStringLiteral("mouse"));
     QCOMPARE(spy.count(), 2);
     QVERIFY(!m_map->gamepadActive());

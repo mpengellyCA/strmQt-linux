@@ -25,6 +25,7 @@
 #include "core/Settings.h"
 #include "input/InputMap.h"
 #include "input/KeyEventLogger.h"
+#include "input/KeyDelivery.h"
 #include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
 #include "input/SkipKeyFilter.h"
@@ -128,6 +129,8 @@ int main(int argc, char *argv[])
         }
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
         window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
+        window->installEventFilter(
+            new strmqt::keydelivery::DeliveredKeyStamp(app.input(), window));
         // ⏭ / ⏮: chapter first, then the queue — the same rule MPRIS
         // Next/Previous run (Application::wirePlaybackIntegrations) — and ⏭
         // held fast-forwards.
