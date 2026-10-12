@@ -20,7 +20,19 @@ export const command = {
   quality: (body) => run(post('/api/quality', body)),
   subtitleStyle: (body) => run(post('/api/subtitles/style', body)),
   navigate: (body) => run(post('/api/navigate', body)),
+  // Any desktop action by its id: what a key or a gamepad button resolves to.
+  action: (id) => run(post('/api/action', { action: id })),
 };
+
+// 'none' | 'full' | 'mini': whether the TV shows the full player or the docked bar.
+export function playerView() {
+  return store.status?.app?.playerView || 'none';
+}
+
+// What the view toggle will do next, for whichever button offers it.
+export function viewToggleLabel() {
+  return playerView() === 'full' ? 'Mini player on the TV' : 'Full player on the TV';
+}
 
 export function togglePause() {
   const p = playback();
@@ -1025,6 +1037,7 @@ function openMoreSheet() {
     build(body, sheet) {
       const p = playback();
       const actions = [
+        { iconName: playerView() === 'full' ? 'down' : 'fullscreen', label: viewToggleLabel(), detail: 'Keeps playing either way.', run: () => command.action('player.toggleView'), needsActive: true },
         { iconName: 'osd', label: 'Show controls on the TV', run: () => command.navigate({ destination: 'osd' }) },
         { iconName: 'reload', label: 'Reload the stream', detail: 'Fixes a stalled or broken picture without losing your place.', run: () => command.playback('reloadStream'), needsActive: true },
         { iconName: 'camera', label: 'Take a screenshot', detail: 'Saved on the TV’s computer.', run: () => command.playback('screenshot'), needsActive: true, video: true },

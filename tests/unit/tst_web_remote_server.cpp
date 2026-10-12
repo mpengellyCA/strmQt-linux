@@ -49,6 +49,7 @@ private slots:
     void postWithoutJsonIsRefused();
     void navigationAllowlist();
     void navigationKeysMapToActions();
+    void actionsAreInvokedById();
     void staticFilesAreWhitelisted();
     void apiSendsNoCorsHeaders();
     void statusCarriesQualityAndApp();
@@ -409,6 +410,27 @@ void WebRemoteServerTest::navigationAllowlist()
     QCOMPARE(destSpy.count(), 1);
 }
 
+void WebRemoteServerTest::actionsAreInvokedById()
+{
+    QSignalSpy spy(m_server, &WebRemoteServer::actionRequested);
+
+    // No catalogue, no actions: the allowlist is what was handed over.
+    m_server->setActions({});
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"action":"player.toggleView"})").status, 400);
+
+    m_server->setActions({QStringLiteral("player.toggleView"), QStringLiteral("nav.nextLetter")});
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"action":"player.toggleView"})").status, 200);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().first().toString(), QStringLiteral("player.toggleView"));
+
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"action":"app.quit"})").status, 400);
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"action":""})").status, 400);
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"key":"up"})").status, 400);
+    QCOMPARE(request("POST", QStringLiteral("/api/action"), R"({"action":"player.toggleView"})",
+                     "text/plain").status, 415);
+    QCOMPARE(spy.count(), 1);
+}
+
 void WebRemoteServerTest::navigationKeysMapToActions()
 {
     for (const QString &key : WebRemoteServer::navigationKeys())
@@ -453,6 +475,13 @@ void WebRemoteServerTest::statusCarriesQualityAndApp()
     QCOMPARE(obj.value(QStringLiteral("quality")).toObject().value(QStringLiteral("maxBitrateKbps")).toInt(), 20000);
     const QJsonObject app = obj.value(QStringLiteral("app")).toObject();
     QCOMPARE(app.value(QStringLiteral("context")).toString(), QStringLiteral("browse"));
+    // Nothing is playing, so there is no view to toggle whatever is on top.
+    m_server->setPlayerOnTop(true);
+    QCOMPARE(QJsonDocument::fromJson(request("GET", QStringLiteral("/api/status")).body)
+                 .object().value(QStringLiteral("app")).toObject()
+                 .value(QStringLiteral("playerView")).toString(),
+             QStringLiteral("none"));
+    m_server->setPlayerOnTop(false);
     QVERIFY(app.value(QStringLiteral("accent")).toString().startsWith(QLatin1Char('#')));
     QVERIFY(obj.contains(QStringLiteral("subtitleStyle")));
     QCOMPARE(obj.value(QStringLiteral("playback")).toObject().value(QStringLiteral("active")).toBool(), false);

@@ -84,6 +84,12 @@ ApplicationWindow {
         value: root.interactionContext
     }
 
+    Binding {
+        target: App
+        property: "playerOnTop"
+        value: root.playerOnTop
+    }
+
     readonly property var currentEntry: stack.currentEntry
     // Destination key for the nav rail: "home", "favorites", "search",
     // "settings", "details", "series", or a library id.

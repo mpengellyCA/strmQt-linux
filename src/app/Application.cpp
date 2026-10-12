@@ -268,6 +268,10 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_webRemoteServer->setInteractionContext(m_interactionContext);
     connect(this, &Application::interactionContextChanged, m_webRemoteServer,
             [this] { m_webRemoteServer->setInteractionContext(m_interactionContext); });
+    m_webRemoteServer->setActions(m_input->actionIds());
+    m_webRemoteServer->setPlayerOnTop(m_playerOnTop);
+    connect(this, &Application::playerOnTopChanged, m_webRemoteServer,
+            [this] { m_webRemoteServer->setPlayerOnTop(m_playerOnTop); });
 
     m_powerInhibit = new PowerInhibit(this);
     m_mpris = new MprisPlayer(this);
@@ -408,6 +412,14 @@ void Application::setInteractionContext(const QString &context)
         m_gamepad->setContext(wanted);
 #endif
     emit interactionContextChanged();
+}
+
+void Application::setPlayerOnTop(bool onTop)
+{
+    if (m_playerOnTop == onTop)
+        return;
+    m_playerOnTop = onTop;
+    emit playerOnTopChanged();
 }
 
 void Application::deliverRemoteAction(const QString &actionId)

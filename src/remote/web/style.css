@@ -1659,6 +1659,14 @@ body[data-route="item"] .topbar:not(.scrolled) {
   color: var(--text);
 }
 
+.key-view {
+  flex-direction: row;
+  gap: 8px;
+  min-height: 48px;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .key-play {
   background: var(--lamp);
   box-shadow: none;
