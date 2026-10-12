@@ -1,5 +1,7 @@
 #include "Application.h"
 #include "WindowFocusKeeper.h"
+#include "input/FocusNavigator.h"
+#include <QQuickWindow>
 #include "controllers/PlaylistController.h"
 #include "controllers/music/AlbumController.h"
 #include "controllers/music/ArtistController.h"
@@ -116,6 +118,14 @@ int main(int argc, char *argv[])
     // and its Back as Qt::Key_Back, which only the page history listened for.
     if (auto *window = qobject_cast<QWindow *>(roots.value(0))) {
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
+        // Answers the arrow no control claimed and re-seats focus that is on
+        // nothing (ARCHITECTURE.md §5, "Where an arrow goes").
+        if (auto *quickWindow = qobject_cast<QQuickWindow *>(window)) {
+            auto *navigator = new strmqt::FocusNavigator(quickWindow, quickWindow);
+            app.setNavigationModal(navigator->modalActive());
+            QObject::connect(navigator, &strmqt::FocusNavigator::modalActiveChanged, &app,
+                             [&app, navigator] { app.setNavigationModal(navigator->modalActive()); });
+        }
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
         window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
         // ⏭ / ⏮: chapter first, then the queue — the same rule MPRIS

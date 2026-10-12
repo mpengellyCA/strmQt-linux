@@ -116,6 +116,8 @@ qt_add_executable(strmqt
     input/RemoteBackKeyFilter.h
     input/KeyEventLogger.h
     input/NavigationKeyHandler.h input/NavigationKeyHandler.cpp
+    input/SpatialDecision.h
+    input/FocusNavigator.h input/FocusNavigator.cpp
     input/SkipKeyFilter.h input/SkipKeyFilter.cpp
     # QtGui (QImage/QColor), so deliberately NOT in strmqt_app, which stays
     # QtCore-only. tests/CMakeLists.txt compiles CoverTint.cpp into its own

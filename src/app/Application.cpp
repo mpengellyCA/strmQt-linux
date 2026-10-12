@@ -422,6 +422,14 @@ void Application::setPlayerOnTop(bool onTop)
     emit playerOnTopChanged();
 }
 
+void Application::setNavigationModal(bool modal)
+{
+    if (m_navigationModal == modal)
+        return;
+    m_navigationModal = modal;
+    emit navigationModalChanged();
+}
+
 void Application::deliverRemoteAction(const QString &actionId)
 {
     if (actionId.isEmpty() || !m_input)
