@@ -195,12 +195,11 @@ FocusScope {
     }
 
     Keys.onUpPressed: event => { event.accepted = page.moveOrRecover(-1) }
-    // Down at the last shelf stays put rather than leaving the page; when
+    // Down at the last shelf is declined, like Up at the strip: the page's
+    // bottom edge leads to the docked bar (FocusNavigator), and accepting the
+    // key here made this the one page a pad could not reach it from. When
     // focus is stranded it recovers to the nearest section instead.
-    Keys.onDownPressed: event => {
-        page.moveOrRecover(1)
-        event.accepted = true
-    }
+    Keys.onDownPressed: event => { event.accepted = page.moveOrRecover(1) }
 
     // ── Scrolling ──────────────────────────────────────────────────────────
     function scrollTo(y): void {

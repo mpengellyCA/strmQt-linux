@@ -588,6 +588,11 @@ FocusScope {
 
         signal dismissed
 
+        // Nothing under the scrim is reachable while the picker is up, and it
+        // is entered on its field (FocusNavigator.h).
+        property bool navModal: picker.opened
+        property Item navEntry: pickerField
+
         readonly property string itemName: picker.target && picker.target.name
                                            ? String(picker.target.name) : ""
         readonly property string itemId: picker.target && picker.target.itemId
@@ -1092,8 +1097,15 @@ FocusScope {
 
     // ── Vertical navigation ────────────────────────────────────────────────
     // Sections come and go with the payload (no crew, no studios, no links on a
-    // sparse item), so Down/Up walk this list and skip whatever is not there,
-    // instead of every section hardcoding what is above and below it.
+    // sparse item), so nothing here hardcodes what is above or below it.
+    //
+    // Down between sections is the navigator's (FocusNavigator.h): they are a
+    // column, and the next one that is on screen is the next one down. Up is
+    // named, from this list, because the top of the column is not a matter of
+    // layout — it leads to the hero's primary verb (or the version picker),
+    // not to whichever button happens to sit over the card. The hero's own
+    // Down is named for the same reason. They are names, not KeyNavigation
+    // links: a link accepts the key whether or not its target is there.
     //
     // "Part of" sits second, directly under the genres: it is a *where does
     // this belong* fact, not trivia, and it is also the one section on this
@@ -1163,7 +1175,34 @@ FocusScope {
     readonly property Item heroDown: page.multiVersion ? versionSelect : page.sectionBelow(0)
     readonly property Item heroExit: page.multiVersion ? versionSelect : page.heroButton
 
-    onItemIdChanged: page.syncUserState()
+    // ── Where the keyboard starts ──────────────────────────────────────────
+    // On the primary verb, chosen once the payload that decides which verb
+    // that is has arrived — and chosen ONCE. The four candidates used to bind
+    // `focus:` to their own conditions, and a binding is re-run by everything
+    // it reads: marking an episode watched moved "Play next", which took the
+    // keyboard back from the button that had just been pressed.
+    //
+    // `focus`, not forceActiveFocus(): this is the hero's default, and must
+    // not pull the keyboard up from a shelf that history restored it to.
+    property bool focusSeated: false
+
+    function seatFocus() {
+        // Not while covered: `visible` is false for every verb then, and the
+        // first one on screen is what this is choosing.
+        if (page.focusSeated || page.detailsLoading || !page.visible)
+            return
+        page.heroButton.focus = true
+        page.focusSeated = true
+    }
+
+    // Deferred: the verbs' visibility hangs off the same payload this flag
+    // reports, and the order the two are updated in is not ours to rely on.
+    onDetailsLoadingChanged: Qt.callLater(page.seatFocus)
+
+    onItemIdChanged: {
+        page.syncUserState()
+        page.focusSeated = false
+    }
 
     function ensureDetailsScope(): void {
         if (page.itemId.length === 0) {
@@ -1189,8 +1228,10 @@ FocusScope {
     }
 
     onVisibleChanged: {
-        if (page.visible)
+        if (page.visible) {
             Qt.callLater(page.ensureDetailsScope)
+            Qt.callLater(page.seatFocus)
+        }
     }
 
     Connections {
@@ -1301,8 +1342,9 @@ FocusScope {
         interactive: scroll.contentHeight > scroll.height
         clip: true
         // Opacity, not visibility: an invisible item cannot hold focus, and the
-        // action buttons declare `focus: true` while this is still loading. A
-        // hidden body would hand the page back with nothing focused.
+        // hero scope holds it while this is still loading (seatFocus() picks
+        // the button once it can). A hidden body would hand the page back with
+        // nothing focused.
         opacity: page.detailsLoading ? 0.0 : 1.0
 
         ScrollBar.vertical: StrmScrollBar {}
@@ -1476,7 +1518,6 @@ FocusScope {
                             StrmButton {
                                 id: playNextSeriesButton
                                 visible: page.isSeries && DetailsCtl.hasNextEpisode
-                                focus: page.isSeries && DetailsCtl.hasNextEpisode
                                 text: {
                                     const code = page.nextEpisodeCode;
                                     const resumable = page.nextEpisodeItem && page.nextEpisodeItem.resumable === true;
@@ -1492,21 +1533,20 @@ FocusScope {
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: Actions.play(DetailsCtl.nextEpisode)
-                                KeyNavigation.right: page.verbAfter(0)
-                                KeyNavigation.down: page.heroDown
+                                property Item navRight: page.verbAfter(0)
+                                property Item navDown: page.heroDown
                             }
 
                             StrmButton {
                                 id: episodesButton
                                 visible: page.isSeries
-                                focus: page.isSeries && !playNextSeriesButton.visible
                                 text: qsTr("Episodes")
                                 iconName: "list"
                                 variant: (page.isSeries && DetailsCtl.hasNextEpisode) ? "secondary" : "primary"
                                 onClicked: Actions.performItemVerb("series", page.item)
-                                KeyNavigation.left: page.verbBefore(1)
-                                KeyNavigation.right: page.verbAfter(1)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(1)
+                                property Item navRight: page.verbAfter(1)
+                                property Item navDown: page.heroDown
                             }
 
                             // A collection has no stream of its own, so its
@@ -1514,14 +1554,13 @@ FocusScope {
                             StrmButton {
                                 id: playAllButton
                                 visible: page.isCollection
-                                focus: page.isCollection
                                 text: qsTr("Play all")
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: Actions.performItemVerb("play", page.item)
-                                KeyNavigation.left: page.verbBefore(2)
-                                KeyNavigation.right: page.verbAfter(2)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(2)
+                                property Item navRight: page.verbAfter(2)
+                                property Item navDown: page.heroDown
                             }
 
                             // The collection's own way in, the exact counterpart
@@ -1536,15 +1575,14 @@ FocusScope {
                                 text: qsTr("View items")
                                 iconName: "lib-collections"
                                 onClicked: Actions.performItemVerb("browseCollection", page.item)
-                                KeyNavigation.left: page.verbBefore(3)
-                                KeyNavigation.right: page.verbAfter(3)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(3)
+                                property Item navRight: page.verbAfter(3)
+                                property Item navDown: page.heroDown
                             }
 
                             StrmButton {
                                 id: playButton
                                 visible: page.isPlayable
-                                focus: page.isPlayable
                                 text: page.resumable
                                       ? qsTr("Resume %1").arg(page.formatPosition(page.item.positionMs))
                                       : qsTr("Play")
@@ -1554,9 +1592,9 @@ FocusScope {
                                     Actions.performItemVerb("play", page.item)
                                     page.applyVersion()
                                 }
-                                KeyNavigation.left: page.verbBefore(4)
-                                KeyNavigation.right: page.verbAfter(4)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(4)
+                                property Item navRight: page.verbAfter(4)
+                                property Item navDown: page.heroDown
                             }
 
                             StrmButton {
@@ -1568,9 +1606,9 @@ FocusScope {
                                     Actions.performItemVerb("playFromStart", page.item)
                                     page.applyVersion()
                                 }
-                                KeyNavigation.left: page.verbBefore(5)
-                                KeyNavigation.right: page.verbAfter(5)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(5)
+                                property Item navRight: page.verbAfter(5)
+                                property Item navDown: page.heroDown
                             }
 
                             // Shuffle sits next to Episodes / Play all, for the
@@ -1581,9 +1619,9 @@ FocusScope {
                                 text: qsTr("Shuffle")
                                 iconName: "shuffle"
                                 onClicked: Actions.performItemVerb("shuffle", page.item)
-                                KeyNavigation.left: page.verbBefore(6)
-                                KeyNavigation.right: page.verbAfter(6)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(6)
+                                property Item navRight: page.verbAfter(6)
+                                property Item navDown: page.heroDown
                             }
 
                             // ── Trailer (ARCHITECTURE.md) ────────────────────
@@ -1610,9 +1648,9 @@ FocusScope {
                                     else
                                         page.showTrailerMenu()
                                 }
-                                KeyNavigation.left: page.verbBefore(7)
-                                KeyNavigation.right: page.verbAfter(7)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(7)
+                                property Item navRight: page.verbAfter(7)
+                                property Item navDown: page.heroDown
                             }
 
                             // Named for what clicking it does, in both states.
@@ -1633,9 +1671,9 @@ FocusScope {
                                 // The verb, not a local flip: Actions owns the
                                 // value and tells every view about the change.
                                 onClicked: Actions.performItemVerb("played", page.item)
-                                KeyNavigation.left: page.verbBefore(8)
-                                KeyNavigation.right: page.verbAfter(8)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(8)
+                                property Item navRight: page.verbAfter(8)
+                                property Item navDown: page.heroDown
                             }
 
                             StrmButton {
@@ -1644,9 +1682,9 @@ FocusScope {
                                 text: page.itemFavorite ? qsTr("Favourite") : qsTr("Add favourite")
                                 iconName: page.itemFavorite ? "heart-filled" : "heart"
                                 onClicked: Actions.performItemVerb("favorite", page.item)
-                                KeyNavigation.left: page.verbBefore(9)
-                                KeyNavigation.right: page.verbAfter(9)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(9)
+                                property Item navRight: page.verbAfter(9)
+                                property Item navDown: page.heroDown
                             }
 
                             // ── Add to playlist (ARCHITECTURE.md) ────────
@@ -1660,9 +1698,9 @@ FocusScope {
                                 text: qsTr("Add to playlist")
                                 iconName: "playlist"
                                 onClicked: playlistPicker.show(page.item)
-                                KeyNavigation.left: page.verbBefore(10)
-                                KeyNavigation.right: page.verbAfter(10)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(10)
+                                property Item navRight: page.verbAfter(10)
+                                property Item navDown: page.heroDown
                             }
 
                             StrmIconButton {
@@ -1673,8 +1711,8 @@ FocusScope {
                                     var p = moreButton.mapToItem(null, 0, moreButton.height)
                                     itemMenu.popupForItemNoDetails(page.item, p.x, p.y)
                                 }
-                                KeyNavigation.left: page.verbBefore(11)
-                                KeyNavigation.down: page.heroDown
+                                property Item navLeft: page.verbBefore(11)
+                                property Item navDown: page.heroDown
                             }
                         }
 
@@ -1748,8 +1786,8 @@ FocusScope {
                                     currentIndex: page.versionIndex
                                     onActivated: index => page.selectVersion(index)
 
-                                    KeyNavigation.up: page.heroButton
-                                    KeyNavigation.down: page.sectionBelow(0)
+                                    property Item navUp: page.heroButton
+                                    property Item navDown: page.sectionBelow(0)
                                 }
                             }
 
@@ -1836,8 +1874,7 @@ FocusScope {
                     if (episodesRail.activeFocus)
                         page.ensureVisible(episodesRail)
                 }
-                KeyNavigation.up: page.heroExit
-                KeyNavigation.down: page.sectionBelow(1)
+                property Item navUp: page.heroExit
 
                 onMoreRequested: Actions.performItemVerb("series", page.item)
                 onItemActivated: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
@@ -1858,8 +1895,7 @@ FocusScope {
                     Actions.browseGenre(genre.id ? genre.id : "", genre.name)
                 }
                 onActiveFocusChanged: { if (genreRow.activeFocus) page.ensureVisible(genreRow) }
-                KeyNavigation.up: page.sectionAbove(0)
-                KeyNavigation.down: page.sectionBelow(2)
+                property Item navUp: page.sectionAbove(0)
             }
 
             // ── Part of (E4) ───────────────────────────────────────────────
@@ -1888,8 +1924,7 @@ FocusScope {
                     if (collectionRow.activeFocus)
                         page.ensureVisible(collectionRow)
                 }
-                KeyNavigation.up: page.sectionAbove(1)
-                KeyNavigation.down: page.sectionBelow(3)
+                property Item navUp: page.sectionAbove(1)
             }
 
             // ── Cast ───────────────────────────────────────────────────────
@@ -1903,8 +1938,7 @@ FocusScope {
                     Actions.browsePerson(person.id ? person.id : "", person.name)
                 }
                 onActiveFocusChanged: { if (castRow.activeFocus) page.ensureVisible(castRow) }
-                KeyNavigation.up: page.sectionAbove(2)
-                KeyNavigation.down: page.sectionBelow(4)
+                property Item navUp: page.sectionAbove(2)
             }
 
             // ── Crew ───────────────────────────────────────────────────────
@@ -1922,8 +1956,7 @@ FocusScope {
                     Actions.browsePerson(person.id ? person.id : "", person.name)
                 }
                 onActiveFocusChanged: { if (crewRow.activeFocus) page.ensureVisible(crewRow) }
-                KeyNavigation.up: page.sectionAbove(3)
-                KeyNavigation.down: page.sectionBelow(5)
+                property Item navUp: page.sectionAbove(3)
             }
 
             // ── Studios ────────────────────────────────────────────────────
@@ -1936,8 +1969,7 @@ FocusScope {
                     Actions.browseStudio(studio.id ? studio.id : "", studio.name)
                 }
                 onActiveFocusChanged: { if (studioRow.activeFocus) page.ensureVisible(studioRow) }
-                KeyNavigation.up: page.sectionAbove(4)
-                KeyNavigation.down: page.sectionBelow(6)
+                property Item navUp: page.sectionAbove(4)
             }
 
             // ── Off-site links ─────────────────────────────────────────────
@@ -1957,8 +1989,7 @@ FocusScope {
                         Qt.openUrlExternally(link.url)
                 }
                 onActiveFocusChanged: { if (linkRow.activeFocus) page.ensureVisible(linkRow) }
-                KeyNavigation.up: page.sectionAbove(5)
-                KeyNavigation.down: page.sectionBelow(7)
+                property Item navUp: page.sectionAbove(5)
             }
 
             // ── "More like this" (Emby-web parity) ─────────────────────────
@@ -1979,7 +2010,7 @@ FocusScope {
                     if (similarRail.activeFocus)
                         page.ensureVisible(similarRail)
                 }
-                KeyNavigation.up: page.sectionAbove(6)
+                property Item navUp: page.sectionAbove(6)
 
                 onItemActivated: index => Actions.openDetails(DetailsCtl.similar.get(index))
                 onItemPlayRequested: index => Actions.play(DetailsCtl.similar.get(index))

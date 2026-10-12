@@ -165,9 +165,11 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingTight / 2
 
-            // Left/Right walk the bar. KeyNavigation skips a disabled item on
-            // its own, so a chain declared once covers every combination of
-            // Back and Forward being offerable.
+            // Left/Right walk the bar. The neighbours are named for the
+            // navigator (FocusNavigator.h) rather than linked: a name that is
+            // disabled — Back at the root of the history, Forward with nothing
+            // gone back from — is stepped past by geometry instead of eating
+            // the key, so one declaration covers every combination of the two.
             StrmIconButton {
                 id: backButton
 
@@ -178,7 +180,7 @@ Item {
                 shortcut: topBar.shortcutFor("nav.back")
                 onClicked: topBar.backRequested()
 
-                KeyNavigation.right: forwardButton
+                property Item navRight: forwardButton
             }
 
             StrmIconButton {
@@ -190,8 +192,8 @@ Item {
                 tooltip: qsTr("Forward")
                 onClicked: topBar.forwardRequested()
 
-                KeyNavigation.left: backButton
-                KeyNavigation.right: settingsButton
+                property Item navLeft: backButton
+                property Item navRight: settingsButton
             }
         }
 
@@ -225,6 +227,10 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: Theme.scale(260)
                 placeholderText: qsTr("Search")
+                // Not somewhere an arrow lands, for the reason given at
+                // focusFirst(): with Forward disabled geometry would otherwise
+                // pick this, the nearest Tab stop, on Left from Settings.
+                property bool navStop: false
 
                 onTextEdited: topBar.searchRequested(field.text)
                 onAccepted: topBar.searchSubmitted(field.text)
@@ -241,8 +247,8 @@ Item {
                 shortcut: topBar.shortcutFor("app.settings")
                 onClicked: topBar.settingsRequested()
 
-                KeyNavigation.left: forwardButton
-                KeyNavigation.right: remoteButton
+                property Item navLeft: forwardButton
+                property Item navRight: remoteButton
             }
 
             StrmIconButton {
@@ -259,8 +265,8 @@ Item {
                         remotePopup.open();
                 }
 
-                KeyNavigation.left: settingsButton
-                KeyNavigation.right: avatar
+                property Item navLeft: settingsButton
+                property Item navRight: avatar
             }
 
             // Avatar: the only place the signed-in user is named anywhere in
@@ -356,7 +362,7 @@ Item {
                 Keys.onEnterPressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
                 Keys.onSpacePressed: event => { if (!event.isAutoRepeat) avatar.openMenu(); }
 
-                KeyNavigation.left: remoteButton
+                property Item navLeft: remoteButton
             }
         }
     }

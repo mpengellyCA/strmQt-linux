@@ -61,6 +61,14 @@ FocusScope {
     // shape as DetailsPage.
     property bool personLoading: true
 
+    // Which part of the page holds the keyboard is decided once per load, by
+    // seatFocus() below, and never by a `focus:` binding on the parts. A
+    // binding is re-run by everything it reads — the page being shown again,
+    // a resize that changes whether the biography overflows, the grid
+    // refilling — and each run took the keyboard from wherever the user had
+    // walked it to.
+    property bool focusSeated: false
+
     readonly property bool haveRecord: page.personData
                                        && page.personData.id !== undefined
                                        && String(page.personData.id).length > 0
@@ -133,9 +141,38 @@ FocusScope {
         // would let a record that arrives on that same call stack be overwritten
         // by a `true` nothing ever clears except the guard timer.
         page.personLoading = true
+        page.focusSeated = false
         loadGuard.restart()
         DetailsCtl.loadPerson(page.personId)
     }
+
+    // The hero's one stop when it has one, otherwise the filmography, and the
+    // error state when there is no person to show. Asked again by each of them
+    // as it appears, until one answers; after that the keyboard is the user's,
+    // and a control that goes away under it is the navigator's to recover from
+    // (FocusNavigator.h). `focus`, not forceActiveFocus(): this picks the
+    // page's default, it does not take the keyboard from the shell's chrome.
+    function seatFocus(): void {
+        if (page.focusSeated || page.personLoading)
+            return
+        // Already somewhere real: history put the cursor back on a film.
+        if (filmGrid.activeFocus || bioToggle.activeFocus) {
+            page.focusSeated = true
+            return
+        }
+        const target = personError.visible ? personError
+                     : bioToggle.visible ? bioToggle
+                     : (filmGrid.visible && filmGrid.count > 0) ? filmGrid
+                     : null
+        if (!target)
+            return
+        target.focus = true
+        page.focusSeated = true
+    }
+
+    // Deferred: the visibility of everything seatFocus() reads hangs off this
+    // flag too, and the order the two are updated in is not ours to rely on.
+    onPersonLoadingChanged: Qt.callLater(page.seatFocus)
 
     // Re-arms the shared library controller when something else has taken it.
     function ensureScope(): void {
@@ -433,13 +470,11 @@ FocusScope {
                 id: bioToggle
 
                 visible: page.biography.length > 0 && page.bioOverflows
-                // Focus follows content, not visibility: an invisible button
-                // must not be the thing the page hands focus to.
-                focus: bioToggle.visible
+                onVisibleChanged: Qt.callLater(page.seatFocus)
                 variant: "ghost"
                 text: page.bioExpanded ? qsTr("Show less") : qsTr("Read more")
                 iconName: page.bioExpanded ? "chevron-up" : "chevron-down"
-                KeyNavigation.down: filmGrid
+                property Item navDown: filmGrid
                 onClicked: page.bioExpanded = !page.bioExpanded
             }
         }
@@ -509,9 +544,11 @@ FocusScope {
         // person: a grid quietly full of somebody else's films is worse than
         // no grid at all.
         visible: page.scopeMine && !page.personLoading && page.haveRecord
-        // Focus follows content rather than visibility.
-        focus: filmGrid.count > 0 && page.haveRecord && !bioToggle.visible
-        KeyNavigation.up: bioToggle.visible ? bioToggle : null
+        onVisibleChanged: Qt.callLater(page.seatFocus)
+        onCountChanged: Qt.callLater(page.seatFocus)
+        // The top row's edge (FocusNavigator.h): Up out of the grid is the
+        // hero's button whenever it is there.
+        property Item navUp: bioToggle
 
         gridModel: LibraryCtl.model
         cardVariant: "poster"
@@ -565,7 +602,7 @@ FocusScope {
 
         anchors.fill: parent
         visible: !page.personLoading && !page.haveRecord
-        focus: personError.visible
+        onVisibleChanged: Qt.callLater(page.seatFocus)
         severity: "error"
         iconName: "user"
         headline: qsTr("Couldn't load this person")

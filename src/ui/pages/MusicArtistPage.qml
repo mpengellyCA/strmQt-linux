@@ -456,10 +456,10 @@ FocusScope {
                                 // takes it by forcing focus, which beats this.
                                 focus: true
 
-                                KeyNavigation.right: radioButton
-                                KeyNavigation.down: page.narrow && page.hasTopTracks ? topTracks
-                                                    : (page.narrow && page.hasSimilar ? similarStrip
-                                                                                      : tabBar)
+                                property Item navRight: radioButton
+                                property Item navDown: page.narrow && page.hasTopTracks ? topTracks
+                                                       : (page.narrow && page.hasSimilar ? similarStrip
+                                                                                         : tabBar)
                             }
 
                             StrmButton {
@@ -470,11 +470,11 @@ FocusScope {
                                 enabled: page.mine
                                 onClicked: ArtistCtl.radio()
 
-                                KeyNavigation.left: shuffleButton
-                                KeyNavigation.right: favouriteButton
-                                KeyNavigation.down: page.narrow && page.hasTopTracks ? topTracks
-                                                    : (page.narrow && page.hasSimilar ? similarStrip
-                                                                                      : tabBar)
+                                property Item navLeft: shuffleButton
+                                property Item navRight: favouriteButton
+                                property Item navDown: page.narrow && page.hasTopTracks ? topTracks
+                                                       : (page.narrow && page.hasSimilar ? similarStrip
+                                                                                         : tabBar)
                             }
 
                             StrmIconButton {
@@ -488,10 +488,16 @@ FocusScope {
                                 shortcut: "L"
                                 onClicked: Actions.toggleFavorite(ArtistCtl.artistItem)
 
-                                KeyNavigation.left: radioButton
-                                KeyNavigation.down: page.narrow && page.hasTopTracks ? topTracks
-                                                    : (page.narrow && page.hasSimilar ? similarStrip
-                                                                                      : tabBar)
+                                property Item navLeft: radioButton
+                                // Unfolded, the side column sits to the right
+                                // under the hero and Down from here goes to the
+                                // tabs: without this no arrow led from the
+                                // verbs into it.
+                                property Item navRight: page.narrow ? null
+                                                        : (page.hasTopTracks ? topTracks : similarStrip)
+                                property Item navDown: page.narrow && page.hasTopTracks ? topTracks
+                                                       : (page.narrow && page.hasSimilar ? similarStrip
+                                                                                         : tabBar)
                             }
                         }
                     }
@@ -595,9 +601,14 @@ FocusScope {
                                 page.ensureVisible(topTracks)
                         }
 
-                        KeyNavigation.up: shuffleButton
-                        KeyNavigation.down: similarStrip
-                        KeyNavigation.left: page.narrow ? null : releases
+                        // The table's edges (FocusNavigator): the ListView
+                        // keeps Up/Down for its rows and declines them at
+                        // either end. A neighbour that is hidden is no dead
+                        // end — Down with no similar artists follows the
+                        // strip's own `navDown` to the tab bar when folded.
+                        property Item navUp: shuffleButton
+                        property Item navDown: similarStrip
+                        property Item navLeft: page.narrow ? null : releases
 
                         onActivated: index => ArtistCtl.playTopTrack(index)
                         onMenuRequested: (index, mx, my) =>
@@ -688,17 +699,27 @@ FocusScope {
                                 page.ensureVisible(similarStrip)
                         }
 
-                        KeyNavigation.up: topTracks
-                        KeyNavigation.down: page.narrow ? tabBar : null
-                        KeyNavigation.left: page.narrow ? null : releases
+                        property Item navUp: page.hasTopTracks ? topTracks : shuffleButton
+                        property Item navDown: page.narrow ? tabBar : null
+                        property Item navLeft: page.narrow ? null : releases
+                        // Where the strip's cursor is, so the column scrolls to
+                        // the portrait and not merely to the strip.
+                        property Item navCursor: similarStrip.similarCount > 0
+                                                 ? similarPortraits.itemAt(similarStrip.currentSimilar)
+                                                 : null
 
-                        // Clamped, not wrapped, and accepted at both ends — the
-                        // same thing ChipStrip's keyNavigationWraps: false
-                        // ListView does, so Left/Right feel identical on all
-                        // three surfaces.
+                        // Clamped, not wrapped. Right is accepted at the end,
+                        // as ChipStrip's keyNavigationWraps: false ListView
+                        // does; Left on the FIRST portrait is declined, because
+                        // unfolded the releases are over there. The handler
+                        // used to accept it at both ends, ahead of the strip's
+                        // own `KeyNavigation.left: releases` (the order
+                        // MusicAlbumPage measured for its shelf), so the strip
+                        // could be walked into and not out of to the left.
                         Keys.onLeftPressed: event => {
-                            similarStrip.moveCursor(-1)
-                            event.accepted = true
+                            event.accepted = similarStrip.currentSimilar > 0
+                            if (event.accepted)
+                                similarStrip.moveCursor(-1)
                         }
                         Keys.onRightPressed: event => {
                             similarStrip.moveCursor(1)
@@ -714,6 +735,8 @@ FocusScope {
                         }
 
                         Repeater {
+                            id: similarPortraits
+
                             model: ArtistCtl.similar
 
                             delegate: CratePortrait {
@@ -817,11 +840,13 @@ FocusScope {
                             page.ensureVisible(tabBar)
                     }
 
-                    KeyNavigation.up: page.narrow && page.hasSimilar ? similarStrip
-                                      : (page.narrow && page.hasTopTracks ? topTracks
-                                                                          : shuffleButton)
-                    KeyNavigation.down: releases
-                    KeyNavigation.right: page.narrow ? null : topTracks
+                    // Right is the bar's own until its last tab, which it
+                    // declines (StrmTabBar); unfolded, the side column is there.
+                    property Item navUp: page.narrow && page.hasSimilar ? similarStrip
+                                         : (page.narrow && page.hasTopTracks ? topTracks
+                                                                             : shuffleButton)
+                    property Item navDown: releases
+                    property Item navRight: page.narrow ? null : topTracks
                 }
 
                 StrmGrid {
@@ -841,22 +866,32 @@ FocusScope {
                     customCardWidth: Theme.crateSleeveSize
                     customCardHeight: Theme.crateSleeveSize + Theme.scale(52)
 
-                    // NOT `page.hasReleases`. A fresh open belongs to the hero
-                    // verbs; the grid claims the keyboard only while the
-                    // navigation-focus restorer is putting the user back where
-                    // Back took them from, and then keeps it (`|| activeFocus`)
-                    // once the restore has landed — without that second half the
-                    // scope's focus item would be cleared the moment `pending`
-                    // went false, dropping focus straight after restoring it.
-                    focus: releases.navigationFocusRestorePending || releases.activeFocus
+                    // NOT `focus: page.hasReleases`. A fresh open belongs to
+                    // the hero verbs; the grid claims the keyboard only when the
+                    // navigation-focus restorer starts putting the user back
+                    // where Back took them from.
+                    //
+                    // Claimed once, on that edge, and not by a binding. It was
+                    // `focus: navigationFocusRestorePending || activeFocus`,
+                    // which went false the moment the keyboard left the grid
+                    // for the destination rail or the docked bar — and a focus
+                    // scope whose focus child says `focus: false` has no child
+                    // to come back to, so the way back from either landed on
+                    // the bare page instead of the sleeve it had left.
+                    onNavigationFocusRestorePendingChanged: {
+                        if (releases.navigationFocusRestorePending)
+                            releases.focus = true
+                    }
 
                     onActiveFocusChanged: {
                         if (releases.activeFocus)
                             page.ensureVisible(releasesColumn)
                     }
 
-                    KeyNavigation.up: tabBar
-                    KeyNavigation.right: page.narrow ? null : topTracks
+                    // The grid's edges: it declines the arrow that would
+                    // leave it (StrmGrid), and these say where that leads.
+                    property Item navUp: tabBar
+                    property Item navRight: page.narrow ? null : topTracks
 
                     cardComponent: Component {
                         CrateSleeve {

@@ -67,6 +67,20 @@ FocusScope {
     readonly property int listPaneWidth: Math.max(Theme.scale(280),
                                                   Math.min(Theme.scale(360), page.width * 0.3))
 
+    // ── Where an arrow goes ────────────────────────────────────────────────
+    // The two lists as the navigator's named neighbours (FocusNavigator.h),
+    // and null while they have no rows: an empty view is live but is not
+    // somewhere to be, and with no name the layout finds whatever IS there —
+    // the empty state's action, the verbs above.
+    readonly property Item browseEntry: browseList.count > 0 ? browseList : null
+    readonly property Item memberEntry: page.hasOpenPlaylist && page.memberCount > 0
+                                        ? memberList : null
+    // The browse list takes the keyboard once, when its first rows arrive.
+    // As a `focus:` binding on the row count it took it again every time the
+    // count left zero — from the filter field mid-word, when a typo emptied
+    // the list and the correction refilled it.
+    property bool focusSeated: false
+
     function showMemberMenu(row, sceneX, sceneY): void {
         const item = PlaylistCtl.itemAt(row);
         if (!item)
@@ -189,7 +203,7 @@ FocusScope {
             iconName: "plus"
             onClicked: createPrompt.show()
 
-            KeyNavigation.down: filterField
+            property Item navDown: filterField
         }
     }
 
@@ -239,8 +253,8 @@ FocusScope {
             // list's cursor from here: unlike the command palette, this list is
             // a real destination with verbs of its own, and a filter you can
             // never leave is a trap.
-            KeyNavigation.up: newButton
-            KeyNavigation.down: browseList
+            property Item navUp: newButton
+            property Item navDown: page.browseEntry
         }
 
         // The list's clip, with room for a row's ring, which sits a pixel
@@ -262,10 +276,9 @@ FocusScope {
 
             parent: browseListClip.contentItem
             anchors.fill: parent
-            // The page's way in, and only while there is something to land on:
-            // an empty view cannot hold focus and would hand the page back with
-            // nothing focused.
-            focus: browseList.count > 0
+            // The page's way in, seated below once there is something to land
+            // on: an empty view cannot hold focus and would hand the page back
+            // with nothing focused.
             model: PlaylistCtl.filteredPlaylists
             currentIndex: -1
             keyNavigationWraps: false
@@ -280,12 +293,16 @@ FocusScope {
                 else if (browseList.currentIndex < 0
                          || browseList.currentIndex >= browseList.count)
                     browseList.currentIndex = 0;
+                if (browseList.count > 0 && !page.focusSeated) {
+                    browseList.focus = true;
+                    page.focusSeated = true;
+                }
             }
 
             ScrollBar.vertical: StrmScrollBar {}
 
-            KeyNavigation.up: filterField
-            KeyNavigation.right: page.hasOpenPlaylist ? memberList : null
+            property Item navUp: filterField
+            property Item navRight: page.memberEntry
 
             function pageStep() {
                 return Math.max(1, Math.floor(browseList.height
@@ -524,9 +541,9 @@ FocusScope {
                     enabled: page.memberCount > 0
                     onClicked: PlaylistCtl.requestPlayFrom(0)
 
-                    KeyNavigation.left: browseList
-                    KeyNavigation.right: shuffleButton
-                    KeyNavigation.down: memberList
+                    property Item navLeft: page.browseEntry
+                    property Item navRight: shuffleButton
+                    property Item navDown: page.memberEntry
                 }
 
                 StrmButton {
@@ -536,9 +553,9 @@ FocusScope {
                     enabled: page.memberCount > 0
                     onClicked: PlaylistCtl.requestShuffle()
 
-                    KeyNavigation.left: playAllButton
-                    KeyNavigation.right: reloadButton
-                    KeyNavigation.down: memberList
+                    property Item navLeft: playAllButton
+                    property Item navRight: reloadButton
+                    property Item navDown: page.memberEntry
                 }
 
                 StrmIconButton {
@@ -547,9 +564,9 @@ FocusScope {
                     tooltip: qsTr("Reload from the server")
                     onClicked: PlaylistCtl.reload()
 
-                    KeyNavigation.left: shuffleButton
-                    KeyNavigation.right: renameButton
-                    KeyNavigation.down: memberList
+                    property Item navLeft: shuffleButton
+                    property Item navRight: renameButton
+                    property Item navDown: page.memberEntry
                 }
 
                 StrmIconButton {
@@ -561,9 +578,9 @@ FocusScope {
                         renameSheet.open();
                     }
 
-                    KeyNavigation.left: reloadButton
-                    KeyNavigation.right: deleteButton
-                    KeyNavigation.down: memberList
+                    property Item navLeft: reloadButton
+                    property Item navRight: deleteButton
+                    property Item navDown: page.memberEntry
                 }
 
                 StrmIconButton {
@@ -575,8 +592,8 @@ FocusScope {
                     // where the user is, not in a verb.
                     onClicked: confirmDelete.open()
 
-                    KeyNavigation.left: renameButton
-                    KeyNavigation.down: memberList
+                    property Item navLeft: renameButton
+                    property Item navDown: page.memberEntry
                 }
             }
         }
@@ -647,8 +664,8 @@ FocusScope {
                 NumberAnimation { duration: Theme.animFastMs; easing.type: Theme.easeStandard }
             }
 
-            KeyNavigation.left: browseList
-            KeyNavigation.up: playAllButton
+            property Item navLeft: page.browseEntry
+            property Item navUp: playAllButton
 
             onActivated: index => PlaylistCtl.requestPlayFrom(index)
 
@@ -913,6 +930,13 @@ FocusScope {
         enabled: createPrompt.opened
 
         property bool opened: false
+        // Nothing under the scrim is reachable while the prompt is up, and it
+        // is entered on the field (FocusNavigator.h). The three controls carry
+        // no links of their own: the navigator reads them off the layout, so
+        // Cancel is still an arrow away while Create is disabled — the old
+        // chain ran through Create and ended there.
+        property bool navModal: createPrompt.opened
+        property Item navEntry: nameField
 
         function show(): void {
             nameField.text = "";
@@ -974,8 +998,6 @@ FocusScope {
                 placeholder: qsTr("Saturday night")
                 onAccepted: createPrompt.commit()
                 onCancelled: createPrompt.dismiss()
-
-                KeyNavigation.down: createButton
             }
 
             Item { width: 1; height: Theme.spacingTight }
@@ -990,9 +1012,6 @@ FocusScope {
                     variant: "primary"
                     enabled: nameField.text.trim().length > 0
                     onClicked: createPrompt.commit()
-
-                    KeyNavigation.up: nameField
-                    KeyNavigation.right: cancelButton
                 }
 
                 StrmButton {
@@ -1000,9 +1019,6 @@ FocusScope {
                     text: qsTr("Cancel")
                     variant: "ghost"
                     onClicked: createPrompt.dismiss()
-
-                    KeyNavigation.up: nameField
-                    KeyNavigation.left: createButton
                 }
             }
         }
@@ -1156,6 +1172,10 @@ FocusScope {
         visible: false
         z: 900
         title: qsTr("Rename playlist")
+        // A sheet in the overlay, not a Popup: it says for itself that the
+        // page under it is out of reach (FocusNavigator.h).
+        property bool navModal: renameSheet.visible
+        property Item navEntry: renameField
 
         function open() {
             visible = true;
@@ -1219,6 +1239,9 @@ FocusScope {
         visible: false
         z: 900
         title: qsTr("Delete this playlist?")
+        property bool navModal: confirmDelete.visible
+        // Cancel, as open() has it: the default of a destructive question.
+        property Item navEntry: cancelDelete
 
         function open() {
             visible = true;
@@ -1254,7 +1277,6 @@ FocusScope {
                     text: qsTr("Cancel")
                     variant: "ghost"
                     onClicked: confirmDelete.close()
-                    KeyNavigation.right: confirmDeleteButton
                 }
 
                 StrmButton {
@@ -1265,7 +1287,6 @@ FocusScope {
                         PlaylistCtl.remove(PlaylistCtl.currentId);
                         confirmDelete.close();
                     }
-                    KeyNavigation.left: cancelDelete
                 }
             }
         }

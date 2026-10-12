@@ -30,10 +30,12 @@ import StrmQt
 //    requests (facetsChanged), after the items are already drawn and being
 //    read; anything appended below the reading position grows the page without
 //    moving what is under the eye, and anything inserted above it does not.
-//  * Sections are walked through `navSections`, never chained to each other, so
-//    a section that is absent (no episodes matched, no genres came back yet) is
-//    skipped by Up/Down instead of being a hole in the keyboard chain — the same
-//    device DetailsPage.qml uses for exactly the same reason.
+//  * Sections are never chained to each other. Up and Down between them are
+//    the navigator's (FocusNavigator.h), which reads the column off the layout,
+//    so a section that is absent (no episodes matched, no genres came back
+//    yet) is simply not there to land on instead of being a hole in a keyboard
+//    chain. `navSections` is the same list for the things that do need to
+//    enumerate them: the field's Down, focus recovery, cancelling restores.
 //
 // objectName is load-bearing: Main.qml tests it so "/" does not push a second
 // search page over this one.
@@ -243,16 +245,6 @@ FocusScope {
                 return page.navSections[i]
         }
         return null
-    }
-
-    // The field is the top of this page and always will be: typing is the
-    // primary act, so Up out of the first section has exactly one destination.
-    function sectionAbove(start) {
-        for (var i = start; i >= 0; --i) {
-            if (page.navSections[i].visible)
-                return page.navSections[i]
-        }
-        return searchField
     }
 
     // ── Inline sections ────────────────────────────────────────────────────
@@ -870,8 +862,8 @@ FocusScope {
             interactive: false
 
             // Up at row 0 and Down at the last row are left unaccepted by
-            // ListView itself, which is what lets the section's KeyNavigation
-            // hand the keyboard to the next section instead of dead-ending.
+            // ListView itself, which is what lets the navigator hand the
+            // keyboard to the next section instead of dead-ending.
             onCurrentIndexChanged: {
                 if (list.activeFocus)
                     tracks.rowFocused(list.y + list.currentIndex * tracks.rowHeight,
@@ -1139,8 +1131,11 @@ FocusScope {
         placeholderText: qsTr("Search movies, shows, episodes, people…")
 
         // Whatever is first *today*: recent searches with nothing typed, the
-        // first non-empty result section once there is.
-        KeyNavigation.down: page.sectionBelow(0)
+        // first non-empty result section once there is. Named rather than left
+        // to the layout because the body scrolls: the nearest section under
+        // the field is not always the first one. With no section at all the
+        // name is null and the layout finds the empty state's action.
+        property Item navDown: page.sectionBelow(0)
 
         Component.onCompleted: searchField.text = SearchCtl.query
 
@@ -1254,8 +1249,6 @@ FocusScope {
                     }
                 }
                 onActiveFocusChanged: { if (recentRow.activeFocus) page.ensureVisible(recentRow) }
-                KeyNavigation.up: searchField
-                KeyNavigation.down: page.sectionBelow(1)
             }
 
             // ── Movies ─────────────────────────────────────────────────────
@@ -1271,8 +1264,6 @@ FocusScope {
                 emptyText: ""
 
                 onActiveFocusChanged: { if (movieRail.activeFocus) page.ensureVisible(movieRail) }
-                KeyNavigation.up: page.sectionAbove(0)
-                KeyNavigation.down: page.sectionBelow(2)
 
                 onItemActivated: index => page.openResult(page.movieModel, index)
                 onItemPlayRequested: index => page.playResult(page.movieModel, index)
@@ -1294,8 +1285,6 @@ FocusScope {
                 emptyText: ""
 
                 onActiveFocusChanged: { if (seriesRail.activeFocus) page.ensureVisible(seriesRail) }
-                KeyNavigation.up: page.sectionAbove(1)
-                KeyNavigation.down: page.sectionBelow(3)
 
                 onItemActivated: index => page.openResult(page.seriesModel, index)
                 onItemPlayRequested: index => page.playResult(page.seriesModel, index)
@@ -1323,8 +1312,6 @@ FocusScope {
                     if (episodeRail.activeFocus)
                         page.ensureVisible(episodeRail)
                 }
-                KeyNavigation.up: page.sectionAbove(2)
-                KeyNavigation.down: page.sectionBelow(4)
 
                 onItemActivated: index => page.openResult(page.episodeModel, index)
                 onItemPlayRequested: index => page.playResult(page.episodeModel, index)
@@ -1351,8 +1338,6 @@ FocusScope {
                     if (collectionRail.activeFocus)
                         page.ensureVisible(collectionRail)
                 }
-                KeyNavigation.up: page.sectionAbove(3)
-                KeyNavigation.down: page.sectionBelow(5)
 
                 onItemActivated: index => page.openResult(page.collectionModel, index)
                 onItemPlayRequested: index => page.playResult(page.collectionModel, index)
@@ -1377,8 +1362,6 @@ FocusScope {
                 emptyText: ""
 
                 onActiveFocusChanged: { if (artistRail.activeFocus) page.ensureVisible(artistRail) }
-                KeyNavigation.up: page.sectionAbove(4)
-                KeyNavigation.down: page.sectionBelow(6)
 
                 onItemActivated: index => page.openResult(page.artistModel, index)
                 // An artist has no ParentId a play query can address — see the
@@ -1405,8 +1388,6 @@ FocusScope {
                 emptyText: ""
 
                 onActiveFocusChanged: { if (albumRail.activeFocus) page.ensureVisible(albumRail) }
-                KeyNavigation.up: page.sectionAbove(5)
-                KeyNavigation.down: page.sectionBelow(7)
 
                 onItemActivated: index => page.openResult(page.albumModel, index)
                 onItemPlayRequested: index => page.playResult(page.albumModel, index)
@@ -1428,8 +1409,6 @@ FocusScope {
                 trackListModel: page.trackModel
 
                 onActiveFocusChanged: { if (trackList.activeFocus) page.ensureVisible(trackList) }
-                KeyNavigation.up: page.sectionAbove(6)
-                KeyNavigation.down: page.sectionBelow(8)
 
                 onTrackActivated: index => page.playResult(page.trackModel, index)
                 onTrackMenuRequested: (index, mx, my) => page.showMenu(page.trackModel, index, mx, my)
@@ -1449,8 +1428,6 @@ FocusScope {
                 emptyText: ""
 
                 onActiveFocusChanged: { if (otherRail.activeFocus) page.ensureVisible(otherRail) }
-                KeyNavigation.up: page.sectionAbove(7)
-                KeyNavigation.down: page.sectionBelow(9)
 
                 onItemActivated: index => page.openResult(page.otherModel, index)
                 onItemPlayRequested: index => page.playResult(page.otherModel, index)
@@ -1479,8 +1456,6 @@ FocusScope {
                     if (peopleShelf.activeFocus)
                         page.ensureVisible(peopleShelf)
                 }
-                KeyNavigation.up: page.sectionAbove(8)
-                KeyNavigation.down: page.sectionBelow(10)
             }
 
             // ── Genres ─────────────────────────────────────────────────────
@@ -1498,7 +1473,6 @@ FocusScope {
                                         genre.name ? String(genre.name) : "")
                 }
                 onActiveFocusChanged: { if (genreRow.activeFocus) page.ensureVisible(genreRow) }
-                KeyNavigation.up: page.sectionAbove(9)
             }
 
             // Bottom padding as a spacer rather than a Flickable margin, which
@@ -1530,7 +1504,10 @@ FocusScope {
     EmptyState {
         anchors.fill: scroll
         visible: page.hasQuery && !SearchCtl.searching && page.failed
-        focus: visible
+        // No claim on the keyboard. A search fails while its query is still
+        // being typed, and `focus: visible` moved the caret's owner to Retry
+        // under the user's hands — the next Space pressed it. Retry is one
+        // Down from the field (its navDown is null with no section to name).
         severity: "error"
         iconName: "info"
         headline: qsTr("Couldn't search your library")

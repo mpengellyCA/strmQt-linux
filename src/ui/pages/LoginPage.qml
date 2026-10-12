@@ -153,17 +153,19 @@ FocusScope {
 
                         // Arrow-walk the Flow as the grid it draws as: rows of
                         // perRow, clamped at the edges; Down off the last row
-                        // lands on the buttons beneath.
-                        KeyNavigation.left: tile.index % tileFlow.perRow > 0
-                                            ? tiles.itemAt(tile.index - 1) : null
-                        KeyNavigation.right: tile.index % tileFlow.perRow < tileFlow.perRow - 1
-                                             && tile.index + 1 < tiles.count
-                                             ? tiles.itemAt(tile.index + 1) : null
-                        KeyNavigation.up: tile.index >= tileFlow.perRow
-                                          ? tiles.itemAt(tile.index - tileFlow.perRow) : null
-                        KeyNavigation.down: tile.index + tileFlow.perRow < tiles.count
-                                            ? tiles.itemAt(tile.index + tileFlow.perRow)
-                                            : differentAccountButton
+                        // lands on the buttons beneath. Named for the navigator
+                        // (FocusNavigator.h), which reads the layout wherever a
+                        // name is null.
+                        property Item navLeft: tile.index % tileFlow.perRow > 0
+                                               ? tiles.itemAt(tile.index - 1) : null
+                        property Item navRight: tile.index % tileFlow.perRow < tileFlow.perRow - 1
+                                                && tile.index + 1 < tiles.count
+                                                ? tiles.itemAt(tile.index + 1) : null
+                        property Item navUp: tile.index >= tileFlow.perRow
+                                             ? tiles.itemAt(tile.index - tileFlow.perRow) : null
+                        property Item navDown: tile.index + tileFlow.perRow < tiles.count
+                                               ? tiles.itemAt(tile.index + tileFlow.perRow)
+                                               : differentAccountButton
                     }
                 }
             }
@@ -177,9 +179,9 @@ FocusScope {
 
                     text: qsTr("Use a different account")
                     iconName: "user"
-                    KeyNavigation.up: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
-                    KeyNavigation.right: manageButton
-                    KeyNavigation.down: pickerAtStartSwitch
+                    property Item navUp: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
+                    property Item navRight: manageButton
+                    property Item navDown: pickerAtStartSwitch
                     onClicked: {
                         // A stale-token error hands off here; prefill the name
                         // of the profile that just failed.
@@ -193,9 +195,9 @@ FocusScope {
 
                     variant: "ghost"
                     text: page.manageMode ? qsTr("Done") : qsTr("Manage profiles")
-                    KeyNavigation.up: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
-                    KeyNavigation.left: differentAccountButton
-                    KeyNavigation.down: pickerAtStartSwitch
+                    property Item navUp: tiles.count > 0 ? tiles.itemAt(tiles.count - 1) : null
+                    property Item navLeft: differentAccountButton
+                    property Item navDown: pickerAtStartSwitch
                     onClicked: page.manageMode = !page.manageMode
                 }
             }
@@ -211,7 +213,7 @@ FocusScope {
                 text: qsTr("Ask who's watching at startup")
                 checked: Session.profilePickerAtStart
                 accessibleDescription: qsTr("With several profiles saved, show this screen when StrmQt starts instead of resuming the last one used")
-                KeyNavigation.up: differentAccountButton
+                property Item navUp: differentAccountButton
                 onToggled: Session.profilePickerAtStart = !Session.profilePickerAtStart
             }
 
@@ -263,7 +265,9 @@ FocusScope {
                 text: Session.serverUrl
                 mono: true
                 inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
-                KeyNavigation.down: userField
+                // No Up/Down names on the fields: they are a column, which the
+                // navigator reads off the layout (FocusNavigator.h), and a
+                // name on a field would be an edge a held Down stops at.
                 KeyNavigation.tab: userField
                 onAccepted: userField.forceActiveFocus()
             }
@@ -278,8 +282,6 @@ FocusScope {
                 label: qsTr("Username")
                 placeholder: qsTr("Your Emby user")
                 inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
-                KeyNavigation.up: serverField
-                KeyNavigation.down: passwordField
                 KeyNavigation.tab: passwordField
                 onAccepted: passwordField.forceActiveFocus()
             }
@@ -291,8 +293,6 @@ FocusScope {
                 label: qsTr("Password")
                 placeholder: qsTr("Never stored")
                 secret: true
-                KeyNavigation.up: userField
-                KeyNavigation.down: signInButton
                 KeyNavigation.tab: signInButton
                 onAccepted: page.submit()
             }
@@ -312,7 +312,10 @@ FocusScope {
                 busy: Session.busy
                 text: Session.busy ? qsTr("Signing in…") : qsTr("Sign in")
                 iconName: Session.busy ? "" : "user"
-                KeyNavigation.up: passwordField
+                property Item navUp: passwordField
+                // Without a name this way the button below was a Tab stop no
+                // arrow led to.
+                property Item navDown: backToProfilesButton
                 onClicked: page.submit()
             }
 
@@ -340,11 +343,14 @@ FocusScope {
             }
 
             StrmButton {
+                id: backToProfilesButton
+
                 width: parent.width
                 variant: "ghost"
                 visible: Session.profiles.length > 0
                 text: qsTr("Back to profiles")
                 iconName: "arrow-left"
+                property Item navUp: signInButton
                 onClicked: page.formRequested = false
             }
         }

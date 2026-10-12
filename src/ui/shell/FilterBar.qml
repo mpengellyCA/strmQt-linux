@@ -273,9 +273,14 @@ FocusScope {
                 // writes it, so this push is the only thing that does — asking
                 // the controller below is how a pick gets back here.
 
-                KeyNavigation.right: directionButton
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                // Neighbours are named for the navigator (FocusNavigator.h),
+                // here and on every control below: the chip row changes shape
+                // with the width and the filters, and a name that is hidden or
+                // null is somewhere geometry decides instead of a key that
+                // does nothing.
+                property Item navRight: directionButton
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
                     if (!bar.hasController)
@@ -305,12 +310,12 @@ FocusScope {
                 text: bar.compact ? ""
                     : bar.activeDescending ? qsTr("Descending") : qsTr("Ascending")
 
-                KeyNavigation.left: sortSelect
-                KeyNavigation.right: bar.hasWatchedFilter
-                                     ? (bar.compact ? watchedSelect : unwatchedChip)
-                                     : bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: sortSelect
+                property Item navRight: bar.hasWatchedFilter
+                                        ? (bar.compact ? watchedSelect : unwatchedChip)
+                                        : bar.clearOrNothing
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onClicked: {
                     if (bar.hasController)
@@ -351,10 +356,10 @@ FocusScope {
                 iconName: "eye-off"
                 checked: bar.watchedValue === "unplayed"
 
-                KeyNavigation.left: directionButton
-                KeyNavigation.right: watchedChip
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: directionButton
+                property Item navRight: watchedChip
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(unwatchedChip.checked ? "all"
                                                                                  : "unplayed")
@@ -369,10 +374,10 @@ FocusScope {
                 iconName: "eye"
                 checked: bar.watchedValue === "played"
 
-                KeyNavigation.left: unwatchedChip
-                KeyNavigation.right: favoriteChip
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: unwatchedChip
+                property Item navRight: favoriteChip
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(watchedChip.checked ? "all" : "played")
             }
@@ -386,10 +391,10 @@ FocusScope {
                 iconName: "heart"
                 checked: bar.watchedValue === "favorites"
 
-                KeyNavigation.left: watchedChip
-                KeyNavigation.right: bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: watchedChip
+                property Item navRight: bar.clearOrNothing
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onToggled: bar.controller.setWatchedFilter(favoriteChip.checked ? "all"
                                                                                 : "favorites")
@@ -408,10 +413,10 @@ FocusScope {
                 // which is also what keeps it agreeing with the three chips it
                 // stands in for at wider widths.
 
-                KeyNavigation.left: directionButton
-                KeyNavigation.right: bar.clearOrNothing
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: directionButton
+                property Item navRight: bar.clearOrNothing
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onActivated: index => {
                     const value = watchedSelect.valueAt(index);
@@ -431,9 +436,9 @@ FocusScope {
                 iconName: "close"
                 text: bar.compact ? "" : qsTr("Clear filters")
 
-                KeyNavigation.left: bar.lastFixedControl
-                KeyNavigation.up: bar.upTarget
-                KeyNavigation.down: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
+                property Item navLeft: bar.lastFixedControl
+                property Item navUp: bar.upTarget
+                property Item navDown: bar.entryItem === sortSelect ? bar.downTarget : alphaStrip
 
                 onClicked: {
                     if (bar.hasController)
@@ -590,13 +595,19 @@ FocusScope {
                 return;
             }
             switch (event.key) {
+            // At either end a fresh press is declined rather than swallowed:
+            // Left of A is the page's left edge, and what lies beyond the
+            // strip is not the strip's to know (FocusNavigator). A HELD key
+            // still stops here — walking the alphabet must not spill into
+            // whatever is beside it.
             case Qt.Key_Left:
+                event.accepted = alphaStrip.currentIndex > 0 || event.isAutoRepeat;
                 alphaStrip.moveCursor(alphaStrip.currentIndex - 1);
-                event.accepted = true;
                 return;
             case Qt.Key_Right:
+                event.accepted = alphaStrip.currentIndex < bar.letters.length - 1
+                                 || event.isAutoRepeat;
                 alphaStrip.moveCursor(alphaStrip.currentIndex + 1);
-                event.accepted = true;
                 return;
             case Qt.Key_Home:
                 alphaStrip.moveCursor(0);
@@ -646,8 +657,8 @@ FocusScope {
                 event.accepted = true;
         }
 
-        KeyNavigation.up: sortSelect
-        KeyNavigation.down: bar.downTarget
+        property Item navUp: sortSelect
+        property Item navDown: bar.downTarget
 
         Flickable {
             id: flick

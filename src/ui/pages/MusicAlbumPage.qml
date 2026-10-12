@@ -113,10 +113,31 @@ FocusScope {
             AlbumCtl.open(page.albumId, page.albumName)
     }
 
-    Component.onCompleted: Qt.callLater(page.ensureOpen)
+    Component.onCompleted: {
+        page.seatTracks()
+        Qt.callLater(page.ensureOpen)
+    }
     // A covered album page becomes visible again after a second album was
     // opened on top of it: take the shared controller back.
     onVisibleChanged: { if (page.visible) Qt.callLater(page.ensureOpen) }
+
+    // The record takes the keyboard when its tracks FIRST arrive, and only
+    // then. This was `focus: page.hasTracks` on the table, and a binding seats
+    // focus again every time it turns true: AlbumCtl is shared, so coming back
+    // to this page reloads it, and the reload pulled the keyboard out of the
+    // verbs or off the artist link and into the table. After the first time,
+    // where the keyboard goes is the navigation history's to restore and
+    // recoverStranded's to rescue.
+    property bool tracksSeated: false
+
+    function seatTracks(): void {
+        if (page.tracksSeated || !page.hasTracks)
+            return
+        page.tracksSeated = true
+        trackTable.focus = true
+    }
+
+    onHasTracksChanged: page.seatTracks()
 
     // ── Stranded focus (ARCHITECTURE.md §4, MusicBrowsePage's shape) ───────
     // Qt clears active focus on `enabled: false` but NOT on `visible: false`,
@@ -385,7 +406,7 @@ FocusScope {
                                       || artistLink.activeFocus
                     onVisibleChanged: Qt.callLater(page.recoverIfStranded)
 
-                    KeyNavigation.down: playButton
+                    property Item navDown: playButton
                     Keys.onReturnPressed: event => { if (!event.isAutoRepeat) artistChip.activate() }
                     Keys.onEnterPressed: event => { if (!event.isAutoRepeat) artistChip.activate() }
 
@@ -454,9 +475,9 @@ FocusScope {
                         enabled: page.hasTracks
                         onClicked: AlbumCtl.play(0)
 
-                        KeyNavigation.up: artistLink
-                        KeyNavigation.right: shuffleButton
-                        KeyNavigation.down: trackTable
+                        property Item navUp: artistLink
+                        property Item navRight: shuffleButton
+                        property Item navDown: trackTable
                     }
 
                     StrmButton {
@@ -467,10 +488,10 @@ FocusScope {
                         enabled: page.hasTracks
                         onClicked: AlbumCtl.shuffle()
 
-                        KeyNavigation.up: artistLink
-                        KeyNavigation.left: playButton
-                        KeyNavigation.right: radioButton
-                        KeyNavigation.down: trackTable
+                        property Item navUp: artistLink
+                        property Item navLeft: playButton
+                        property Item navRight: radioButton
+                        property Item navDown: trackTable
                     }
 
                     StrmButton {
@@ -481,10 +502,10 @@ FocusScope {
                         enabled: AlbumCtl.albumId.length > 0
                         onClicked: AlbumCtl.radio()
 
-                        KeyNavigation.up: artistLink
-                        KeyNavigation.left: shuffleButton
-                        KeyNavigation.right: playlistButton
-                        KeyNavigation.down: trackTable
+                        property Item navUp: artistLink
+                        property Item navLeft: shuffleButton
+                        property Item navRight: playlistButton
+                        property Item navDown: trackTable
                     }
 
                     StrmButton {
@@ -495,10 +516,10 @@ FocusScope {
                         enabled: page.hasTracks
                         onClicked: playlistPicker.show(AlbumCtl.title, AlbumCtl.trackIds)
 
-                        KeyNavigation.up: artistLink
-                        KeyNavigation.left: radioButton
-                        KeyNavigation.right: favouriteButton
-                        KeyNavigation.down: trackTable
+                        property Item navUp: artistLink
+                        property Item navLeft: radioButton
+                        property Item navRight: favouriteButton
+                        property Item navDown: trackTable
                     }
 
                     StrmIconButton {
@@ -512,9 +533,9 @@ FocusScope {
                         shortcut: "L"
                         onClicked: Actions.toggleFavorite(AlbumCtl.albumItem)
 
-                        KeyNavigation.up: artistLink
-                        KeyNavigation.left: playlistButton
-                        KeyNavigation.down: trackTable
+                        property Item navUp: artistLink
+                        property Item navLeft: playlistButton
+                        property Item navDown: trackTable
                     }
                 }
             }
@@ -569,7 +590,6 @@ FocusScope {
             anchors.fill: parent
             // TrackTable clips itself; FocusClip above is the clip now.
             clip: false
-            focus: page.hasTracks
             visible: page.hasTracks
             // A list is one tab stop (ARCHITECTURE.md §4), and tied to
             // `visible` because this one hides on an empty or failed album.
@@ -590,19 +610,15 @@ FocusScope {
             discs: AlbumCtl.discs
             artistColumnShown: AlbumCtl.showArtistColumn
 
-            KeyNavigation.up: playButton
-            // KeyNavigation's default priority is AfterItem, so the ListView keeps
-            // Up/Down for the row cursor and these only fire at the ends.
-            //
-            // There is deliberately no `KeyNavigation.down` here. Down at the last
-            // row already reaches the More-by shelf, because Qt wires a pair's
-            // reverse direction implicitly: the shelf's own `KeyNavigation.up:
-            // trackTable` is what gives this table its `down`, and the footer
-            // re-declares it whenever the view rebuilds one. A line here was tried
-            // twice on two different justifications and both were measured false —
-            // the second claimed Qt holds these targets as raw pointers, but
-            // Qt 6.11.2 stores them as QPointer<QQuickItem> (qquickitem_p.h:844-849)
-            // and a destroyed shelf self-nulls.
+            // The table's edges (FocusNavigator): the ListView keeps Up/Down for
+            // the row cursor, and these answer only the press it declines at
+            // either end. Down names the More-by shelf because the shelf is this
+            // view's own footer, and what a control contains is never a
+            // candidate for geometry. It used to come from Qt wiring the reverse
+            // of the shelf's `KeyNavigation.up: trackTable`; with no shelf the
+            // name is null and Down goes on to the page's own bottom edge.
+            property Item navUp: playButton
+            property Item navDown: page.moreByShelf
 
             onActivated: index => AlbumCtl.play(index)
             onMenuRequested: (index, mx, my) =>
@@ -684,21 +700,12 @@ FocusScope {
                             trackTable.positionViewAtEnd()
                     }
 
-                    // KEEP this binding: it is what supplies the TABLE's Down.
-                    // Qt wires a KeyNavigation pair's reverse direction
-                    // implicitly, so the table declares no KeyNavigation.down —
-                    // retarget or delete this and Down at the last row dies
-                    // silently.
-                    KeyNavigation.up: trackTable
-
-                    // ...but on its own it does not work, for the same reason
-                    // route 2 did not: KeyNavigation calls setFocus on the
-                    // table, and the shelf is a sibling inside the table's own
-                    // FocusScope, so the scope's focus never leaves the shelf.
-                    // An explicit Keys handler runs BEFORE the attached
-                    // KeyNavigation and, by accepting the event, stops it; the
-                    // binding above survives for the pairing while this does the
-                    // actual move. Measured in both directions.
+                    // Up is a handler and not a `navUp`, on purpose. The shelf
+                    // is a sibling inside the table's own FocusScope, so giving
+                    // the TABLE focus never takes it off the shelf (measured in
+                    // both directions); focusRows names the row instead. And a
+                    // declined Up would be answered by the table's own `navUp`
+                    // above, which skips the rows for the Play button.
                     Keys.onUpPressed: event => {
                         trackTable.focusRows(Qt.BacktabFocusReason)
                         event.accepted = true
