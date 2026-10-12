@@ -72,6 +72,7 @@ private slots:
     void containerFocusStepsInside();
     void hiddenFocusRecoversToTheNearestControl();
     void destroyedFocusRecovers();
+    void recoveryPrefersThePageToTheChrome();
     void modalSurfaceConfinesAndReclaims();
     void popupConfinesNavigation();
     void heldDirectionStopsAtAViewEdge();
@@ -320,6 +321,80 @@ void FocusNavigatorTest::destroyedFocusRecovers()
     s.focus("a");
     delete s.item("a");
     QTRY_COMPARE(s.focused(), QStringLiteral("b"));
+}
+
+void FocusNavigatorTest::recoveryPrefersThePageToTheChrome()
+{
+    // Connecting: whatever had the keyboard is gone, or nothing had it, and
+    // a rail entry is the nearest (or simply the first) control in the
+    // window. The keyboard belongs to the page.
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(R"(
+        import QtQuick
+        Window {
+            width: 800; height: 600
+            property Item navHome: pages
+            Item { objectName: "railEntry"; x: 0; y: 500; width: 60; height: 40; activeFocusOnTab: true }
+            FocusScope {
+                id: pages
+                objectName: "pages"
+                x: 80; width: 720; height: 600
+                property Item navEntry: home
+                Item { objectName: "signIn"; x: 0; y: 500; width: 100; height: 40; activeFocusOnTab: true }
+                FocusScope {
+                    id: home
+                    objectName: "home"
+                    anchors.fill: parent
+                    Item { objectName: "firstCard"; x: 20; y: 20; width: 100; height: 100
+                           activeFocusOnTab: true; focus: true }
+                    Item { objectName: "lowCard"; x: 20; y: 480; width: 100; height: 100
+                           activeFocusOnTab: true }
+                    Item { objectName: "nearLow"; x: 140; y: 480; width: 100; height: 100
+                           activeFocusOnTab: true }
+                }
+            }
+        })",
+                      QUrl(QStringLiteral("qrc:/window.qml")));
+    std::unique_ptr<QQuickWindow> window(qobject_cast<QQuickWindow *>(component.create()));
+    QVERIFY2(window, qPrintable(component.errorString()));
+    auto *navigator = new strmqt::FocusNavigator(window.get(), window.get());
+    navigator->setRecoveryDelayMs(0);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window.get()));
+    const auto item = [&](const char *name) {
+        return window->findChild<QQuickItem *>(QLatin1String(name));
+    };
+    const auto focused = [&] {
+        QQuickItem *focus = window->activeFocusItem();
+        return focus ? focus->objectName() : QStringLiteral("<none>");
+    };
+
+    // The window comes up with the keyboard nowhere. Not the first control
+    // in the tree, which is the rail: the page is handed the keyboard and
+    // seats it where it always does.
+    QTRY_COMPARE(focused(), QStringLiteral("firstCard"));
+
+    // Out in the chrome, on a control beside the rail, which then goes: not
+    // the rail entry next to it, and not the card nearest it either.
+    item("signIn")->setParentItem(window->contentItem());
+    item("signIn")->forceActiveFocus();
+    QCOMPARE(focused(), QStringLiteral("signIn"));
+    delete item("signIn");
+    QTRY_COMPARE(focused(), QStringLiteral("firstCard"));
+
+    // Focus out in the chrome, lost: the page again.
+    item("railEntry")->forceActiveFocus();
+    QTest::qWait(50); // long enough to have been where the keyboard was
+    item("railEntry")->setVisible(false);
+    QTRY_COMPARE(focused(), QStringLiteral("firstCard"));
+
+    // A control vanishing on a page that is still there is different: the
+    // nearest thing on that page.
+    item("lowCard")->forceActiveFocus();
+    QTest::qWait(50); // long enough to have been where the keyboard was
+    item("lowCard")->setVisible(false);
+    QTRY_COMPARE(focused(), QStringLiteral("nearLow"));
 }
 
 void FocusNavigatorTest::modalSurfaceConfinesAndReclaims()

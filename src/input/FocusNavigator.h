@@ -68,6 +68,11 @@ namespace strmqt {
 //                                keyboard when it is entered: a composite
 //                                control's first stop, a modal surface's
 //                                default button
+//   property Item navHome        on the WINDOW: where the keyboard belongs
+//                                when recovery has nothing better to go on —
+//                                the page area rather than the chrome. A
+//                                control that vanishes on a page still
+//                                recovers to its nearest neighbour there
 //   property Item navCursor      the item whose rectangle stands for this
 //                                one's position (a view's current delegate is
 //                                found without it)
@@ -134,6 +139,8 @@ private:
 
     QPointer<QQuickWindow> m_window;
     QPointer<QQuickItem> m_watched;
+    // The last item focus was properly on; null once it is destroyed.
+    QPointer<QQuickItem> m_lastLive;
     QRectF m_lastRect;
     QTimer m_evaluate;
     QTimer m_recover;

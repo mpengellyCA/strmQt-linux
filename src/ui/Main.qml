@@ -21,6 +21,10 @@ import StrmQt
 ApplicationWindow {
     id: root
 
+    // Where the keyboard belongs when focus has to be put back and nothing
+    // says where (FocusNavigator): the page, not the chrome around it.
+    property Item navHome: stack
+
     width: 1600
     height: 900
     minimumWidth: 960
@@ -849,6 +853,9 @@ ApplicationWindow {
         // to. Named on the stack, so it is the page's EDGE: Down still goes
         // to whatever the page has further down first (FocusNavigator).
         property Item navDown: miniPlayer.shown ? miniPlayer : null
+        // Entered — by an edge, or by recovery (root.navHome) — on the page
+        // that is up, whose own focus scope then says where inside it.
+        property Item navEntry: stack.currentItem
         // The other two edges reach the chrome: Left to the destination rail,
         // Up to the header. These were claimed here, as key handlers — which
         // run before the navigator is asked, so on every page Left and Up

@@ -516,8 +516,29 @@ QQuickItem *FocusNavigator::recoveryTarget(QQuickItem *scope) const
         if (isLive(entry))
             return entry;
     }
+    // The window says where the keyboard belongs when it has to be put
+    // somewhere (`navHome`: the page area, as against the chrome around it).
+    // Without that, "nearest to where it was" is taken across the whole
+    // window — and signing in, where the thing that had focus is a button on
+    // a page that no longer exists, landed on whichever rail entry happened
+    // to be closest to where that button had been.
+    QQuickItem *home = scope == m_window->contentItem() ? duckItem(m_window, "navHome") : nullptr;
+    if (home && !isLive(home))
+        home = nullptr;
     QList<QQuickItem *> stops;
-    collectStops(scope, &stops);
+    if (home) {
+        // A control that vanished from under the cursor, on a page that is
+        // still there: the nearest thing on that page. Anything else — the
+        // page itself went, or focus was out in the chrome — is the page's
+        // own to seat, and it is simply handed the keyboard.
+        if (!m_lastLive || !isAncestorOf(home, m_lastLive))
+            return home;
+        collectStops(home, &stops);
+        if (stops.isEmpty())
+            return home;
+    } else {
+        collectStops(scope, &stops);
+    }
     if (stops.isEmpty())
         return nullptr;
     if (!m_lastRect.isValid())
@@ -615,6 +636,7 @@ void FocusNavigator::evaluate()
         m_recover.stop();
         QQuickItem *focus = m_window->activeFocusItem();
         m_lastRect = sceneRect(cursorItem(focus));
+        m_lastLive = focus;
         if (!m_giving)
             reveal(focus);
         return;
