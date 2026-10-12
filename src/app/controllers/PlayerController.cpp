@@ -645,6 +645,13 @@ void PlayerController::setPreferredSource(int index)
         return; // remembered for the next playItem()
     if (index < 0 || index == m_sourceIndex)
         return;
+    // The ticket for this item is still on its way: the details page hands
+    // its choice over right after the verb, which is before the reply. There
+    // is nothing to switch yet and nothing wrong — the reply reads the
+    // preference just stored. Judged against the empty ticket instead, every
+    // such start was reported as an unplayable version.
+    if (m_ticketItemId != m_itemId)
+        return;
     const MediaSourceCandidates *entry = m_ticket.source(index);
     if (!entry || !entry->isValid()) {
         // A version the server listed but offered no playable ladder for. The
