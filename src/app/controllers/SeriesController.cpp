@@ -244,11 +244,10 @@ void SeriesController::refreshNextUnwatched()
     query.recursive = true;
     query.includeItemTypes = {QStringLiteral("Episode")};
     query.filters = {QStringLiteral("IsUnplayed")};
-    // This is the same verified cross-season air order used by series play-all:
-    // PremiereDate is accepted by every Emby 4.x server and SortName makes ties
-    // deterministic without requesting episode overviews.
-    query.sortBy = episodeAirOrderSort();
-    query.limit = 1;
+    // The same cross-season order series play-all uses. More than one row,
+    // because season 0 sorts first and a special is not what is next.
+    query.sortBy = episodeOrderSort();
+    query.limit = kEpisodeLeadFetch;
 
     const int generation = ++m_nextUnwatchedGeneration;
     m_client->items(query).then(this, [this, generation](const Result<ItemsPage> &result) {
@@ -261,10 +260,12 @@ void SeriesController::refreshNextUnwatched()
 
         QVariantMap next;
         if (!result.value.items.isEmpty()) {
+            QList<MediaItem> ordered = result.value.items;
+            moveSpecialsLast(ordered);
             // Reuse the public model's one role-to-map implementation without
             // retaining a hidden model or the rest of the series.
             MediaItemModel one;
-            one.setItems({result.value.items.first()});
+            one.setItems({ordered.first()});
             next = one.get(0);
         }
         setNextUnwatched(std::move(next));

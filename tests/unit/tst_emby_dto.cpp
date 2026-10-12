@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QtTest>
 
+#include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyDtoMapper.h"
 
 using namespace strmqt;
@@ -24,6 +25,7 @@ class EmbyDtoTest : public QObject
     Q_OBJECT
 
 private slots:
+    void specialsFollowTheSeasons();
     void authResult();
     void views();
     void itemsPage();
@@ -404,4 +406,25 @@ void EmbyDtoTest::artistIdsLineUpWithTheNamesTheyBelongTo()
 }
 
 QTEST_GUILESS_MAIN(EmbyDtoTest)
+// The server sorts season 0 first. A special is not where a series starts.
+void EmbyDtoTest::specialsFollowTheSeasons()
+{
+    const auto episode = [](int season, int number) {
+        MediaItem item;
+        item.type = QStringLiteral("Episode");
+        item.parentIndexNumber = season;
+        item.indexNumber = number;
+        return item;
+    };
+    QList<MediaItem> items{episode(0, 1), episode(0, 2), episode(1, 1), episode(1, 2),
+                             episode(2, 1)};
+    moveSpecialsLast(items);
+    QCOMPARE(items.at(0).parentIndexNumber, 1);
+    QCOMPARE(items.at(0).indexNumber, 1);
+    QCOMPARE(items.at(2).parentIndexNumber, 2);
+    QCOMPARE(items.at(3).parentIndexNumber, 0);
+    QCOMPARE(items.at(3).indexNumber, 1); // their own order is kept
+    QCOMPARE(items.at(4).indexNumber, 2);
+}
+
 #include "tst_emby_dto.moc"
