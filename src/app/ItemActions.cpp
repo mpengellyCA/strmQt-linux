@@ -1,4 +1,5 @@
 #include "ItemActions.h"
+#include "YouTubeLinks.h"
 
 #include "app/PlayQueue.h"
 #include "app/controllers/PlayerController.h"
@@ -1215,6 +1216,28 @@ void ItemActions::toggleFavorite(const QVariant &item)
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
+
+bool ItemActions::playOnYouTube(const QString &link)
+{
+    if (!m_youtubeAvailable)
+        return false;
+    const QString id = youtube::videoId(QUrl(link));
+    if (id.isEmpty())
+        return false;
+    emit youtubeRequested(youtube::watchAddress(id), true);
+    return true;
+}
+
+bool ItemActions::searchYouTube(const QString &query)
+{
+    if (!m_youtubeAvailable)
+        return false;
+    const QUrl address = youtube::searchAddress(query);
+    if (address.isEmpty())
+        return false;
+    emit youtubeRequested(address, false);
+    return true;
+}
 
 void ItemActions::browseGenre(const QString &genreId, const QString &name)
 {

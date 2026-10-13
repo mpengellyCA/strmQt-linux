@@ -628,6 +628,21 @@ ApplicationWindow {
                         "title": qsTr("YouTube") });
     }
 
+    // One video or a search, asked for by a page (Actions.playOnYouTube /
+    // searchYouTube). A YouTube page already on screen is told where to go;
+    // otherwise this is a new history entry, so Back from a trailer is the
+    // details page it was opened from and not wherever the YouTube tab was.
+    function openYouTubeAt(address, single): void {
+        const page = stack.currentItem;
+        if (root.currentKey === "youtube" && page !== null && page.objectName === "youtubePage") {
+            page.open(address, single);
+            root.focusCurrentPage();
+            return;
+        }
+        root.pushPage({ "kind": "youtube", "key": "youtube", "title": qsTr("YouTube") },
+                      { "address": address, "single": single });
+    }
+
     // `section` optionally names a Settings section to land on ("remote").
     function openSettings(section): void {
         if (root.currentKey !== "settings")
@@ -1715,6 +1730,9 @@ ApplicationWindow {
 
         function onRouteRequested(kind, target) {
             root.openRoute(kind, target);
+        }
+        function onYoutubeRequested(address, single) {
+            root.openYouTubeAt(address, single);
         }
         function onBrowseRequested(kind, id, name) {
             root.openBrowse(kind, id, name);

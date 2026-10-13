@@ -24,6 +24,8 @@ WebEngineView {
 
     // Left was pressed and YouTube's focus did not move: its left edge.
     signal leftEdgeReached
+    // YouTube moved to another of its own screens ("#/watch?v=…", "#/").
+    signal routeChanged(string route)
     // A video started playing with sound the user can hear.
     signal playbackStarted
     // YouTube asked to close itself (its own "Exit YouTube" dialog).
@@ -35,6 +37,9 @@ WebEngineView {
     }
 
     url: view.address
+    // Asked for again later (a second trailer): YouTube is one page, and a new
+    // address inside it is a move within that page, not a reload.
+    onAddressChanged: view.url = view.address
     backgroundColor: "#0f0f0f"
 
     // A TV identifies itself, and youtube.com/tv redirects anything else to
@@ -74,6 +79,9 @@ WebEngineView {
                 + "  var before = where();"
                 + "  setTimeout(function () { if (where() === before) say('edge-left'); }, 150);"
                 + " }, true);"
+                + " window.addEventListener('hashchange', function () {"
+                + "  say('route:' + location.hash);"
+                + " });"
                 + " document.addEventListener('playing', function (e) {"
                 + "  if (e.target && !e.target.muted) say('playing');"
                 + " }, true);"
@@ -86,6 +94,8 @@ WebEngineView {
             view.leftEdgeReached();
         else if (message === "strmqt:playing")
             view.playbackStarted();
+        else if (message.startsWith("strmqt:route:"))
+            view.routeChanged(message.substring(13));
     }
 
     onWindowCloseRequested: view.exitRequested()

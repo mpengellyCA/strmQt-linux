@@ -4,6 +4,7 @@
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/RequestHandle.h"
 
+#include <QUrl>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -135,6 +136,19 @@ public:
     Q_INVOKABLE void browseStudio(const QString &studioId, const QString &name);
     Q_INVOKABLE void browseCollection(const QString &collectionId, const QString &name);
 
+    // YouTube, inside the app (YouTubePage.qml). Both answer false when this
+    // build has no YouTube tab or there is nothing to ask for, and the caller
+    // falls back to what it did before: a trailer link goes to the browser.
+    //
+    // A link that is one YouTube video plays as that video and nothing else —
+    // Back from it returns to the page that asked. A search opens YouTube on
+    // its results, as a destination to browse.
+    Q_INVOKABLE bool playOnYouTube(const QString &link);
+    Q_INVOKABLE bool searchYouTube(const QString &query);
+    // Set once at startup, before any page exists (main.cpp).
+    void setYouTubeAvailable(bool available) { m_youtubeAvailable = available; }
+    bool youtubeAvailable() const { return m_youtubeAvailable; }
+
     // Semantic item policy. QML supplies presentation context and renders the
     // returned presentation keys; item kinds, capability gates, action order,
     // checked state and dispatch targets stay here.
@@ -211,8 +225,12 @@ signals:
     // `kind` is "genre" | "person" | "studio" | "collection"; one signal rather
     // keeps Main.qml to a single handler and the routing in one place.
     void browseRequested(const QString &kind, const QString &id, const QString &name);
+    // `address` is inside YouTube's TV interface (YouTubeLinks.h). `single`:
+    // one video, left when it is left.
+    void youtubeRequested(const QUrl &address, bool single);
 
 private:
+    bool m_youtubeAvailable = false;
     struct CollectionWalk
     {
         QList<MediaItem> members;

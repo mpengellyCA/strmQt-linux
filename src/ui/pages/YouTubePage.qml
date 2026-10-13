@@ -18,6 +18,17 @@ FocusScope {
     // Where to open: the TV interface's front page, or one video / search
     // (Main.qml openYouTube()).
     property url address: "https://www.youtube.com/tv"
+    // Opened for one video (a trailer): when YouTube leaves that video — Back
+    // in its player — the page is left too, back to whoever asked for it,
+    // where a destination opened from the rail would go on to YouTube's home.
+    property bool single: false
+
+    function open(address: url, single: bool): void {
+        page.single = single
+        page.address = address
+        if (viewLoader.item)
+            viewLoader.item.address = address
+    }
 
     signal railRequested
     signal exitRequested
@@ -65,6 +76,12 @@ FocusScope {
         target: viewLoader.item
         ignoreUnknownSignals: true
         function onLeftEdgeReached() { page.railRequested() }
+        function onRouteChanged(route) {
+            if (!page.single || route.indexOf("#/watch") === 0)
+                return
+            page.single = false
+            page.exitRequested()
+        }
         function onExitRequested() { page.exitRequested() }
         function onPlaybackStarted() {
             if (PlayerCtl.active && !PlayerCtl.paused)

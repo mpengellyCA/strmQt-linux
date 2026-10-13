@@ -108,13 +108,13 @@ int main(int argc, char *argv[])
     // broken PlayerPage.
     // Whether this build carries the YouTube tab (STRMQT_WITH_YOUTUBE). The
     // rail entry and YouTubePage ask.
-    engine.rootContext()->setContextProperty(QStringLiteral("YouTubeAvailable"),
 #ifdef STRMQT_HAVE_YOUTUBE
-                                             true
+    const bool youtube = true;
 #else
-                                             false
+    const bool youtube = false;
 #endif
-                                             );
+    app.actions()->setYouTubeAvailable(youtube);
+    engine.rootContext()->setContextProperty(QStringLiteral("YouTubeAvailable"), youtube);
     engine.rootContext()->setContextProperty(
         QStringLiteral("SelfTest"),
         qEnvironmentVariableIsSet("STRMQT_SELFTEST"));
