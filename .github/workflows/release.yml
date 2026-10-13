@@ -82,7 +82,8 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake ninja pkgconf gcc namcap ffmpeg \
-            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg mpv sdl3 \
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg \
+            qt6-webengine sqlite mpv sdl3 \
             libvlc vlc-plugins-base vlc-plugin-ffmpeg
 
       - uses: actions/checkout@v4
