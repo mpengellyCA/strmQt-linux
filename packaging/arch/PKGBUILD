@@ -48,7 +48,7 @@ license=('GPL-3.0-or-later')
 # player renders through; vlc-plugin-ffmpeg carries libavcodec, which is what
 # actually decodes H.264/HEVC. The soname dep stays alongside them so an ABI
 # bump still forces a rebuild.
-depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg'
+depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg' 'qt6-webengine'
          'hicolor-icon-theme' 'libmpv.so' 'sdl3'
          'libvlc.so' 'vlc-plugins-base' 'vlc-plugin-ffmpeg')
 # Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).

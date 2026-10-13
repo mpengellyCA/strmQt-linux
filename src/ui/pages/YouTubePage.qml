@@ -1,4 +1,5 @@
 import QtQuick
+import StrmQt
 
 // The YouTube destination: YouTube's ten-foot interface, hosted as one more
 // page of the shell. The rail and the header stay where they are on every

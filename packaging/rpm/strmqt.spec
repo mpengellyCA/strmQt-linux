@@ -11,7 +11,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc-c++ cmake ninja-build pkgconf git-core
 BuildRequires:  qt6-rpm-macros
 BuildRequires:  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel
-BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel
+BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtwebengine-devel
 BuildRequires:  mpv-devel vlc-devel SDL3-devel openssl-devel
 # Runtime pieces for %%check's ctest and for the C(fedora-*) self-test (deps.sh installs these via dnf builddep):
 BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpeg-free mesa-dri-drivers
@@ -21,6 +21,9 @@ BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpe
 # holds the Qt update back until a rebuilt StrmQt exists (README).
 Requires:       qt6-qtdeclarative%{?_isa} = %{_qt6_version}
 Requires:       qt6-qtsvg%{?_isa} qt6-qtwayland%{?_isa}
+# The YouTube tab: its QML module is loaded at run time, by URL, so nothing
+# links against it for rpm to find.
+Requires:       qt6-qtwebengine%{?_isa}
 Requires:       vlc-plugins-base vlc-plugin-ffmpeg
 # kf6-kwallet ships ksecretd/kwalletd6; Fedora's "kwallet" is the KDE 4 one.
 Recommends:     (kf6-kwallet or gnome-keyring or keepassxc)

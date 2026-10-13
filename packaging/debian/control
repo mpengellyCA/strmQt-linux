@@ -5,7 +5,7 @@ Maintainer: Mike Pengelly <mike@leadrix.io>
 Build-Depends: debhelper-compat (= 13),
                cmake (>= 3.25), ninja-build, pkgconf | pkg-config, file,
                qt6-base-dev, qt6-base-dev-tools, qt6-declarative-dev, qt6-declarative-dev-tools,
-               qt6-websockets-dev, qt6-svg-dev,
+               qt6-websockets-dev, qt6-svg-dev, qt6-webengine-dev,
                libmpv-dev, libvlc-dev, libssl-dev,
 # An or-group already satisfied by a package something else pulls in installs
 # nothing, and libsdl2-dev pulls libudev-dev, qt6-svg-dev pulls libqt6svg6. The
@@ -34,7 +34,7 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          ${strmqt:QtAbi}, ${strmqt:QmlEffects}, ${strmqt:SvgPlugin},
          qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-templates,
          qml6-module-qtquick-window, qml6-module-qtqml-workerscript, qml6-module-qtqml,
-         qml6-module-qtqml-models,
+         qml6-module-qtqml-models, qml6-module-qtwebengine,
          qt6-qpa-plugins, qt6-wayland, vlc-plugin-base, vlc-plugin-video-output,
          hicolor-icon-theme
 Recommends: kwalletmanager | gnome-keyring | keepassxc, kscreen

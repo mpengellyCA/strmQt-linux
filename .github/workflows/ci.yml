@@ -33,7 +33,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             git cmake ninja pkgconf gcc ffmpeg \
-            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg \
+            qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg qt6-webengine \
             mpv sdl3 \
             libvlc vlc-plugins-base vlc-plugin-ffmpeg \
             xorg-server-xvfb

@@ -79,7 +79,20 @@ WebEngineView {
                 + "  var before = where();"
                 + "  setTimeout(function () { if (where() === before) say('edge-left'); }, 150);"
                 + " }, true);"
+                // YouTube draws on a fixed 16:9 canvas, centred, and leaves
+                // the rest of the window black. In its own background colour
+                // the bars are margin instead of a hole in the page — except
+                // beside a video, where black is what belongs there.
+                + " var paint = document.createElement('style');"
+                + " paint.textContent = 'html:not(.strmqt-watch), html:not(.strmqt-watch) body'"
+                + "  + ' { background: #0f0f0f !important; }';"
+                + " document.documentElement.appendChild(paint);"
+                + " function mark() {"
+                + "  document.documentElement.classList.toggle('strmqt-watch', watching());"
+                + " }"
+                + " mark();"
                 + " window.addEventListener('hashchange', function () {"
+                + "  mark();"
                 + "  say('route:' + location.hash);"
                 + " });"
                 + " document.addEventListener('playing', function (e) {"
