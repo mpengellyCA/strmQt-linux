@@ -92,12 +92,46 @@ WebEngineView {
     readonly property real wantedZoom: Math.max(1, Math.min(3, view.height / 720))
     zoomFactor: view.wantedZoom
 
+    // Google's sign-in pages turn away anything that says it is an embedded
+    // Chromium ("This browser or app may not be secure"), and do not turn
+    // away Firefox. So the sign-in pages — and only those — are asked for as
+    // Firefox; the site itself is asked for as the Chrome this engine is.
+    readonly property string siteAgent:
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
+        + " Chrome/130.0.0.0 Safari/537.36"
+    readonly property string signInAgent:
+        "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"
+
+    function agentFor(address: url): string {
+        const host = String(address).replace(/^[a-z]+:\/\//i, "").split(/[\/:?#]/)[0].toLowerCase();
+        return host === "accounts.google.com" || host.startsWith("accounts.google.")
+               ? view.signInAgent : view.siteAgent;
+    }
+
     profile: WebEngineProfile {
+        id: musicProfile
+
         storageName: "youtube-music"
         offTheRecord: false
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-        httpUserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
-                       + " Chrome/130.0.0.0 Safari/537.36"
+        httpUserAgent: view.siteAgent
+    }
+
+    // The agent is the profile's, so it is changed before the request that
+    // needs it is made: this one is dropped and asked for again.
+    onNavigationRequested: request => {
+        if (!request.isMainFrame)
+            return;
+        const wanted = view.agentFor(request.url);
+        if (musicProfile.httpUserAgent === wanted)
+            return;
+        const address = request.url;
+        request.reject();
+        // Not from inside the request: the engine is still holding it.
+        Qt.callLater(() => {
+            musicProfile.httpUserAgent = wanted;
+            view.url = address;
+        });
     }
 
     settings.playbackRequiresUserGesture: false
