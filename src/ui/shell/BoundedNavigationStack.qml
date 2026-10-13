@@ -54,6 +54,7 @@ StackView {
     property Component searchPageComponent: null
     property Component settingsPageComponent: null
     property Component youtubePageComponent: null
+    property Component youtubeMusicPageComponent: null
 
     property var navTrail: []
     property var navForward: []
@@ -299,6 +300,7 @@ StackView {
         case "search": return navigation.searchPageComponent;
         case "settings": return navigation.settingsPageComponent;
         case "youtube": return navigation.youtubePageComponent;
+        case "youtubeMusic": return navigation.youtubeMusicPageComponent;
         default: return null;
         }
     }

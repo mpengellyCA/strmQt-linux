@@ -123,6 +123,7 @@ Item {
     signal favoritesRequested
     signal playlistsRequested
     signal youtubeRequested
+    signal youtubeMusicRequested
     signal searchRequested
     signal settingsRequested
     // Closed without choosing anything; the page takes focus back.
@@ -411,6 +412,14 @@ Item {
                 label: qsTr("YouTube")
                 active: rail.current === "youtube"
                 onChosen: rail.youtubeRequested()
+            }
+
+            NavEntry {
+                visible: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                iconName: "youtube-music"
+                label: qsTr("YouTube Music")
+                active: rail.current === "youtubeMusic"
+                onChosen: rail.youtubeMusicRequested()
             }
 
             NavEntry {

@@ -253,7 +253,8 @@ endif()
 # The web view is a separate QML file for the same reason: YouTubePage loads it
 # by URL, and a build without Qt WebEngine simply lacks it.
 if(STRMQT_WITH_YOUTUBE)
-    qt_target_qml_sources(strmqt QML_FILES ui/youtube/YouTubeView.qml)
+    qt_target_qml_sources(strmqt QML_FILES ui/youtube/YouTubeView.qml
+                                           ui/youtube/YouTubeMusicView.qml)
     target_compile_definitions(strmqt PRIVATE STRMQT_HAVE_YOUTUBE)
     target_link_libraries(strmqt PRIVATE Qt6::WebEngineQuick)
 endif()

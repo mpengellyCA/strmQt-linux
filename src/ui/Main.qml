@@ -635,6 +635,20 @@ ApplicationWindow {
                         "title": qsTr("YouTube") });
     }
 
+    // YouTube Music, the same way: one history entry, one view (below).
+    function openYouTubeMusic(): void {
+        if (typeof YouTubeAvailable !== "undefined" && YouTubeAvailable && !youtubeMusicHost.active) {
+            youtubeMusicHost.source = Qt.resolvedUrl("youtube/YouTubeMusicView.qml");
+            youtubeMusicHost.active = true;
+        }
+        if (root.currentKey === "youtubeMusic") {
+            root.focusCurrentPage();
+            return;
+        }
+        root.pushPage({ "kind": "youtubeMusic", "key": "youtubeMusic",
+                        "title": qsTr("YouTube Music") });
+    }
+
     // One video or a search, asked for by a page (Actions.playOnYouTube /
     // searchYouTube). A YouTube page already on screen stays where it is;
     // otherwise this is a new history entry, so Back from a trailer is the
@@ -663,6 +677,31 @@ ApplicationWindow {
     // frame otherwise — the arrangement the film's video plane has.
     readonly property bool youtubeOnTop: stack.currentItem !== null
                                          && stack.currentItem.objectName === "youtubePage"
+                                         && stack.currentItem.service === "tv"
+    readonly property bool youtubeMusicOnTop: stack.currentItem !== null
+                                              && stack.currentItem.objectName === "youtubePage"
+                                              && stack.currentItem.service === "music"
+    // YouTube Music's side of the same arrangement (youtubeMusicHost).
+    property var youtubeMusicState: ({})
+    // Stop was pressed on its bar. The site's player cannot be emptied, so
+    // "stopped" is remembered here until something plays again.
+    property bool youtubeMusicStopped: false
+    // Which of the two the bar under other pages is for: a video that is up
+    // comes first, and starting either one puts the other away (below).
+    readonly property bool youtubeVideoParked:
+        Session.authenticated && youtubeHost.item !== null && !root.youtubeOnTop
+        && !root.playerOnTop && root.youtubeState.watching === true
+        // A video, not a screen standing where one would be (YouTube asking
+        // for a sign-in before it plays).
+        && (root.youtubeState.playing === true || root.youtubeState.duration > 0
+            || root.youtubeState.position > 0)
+    readonly property bool youtubeMusicParked:
+        Session.authenticated && youtubeMusicHost.item !== null && !root.youtubeMusicOnTop
+        && !root.playerOnTop && root.youtubeMusicState.watching === true
+        && !root.youtubeMusicStopped
+    readonly property bool youtubeMiniIsMusic: !root.youtubeVideoParked && root.youtubeMusicParked
+    readonly property Item youtubeMiniView: root.youtubeMiniIsMusic ? youtubeMusicHost.item
+                                                                    : youtubeHost.item
     // What the view reported last (YouTubeView.stateReported).
     property var youtubeState: ({})
     property bool youtubeSingle: false
@@ -696,6 +735,8 @@ ApplicationWindow {
             root.ensureYouTube();
             return;
         }
+        if (root.youtubeMusicOnTop)
+            root.openYouTubeMusic();
         // Left with a video up: it plays on in the mini player. Left while
         // browsing: the preview YouTube was playing on a shelf stops.
         if (youtubeHost.item === null)
@@ -821,6 +862,7 @@ ApplicationWindow {
         searchPageComponent: searchComponent
         settingsPageComponent: settingsComponent
         youtubePageComponent: youtubeComponent
+        youtubeMusicPageComponent: youtubeMusicComponent
 
         onPrepareRequested: route => root.prepareRoute(route)
 
@@ -845,7 +887,8 @@ ApplicationWindow {
                     ["artist", artistComponent], ["album", albumComponent],
                     ["musicPlaylist", musicPlaylistComponent],
                     ["musicHome", musicHomeComponent], ["musicBrowse", musicBrowseComponent],
-                    ["youtube", youtubeComponent]
+                    ["youtube", youtubeComponent],
+                    ["youtubeMusic", youtubeMusicComponent]
                 ];
                 let failures = 0;
                 for (let i = 0; i < pages.length; ++i) {
@@ -1238,6 +1281,8 @@ ApplicationWindow {
         function onPlaybackStarted() {
             if (PlayerCtl.active && !PlayerCtl.paused)
                 PlayerCtl.togglePause();
+            if (youtubeMusicHost.item !== null)
+                youtubeMusicHost.item.pausePlayback();
         }
         function onStateReported(state) {
             root.youtubeState = state;
@@ -1252,9 +1297,63 @@ ApplicationWindow {
         }
     }
 
+    // YouTube Music's view. Parked, it is out of sight: what it plays is a
+    // record, and the bar shows its cover. It keeps the page's size there for
+    // the reason youtubeHost does.
+    Item {
+        id: youtubeMusicPark
+
+        visible: false
+    }
+
+    Loader {
+        id: youtubeMusicHost
+
+        readonly property bool onPage: root.youtubeMusicOnTop
+                                       && stack.currentItem.slot !== undefined
+
+        active: false
+        focus: true
+        parent: youtubeMusicHost.onPage ? stack.currentItem.slot : youtubeMusicPark
+        width: youtubeMusicHost.onPage ? parent.width : stack.width
+        height: youtubeMusicHost.onPage ? parent.height : youtubeHost.pageHeight
+
+        onLoaded: youtubeMusicHost.item.focus = true
+    }
+
+    Connections {
+        target: youtubeMusicHost.item
+        ignoreUnknownSignals: true
+
+        function onLeftEdgeReached() {
+            if (root.youtubeMusicOnTop)
+                root.focusNavigationRail();
+        }
+        function onExitRequested() {
+            if (root.youtubeMusicOnTop)
+                root.leaveYouTube();
+        }
+        function onPlaybackStarted() {
+            root.youtubeMusicStopped = false;
+            if (PlayerCtl.active && !PlayerCtl.paused)
+                PlayerCtl.togglePause();
+            if (youtubeHost.item === null)
+                return;
+            // A video parked in the corner gives the corner up; one on the
+            // page (the bar's Play was pressed from there) only goes quiet.
+            if (root.youtubeOnTop)
+                youtubeHost.item.pausePlayback();
+            else if (root.youtubeState.watching === true)
+                youtubeHost.item.stopPlayback();
+        }
+        function onStateReported(state) {
+            root.youtubeMusicState = state;
+        }
+    }
+
     Connections {
         target: PlayerCtl
-        enabled: youtubeHost.item !== null
+        enabled: youtubeHost.item !== null || youtubeMusicHost.item !== null
 
         function onPausedChanged() { root.yieldYouTube() }
         function onActiveChanged() { root.yieldYouTube() }
@@ -1264,7 +1363,13 @@ ApplicationWindow {
     // pause; in the mini player it is a stop, because the film's own
     // picture-in-picture is about to want that corner.
     function yieldYouTube(): void {
-        if (youtubeHost.item === null || !PlayerCtl.active || PlayerCtl.paused)
+        if (!PlayerCtl.active || PlayerCtl.paused)
+            return;
+        if (youtubeMusicHost.item !== null && root.youtubeMusicState.playing === true) {
+            youtubeMusicHost.item.pausePlayback();
+            root.youtubeMusicStopped = !root.youtubeMusicOnTop;
+        }
+        if (youtubeHost.item === null)
             return;
         root.youtubeKeepPlayingUntil = 0;
         if (root.youtubeOnTop)
@@ -1285,31 +1390,37 @@ ApplicationWindow {
         // film, and a video started after it).
         anchors.bottomMargin: miniPlayer.reservedHeight
         z: 17
-        shown: Session.authenticated && youtubeHost.item !== null && !root.youtubeOnTop
-               && !root.playerOnTop && root.youtubeState.watching === true
-               // A video, not a screen standing where one would be (YouTube
-               // asking for a sign-in before it plays).
-               && (root.youtubeState.playing === true || root.youtubeState.duration > 0
-                   || root.youtubeState.position > 0)
-        state: root.youtubeState
+        shown: root.youtubeVideoParked || root.youtubeMusicParked
+        music: root.youtubeMiniIsMusic
+        state: root.youtubeMiniIsMusic ? root.youtubeMusicState : root.youtubeState
         aspect: youtubeHost.pageHeight > 0 ? stack.width / youtubeHost.pageHeight : 16 / 9
         pictureLift: pip.shown ? pip.height + Theme.spacingValue : 0
         navUp: stack
 
-        onExpandRequested: root.openYouTube()
+        onExpandRequested: {
+            if (root.youtubeMiniIsMusic)
+                root.openYouTubeMusic();
+            else
+                root.openYouTube();
+        }
         onStopRequested: {
             root.youtubeKeepPlayingUntil = 0;
-            youtubeHost.item.stopPlayback();
+            const music = root.youtubeMiniIsMusic;
+            root.youtubeMiniView.stopPlayback();
+            if (music)
+                root.youtubeMusicStopped = true;
             root.focusCurrentPage();
         }
         onPlayPauseRequested: {
             root.youtubeKeepPlayingUntil = 0;
-            youtubeHost.item.playPause();
+            root.youtubeMiniView.playPause();
         }
-        onSeekRequested: seconds => youtubeHost.item.seekBy(seconds)
-        onSeekToRequested: seconds => youtubeHost.item.seekTo(seconds)
-        onVolumeRequested: volume => youtubeHost.item.setVolume(volume)
-        onMuteRequested: muted => youtubeHost.item.setMuted(muted)
+        onSeekRequested: seconds => root.youtubeMiniView.seekBy(seconds)
+        onSeekToRequested: seconds => root.youtubeMiniView.seekTo(seconds)
+        onVolumeRequested: volume => root.youtubeMiniView.setVolume(volume)
+        onMuteRequested: muted => root.youtubeMiniView.setMuted(muted)
+        onPreviousRequested: youtubeMusicHost.item.previous()
+        onNextRequested: youtubeMusicHost.item.next()
         onDismissed: root.focusCurrentPage()
     }
 
@@ -1376,6 +1487,7 @@ ApplicationWindow {
         onFavoritesRequested: root.openFavorites()
         onPlaylistsRequested: root.openPlaylists()
         onYoutubeRequested: root.openYouTube()
+        onYoutubeMusicRequested: root.openYouTubeMusic()
         onDismissed: root.focusCurrentPage()
     }
 
@@ -1558,6 +1670,14 @@ ApplicationWindow {
         id: youtubeComponent
         YouTubePage {
             view: youtubeHost
+        }
+    }
+
+    Component {
+        id: youtubeMusicComponent
+        YouTubePage {
+            service: "music"
+            view: youtubeMusicHost
         }
     }
 

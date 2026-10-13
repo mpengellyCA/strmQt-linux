@@ -24,6 +24,10 @@ FocusScope {
     readonly property Item slot: viewSlot
     // The shell's view once it is in the slot; the keyboard is passed to it.
     property Item view: null
+    // Which of the two this page is showing: "tv", YouTube's ten-foot
+    // interface, or "music", YouTube Music. One page for both — it is a
+    // slot and a background either way — and the shell tells them apart.
+    property string service: "tv"
 
     readonly property bool available: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
 
@@ -43,7 +47,7 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: "#0f0f0f"
+        color: page.service === "music" ? "#030303" : "#0f0f0f"
     }
 
     Item {
@@ -57,8 +61,9 @@ FocusScope {
         anchors.fill: parent
         visible: !page.available
         focus: !page.available
-        iconName: "youtube"
-        headline: qsTr("YouTube is not part of this build")
+        iconName: page.service === "music" ? "youtube-music" : "youtube"
+        headline: page.service === "music" ? qsTr("YouTube Music is not part of this build")
+                                           : qsTr("YouTube is not part of this build")
         body: qsTr("This copy of StrmQt was built without its web engine.")
     }
 }

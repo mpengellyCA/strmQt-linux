@@ -24,6 +24,9 @@ FocusScope {
     // Width over height the view is laid out for: the picture keeps that
     // shape, so the parked view fills it exactly.
     property real aspect: 16 / 9
+    // YouTube Music rather than a video: a record has a cover, not a
+    // picture, and a queue to step through instead of ten seconds either way.
+    property bool music: false
     // How far above the bar the picture stands: the film's own picture, when
     // there is one, has the place directly above the bar.
     property int pictureLift: 0
@@ -34,7 +37,9 @@ FocusScope {
     readonly property real volume: mini.state.volume !== undefined ? Number(mini.state.volume) : 1
     readonly property real position: Number(mini.state.position || 0)
     readonly property real duration: Number(mini.state.duration || 0)
-    readonly property string title: mini.state.title ? String(mini.state.title) : qsTr("YouTube")
+    readonly property string serviceName: mini.music ? qsTr("YouTube Music") : qsTr("YouTube")
+    readonly property string title: mini.state.title ? String(mini.state.title) : mini.serviceName
+    readonly property string art: mini.music && mini.state.art ? String(mini.state.art) : ""
     readonly property string artist: mini.state.artist ? String(mini.state.artist) : ""
     readonly property bool compactWidth: mini.width < Theme.scale(900)
     readonly property bool narrowWidth: mini.width < Theme.scale(620)
@@ -59,6 +64,8 @@ FocusScope {
     signal playPauseRequested
     signal seekRequested(real seconds)
     signal seekToRequested(real seconds)
+    signal previousRequested
+    signal nextRequested
     signal volumeRequested(real volume)
     signal muteRequested(bool muted)
     // Back was pressed on it, or it left while holding the keyboard.
@@ -133,7 +140,8 @@ FocusScope {
         anchors.rightMargin: Theme.spacingValue
         y: mini.barHeight - mini.reservedHeight - Theme.spacingValue - mini.pictureLift
            - picture.height
-        opacity: mini.slide
+        opacity: mini.music ? 0 : mini.slide
+        enabled: !mini.music
         scale: 0.94 + 0.06 * mini.slide
 
         Accessible.role: Accessible.Button
@@ -303,15 +311,29 @@ FocusScope {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         height: Theme.scale(44)
-                        width: Math.round(badge.height * 16 / 9)
+                        width: mini.music ? badge.height : Math.round(badge.height * 16 / 9)
                         radius: Theme.radiusChip
                         color: Theme.surfaceRaisedColor
+                        clip: true
 
                         StrmIcon {
                             anchors.centerIn: parent
-                            name: "youtube"
+                            name: mini.music ? "youtube-music" : "youtube"
                             size: Theme.iconSize
                             color: Theme.textSecondaryColor
+                        }
+
+                        // The cover YouTube Music names for the track. Not
+                        // StrmImage: that is the media server's cache and
+                        // its sign-in, and this address is neither's.
+                        Image {
+                            anchors.fill: parent
+                            visible: mini.art.length > 0 && status === Image.Ready
+                            source: mini.art
+                            sourceSize.width: 2 * badge.width
+                            sourceSize.height: 2 * badge.height
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
                         }
                     }
 
@@ -336,8 +358,9 @@ FocusScope {
                         Text {
                             width: parent.width
                             visible: !mini.narrowWidth
-                            text: mini.artist.length > 0 ? qsTr("%1  ·  YouTube").arg(mini.artist)
-                                                         : qsTr("YouTube")
+                            text: mini.artist.length > 0
+                                  ? qsTr("%1  ·  %2").arg(mini.artist).arg(mini.serviceName)
+                                  : mini.serviceName
                             color: Theme.textSecondaryColor
                             font.family: Theme.fontBody
                             font.pixelSize: Theme.fontCaption
@@ -369,12 +392,30 @@ FocusScope {
                     spacing: Theme.spacingTight
 
                     StrmIconButton {
+                        id: previousButton
+
+                        objectName: "youtubeMiniPrevious"
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: Theme.scale(34)
+                        visible: mini.music
+                        activeFocusOnTab: false
+                        iconName: "skip-previous"
+                        tooltip: qsTr("Previous")
+
+                        onClicked: mini.previousRequested()
+
+                        property Item navRight: playPause
+                        property Item navUp: scrubber
+                    }
+
+                    StrmIconButton {
                         id: rewindButton
 
                         objectName: "youtubeMiniRewind"
                         anchors.verticalCenter: parent.verticalCenter
                         size: Theme.scale(34)
                         activeFocusOnTab: false
+                        visible: !mini.music
                         iconName: "rewind-10"
                         tooltip: qsTr("Back 10 seconds")
                         enabled: mini.duration > 0
@@ -398,8 +439,8 @@ FocusScope {
 
                         onClicked: mini.playPauseRequested()
 
-                        property Item navLeft: rewindButton
-                        property Item navRight: forwardButton
+                        property Item navLeft: mini.music ? previousButton : rewindButton
+                        property Item navRight: mini.music ? nextButton : forwardButton
                         property Item navUp: scrubber
                     }
 
@@ -410,11 +451,30 @@ FocusScope {
                         anchors.verticalCenter: parent.verticalCenter
                         size: Theme.scale(34)
                         activeFocusOnTab: false
+                        visible: !mini.music
                         iconName: "forward-10"
                         tooltip: qsTr("Forward 10 seconds")
                         enabled: mini.duration > 0
 
                         onClicked: mini.seekRequested(10)
+
+                        property Item navLeft: playPause
+                        property Item navRight: stopButton
+                        property Item navUp: scrubber
+                    }
+
+                    StrmIconButton {
+                        id: nextButton
+
+                        objectName: "youtubeMiniNext"
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: Theme.scale(34)
+                        visible: mini.music
+                        activeFocusOnTab: false
+                        iconName: "skip-next"
+                        tooltip: qsTr("Next")
+
+                        onClicked: mini.nextRequested()
 
                         property Item navLeft: playPause
                         property Item navRight: stopButton
@@ -433,7 +493,7 @@ FocusScope {
 
                         onClicked: mini.stopRequested()
 
-                        property Item navLeft: forwardButton
+                        property Item navLeft: mini.music ? nextButton : forwardButton
                         property Item navRight: quieterButton
                         property Item navUp: scrubber
                     }
@@ -523,7 +583,7 @@ FocusScope {
                         size: Theme.scale(34)
                         activeFocusOnTab: false
                         iconName: "chevron-up"
-                        tooltip: qsTr("Back to YouTube")
+                        tooltip: qsTr("Back to %1").arg(mini.serviceName)
 
                         onClicked: mini.expandRequested()
 
