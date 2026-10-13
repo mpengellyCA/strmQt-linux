@@ -1334,8 +1334,13 @@ ApplicationWindow {
         function onPlaybackStarted() {
             if (PlayerCtl.active && !PlayerCtl.paused)
                 PlayerCtl.togglePause();
-            if (youtubeMusicHost.item !== null)
+            // YouTube Music gives way altogether: quiet, and its bar put
+            // away — a paused record's bar under a playing video is one
+            // more thing to play, on top of the thing that is playing.
+            if (youtubeMusicHost.item !== null) {
                 youtubeMusicHost.item.pausePlayback();
+                root.youtubeMusicStopped = !root.youtubeMusicOnTop;
+            }
         }
         function onStateReported(state) {
             root.youtubeState = state;
@@ -1442,7 +1447,7 @@ ApplicationWindow {
     function yieldYouTube(): void {
         if (!PlayerCtl.active || PlayerCtl.paused)
             return;
-        if (youtubeMusicHost.item !== null && root.youtubeMusicState.playing === true) {
+        if (youtubeMusicHost.item !== null) {
             youtubeMusicHost.item.pausePlayback();
             root.youtubeMusicStopped = !root.youtubeMusicOnTop;
         }
