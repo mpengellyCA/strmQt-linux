@@ -268,7 +268,10 @@ void FilterSheetTest::aTickKeepsTheCursor()
 
 void FilterSheetTest::singleChoiceReplaces()
 {
+    // From thirty rows down a list that has not been drawn since: Left is
+    // still the axes (FocusNavigator::cursorRect).
     press(Qt::Key_Left);
+    QCOMPARE(where(), QStringLiteral("filterSheetFacets"));
     press(Qt::Key_Down);
     QCOMPARE(call("activeKey").toString(), QStringLiteral("resolution"));
     press(Qt::Key_Right);

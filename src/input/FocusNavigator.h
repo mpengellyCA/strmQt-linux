@@ -127,6 +127,7 @@ private:
     QQuickItem *ownerOf(QQuickItem *focus, QQuickItem *scope) const;
     bool isView(QQuickItem *item) const;
     QRectF sceneRect(QQuickItem *item) const;
+    QRectF cursorRect(QQuickItem *item) const;
     QQuickItem *explicitNeighbour(QQuickItem *item, QQuickItem *from, NavDirection dir,
                                   bool followChain) const;
     QQuickItem *recoveryTarget(QQuickItem *scope) const;
