@@ -783,6 +783,47 @@ FocusScope {
                     }
                 }
 
+                // ── YouTube ────────────────────────────────────────────────
+                // Each switched off by itself, and off is gone: the rail
+                // entry, the view, and whatever led there from other pages.
+                StrmPanel {
+                    width: parent.width
+                    visible: page.currentKey === "server"
+                             && typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                    title: qsTr("YouTube")
+                    subtitle: qsTr("YouTube and YouTube Music inside StrmQt. Turned off, one is gone from the menu and from every page that leads to it.")
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("YouTube")
+                        hint: page.prefsAvailable
+                              ? qsTr("YouTube's TV interface as a destination, and trailers played in the app. Off, a trailer opens in your browser instead.")
+                              : page.unavailableHint
+
+                        StrmSwitch {
+                            objectName: "youtubeEnabledSwitch"
+                            enabled: page.prefsAvailable
+                            checked: page.prefsAvailable && Prefs.youtubeEnabled
+                            onToggled: Prefs.youtubeEnabled = !Prefs.youtubeEnabled
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("YouTube Music")
+                        hint: page.prefsAvailable
+                              ? qsTr("YouTube Music as a destination. Off, what it was playing stops and its sign-in stays where it is until you sign out.")
+                              : page.unavailableHint
+
+                        StrmSwitch {
+                            objectName: "youtubeMusicEnabledSwitch"
+                            enabled: page.prefsAvailable
+                            checked: page.prefsAvailable && Prefs.youtubeMusicEnabled
+                            onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
+                        }
+                    }
+                }
+
                 // ── YouTube Music ──────────────────────────────────────────
                 // Google does not let an embedded browser sign in, so the
                 // sign-in is copied from a browser that already has one
@@ -795,7 +836,8 @@ FocusScope {
 
                     width: parent.width
                     visible: page.currentKey === "server" && youtubeMusicPanel.signIn !== null
-                    title: qsTr("YouTube Music")
+                             && page.prefsAvailable && Prefs.youtubeMusicEnabled
+                    title: qsTr("YouTube Music sign-in")
                     subtitle: qsTr("Google does not allow signing in from inside an app like this one. Sign in to YouTube in Firefox, then copy that sign-in here.")
 
                     onVisibleChanged: {

@@ -637,7 +637,7 @@ ApplicationWindow {
 
     // YouTube Music, the same way: one history entry, one view (below).
     function ensureYouTubeMusic(): bool {
-        if (typeof YouTubeAvailable === "undefined" || !YouTubeAvailable)
+        if (!root.youtubeMusicOn)
             return false;
         if (!youtubeMusicHost.active) {
             youtubeMusicHost.source = Qt.resolvedUrl("youtube/YouTubeMusicView.qml");
@@ -719,8 +719,39 @@ ApplicationWindow {
     // is undone, once. A pause the user asks for clears this first.
     property real youtubeKeepPlayingUntil: 0
 
+    // In the build, and not switched off in Settings (Prefs.youtubeEnabled /
+    // youtubeMusicEnabled). Off is gone: no rail entry, no view, nothing
+    // playing — see the two handlers below.
+    readonly property bool youtubeOn: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                                      && Prefs.youtubeEnabled
+    readonly property bool youtubeMusicOn: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                                           && Prefs.youtubeMusicEnabled
+
+    onYoutubeOnChanged: {
+        if (root.youtubeOn)
+            return;
+        const wasOnTop = root.youtubeOnTop;
+        root.youtubeKeepPlayingUntil = 0;
+        root.youtubeSingle = false;
+        root.youtubePending = "";
+        youtubeHost.active = false;
+        root.youtubeState = ({});
+        if (wasOnTop)
+            root.leaveYouTube();
+    }
+    onYoutubeMusicOnChanged: {
+        if (root.youtubeMusicOn)
+            return;
+        const wasOnTop = root.youtubeMusicOnTop;
+        youtubeMusicHost.active = false;
+        root.youtubeMusicState = ({});
+        root.youtubeMusicStopped = false;
+        if (wasOnTop)
+            root.leaveYouTube();
+    }
+
     function ensureYouTube(): bool {
-        if (typeof YouTubeAvailable === "undefined" || !YouTubeAvailable)
+        if (!root.youtubeOn)
             return false;
         if (!youtubeHost.active) {
             youtubeHost.source = Qt.resolvedUrl("youtube/YouTubeView.qml");
@@ -1508,6 +1539,8 @@ ApplicationWindow {
         z: 20
         visible: root.chromeVisible
         enabled: root.chromeVisible
+        youtubeShown: root.youtubeOn
+        youtubeMusicShown: root.youtubeMusicOn
         current: root.railKey
 
         onHomeRequested: root.goHome()

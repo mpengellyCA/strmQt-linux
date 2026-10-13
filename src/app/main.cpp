@@ -118,7 +118,14 @@ int main(int argc, char *argv[])
 #else
     const bool youtube = false;
 #endif
-    app.actions()->setYouTubeAvailable(youtube);
+    // In the build AND switched on (Settings → Server → YouTube): a trailer
+    // or a search asked for while it is off goes where it went before there
+    // was a YouTube tab.
+    const auto applyYouTube = [&app, youtube] {
+        app.actions()->setYouTubeAvailable(youtube && app.settings()->youtubeEnabled());
+    };
+    applyYouTube();
+    QObject::connect(app.settings(), &strmqt::Settings::youtubeEnabledChanged, &app, applyYouTube);
     engine.rootContext()->setContextProperty(QStringLiteral("YouTubeAvailable"), youtube);
     engine.rootContext()->setContextProperty(
         QStringLiteral("SelfTest"),

@@ -43,6 +43,13 @@ class Settings : public QObject
     // and of Emby's own web player.
     Q_PROPERTY(bool autoPlayNextEpisode READ autoPlayNextEpisode WRITE setAutoPlayNextEpisode
                    NOTIFY autoPlayNextEpisodeChanged)
+    // YouTube and YouTube Music, each switched off by itself. Off is gone:
+    // no entry in the rail, nothing that leads there from another page, and
+    // its web view unloaded. Both on unless the user says otherwise.
+    Q_PROPERTY(bool youtubeEnabled READ youtubeEnabled WRITE setYoutubeEnabled
+                   NOTIFY youtubeEnabledChanged)
+    Q_PROPERTY(bool youtubeMusicEnabled READ youtubeMusicEnabled WRITE setYoutubeMusicEnabled
+                   NOTIFY youtubeMusicEnabledChanged)
     // ── Quality (ARCHITECTURE.md) ────────────────────────────────────────────
     // Ceiling handed to the server in the DeviceProfile. 0 = no cap ("auto"),
     // which is not the same as a very large number: a cap makes the server
@@ -152,6 +159,10 @@ public:
 
     bool autoPlayNextEpisode() const;
     void setAutoPlayNextEpisode(bool enabled);
+    bool youtubeEnabled() const;
+    void setYoutubeEnabled(bool enabled);
+    bool youtubeMusicEnabled() const;
+    void setYoutubeMusicEnabled(bool enabled);
 
     int maxBitrateKbps() const;
     void setMaxBitrateKbps(int kbps);
@@ -299,6 +310,8 @@ public:
 signals:
     void serverUrlChanged();
     void autoPlayNextEpisodeChanged();
+    void youtubeEnabledChanged();
+    void youtubeMusicEnabledChanged();
     void maxBitrateKbpsChanged();
     void playbackModeChanged();
     void replayGainModeChanged();

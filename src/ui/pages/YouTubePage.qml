@@ -29,7 +29,12 @@ FocusScope {
     // slot and a background either way — and the shell tells them apart.
     property string service: "tv"
 
-    readonly property bool available: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+    readonly property bool inBuild: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+    // Switched on in Settings. A page for one that is off can still be
+    // reached — it may be an entry in the history — and says so.
+    readonly property bool switchedOn: typeof Prefs === "undefined" || Prefs === null
+        || (page.service === "music" ? Prefs.youtubeMusicEnabled : Prefs.youtubeEnabled)
+    readonly property bool available: page.inBuild && page.switchedOn
 
     function seatFocus(): void {
         if (page.view !== null && page.activeFocus && !page.view.activeFocus)
@@ -62,8 +67,12 @@ FocusScope {
         visible: !page.available
         focus: !page.available
         iconName: page.service === "music" ? "youtube-music" : "youtube"
-        headline: page.service === "music" ? qsTr("YouTube Music is not part of this build")
-                                           : qsTr("YouTube is not part of this build")
-        body: qsTr("This copy of StrmQt was built without its web engine.")
+        headline: page.inBuild
+                  ? (page.service === "music" ? qsTr("YouTube Music is turned off")
+                                              : qsTr("YouTube is turned off"))
+                  : (page.service === "music" ? qsTr("YouTube Music is not part of this build")
+                                              : qsTr("YouTube is not part of this build"))
+        body: page.inBuild ? qsTr("It can be turned back on in Settings, under Server.")
+                           : qsTr("This copy of StrmQt was built without its web engine.")
     }
 }
