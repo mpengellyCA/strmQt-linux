@@ -1,7 +1,7 @@
 # StrmQt RPM packaging (spec 2026-09-27 §7.3). Built in, and for, one Fedora
 # release's container by scripts/ci/package-rpm.sh; not a Fedora-review spec.
 Name:           strmqt
-Version:        0.8.0
+Version:        0.8.5
 Release:        1%{?dist}
 Summary:        Couch-first Emby client for the Linux desktop
 License:        GPL-3.0-or-later AND OFL-1.1 AND MIT AND LGPL-3.0-or-later
@@ -11,7 +11,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc-c++ cmake ninja-build pkgconf git-core
 BuildRequires:  qt6-rpm-macros
 BuildRequires:  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel
-BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel
+BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtwebengine-devel sqlite-devel
 BuildRequires:  mpv-devel vlc-devel SDL3-devel openssl-devel
 # Runtime pieces for %%check's ctest and for the C(fedora-*) self-test (deps.sh installs these via dnf builddep):
 BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpeg-free mesa-dri-drivers
@@ -21,6 +21,9 @@ BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpe
 # holds the Qt update back until a rebuilt StrmQt exists (README).
 Requires:       qt6-qtdeclarative%{?_isa} = %{_qt6_version}
 Requires:       qt6-qtsvg%{?_isa} qt6-qtwayland%{?_isa}
+# The YouTube tab: its QML module is loaded at run time, by URL, so nothing
+# links against it for rpm to find.
+Requires:       qt6-qtwebengine%{?_isa}
 Requires:       vlc-plugins-base vlc-plugin-ffmpeg
 # kf6-kwallet ships ksecretd/kwalletd6; Fedora's "kwallet" is the KDE 4 one.
 Recommends:     (kf6-kwallet or gnome-keyring or keepassxc)
@@ -61,6 +64,10 @@ export QT_QPA_PLATFORM=offscreen
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*
 
 %changelog
+* Tue Oct 13 2026 Mike Pengelly <mike@leadrix.io> - 0.8.5-1
+- YouTube and YouTube Music as destinations (Qt WebEngine), each of which
+  can be switched off; trailers play in the app; a full-screen toggle.
+
 * Mon Oct 12 2026 Mike Pengelly <mike@leadrix.io> - 0.8.0-1
 - One input layer for keyboard, mouse, controller, remote and phone; library
   filters; idle pointer hiding; video upscaling.

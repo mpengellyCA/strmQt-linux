@@ -122,6 +122,11 @@ Item {
     signal librarySelected(string libraryId, string name, string collectionType)
     signal favoritesRequested
     signal playlistsRequested
+    // In the build and switched on (Main.qml youtubeOn / youtubeMusicOn).
+    property bool youtubeShown: false
+    property bool youtubeMusicShown: false
+    signal youtubeRequested
+    signal youtubeMusicRequested
     signal searchRequested
     signal settingsRequested
     // Closed without choosing anything; the page takes focus back.
@@ -401,6 +406,24 @@ Item {
                 label: qsTr("Favorites")
                 active: rail.current === "favorites"
                 onChosen: rail.favoritesRequested()
+            }
+
+            // Absent, not disabled, in a build made without the web engine
+            // or with it switched off in Settings.
+            NavEntry {
+                visible: rail.youtubeShown
+                iconName: "youtube"
+                label: qsTr("YouTube")
+                active: rail.current === "youtube"
+                onChosen: rail.youtubeRequested()
+            }
+
+            NavEntry {
+                visible: rail.youtubeMusicShown
+                iconName: "youtube-music"
+                label: qsTr("YouTube Music")
+                active: rail.current === "youtubeMusic"
+                onChosen: rail.youtubeMusicRequested()
             }
 
             NavEntry {

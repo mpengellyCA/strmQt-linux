@@ -506,6 +506,67 @@ because a picker raised from a film has to keep offering film lists.
 
 ---
 
+### YouTube and YouTube Music
+
+Two pages whose content is somebody else's website, hosted in Qt WebEngine. Everything
+that names the engine is in `src/ui/youtube/` and is added to the module only when the
+build has it (`STRMQT_WITH_YOUTUBE`, on by default); the rest of the tree loads those
+files by URL and asks `YouTubeAvailable`, the arrangement the VLC video plane has.
+
+- **`YouTubeView.qml`** is `youtube.com/tv` with a TV's user agent: an interface already
+  built for arrows, OK and Back, so keys are simply delivered to it.
+- **`YouTubeMusicView.qml`** is `music.youtube.com`, which is built for a pointer. It is
+  zoomed to 720 lines of its own layout and given a D-pad by a script injected into the
+  page: an arrow moves to the nearest link, button, song row or card in that direction,
+  Enter activates it, Back closes a menu, then goes back a page, then leaves. Chromium's
+  own spatial navigation was tried first and stops on every scrolling container on the
+  way. The cursor is a frame of its own drawn over the page, because an outline on the
+  focused element is clipped by whatever clips the element.
+
+**A web view cannot decline a key**, so the navigator (§5) never hears about an arrow
+the page had no use for. Each view's script stands in: it reports a Left that moved
+nothing at the page's left edge, and the shell answers by opening the rail. The bridge
+is one-way and narrow — the page prints `strmqt:<run's random word>:<word>` lines to its console
+(`edge-left`, `playing`, `exit`, `route:`, `state:<json>`), the view turns each into a
+signal, and a state line is parsed as data and nothing else. The random word is made
+up each run and known only to the injected script, so another site, or a frame from
+one, cannot speak for the page; titles are shown as plain text and a cover is fetched
+only from Google's image hosts over HTTPS. Commands go the other way
+as fixed snippets through `runJavaScript`; nothing the page says is ever evaluated.
+
+**One view each, owned by the shell** (`Main.qml`, `youtubeHost` and
+`youtubeMusicHost`), not by the page — the page can be left, covered or evicted from
+the bounded stack while something is playing. The view is parented into the page's
+`slot` while that page is on top and parked otherwise, exactly as the mpv video plane
+moves between the player page and the picture-in-picture frame. Parked, a YouTube video
+sits in the frame above `YouTubeMini`'s docked bar; YouTube Music is parked out of sight
+and the bar shows its cover. Two things had to be true for playback to survive the
+move, and both are load-bearing: the frame is never hidden as a whole (a web view that
+finds itself inside something invisible for one frame tells its page it is hidden), and
+a script injected before YouTube's own keeps `document.hidden` false — a TV application
+pauses when told it is hidden and does not resume.
+
+One thing is heard at a time. Each view reports `playing`; the shell pauses the app's
+player and the other view, and `yieldYouTube()` does the reverse when `PlayerCtl`
+starts. A YouTube video on its own page takes the whole window (`youtubeTheatre`), and
+the rail flies out over it on the Menu button or the pointer at the left edge.
+
+**Signing in to YouTube Music** cannot happen in the view: Google refuses a real
+account from an embedded browser at the step after the address, whatever the browser
+calls itself (measured: a Firefox user agent with client hints off passes for an address
+that does not exist and fails for one that does). `app/FirefoxCookies` reads the
+`youtube.com` and `google.com` cookies of one Firefox profile or container — each is its
+own cookie jar, which is the choice the user is given — from a *copy* of
+`cookies.sqlite` and its write-ahead log, so a running Firefox is neither disturbed nor
+read stale, and `app/YouTubeSignIn` puts them in the view's profile. SQLite's C API is
+used directly. Nothing is read until the button is pressed.
+
+**Off is gone.** `Prefs.youtubeEnabled` and `youtubeMusicEnabled` each remove the rail
+entry, unload the view and, for YouTube, make `ItemActions::playOnYouTube` /
+`searchYouTube` answer false — the one gate everything that leads to YouTube from
+another page must go through, so a trailer opens in the browser again. There is no ad
+blocking, by decision.
+
 ## 5. Input
 
 `InputMap` is the single source of truth for every binding. It feeds the shortcut
@@ -819,8 +880,10 @@ Five artifacts, all built from a clean checkout:
 - **Arch package** — `install()` rules put two binaries, a desktop entry, AppStream
   metainfo and six icon sizes into `/usr`. Nothing else is installed: the QML module
   is compiled into the executable, so there is no qmldir or `.qml` to ship.
-- **Flatpak** — `org.kde.Platform` 6.11 plus libmpv, libplacebo, libass and uchardet
-  built from source. FFmpeg comes from the runtime.
+- **Flatpak** — `org.kde.Platform` 6.11 on the `io.qt.qtwebengine.BaseApp` base (the
+  runtime has no Qt WebEngine), plus libmpv, libplacebo, libass and uchardet built from
+  source. FFmpeg comes from the runtime. Firefox's three profile locations are mounted
+  read-only for the YouTube Music sign-in (§4).
 - **`.deb`** (`packaging/debian/`) — one binary package, built inside and for
   exactly one release's container (`scripts/ci/package-deb.sh`, `dpkg-buildpackage`),
   targeting Ubuntu 24.04/26.04 and Debian 12/13. `packaging/debian/rules`'
@@ -863,6 +926,20 @@ assertion catches the rot.
 
 ## 10. Known limitations
 
+- **YouTube and YouTube Music are other people's pages.** The injected scripts lean on
+  element names and behaviour neither site promises (§4); either can change under the
+  app without notice. The pieces most likely to go first: the D-pad's list of things
+  worth stopping on, the left-edge report, and previous/next on the docked bar.
+- **YouTube Music can only be signed in to from Firefox**, and a copied sign-in expires
+  when Google says so, at which point it is copied again. Chromium-family browsers keep
+  their cookies encrypted and are not read.
+- **YouTube Music's search box has no on-screen keyboard**: typing needs a keyboard.
+- **The YouTube sign-ins belong to the computer's user, not to the Emby profile.**
+  Both web profiles are kept per desktop account; signing out of the server unloads
+  the views but a second Emby user on the same desktop account finds the first one's
+  YouTube still signed in.
+- **The upscaling shaders do not apply to YouTube.** They are mpv's; YouTube plays in
+  Chromium.
 - **Zero-copy VAAPI is unreachable**: `MpvVideoItem::ensureContext()` does not pass
   `MPV_RENDER_PARAM_WL_DISPLAY`, so mpv finds no native display. Hardware decode
   still works via `vulkan-copy`; this costs a copy, not the feature.

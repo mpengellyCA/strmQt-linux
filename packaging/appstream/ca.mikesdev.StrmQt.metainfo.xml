@@ -22,6 +22,7 @@
       <li>Ten-foot interface: home rails, library grids, series drill-down, and search</li>
       <li>Resume playback, watched state, and favourites synchronised with the server</li>
       <li>MPRIS2 media controls, so KDE Connect and the Plasma applet just work</li>
+      <li>YouTube and YouTube Music as destinations, driven with the same remote, with background play; each can be switched off</li>
       <li>Per-profile access tokens stored in KWallet, with a warned-about vault file as fallback</li>
       <li>HDR-aware tone mapping and screensaver inhibition during playback</li>
     </ul>
@@ -62,6 +63,20 @@
   </requires>
 
   <releases>
+    <release version="0.8.5" date="2026-10-13" type="development">
+      <description>
+        <p>YouTube and YouTube Music join the menu.</p>
+        <ul>
+          <li>YouTube's TV interface is a destination in the menu, driven with the same arrows, OK and Back as everything else. A video takes the whole window, and the menu slides out over it on the Menu button.</li>
+          <li>YouTube Music is a destination too, drawn large with a cursor the arrows move.</li>
+          <li>What either is playing carries on under other pages, with a docked bar: scrub, volume, stop, and previous and next for music.</li>
+          <li>Trailers play in the app.</li>
+          <li>YouTube Music is signed in to by copying a sign-in from Firefox, from the profile or container you choose.</li>
+          <li>Each of the two can be switched off in Settings, which removes it entirely.</li>
+          <li>Full screen can be toggled from the profile menu.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-10-12" type="development">
       <description>
         <p>The input release: every way of driving StrmQt now goes through one input layer.</p>

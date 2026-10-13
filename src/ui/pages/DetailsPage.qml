@@ -940,7 +940,9 @@ FocusScope {
         if (index < 0 || index >= page.trailerCount)
             return
         const trailer = page.trailers[index]
-        if (trailer && trailer.url)
+        // In the app when it is a YouTube video and this build has YouTube;
+        // anything else is a link, and leaves for the browser.
+        if (trailer && trailer.url && !Actions.playOnYouTube(String(trailer.url)))
             Qt.openUrlExternally(String(trailer.url))
     }
 

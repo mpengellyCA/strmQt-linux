@@ -1,5 +1,6 @@
 #include <QFile>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QtTest>
 
 #include "core/Settings.h"
@@ -20,6 +21,7 @@ private slots:
     void oversizedLegacyChoicesArePrunedWhenSessionRestores();
     void accountProfileRemovalClearsSession();
     void webRemoteIsOffAndPinnedByDefault();
+    void youtubeAndYoutubeMusicAreSwitchedSeparately();
 };
 
 void SettingsTest::defaultServerUrl()
@@ -261,6 +263,38 @@ void SettingsTest::webRemoteIsOffAndPinnedByDefault()
     }
     Settings settings(ini);
     QVERIFY(settings.webRemoteSetupOffered());
+}
+
+void SettingsTest::youtubeAndYoutubeMusicAreSwitchedSeparately()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    {
+        Settings settings(ini);
+        // Both there unless the user says otherwise.
+        QVERIFY(settings.youtubeEnabled());
+        QVERIFY(settings.youtubeMusicEnabled());
+
+        QSignalSpy youtube(&settings, &Settings::youtubeEnabledChanged);
+        QSignalSpy music(&settings, &Settings::youtubeMusicEnabledChanged);
+        settings.setYoutubeMusicEnabled(false);
+        settings.setYoutubeMusicEnabled(false);
+        QCOMPARE(music.count(), 1);
+        QCOMPARE(youtube.count(), 0);
+        QVERIFY(settings.youtubeEnabled());
+        QVERIFY(!settings.youtubeMusicEnabled());
+    }
+    {
+        Settings settings(ini);
+        QVERIFY(settings.youtubeEnabled());
+        QVERIFY(!settings.youtubeMusicEnabled());
+        settings.setYoutubeEnabled(false);
+        settings.setYoutubeMusicEnabled(true);
+    }
+    Settings settings(ini);
+    QVERIFY(!settings.youtubeEnabled());
+    QVERIFY(settings.youtubeMusicEnabled());
 }
 
 QTEST_GUILESS_MAIN(SettingsTest)

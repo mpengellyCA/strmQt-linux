@@ -32,6 +32,8 @@ const auto kVolumeKey = QStringLiteral("playback/volume");
 const auto kMutedKey = QStringLiteral("playback/muted");
 const auto kReplayGainKey = QStringLiteral("playback/replayGain");
 const auto kAutoPlayNextEpisodeKey = QStringLiteral("playback/autoPlayNextEpisode");
+const auto kYoutubeEnabledKey = QStringLiteral("youtube/enabled");
+const auto kYoutubeMusicEnabledKey = QStringLiteral("youtube/musicEnabled");
 const auto kMaxBitrateKey = QStringLiteral("playback/maxBitrateKbps");
 const auto kPlaybackModeKey = QStringLiteral("playback/mode");
 const auto kBackdropKey = QStringLiteral("appearance/backdrop");
@@ -494,6 +496,32 @@ void Settings::setAutoPlayNextEpisode(bool enabled)
         return;
     m_store.setValue(kAutoPlayNextEpisodeKey, enabled);
     emit autoPlayNextEpisodeChanged();
+}
+
+bool Settings::youtubeEnabled() const
+{
+    return m_store.value(kYoutubeEnabledKey, true).toBool();
+}
+
+void Settings::setYoutubeEnabled(bool enabled)
+{
+    if (enabled == youtubeEnabled())
+        return;
+    m_store.setValue(kYoutubeEnabledKey, enabled);
+    emit youtubeEnabledChanged();
+}
+
+bool Settings::youtubeMusicEnabled() const
+{
+    return m_store.value(kYoutubeMusicEnabledKey, true).toBool();
+}
+
+void Settings::setYoutubeMusicEnabled(bool enabled)
+{
+    if (enabled == youtubeMusicEnabled())
+        return;
+    m_store.setValue(kYoutubeMusicEnabledKey, enabled);
+    emit youtubeMusicEnabledChanged();
 }
 
 int Settings::maxBitrateKbps() const

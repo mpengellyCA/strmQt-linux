@@ -82,6 +82,36 @@ network from taking over playback. Anything a key or a controller button can do,
 can ask for too, and its Remote screen switches between the full player and the mini
 player.
 
+### YouTube and YouTube Music, in the same room
+
+Two more destinations in the menu, each driven with the same arrows, OK and Back as the
+rest of the app — no mouse needed, no second remote.
+
+**YouTube** is YouTube's own TV interface, the one a console or a smart TV shows. A video
+takes the whole window; press Menu, or touch the left edge with the pointer, and the app's
+menu slides out over it without stopping it. Leave the page and the video carries on in a
+picture-in-picture frame with the same docked bar a film gets — scrub, ±10 seconds,
+volume, stop, back. Trailers on a film's page play here instead of opening a browser.
+
+**YouTube Music** is the full music site, drawn large and given a D-pad: an arrow moves a
+cursor to the nearest song, album or button in that direction and OK plays it. What it
+plays carries on under other pages with its cover, previous and next on the docked bar.
+
+Only one thing is ever heard: starting a film, a YouTube video or a YouTube Music track
+quiets the other two.
+
+Signing in: YouTube signs in on its own screen with a code, as on a TV. YouTube Music
+cannot be signed in to inside an app — Google refuses it — so **Settings → Server** copies
+a sign-in from Firefox instead: press **Look in Firefox** and it lists each Firefox
+profile and container on your computer, and whether it is signed in to YouTube; you choose
+which one to use. Nothing of Firefox's is opened before you press that button. StrmQt
+copies only the `youtube.com` and `google.com` cookies of the one you pick — which is the
+Google session of every account signed in there — and never writes to Firefox's files.
+
+Don't want them? **Settings → Server → YouTube** switches each off separately, and off is
+gone: out of the menu, nothing playing, and trailers open in your browser as before.
+There is no ad blocking and none is planned.
+
 ### Your credentials stay yours
 
 Sign-in tokens go to the system keyring — KWallet on Plasma 6 or 5, and the Secret
@@ -103,15 +133,15 @@ Qt. Install it from its local path so the package manager pulls in the dependenc
 
 | Distro | Format | Command |
 |---|---|---|
-| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.0-1.ubuntu24.04_amd64.deb` |
-| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.0-1.ubuntu26.04_amd64.deb` |
-| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.8.0-1.deb12_amd64.deb` |
-| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.8.0-1.deb13_amd64.deb` |
-| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.8.0-1.fc43.x86_64.rpm` |
-| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.8.0-1.fc44.x86_64.rpm` |
-| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.8.0-1-x86_64.pkg.tar.zst` |
+| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.5-1.ubuntu24.04_amd64.deb` |
+| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.5-1.ubuntu26.04_amd64.deb` |
+| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.8.5-1.deb12_amd64.deb` |
+| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.8.5-1.deb13_amd64.deb` |
+| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.8.5-1.fc43.x86_64.rpm` |
+| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.8.5-1.fc44.x86_64.rpm` |
+| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.8.5-1-x86_64.pkg.tar.zst` |
 | everyone | Flatpak | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
-| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.8.0-x86_64.AppImage` and run it |
+| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.8.5-x86_64.AppImage` and run it |
 
 A keyring is recommended, not required: the `.deb` recommends
 `kwalletmanager | gnome-keyring | keepassxc`, the `.rpm` recommends
@@ -235,19 +265,27 @@ without them, so a password never reaches the log). For the Flatpak, pass it wit
 
 ## Where it stands
 
-Version **0.8.0**, a pre-release: the input release. Keyboard, mouse, controller, remote
-and phone now go through one input layer, so an arrow always has somewhere to go and no
+Version **0.8.5**, a pre-release: YouTube and YouTube Music arrive as destinations in the
+menu, with background play, a docked bar and their own off switches, and full screen can
+be toggled from the profile menu. They are a day old. The parts with logic of their own
+— reading a sign-in from Firefox, the links, the preferences — are covered by tests; how
+the two web pages behave inside the app has been checked by driving them in a headless
+window and by one evening's use on one machine, and both sites can change under it
+without notice.
+
+0.8.0, the release before, was the input release: keyboard, mouse, controller, remote
+and phone go through one input layer, so an arrow always has somewhere to go and no
 control is out of reach; libraries of films and shows can be filtered by their metadata;
 an idle pointer hides everywhere; and video below the window's resolution is upscaled.
-The new input layer and the filters are covered by tests but have had very little time
+The input layer and the filters are covered by tests but have had very little time
 in the hand on a real controller, remote or phone.
 The core of it has been exercised against a live Emby 4.9 server: browsing, search,
 playback of video and audio, live updates over a WebSocket, playlists, favourites,
 resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 85/85 on Qt 6.4.2, 6.8.2, 6.10 and
+The build is clean under `-Werror`, `ctest` passes 87/87 on Qt 6.4.2, 6.8.2, 6.10 and
 6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
-page-construction self-test builds all 15 screens on every release.
+page-construction self-test builds all 17 screens on every release.
 
 Worth knowing before you rely on it:
 

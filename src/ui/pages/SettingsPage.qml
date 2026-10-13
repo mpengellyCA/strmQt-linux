@@ -783,6 +783,127 @@ FocusScope {
                     }
                 }
 
+                // ── YouTube ────────────────────────────────────────────────
+                // Each switched off by itself, and off is gone: the rail
+                // entry, the view, and whatever led there from other pages.
+                StrmPanel {
+                    width: parent.width
+                    visible: page.currentKey === "server"
+                             && typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                    title: qsTr("YouTube")
+                    subtitle: qsTr("YouTube and YouTube Music inside StrmQt. Turned off, one is gone from the menu and from every page that leads to it.")
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("YouTube")
+                        hint: page.prefsAvailable
+                              ? qsTr("YouTube's TV interface as a destination, and trailers played in the app. Off, a trailer opens in your browser instead.")
+                              : page.unavailableHint
+
+                        StrmSwitch {
+                            objectName: "youtubeEnabledSwitch"
+                            enabled: page.prefsAvailable
+                            checked: page.prefsAvailable && Prefs.youtubeEnabled
+                            onToggled: Prefs.youtubeEnabled = !Prefs.youtubeEnabled
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("YouTube Music")
+                        hint: page.prefsAvailable
+                              ? qsTr("YouTube Music as a destination. Off, what it was playing stops and its sign-in stays where it is until you sign out.")
+                              : page.unavailableHint
+
+                        StrmSwitch {
+                            objectName: "youtubeMusicEnabledSwitch"
+                            enabled: page.prefsAvailable
+                            checked: page.prefsAvailable && Prefs.youtubeMusicEnabled
+                            onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
+                        }
+                    }
+                }
+
+                // ── YouTube Music ──────────────────────────────────────────
+                // Google does not let an embedded browser sign in, so the
+                // sign-in is copied from a browser that already has one
+                // (YouTubeSignIn.h). Each Firefox profile and container is
+                // its own set of Google accounts, hence a row for each.
+                StrmPanel {
+                    id: youtubeMusicPanel
+
+                    readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
+
+                    width: parent.width
+                    visible: page.currentKey === "server" && youtubeMusicPanel.signIn !== null
+                             && page.prefsAvailable && Prefs.youtubeMusicEnabled
+                    title: qsTr("YouTube Music sign-in")
+                    subtitle: qsTr("Google does not allow signing in from inside an app like this one. Sign in to YouTube in Firefox, then copy that sign-in here.")
+
+                    // Firefox's files are not opened until "Look in Firefox" is
+                    // pressed: showing this page is not asking.
+                    property bool looked: false
+
+                    Repeater {
+                        model: youtubeMusicPanel.signIn !== null ? youtubeMusicPanel.signIn.sources : []
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.label
+                            hint: modelData.signedIn
+                                  ? qsTr("Signed in to YouTube. Every Google account signed in there comes along; choose between them in YouTube Music.")
+                                  : qsTr("Not signed in to YouTube.")
+
+                            StrmButton {
+                                objectName: "youtubeSignInCopy" + index
+                                enabled: modelData.signedIn
+                                text: qsTr("Use this sign-in")
+                                onClicked: youtubeMusicPanel.signIn.request(index)
+                            }
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: youtubeMusicPanel.looked && youtubeMusicPanel.signIn !== null
+                                 && youtubeMusicPanel.signIn.sources.length === 0
+                        text: qsTr("No Firefox profile with YouTube cookies was found on this computer.")
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: youtubeMusicPanel.signIn !== null
+                                 && youtubeMusicPanel.signIn.status.length > 0
+                        text: youtubeMusicPanel.signIn !== null ? youtubeMusicPanel.signIn.status : ""
+                        iconName: youtubeMusicPanel.signIn !== null && youtubeMusicPanel.signIn.failed
+                                  ? "info" : "check"
+                    }
+
+                    Row {
+                        spacing: Theme.spacingTight
+
+                        StrmButton {
+                            objectName: "youtubeSignInLook"
+                            text: youtubeMusicPanel.looked ? qsTr("Look again") : qsTr("Look in Firefox")
+                            iconName: "refresh"
+                            onClicked: {
+                                youtubeMusicPanel.looked = true;
+                                youtubeMusicPanel.signIn.refresh();
+                            }
+                        }
+
+                        StrmButton {
+                            text: qsTr("Sign out of YouTube Music")
+                            iconName: "logout"
+                            destructive: true
+                            onClicked: youtubeMusicPanel.signIn.requestSignOut()
+                        }
+                    }
+                }
+
                 // ── Appearance ─────────────────────────────────────────────
                 StrmPanel {
                     width: parent.width

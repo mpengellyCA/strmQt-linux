@@ -1,3 +1,14 @@
+strmqt (0.8.5-1) unstable; urgency=medium
+
+  * YouTube's TV interface and YouTube Music as destinations in the menu,
+    driven with the same arrows as the rest of the app; what they play goes
+    on under other pages. Each can be switched off in Settings.
+  * Trailers play in the app; full screen can be toggled from the profile
+    menu.
+  * New dependencies: Qt WebEngine, SQLite.
+
+ -- Mike Pengelly <mike@leadrix.io>  Tue, 13 Oct 2026 03:30:00 +0000
+
 strmqt (0.8.0-1) unstable; urgency=medium
 
   * One input layer for keyboard, mouse, controller, remote and phone: an

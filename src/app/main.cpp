@@ -37,6 +37,11 @@
 #include <QStringList>
 #include <QUrl>
 #include <QWindow>
+#ifdef STRMQT_HAVE_YOUTUBE
+#include "app/YouTubeSignIn.h"
+
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#endif
 
 #include <utility>
 
@@ -46,6 +51,13 @@ int main(int argc, char *argv[])
     // share the GL context when video lands (M3). Explicit env override wins.
     if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND"))
         qputenv("QSG_RHI_BACKEND", "opengl");
+
+#ifdef STRMQT_HAVE_YOUTUBE
+    // Has to precede the application object: it shares the scene graph's GL
+    // context with Chromium's. Nothing of the engine starts until the YouTube
+    // page is first opened.
+    QtWebEngineQuick::initialize();
+#endif
 
     strmqt::Application app(argc, argv);
     // QT_LOGGING_RULES="strmqt.input.keys.debug=true": every key, with its
@@ -96,6 +108,25 @@ int main(int argc, char *argv[])
     // page reachable by a push is never instantiated and a QML type error in it
     // survives a clean-looking startup — which is exactly how M7 shipped a
     // broken PlayerPage.
+    // Whether this build carries the YouTube tab (STRMQT_WITH_YOUTUBE). The
+    // rail entry and YouTubePage ask.
+#ifdef STRMQT_HAVE_YOUTUBE
+    const bool youtube = true;
+    // Settings' "YouTube Music" panel and the shell (Main.qml) meet here.
+    YouTubeSignIn youtubeSignIn;
+    engine.rootContext()->setContextProperty(QStringLiteral("YouTubeSignIn"), &youtubeSignIn);
+#else
+    const bool youtube = false;
+#endif
+    // In the build AND switched on (Settings → Server → YouTube): a trailer
+    // or a search asked for while it is off goes where it went before there
+    // was a YouTube tab.
+    const auto applyYouTube = [&app, youtube] {
+        app.actions()->setYouTubeAvailable(youtube && app.settings()->youtubeEnabled());
+    };
+    applyYouTube();
+    QObject::connect(app.settings(), &strmqt::Settings::youtubeEnabledChanged, &app, applyYouTube);
+    engine.rootContext()->setContextProperty(QStringLiteral("YouTubeAvailable"), youtube);
     engine.rootContext()->setContextProperty(
         QStringLiteral("SelfTest"),
         qEnvironmentVariableIsSet("STRMQT_SELFTEST"));
