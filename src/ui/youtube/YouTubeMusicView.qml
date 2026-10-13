@@ -96,6 +96,14 @@ WebEngineView {
     // Chromium ("This browser or app may not be secure"), and do not turn
     // away Firefox. So the sign-in pages — and only those — are asked for as
     // Firefox; the site itself is asked for as the Chrome this engine is.
+    //
+    // The name alone is not enough (measured): Chromium also sends its brand
+    // in the client-hint headers, which Firefox does not send at all, and a
+    // Firefox that sends them is turned away as before. They are switched
+    // off for this profile (Component.onCompleted) — where Qt can: the
+    // switch arrived in Qt 6.8, and on an older Qt signing in here is still
+    // refused. Hiding what the page's own script can see (userAgentData,
+    // window.chrome) was tried as well and makes it worse, not better.
     readonly property string siteAgent:
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
         + " Chrome/130.0.0.0 Safari/537.36"
@@ -115,6 +123,12 @@ WebEngineView {
         offTheRecord: false
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
         httpUserAgent: view.siteAgent
+    }
+
+    Component.onCompleted: {
+        const hints = musicProfile.clientHints;
+        if (hints !== undefined && hints !== null)
+            hints.isAllClientHintsEnabled = false;
     }
 
     // The agent is the profile's, so it is changed before the request that
