@@ -71,6 +71,14 @@ ApplicationWindow {
     readonly property bool youtubeTheatre: root.youtubeOnTop && root.youtubeState.watching === true
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
                                           && !root.youtubeTheatre
+    // The rail, flown out over a YouTube video: by the Menu button, or by
+    // the pointer reaching the window's left edge. Over the picture, which
+    // goes on playing and is not moved aside for it. It goes back when it
+    // is neither pointed at nor holding the keyboard.
+    property bool youtubeRailOut: false
+    readonly property bool railAvailable: root.chromeVisible
+                                          || (root.youtubeTheatre && root.youtubeRailOut)
+    onYoutubeTheatreChanged: root.youtubeRailOut = false
 
     // One toggle for the shortcut and for the profile menu's row.
     function toggleFullScreen(): void {
@@ -278,8 +286,9 @@ ApplicationWindow {
     // undiscoverable and the other absent from a pad. Left off the left-hand
     // edge of a page is the gesture every ten-foot interface already teaches.
     function focusNavigationRail(): bool {
-        if (!root.chromeVisible || root.overlayOpen)
+        if (root.overlayOpen || !(root.chromeVisible || root.youtubeTheatre))
             return false;
+        root.youtubeRailOut = root.youtubeTheatre;
         navRail.pinned = true;
         navRail.focusCurrent();
         return true;
@@ -1543,8 +1552,8 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         z: 20
-        visible: root.chromeVisible
-        enabled: root.chromeVisible
+        visible: root.railAvailable
+        enabled: root.railAvailable
         youtubeShown: root.youtubeOn
         youtubeMusicShown: root.youtubeMusicOn
         current: root.railKey
@@ -1559,6 +1568,34 @@ ApplicationWindow {
         onYoutubeRequested: root.openYouTube()
         onYoutubeMusicRequested: root.openYouTubeMusic()
         onDismissed: root.focusCurrentPage()
+    }
+
+    // The window's left edge, while a YouTube video has the window: the
+    // pointer arriving there is how a mouse asks for the rail. A sliver, and
+    // only a hover — a click there is still the video's.
+    Item {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: Theme.scale(6)
+        z: 21
+        visible: root.youtubeTheatre && !root.youtubeRailOut && !root.overlayOpen
+
+        HoverHandler {
+            onHoveredChanged: {
+                if (hovered)
+                    root.youtubeRailOut = true;
+            }
+        }
+    }
+
+    // Flown out and no longer pointed at or focused: put away again. A
+    // moment's grace, because the rail is not "hovered" until the pointer
+    // that summoned it has been seen moving on it.
+    Timer {
+        interval: 700
+        running: root.youtubeTheatre && root.youtubeRailOut && !navRail.expanded
+        onTriggered: root.youtubeRailOut = false
     }
 
     // Docked now-playing bar (ARCHITECTURE.md). Sits above the pages and the top
@@ -2036,8 +2073,7 @@ ApplicationWindow {
                 navRail.pinned = false;
                 root.focusCurrentPage();
             } else {
-                navRail.pinned = true;
-                navRail.focusCurrent();
+                root.focusNavigationRail();
             }
         }
     }
