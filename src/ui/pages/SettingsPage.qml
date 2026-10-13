@@ -783,6 +783,86 @@ FocusScope {
                     }
                 }
 
+                // ── YouTube Music ──────────────────────────────────────────
+                // Google does not let an embedded browser sign in, so the
+                // sign-in is copied from a browser that already has one
+                // (YouTubeSignIn.h). Each Firefox profile and container is
+                // its own set of Google accounts, hence a row for each.
+                StrmPanel {
+                    id: youtubeMusicPanel
+
+                    readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
+
+                    width: parent.width
+                    visible: page.currentKey === "server" && youtubeMusicPanel.signIn !== null
+                    title: qsTr("YouTube Music")
+                    subtitle: qsTr("Google does not allow signing in from inside an app like this one. Sign in to YouTube in Firefox, then copy that sign-in here.")
+
+                    onVisibleChanged: {
+                        if (youtubeMusicPanel.visible)
+                            youtubeMusicPanel.signIn.refresh();
+                    }
+                    Component.onCompleted: {
+                        if (youtubeMusicPanel.visible)
+                            youtubeMusicPanel.signIn.refresh();
+                    }
+
+                    Repeater {
+                        model: youtubeMusicPanel.signIn !== null ? youtubeMusicPanel.signIn.sources : []
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.label
+                            hint: modelData.signedIn
+                                  ? qsTr("Signed in to YouTube. Every Google account signed in there comes along; choose between them in YouTube Music.")
+                                  : qsTr("Not signed in to YouTube.")
+
+                            StrmButton {
+                                objectName: "youtubeSignInCopy" + index
+                                enabled: modelData.signedIn
+                                text: qsTr("Use this sign-in")
+                                onClicked: youtubeMusicPanel.signIn.request(index)
+                            }
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: youtubeMusicPanel.signIn !== null
+                                 && youtubeMusicPanel.signIn.sources.length === 0
+                        text: qsTr("No Firefox profile with YouTube cookies was found on this computer.")
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: youtubeMusicPanel.signIn !== null
+                                 && youtubeMusicPanel.signIn.status.length > 0
+                        text: youtubeMusicPanel.signIn !== null ? youtubeMusicPanel.signIn.status : ""
+                        iconName: youtubeMusicPanel.signIn !== null && youtubeMusicPanel.signIn.failed
+                                  ? "info" : "check"
+                    }
+
+                    Row {
+                        spacing: Theme.spacingTight
+
+                        StrmButton {
+                            text: qsTr("Look again")
+                            iconName: "refresh"
+                            onClicked: youtubeMusicPanel.signIn.refresh()
+                        }
+
+                        StrmButton {
+                            text: qsTr("Sign out of YouTube Music")
+                            iconName: "logout"
+                            destructive: true
+                            onClicked: youtubeMusicPanel.signIn.requestSignOut()
+                        }
+                    }
+                }
+
                 // ── Appearance ─────────────────────────────────────────────
                 StrmPanel {
                     width: parent.width

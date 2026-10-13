@@ -38,6 +38,8 @@
 #include <QUrl>
 #include <QWindow>
 #ifdef STRMQT_HAVE_YOUTUBE
+#include "app/YouTubeSignIn.h"
+
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #endif
 
@@ -110,6 +112,9 @@ int main(int argc, char *argv[])
     // rail entry and YouTubePage ask.
 #ifdef STRMQT_HAVE_YOUTUBE
     const bool youtube = true;
+    // Settings' "YouTube Music" panel and the shell (Main.qml) meet here.
+    YouTubeSignIn youtubeSignIn;
+    engine.rootContext()->setContextProperty(QStringLiteral("YouTubeSignIn"), &youtubeSignIn);
 #else
     const bool youtube = false;
 #endif

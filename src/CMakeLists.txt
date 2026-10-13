@@ -63,6 +63,7 @@ qt_add_library(strmqt_app STATIC
     app/controllers/DetailsController.h app/controllers/DetailsController.cpp
     app/ItemActions.h app/ItemActions.cpp
     app/YouTubeLinks.h
+    app/FirefoxCookies.h app/FirefoxCookies.cpp
     app/PlayQueue.h app/PlayQueue.cpp
     app/music/TtlCache.h
     app/music/Fanout.h
@@ -92,6 +93,11 @@ qt_add_library(strmqt_app STATIC
     input/InputMap.h input/InputMap.cpp
 )
 target_link_libraries(strmqt_app PUBLIC strmqt_core)
+# SQLite, for one thing: reading the sign-in out of Firefox's cookie store
+# (app/FirefoxCookies.h). Its C API, as the hard rules ask.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+target_link_libraries(strmqt_app PRIVATE PkgConfig::SQLITE3)
 
 include(remote/Remote.cmake)
 
@@ -255,6 +261,7 @@ endif()
 if(STRMQT_WITH_YOUTUBE)
     qt_target_qml_sources(strmqt QML_FILES ui/youtube/YouTubeView.qml
                                            ui/youtube/YouTubeMusicView.qml)
+    target_sources(strmqt PRIVATE app/YouTubeSignIn.h app/YouTubeSignIn.cpp)
     target_compile_definitions(strmqt PRIVATE STRMQT_HAVE_YOUTUBE)
     target_link_libraries(strmqt PRIVATE Qt6::WebEngineQuick)
 endif()

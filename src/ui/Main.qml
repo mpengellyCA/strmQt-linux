@@ -636,11 +636,18 @@ ApplicationWindow {
     }
 
     // YouTube Music, the same way: one history entry, one view (below).
-    function openYouTubeMusic(): void {
-        if (typeof YouTubeAvailable !== "undefined" && YouTubeAvailable && !youtubeMusicHost.active) {
+    function ensureYouTubeMusic(): bool {
+        if (typeof YouTubeAvailable === "undefined" || !YouTubeAvailable)
+            return false;
+        if (!youtubeMusicHost.active) {
             youtubeMusicHost.source = Qt.resolvedUrl("youtube/YouTubeMusicView.qml");
             youtubeMusicHost.active = true;
         }
+        return youtubeMusicHost.item !== null;
+    }
+
+    function openYouTubeMusic(): void {
+        root.ensureYouTubeMusic();
         if (root.currentKey === "youtubeMusic") {
             root.focusCurrentPage();
             return;
@@ -1348,6 +1355,30 @@ ApplicationWindow {
         }
         function onStateReported(state) {
             root.youtubeMusicState = state;
+        }
+    }
+
+    // Settings asked for a sign-in to be copied in, or forgotten
+    // (YouTubeSignIn.h). The view is brought up for it if it is not yet:
+    // the sign-in goes into its profile, and nowhere else.
+    Connections {
+        target: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
+        ignoreUnknownSignals: true
+
+        function onImportRequested(index) {
+            if (root.ensureYouTubeMusic())
+                YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
+        }
+        function onSignOutRequested() {
+            if (root.ensureYouTubeMusic())
+                YouTubeSignIn.clear(youtubeMusicHost.item.profile);
+        }
+        function onChanged() {
+            if (youtubeMusicHost.item === null)
+                return;
+            youtubeMusicHost.item.pausePlayback();
+            youtubeMusicHost.item.url = youtubeMusicHost.item.address;
+            youtubeMusicHost.item.reload();
         }
     }
 

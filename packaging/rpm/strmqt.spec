@@ -11,7 +11,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc-c++ cmake ninja-build pkgconf git-core
 BuildRequires:  qt6-rpm-macros
 BuildRequires:  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel
-BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtwebengine-devel
+BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtwebengine-devel sqlite-devel
 BuildRequires:  mpv-devel vlc-devel SDL3-devel openssl-devel
 # Runtime pieces for %%check's ctest and for the C(fedora-*) self-test (deps.sh installs these via dnf builddep):
 BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpeg-free mesa-dri-drivers
