@@ -78,6 +78,7 @@ private slots:
     void heldDirectionStopsAtAViewEdge();
     void focusedControlIsScrolledIntoView();
     void viewCursorIsTheSource();
+    void viewCursorNotYetScrolledToIsInsideTheView();
     void listsAreSomewhereToGoWithoutBeingTabStops();
 };
 
@@ -586,6 +587,36 @@ void FocusNavigatorTest::viewCursorIsTheSource()
     s.item("list")->setProperty("currentIndex", 0);
     s.press(Qt::Key_Up);
     QCOMPARE(s.focused(), QStringLiteral("left"));
+}
+
+void FocusNavigatorTest::viewCursorNotYetScrolledToIsInsideTheView()
+{
+    // Forty rows down a list five rows tall, with no frame drawn since: the
+    // current delegate is positioned far below the window until the list
+    // scrolls to it. Left is still measured from the list, so it reaches what
+    // is beside the list and not whatever is lowest on the page.
+    Scene s(R"(
+        import QtQuick
+        Item {
+            width: 800; height: 600
+            Item { objectName: "beside"; x: 0; y: 150; width: 100; height: 40; activeFocusOnTab: true }
+            Item { objectName: "below";  x: 0; y: 560; width: 100; height: 40; activeFocusOnTab: true }
+            ListView {
+                objectName: "list"
+                x: 300; y: 100; width: 300; height: 200
+                clip: true
+                activeFocusOnTab: true
+                model: 60
+                delegate: Item { width: 300; height: 40 }
+            }
+        })");
+    QVERIFY(s.root);
+    s.focus("list");
+    for (int i = 0; i < 40; ++i)
+        s.press(Qt::Key_Down);
+    QCOMPARE(s.item("list")->property("currentIndex").toInt(), 40);
+    s.press(Qt::Key_Left);
+    QCOMPARE(s.focused(), QStringLiteral("beside"));
 }
 
 void FocusNavigatorTest::listsAreSomewhereToGoWithoutBeingTabStops()

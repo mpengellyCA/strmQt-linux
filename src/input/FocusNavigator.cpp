@@ -266,6 +266,30 @@ QRectF FocusNavigator::sceneRect(QQuickItem *item) const
     return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
 }
 
+// Where `item`'s cursor is on screen: its own rectangle, or a view's current
+// delegate's.
+//
+// A view moves its current item at once and scrolls to it on the next frame,
+// so between the two the delegate stands where the list would have it if
+// nothing were clipped: thirty rows down a list six rows tall is a rectangle
+// a thousand pixels below the window. Measured from there, "the nearest
+// control to the left" is whatever is lowest on the page. The cursor is in
+// the view, so its rectangle is brought to the nearest place inside it —
+// which is where the next frame will draw it.
+QRectF FocusNavigator::cursorRect(QQuickItem *item) const
+{
+    QQuickItem *cursor = cursorItem(item);
+    QRectF rect = sceneRect(cursor);
+    if (cursor == item || !isView(item) || !isAncestorOf(item, cursor))
+        return rect;
+    const QRectF view = sceneRect(item);
+    if (rect.width() <= view.width())
+        rect.moveLeft(qBound(view.left(), rect.left(), view.right() - rect.width()));
+    if (rect.height() <= view.height())
+        rect.moveTop(qBound(view.top(), rect.top(), view.bottom() - rect.height()));
+    return rect;
+}
+
 // The neighbour `item` names for `dir`, if it leads anywhere. A named
 // neighbour that is hidden or disabled is not a dead end. With `followChain`
 // its own link in the same direction is followed, the way a row of buttons
@@ -444,7 +468,7 @@ bool FocusNavigator::move(int qtKey, bool autoRepeat)
         candidates.append(stop);
         rects.append(sceneRect(stop));
     }
-    const QRectF source = sceneRect(cursorItem(self));
+    const QRectF source = cursorRect(self);
 
     // A region that names a neighbour is saying where its EDGE leads. So
     // geometry is tried inside the region first, and the name is used only
@@ -635,7 +659,7 @@ void FocusNavigator::evaluate()
     if (focusIsLive()) {
         m_recover.stop();
         QQuickItem *focus = m_window->activeFocusItem();
-        m_lastRect = sceneRect(cursorItem(focus));
+        m_lastRect = cursorRect(focus);
         m_lastLive = focus;
         if (!m_giving)
             reveal(focus);
@@ -668,7 +692,7 @@ bool FocusNavigator::eventFilter(QObject *watched, QEvent *event)
         } else if (QQuickItem *focus = m_window->activeFocusItem()) {
             // Where the cursor is as the key arrives: a view moves its
             // current item without focus changing hands.
-            m_lastRect = sceneRect(cursorItem(focus));
+            m_lastRect = cursorRect(focus);
             m_evaluate.start();
         }
         return QObject::eventFilter(watched, event);
