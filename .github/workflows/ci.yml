@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # release.yml runs these same jobs as the gate before it tags.
+  workflow_call:
 
 # Every job only reads the repository; PR code runs here with this token.
 permissions:

@@ -783,6 +783,13 @@ and the AppImage, then installs each into a fresh container of its own release
 and reruns the page self-test there, so a package is proven installable, not
 just buildable.
 
+`.github/workflows/release.yml` ties the three together. It runs on every push
+to `main` and treats a version in `CMakeLists.txt` that has no tag as a release
+candidate: the CI jobs, the packages, the Arch package and the Flatpak are
+built once, and the tag is the last thing created, by the workflow, so it never
+names a commit that failed. The files published are the ones that were tested.
+The notes come from `docs/releases/<version>.md`; a failure opens an issue.
+
 One lesson from porting `tst_navigation_history` to Qt 6.8: **stage a QML
 module once per run, not once per test**, because Qt 6.8's type loader
 remembers where it first resolved a module URI across engines, and a per-test

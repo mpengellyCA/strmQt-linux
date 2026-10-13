@@ -1,73 +1,124 @@
 name: Release
 
+# One pipeline from a version bump to a published release.
+#
+# Every push to main is checked: when CMakeLists.txt names a version that has
+# no v<version> tag yet, the push is a release candidate. It is tested, every
+# package is built and install-checked once, and only when all of that is
+# green does this workflow create the tag and publish those same files with
+# the notes in docs/releases/<version>.md. A tag therefore never names a
+# commit that failed. When anything fails nothing is tagged, an issue is
+# opened, and the next push to main tries again.
+#
+# Run by hand it is a dry run by default: everything except the tag and the
+# release, for whatever version main carries, tagged already or not.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to build (e.g. v0.3.0)'
-        required: true
+      dry_run:
+        description: 'Build and check everything, but tag and publish nothing'
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
+
+# Two candidates racing would both find the tag missing.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   resolve:
-    name: Resolve release revision
+    name: Is this a release?
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.validate.outputs.tag }}
-      ref: ${{ steps.validate.outputs.ref }}
-      sha: ${{ steps.commit.outputs.sha }}
+      candidate: ${{ steps.decide.outputs.candidate }}
+      publish: ${{ steps.decide.outputs.publish }}
+      tag: ${{ steps.decide.outputs.tag }}
+      version: ${{ steps.decide.outputs.version }}
+      sha: ${{ steps.decide.outputs.sha }}
     steps:
-      - name: Validate release tag
-        id: validate
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PUSH_REF: ${{ github.ref }}
-          DISPATCH_TAG: ${{ inputs.tag }}
-        run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            TAG="$DISPATCH_TAG"
-          else
-            [[ "$PUSH_REF" == refs/tags/* ]] || {
-              echo "::error::release pushes must name a tag ref"
-              exit 1
-            }
-            TAG="${PUSH_REF#refs/tags/}"
-          fi
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] || {
-            echo "::error::invalid release tag: $TAG"
-            exit 1
-          }
-          git check-ref-format "refs/tags/$TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.validate.outputs.ref }}
           fetch-depth: 0
 
-      - name: Record immutable revision
-        id: commit
+      - name: Decide
+        id: decide
         env:
-          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
-          SHA=$(git rev-parse HEAD)
-          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
-          [ "$TAG_SHA" = "$SHA" ] || {
-            echo "::error::checked-out commit $SHA is not tag $RELEASE_TAG ($TAG_SHA)"
+          CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          [[ "$CM_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::cannot read a x.y.z version from CMakeLists.txt (got '$CM_VER')"
             exit 1
           }
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          TAG="v$CM_VER"
+          # Asked of the remote, not of this clone: the tag may be seconds old.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            TAGGED=true
+          else
+            TAGGED=false
+          fi
+          CANDIDATE=false
+          PUBLISH=false
+          if [ "$DRY_RUN" = "true" ]; then
+            CANDIDATE=true
+          elif [ "$TAGGED" = "false" ]; then
+            CANDIDATE=true
+            PUBLISH=true
+          fi
+          echo "version=$CM_VER tag=$TAG tagged=$TAGGED candidate=$CANDIDATE publish=$PUBLISH"
+          {
+            echo "version=$CM_VER"
+            echo "tag=$TAG"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "candidate=$CANDIDATE"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
+      # Every version is written by hand in five places and nothing else
+      # compares them. Three green package jobs once produced a release whose
+      # Arch package was built from the PREVIOUS tag and named after it.
+      # Checked here, before an hour of building, rather than trusted.
+      - name: Version consistency
+        if: steps.decide.outputs.candidate == 'true'
+        env:
+          CM_VER: ${{ steps.decide.outputs.version }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          fail=0
+          bad() { echo "::error::$1"; fail=1; }
+          PKG_TAG=$(sed -n 's/^_tag=//p' packaging/arch/PKGBUILD)
+          DEB_VER=$(sed -n '1s/^strmqt (\([^)]*\)).*/\1/p' packaging/debian/changelog)
+          DEB_DIST=$(sed -n '1s/^strmqt ([^)]*) \([^;]*\);.*/\1/p' packaging/debian/changelog)
+          RPM_VER=$(sed -n 's/^Version:[[:space:]]*//p' packaging/rpm/strmqt.spec)
+          echo "CMake=$CM_VER  PKGBUILD _tag=$PKG_TAG  debian/changelog=$DEB_VER ($DEB_DIST)  strmqt.spec=$RPM_VER"
+          [ "$PKG_TAG" = "$TAG" ] || bad "PKGBUILD _tag ($PKG_TAG) is not $TAG"
+          [ "$DEB_VER" = "${CM_VER}-1" ] || bad "debian/changelog version ($DEB_VER) is not ${CM_VER}-1"
+          [ -n "$DEB_DIST" ] || bad "could not read debian/changelog distribution"
+          [ "$DEB_DIST" != "UNRELEASED" ] || bad "debian/changelog's top entry is still UNRELEASED"
+          [ "$RPM_VER" = "$CM_VER" ] || bad "strmqt.spec Version ($RPM_VER) is not $CM_VER"
+          grep -q "<release version=\"$CM_VER\"" packaging/appstream/ca.mikesdev.StrmQt.metainfo.xml \
+            || bad "the AppStream metainfo has no <release version=\"$CM_VER\">"
+          [ -s "docs/releases/$CM_VER.md" ] \
+            || bad "docs/releases/$CM_VER.md is missing or empty: the release notes are published from it"
+          exit $fail
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    needs: resolve
+    if: needs.resolve.outputs.candidate == 'true'
+    uses: ./.github/workflows/ci.yml
 
   # ── Arch package ────────────────────────────────────────────────────────────
   arch:
     name: Arch package
     needs: resolve
+    if: needs.resolve.outputs.candidate == 'true'
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -89,7 +140,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-          fetch-depth: 0   # the PKGBUILD clones this checkout by tag
+          fetch-depth: 0   # the PKGBUILD clones this checkout
 
       # makepkg refuses to run as root, and a container has no other user.
       - name: Create build user
@@ -97,9 +148,8 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           # The chown above hands the checkout to builder, so git running as
-          # root now refuses it as "dubious ownership" and exits 128. Harmless
-          # until the version-consistency step below started calling git to
-          # catch a moved tag; that turned the next release into a hard failure.
+          # root now refuses it as "dubious ownership" and exits 128, and
+          # the tagging step below runs git as root.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           # Arch's stock makepkg.conf splits out a -debug package. We do not
@@ -109,55 +159,15 @@ jobs:
           sed -i 's/^OPTIONS=(\(.*\)debug/OPTIONS=(\1!debug/' /etc/makepkg.conf
           grep '^OPTIONS=' /etc/makepkg.conf
 
-      # Three green package jobs once produced a release whose Arch package was
-      # built from the PREVIOUS tag and named after it, because _tag is written
-      # by hand and nothing compared it to the tag being released. Checked here
-      # rather than trusted.
-      - name: Version consistency
+      # The PKGBUILD clones this checkout at the release tag, and the tag is
+      # the last thing this workflow creates. It exists here only, in this
+      # job's clone, until every job is green. Forced, because a dry run may be
+      # building a version whose tag already names an older commit.
+      - name: Tag this clone
         env:
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
           RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          TAG="$RELEASE_TAG"
-          TAG_SHA=$(git rev-list -n 1 "$TAG")
-          [ "$TAG_SHA" = "$RELEASE_SHA" ] || {
-            echo "::error::tag $TAG moved from $RELEASE_SHA to $TAG_SHA"
-            exit 1
-          }
-          PKG_TAG=$(sed -n 's/^_tag=//p' packaging/arch/PKGBUILD)
-          CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
-          echo "release tag=$TAG  PKGBUILD _tag=$PKG_TAG  CMake version=$CM_VER"
-          [ "$PKG_TAG" = "$TAG" ] || {
-            echo "::error::PKGBUILD _tag ($PKG_TAG) does not match the tag being released ($TAG)"
-            exit 1
-          }
-          # The tag may carry a prerelease suffix the project version does not.
-          case "$TAG" in
-            "v$CM_VER"|"v$CM_VER"-*) ;;
-            *) echo "::error::tag $TAG does not match CMake version $CM_VER"; exit 1 ;;
-          esac
-          # The .deb and .rpm take their versions from their own files, which
-          # are just as hand-written as _tag.
-          DEB_VER=$(sed -n '1s/^strmqt (\([^)]*\)).*/\1/p' packaging/debian/changelog)
-          DEB_DIST=$(sed -n '1s/^strmqt ([^)]*) \([^;]*\);.*/\1/p' packaging/debian/changelog)
-          RPM_VER=$(sed -n 's/^Version:[[:space:]]*//p' packaging/rpm/strmqt.spec)
-          echo "debian/changelog=$DEB_VER ($DEB_DIST)  strmqt.spec Version=$RPM_VER"
-          [ "$DEB_VER" = "${CM_VER}-1" ] || {
-            echo "::error::debian/changelog version ($DEB_VER) is not ${CM_VER}-1"
-            exit 1
-          }
-          [ -n "$DEB_DIST" ] || {
-            echo "::error::could not read debian/changelog distribution"
-            exit 1
-          }
-          [ "$DEB_DIST" != "UNRELEASED" ] || {
-            echo "::error::debian/changelog's top entry is still UNRELEASED"
-            exit 1
-          }
-          [ "$RPM_VER" = "$CM_VER" ] || {
-            echo "::error::strmqt.spec Version ($RPM_VER) does not match CMake version $CM_VER"
-            exit 1
-          }
+        run: git tag -f "$RELEASE_TAG" "$RELEASE_SHA"
 
       - name: makepkg
         run: |
@@ -186,6 +196,7 @@ jobs:
   packages:
     name: Packages
     needs: resolve
+    if: needs.resolve.outputs.candidate == 'true'
     uses: ./.github/workflows/packages.yml
     with:
       ref: ${{ needs.resolve.outputs.sha }}
@@ -194,6 +205,7 @@ jobs:
   flatpak:
     name: Flatpak
     needs: resolve
+    if: needs.resolve.outputs.candidate == 'true'
     runs-on: ubuntu-latest
     container:
       image: bilelmoussaoui/flatpak-github-actions:kde-6.7
@@ -209,38 +221,29 @@ jobs:
           cache-key: flatpak-builder-${{ needs.resolve.outputs.sha }}
 
   # ── Publish ─────────────────────────────────────────────────────────────────
+  # The files published are the ones the jobs above built and install-checked:
+  # nothing is built again for the release.
   release:
-    name: Publish release
-    needs: [resolve, arch, packages, flatpak]
+    name: Tag and publish
+    needs: [resolve, ci, arch, packages, flatpak]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
 
-      - name: Verify tag still names the built revision
-        env:
-          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
-          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
-          [ "$TAG_SHA" = "$RELEASE_SHA" ] || {
-            echo "::error::tag $RELEASE_TAG moved from $RELEASE_SHA to $TAG_SHA"
-            exit 1
-          }
-
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Publish
+      - name: Collect
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
           RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          TAG="$RELEASE_TAG"
           cat > artifacts/release-provenance.txt <<EOF
           tag=$RELEASE_TAG
           commit=$RELEASE_SHA
@@ -253,17 +256,96 @@ jobs:
           sdl3_bundled_url=https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
           sdl3_bundled_sha256=7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68
           EOF
-          find artifacts -type f | sort
-          # A tag carrying a prerelease suffix (v0.3.0-rc1, -beta2, -alpha) is
-          # marked as one. Without this it publishes looking like a final
-          # release, and the "Latest" badge would move to it.
-          PRERELEASE=""
-          case "$TAG" in
-            *-rc*|*-alpha*|*-beta*) PRERELEASE="--prerelease" ;;
-          esac
+          mkdir upload
+          find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.deb' \
+            -o -name '*.rpm' -o -name '*.flatpak' -o -name 'release-provenance.txt' \) \
+            -exec mv -t upload {} +
+          ls -l upload
+          # Four .deb, two .rpm, and one each of the Arch package, the
+          # AppImage, the Flatpak and the provenance file.
+          n=$(find upload -type f | wc -l)
+          [ "$n" -eq 10 ] || { echo "::error::expected 10 release files, found $n"; exit 1; }
+
+      - name: Dry run stops here
+        if: needs.resolve.outputs.publish != 'true'
+        run: echo "Dry run - ${{ needs.resolve.outputs.tag }} was not tagged and nothing was published."
+
+      # A draft holds the files before the tag exists, so a failed upload
+      # leaves no tag behind and the next push simply tries again.
+      - name: Publish
+        if: needs.resolve.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG appeared while this run was building"
+            exit 1
+          fi
+          # A draft left by an earlier attempt that failed past this point.
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
             --title "StrmQt $TAG" \
-            --generate-notes \
-            --draft $PRERELEASE \
-            $(find artifacts -type f \( -name '*.pkg.tar.zst' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.flatpak' -o -name 'release-provenance.txt' \) | tr '\n' ' ')
+            --notes-file "docs/releases/$VERSION.md" \
+            --draft \
+            upload/*
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SHA" -m "StrmQt $TAG"
+          git push origin "refs/tags/$TAG"
+          # Everything before 1.0 is published as a pre-release.
+          case "$VERSION" in
+            0.*) gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease ;;
+            *)   gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest ;;
+          esac
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
+
+  # ── Tell someone ────────────────────────────────────────────────────────────
+  notify:
+    name: Report a failed release
+    needs: [resolve, ci, arch, packages, flatpak, release]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Optional: a Discord (or compatible) webhook that is pinged as well.
+          WEBHOOK: ${{ secrets.RELEASE_WEBHOOK_URL }}
+        run: |
+          TITLE="Release ${TAG:-pipeline} failed"
+          {
+            echo "The release pipeline failed on \`${SHA:0:7}\`. Nothing was tagged or published."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Failed jobs:"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+              --jq '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.html_url))"'
+            echo
+            echo "Push the fix to \`main\`: the version still has no tag, so the pipeline runs again by itself."
+          } > body.md
+          cat body.md
+          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          fi
+          if [ -n "$WEBHOOK" ]; then
+            jq -n --arg c "$TITLE - $RUN_URL" '{content: $c}' \
+              | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK" || true
+          fi

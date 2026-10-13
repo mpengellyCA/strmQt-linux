@@ -85,3 +85,20 @@ rm -rf /tmp/w<wave>*       # at the gate, once every agent has reported
 - Commit per working increment with a conventional message (`feat(scope): ...`,
   `fix(scope): ...`, `test(scope): ...`, `docs: ...`).
 - Never push, force-push, amend, rebase, or delete branches unless the user explicitly asks.
+
+## Releasing
+
+A release is a push to `main`, not a tag. `.github/workflows/release.yml` runs on every
+push: when `CMakeLists.txt` names a version with no `v<version>` tag, it runs the tests,
+builds and install-checks every package once, and only then creates the tag and publishes
+those files as the release. Nobody pushes a release tag by hand.
+
+- Bump the version only in the commit that is meant to ship, in all five places the
+  pipeline compares: `CMakeLists.txt`, `packaging/arch/PKGBUILD` (`_tag`),
+  `packaging/debian/changelog`, `packaging/rpm/strmqt.spec`, and a `<release>` entry in
+  the AppStream metainfo.
+- Write the release notes to `docs/releases/<version>.md` in the same commit. They are
+  published as written.
+- When a job fails, nothing is tagged and the pipeline opens an issue naming the failed
+  jobs. Push the fix to `main`; it runs again by itself.
+- To rehearse without publishing: `gh workflow run release.yml` (a dry run by default).
