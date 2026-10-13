@@ -64,7 +64,13 @@ ApplicationWindow {
     readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
                                         || resumePrompt.visible || remoteOffer.visible
                                         || App.navigationModal === true
+    // A YouTube video on its own page is a player too: it gets the window,
+    // as a film does, and the rail and header come back when YouTube leaves
+    // the video (Back) or the page is left. Only the video: YouTube's menus
+    // and shelves are browsing, and keep the rail beside them.
+    readonly property bool youtubeTheatre: root.youtubeOnTop && root.youtubeState.watching === true
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
+                                          && !root.youtubeTheatre
 
     // One toggle for the shortcut and for the profile menu's row.
     function toggleFullScreen(): void {
