@@ -684,7 +684,7 @@ ApplicationWindow {
             return;
         root.youtubeSingle = single === true;
         if (youtubeHost.item !== null)
-            youtubeHost.item.address = address;
+            youtubeHost.item.open(address);
         else
             root.youtubePending = address;
         root.openYouTube();
@@ -742,25 +742,56 @@ ApplicationWindow {
     readonly property bool youtubeMusicOn: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
                                            && Prefs.youtubeMusicEnabled
 
-    onYoutubeOnChanged: {
-        if (root.youtubeOn)
-            return;
-        const wasOnTop = root.youtubeOnTop;
+    // Reached by Back or Forward as well as by the rail.
+    onYoutubeMusicOnTopChanged: {
+        if (root.youtubeMusicOnTop)
+            root.ensureYouTubeMusic();
+    }
+
+    // Signed out of the server: nothing of the last session goes on playing
+    // behind the sign-in screen, where there is no control left to stop it.
+    function closeYouTube(): void {
         root.youtubeKeepPlayingUntil = 0;
         root.youtubeSingle = false;
         root.youtubePending = "";
         youtubeHost.active = false;
         root.youtubeState = ({});
+    }
+    function closeYouTubeMusic(): void {
+        youtubeMusicHost.active = false;
+        root.youtubeMusicState = ({});
+        root.youtubeMusicStopped = false;
+    }
+    Connections {
+        target: Session
+        function onAuthenticatedChanged() {
+            if (!Session.authenticated) {
+                root.closeYouTube();
+                root.closeYouTubeMusic();
+            }
+        }
+    }
+
+    onYoutubeOnChanged: {
+        if (root.youtubeOn) {
+            // Switched back on with its page still the one on screen.
+            if (root.youtubeOnTop)
+                root.ensureYouTube();
+            return;
+        }
+        const wasOnTop = root.youtubeOnTop;
+        root.closeYouTube();
         if (wasOnTop)
             root.leaveYouTube();
     }
     onYoutubeMusicOnChanged: {
-        if (root.youtubeMusicOn)
+        if (root.youtubeMusicOn) {
+            if (root.youtubeMusicOnTop)
+                root.ensureYouTubeMusic();
             return;
+        }
         const wasOnTop = root.youtubeMusicOnTop;
-        youtubeMusicHost.active = false;
-        root.youtubeMusicState = ({});
-        root.youtubeMusicStopped = false;
+        root.closeYouTubeMusic();
         if (wasOnTop)
             root.leaveYouTube();
     }
@@ -788,15 +819,15 @@ ApplicationWindow {
             root.ensureYouTube();
             return;
         }
-        if (root.youtubeMusicOnTop)
-            root.openYouTubeMusic();
+
         // Left with a video up: it plays on in the mini player. Left while
         // browsing: the preview YouTube was playing on a shelf stops.
         if (youtubeHost.item === null)
             return;
         if (root.youtubeState.watching !== true)
             youtubeHost.item.pausePlayback();
-        else if (root.youtubeState.playing === true)
+        // Not when it was left FOR the app's own player: that pause is ours.
+        else if (root.youtubeState.playing === true && !(PlayerCtl.active && !PlayerCtl.paused))
             root.youtubeKeepPlayingUntil = Date.now() + 2000;
     }
 
@@ -1040,8 +1071,10 @@ ApplicationWindow {
         // nothing else, which made it the one surface a D-pad could not walk
         // to. Named on the stack, so it is the page's EDGE: Down still goes
         // to whatever the page has further down first (FocusNavigator).
-        property Item navDown: miniPlayer.shown ? miniPlayer
-                             : youtubeMini.shown ? youtubeMini : null
+        // YouTube's bar is docked above the film's on the rare occasion both
+        // are up, so it is the first one down.
+        property Item navDown: youtubeMini.shown ? youtubeMini
+                             : miniPlayer.shown ? miniPlayer : null
         // Entered — by an edge, or by recovery (root.navHome) — on the page
         // that is up, whose own focus scope then says where inside it.
         property Item navEntry: stack.currentItem
@@ -1301,7 +1334,7 @@ ApplicationWindow {
         onLoaded: {
             youtubeHost.item.focus = true;
             if (root.youtubePending.toString().length > 0) {
-                youtubeHost.item.address = root.youtubePending;
+                youtubeHost.item.open(root.youtubePending);
                 root.youtubePending = "";
             }
         }
@@ -1425,11 +1458,21 @@ ApplicationWindow {
                 YouTubeSignIn.clear(youtubeMusicHost.item.profile);
         }
         function onChanged() {
-            if (youtubeMusicHost.item === null)
-                return;
-            youtubeMusicHost.item.pausePlayback();
-            youtubeMusicHost.item.url = youtubeMusicHost.item.address;
-            youtubeMusicHost.item.reload();
+            if (youtubeMusicHost.item !== null)
+                youtubeMusicHost.item.pausePlayback();
+            youtubeSignInSettle.restart();
+        }
+    }
+
+    // The cookie store takes the new sign-in in its own time: the page is
+    // loaded again once it has had that, not in the same breath.
+    Timer {
+        id: youtubeSignInSettle
+
+        interval: 1200
+        onTriggered: {
+            if (youtubeMusicHost.item !== null)
+                youtubeMusicHost.item.reload();
         }
     }
 
@@ -1474,7 +1517,8 @@ ApplicationWindow {
         z: 17
         shown: root.youtubeVideoParked || root.youtubeMusicParked
         music: root.youtubeMiniIsMusic
-        state: root.youtubeMiniIsMusic ? root.youtubeMusicState : root.youtubeState
+        report: root.youtubeMiniIsMusic ? root.youtubeMusicState : root.youtubeState
+        navDown: miniPlayer.shown ? miniPlayer : null
         aspect: youtubeHost.pageHeight > 0 ? stack.width / youtubeHost.pageHeight : 16 / 9
         pictureLift: pip.shown ? pip.height + Theme.spacingValue : 0
         navUp: stack
@@ -1617,8 +1661,9 @@ ApplicationWindow {
         sleeveInFlight: sleeveFlight.active
 
         // Up off the bar goes back to the page, to wherever in it the
-        // keyboard was (the stack is a focus scope and remembers).
-        navUp: stack
+        // keyboard was (the stack is a focus scope and remembers) — by way
+        // of YouTube's bar, when that is docked above this one.
+        navUp: youtubeMini.shown ? youtubeMini : stack
 
         onExpandRequested: {
             root.showPlayer(true)

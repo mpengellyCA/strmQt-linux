@@ -16,7 +16,8 @@
 // Firefox only: its store is a plain SQLite file. Chromium-family browsers
 // encrypt theirs with a key in the keyring.
 //
-// Nothing here writes to Firefox's files, and nothing is read until asked.
+// Nothing here writes to Firefox's files, and nothing is read until asked:
+// Settings calls sources() when its "Look in Firefox" button is pressed.
 namespace strmqt::firefox {
 
 // One place a sign-in can be copied from: a Firefox profile, or one container

@@ -78,8 +78,19 @@ WebEngineView {
 
     url: view.address
     // Asked for again later (a second trailer): YouTube is one page, and a new
-    // address inside it is a move within that page, not a reload.
-    onAddressChanged: view.url = view.address
+    // address inside it is a move within that page, not a reload. A function
+    // and not a change handler: the same trailer asked for twice is the same
+    // address, and YouTube has moved on from it in between.
+    function open(address: url): void {
+        view.address = address;
+        view.url = address;
+    }
+
+    // What the page's console must say first for a line to be the bridge's.
+    // Made up afresh each run and known only to the script below, so another
+    // site, or a frame from one inside YouTube, cannot speak for it.
+    readonly property string bridgeWord: "strmqt:" + Math.random().toString(36).slice(2)
+                                         + Math.random().toString(36).slice(2) + ":"
     backgroundColor: "#0f0f0f"
 
     // A TV identifies itself, and youtube.com/tv redirects anything else to
@@ -129,7 +140,8 @@ WebEngineView {
             "runsOnSubFrames": false,
             "sourceCode": "(function () {"
                 + " if (window.__strmqt) return; window.__strmqt = true;"
-                + " function say(m) { console.log('strmqt:' + m); }"
+                + " if (location.hostname !== 'www.youtube.com') return;"
+                + " function say(m) { console.log('" + view.bridgeWord + "' + m); }"
                 // What YouTube has focused, as something that differs
                 // whenever its cursor moved: the element itself, what it
                 // says, where it is, and how far the lists around it have
@@ -221,16 +233,22 @@ WebEngineView {
     ]
 
     onJavaScriptConsoleMessage: (level, message, line, source) => {
-        if (message === "strmqt:edge-left")
+        if (!message.startsWith(view.bridgeWord))
+            return;
+        const said = message.substring(view.bridgeWord.length);
+        if (said === "edge-left")
             view.leftEdgeReached();
-        else if (message === "strmqt:playing")
+        else if (said === "playing")
             view.playbackStarted();
-        else if (message.startsWith("strmqt:route:"))
-            view.routeChanged(message.substring(13));
-        else if (message.startsWith("strmqt:state:")) {
-            // The page's words, so they are parsed as data and nothing more.
+        else if (said.startsWith("route:"))
+            view.routeChanged(said.substring(6));
+        else if (said.startsWith("state:")) {
+            // The page's words, so they are parsed as data and nothing more —
+            // and only an object is a state.
             try {
-                view.stateReported(JSON.parse(message.substring(13)));
+                const state = JSON.parse(said.substring(6));
+                if (state !== null && typeof state === "object" && !Array.isArray(state))
+                    view.stateReported(state);
             } catch (error) {
             }
         }

@@ -187,7 +187,8 @@ QList<Source> sources(const QStringList &profileDirs)
             "           AND (host = '.youtube.com' OR host = '.google.com') THEN 1 ELSE 0 END),"
             " MAX(lastAccessed)"
             " FROM moz_cookies"
-            " WHERE host LIKE '%youtube.com' OR host LIKE '%google.com'"
+            " WHERE host = 'youtube.com' OR host LIKE '%.youtube.com'"
+            "    OR host = 'google.com' OR host LIKE '%.google.com'"
             " GROUP BY originAttributes";
         if (sqlite3_prepare_v2(snapshot.db(), query, -1, &statement, nullptr) != SQLITE_OK)
             continue;
@@ -253,8 +254,14 @@ QList<QNetworkCookie> cookies(const Source &source, QString *error)
         cookie.setSecure(sqlite3_column_int(statement, 5) != 0);
         cookie.setHttpOnly(sqlite3_column_int(statement, 6) != 0);
         // Firefox: 0 none, 1 lax, 2 strict (and 256 "unset" in newer ones).
+        // "None" on a cookie that is not Secure is how older Firefox wrote
+        // "nothing was said", and Chromium refuses that pair outright: such
+        // a cookie is left to the engine's default.
         switch (sqlite3_column_int(statement, 7)) {
-        case 0: cookie.setSameSitePolicy(QNetworkCookie::SameSite::None); break;
+        case 0:
+            if (cookie.isSecure())
+                cookie.setSameSitePolicy(QNetworkCookie::SameSite::None);
+            break;
         case 1: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Lax); break;
         case 2: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Strict); break;
         default: break;

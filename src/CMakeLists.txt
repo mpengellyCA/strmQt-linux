@@ -63,7 +63,6 @@ qt_add_library(strmqt_app STATIC
     app/controllers/DetailsController.h app/controllers/DetailsController.cpp
     app/ItemActions.h app/ItemActions.cpp
     app/YouTubeLinks.h
-    app/FirefoxCookies.h app/FirefoxCookies.cpp
     app/PlayQueue.h app/PlayQueue.cpp
     app/music/TtlCache.h
     app/music/Fanout.h
@@ -93,11 +92,6 @@ qt_add_library(strmqt_app STATIC
     input/InputMap.h input/InputMap.cpp
 )
 target_link_libraries(strmqt_app PUBLIC strmqt_core)
-# SQLite, for one thing: reading the sign-in out of Firefox's cookie store
-# (app/FirefoxCookies.h). Its C API, as the hard rules ask.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
-target_link_libraries(strmqt_app PRIVATE PkgConfig::SQLITE3)
 
 include(remote/Remote.cmake)
 
@@ -124,6 +118,12 @@ if(STRMQT_WITH_YOUTUBE)
         message(FATAL_ERROR "Qt WebEngine (Qt6WebEngineQuick) was not found. "
             "Install it, or configure with -DSTRMQT_WITH_YOUTUBE=OFF to build without the YouTube tab.")
     endif()
+    # SQLite, for one thing: reading the sign-in out of Firefox's cookie store
+    # for YouTube Music (app/FirefoxCookies.h). Its C API, as the hard rules ask.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
+    target_sources(strmqt_app PRIVATE app/FirefoxCookies.h app/FirefoxCookies.cpp)
+    target_link_libraries(strmqt_app PRIVATE PkgConfig::SQLITE3)
 endif()
 
 qt_add_executable(strmqt

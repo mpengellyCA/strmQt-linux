@@ -20,7 +20,8 @@ FocusScope {
 
     // Up, and what the page reported last (YouTubeView.stateReported).
     property bool shown: false
-    property var state: ({})
+    // (Not `state`: that is Item's own, and a different thing.)
+    property var report: ({})
     // Width over height the view is laid out for: the picture keeps that
     // shape, so the parked view fills it exactly.
     property real aspect: 16 / 9
@@ -32,15 +33,21 @@ FocusScope {
     property int pictureLift: 0
 
     readonly property Item slot: frameSlot
-    readonly property bool playing: mini.state.playing === true
-    readonly property bool muted: mini.state.muted === true
-    readonly property real volume: mini.state.volume !== undefined ? Number(mini.state.volume) : 1
-    readonly property real position: Number(mini.state.position || 0)
-    readonly property real duration: Number(mini.state.duration || 0)
+    readonly property bool playing: mini.report.playing === true
+    readonly property bool muted: mini.report.muted === true
+    readonly property real volume: mini.report.volume !== undefined ? Number(mini.report.volume) : 1
+    readonly property real position: Number(mini.report.position || 0)
+    readonly property real duration: Number(mini.report.duration || 0)
     readonly property string serviceName: mini.music ? qsTr("YouTube Music") : qsTr("YouTube")
-    readonly property string title: mini.state.title ? String(mini.state.title) : mini.serviceName
-    readonly property string art: mini.music && mini.state.art ? String(mini.state.art) : ""
-    readonly property string artist: mini.state.artist ? String(mini.state.artist) : ""
+    readonly property string title: mini.report.title ? String(mini.report.title) : mini.serviceName
+    // Only ever a picture from Google's image hosts, over HTTPS: the address
+    // is the page's word, and an Image fetches whatever it is given.
+    readonly property string art: {
+        const address = mini.music && mini.report.art ? String(mini.report.art) : "";
+        return /^https:\/\/[a-z0-9.-]+\.(googleusercontent|ytimg|ggpht)\.com\//i.test(address)
+               ? address : "";
+    }
+    readonly property string artist: mini.report.artist ? String(mini.report.artist) : ""
     readonly property bool compactWidth: mini.width < Theme.scale(900)
     readonly property bool narrowWidth: mini.width < Theme.scale(620)
 
@@ -58,6 +65,8 @@ FocusScope {
     // FocusNavigator.h: entered on play/pause, and Up leads back to the page.
     property Item navEntry: playPause
     property Item navUp: null
+    // The film's bar, when both are up: it is docked underneath this one.
+    property Item navDown: null
 
     signal expandRequested
     signal stopRequested
@@ -346,6 +355,8 @@ FocusScope {
 
                         Text {
                             width: parent.width
+                            // The page's words: shown, never interpreted.
+                            textFormat: Text.PlainText
                             text: mini.title
                             color: identityHover.hovered ? Theme.textPrimaryColor
                                                          : Qt.darker(Theme.textPrimaryColor, 1.06)
@@ -358,6 +369,7 @@ FocusScope {
                         Text {
                             width: parent.width
                             visible: !mini.narrowWidth
+                            textFormat: Text.PlainText
                             text: mini.artist.length > 0
                                   ? qsTr("%1  ·  %2").arg(mini.artist).arg(mini.serviceName)
                                   : mini.serviceName

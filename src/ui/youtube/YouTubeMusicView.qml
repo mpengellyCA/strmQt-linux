@@ -92,61 +92,21 @@ WebEngineView {
     readonly property real wantedZoom: Math.max(1, Math.min(3, view.height / 720))
     zoomFactor: view.wantedZoom
 
-    // Google's sign-in pages turn away anything that says it is an embedded
-    // Chromium ("This browser or app may not be secure"), and do not turn
-    // away Firefox. So the sign-in pages — and only those — are asked for as
-    // Firefox; the site itself is asked for as the Chrome this engine is.
-    //
-    // The name alone is not enough (measured): Chromium also sends its brand
-    // in the client-hint headers, which Firefox does not send at all, and a
-    // Firefox that sends them is turned away as before. They are switched
-    // off for this profile (Component.onCompleted) — where Qt can: the
-    // switch arrived in Qt 6.8, and on an older Qt signing in here is still
-    // refused. Hiding what the page's own script can see (userAgentData,
-    // window.chrome) was tried as well and makes it worse, not better.
-    readonly property string siteAgent:
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
-        + " Chrome/130.0.0.0 Safari/537.36"
-    readonly property string signInAgent:
-        "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"
-
-    function agentFor(address: url): string {
-        const host = String(address).replace(/^[a-z]+:\/\//i, "").split(/[\/:?#]/)[0].toLowerCase();
-        return host === "accounts.google.com" || host.startsWith("accounts.google.")
-               ? view.signInAgent : view.siteAgent;
-    }
-
+    // A desktop browser's user agent: the site is not served to anything
+    // else. Signing in is not done here at all — Google refuses a sign-in
+    // typed into an embedded browser, whatever it calls itself (two disguises
+    // were tried and are gone) — but copied in from Firefox (YouTubeSignIn.h).
     profile: WebEngineProfile {
-        id: musicProfile
-
         storageName: "youtube-music"
         offTheRecord: false
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-        httpUserAgent: view.siteAgent
+        httpUserAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
+                       + " Chrome/130.0.0.0 Safari/537.36"
     }
 
-    Component.onCompleted: {
-        const hints = musicProfile.clientHints;
-        if (hints !== undefined && hints !== null)
-            hints.isAllClientHintsEnabled = false;
-    }
-
-    // The agent is the profile's, so it is changed before the request that
-    // needs it is made: this one is dropped and asked for again.
-    onNavigationRequested: request => {
-        if (!request.isMainFrame)
-            return;
-        const wanted = view.agentFor(request.url);
-        if (musicProfile.httpUserAgent === wanted)
-            return;
-        const address = request.url;
-        request.reject();
-        // Not from inside the request: the engine is still holding it.
-        Qt.callLater(() => {
-            musicProfile.httpUserAgent = wanted;
-            view.url = address;
-        });
-    }
+    // See YouTubeView.bridgeWord.
+    readonly property string bridgeWord: "strmqt:" + Math.random().toString(36).slice(2)
+                                         + Math.random().toString(36).slice(2) + ":"
 
     settings.playbackRequiresUserGesture: false
     settings.fullScreenSupportEnabled: false
@@ -157,7 +117,7 @@ WebEngineView {
     readonly property string bridge: `(function () {
  if (window.__strmqt) return; window.__strmqt = true;
  if (location.hostname !== 'music.youtube.com') return;
- function say(m) { console.log('strmqt:' + m); }
+ function say(m) { console.log('${view.bridgeWord}' + m); }
 
  // What the focus stops on. A row or a card is one stop, not one for
  // each link inside it.
@@ -362,7 +322,7 @@ WebEngineView {
    playing: !!v && !v.paused && !v.ended,
    title: (meta && meta.title) || '',
    artist: (meta && meta.artist) || '',
-   art: art,
+   art: /^https:\/\/[a-z0-9.-]+\.(googleusercontent|ytimg|ggpht)\.com\//i.test(art) ? art : '',
    position: v ? Math.floor(v.currentTime) : 0,
    duration: v && isFinite(v.duration) ? Math.floor(v.duration) : 0,
    volume: v ? v.volume : 1,
@@ -413,15 +373,20 @@ WebEngineView {
     }
 
     onJavaScriptConsoleMessage: (level, message, line, source) => {
-        if (message === "strmqt:edge-left")
+        if (!message.startsWith(view.bridgeWord))
+            return;
+        const said = message.substring(view.bridgeWord.length);
+        if (said === "edge-left")
             view.leftEdgeReached();
-        else if (message === "strmqt:playing")
+        else if (said === "playing")
             view.playbackStarted();
-        else if (message === "strmqt:exit")
+        else if (said === "exit")
             view.exitRequested();
-        else if (message.startsWith("strmqt:state:")) {
+        else if (said.startsWith("state:")) {
             try {
-                view.stateReported(JSON.parse(message.substring(13)));
+                const state = JSON.parse(said.substring(6));
+                if (state !== null && typeof state === "object" && !Array.isArray(state))
+                    view.stateReported(state);
             } catch (error) {
             }
         }

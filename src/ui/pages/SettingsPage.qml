@@ -840,14 +840,9 @@ FocusScope {
                     title: qsTr("YouTube Music sign-in")
                     subtitle: qsTr("Google does not allow signing in from inside an app like this one. Sign in to YouTube in Firefox, then copy that sign-in here.")
 
-                    onVisibleChanged: {
-                        if (youtubeMusicPanel.visible)
-                            youtubeMusicPanel.signIn.refresh();
-                    }
-                    Component.onCompleted: {
-                        if (youtubeMusicPanel.visible)
-                            youtubeMusicPanel.signIn.refresh();
-                    }
+                    // Firefox's files are not opened until "Look in Firefox" is
+                    // pressed: showing this page is not asking.
+                    property bool looked: false
 
                     Repeater {
                         model: youtubeMusicPanel.signIn !== null ? youtubeMusicPanel.signIn.sources : []
@@ -873,7 +868,7 @@ FocusScope {
 
                     SettingsSections.SectionNote {
                         width: parent.width
-                        visible: youtubeMusicPanel.signIn !== null
+                        visible: youtubeMusicPanel.looked && youtubeMusicPanel.signIn !== null
                                  && youtubeMusicPanel.signIn.sources.length === 0
                         text: qsTr("No Firefox profile with YouTube cookies was found on this computer.")
                     }
@@ -891,9 +886,13 @@ FocusScope {
                         spacing: Theme.spacingTight
 
                         StrmButton {
-                            text: qsTr("Look again")
+                            objectName: "youtubeSignInLook"
+                            text: youtubeMusicPanel.looked ? qsTr("Look again") : qsTr("Look in Firefox")
                             iconName: "refresh"
-                            onClicked: youtubeMusicPanel.signIn.refresh()
+                            onClicked: {
+                                youtubeMusicPanel.looked = true;
+                                youtubeMusicPanel.signIn.refresh();
+                            }
                         }
 
                         StrmButton {

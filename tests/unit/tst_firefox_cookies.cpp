@@ -22,6 +22,7 @@ struct Row
     qint64 expiry;
     const char *originAttributes = "";
     int sameSite = 0;
+    bool secure = true;
 };
 
 void writeStore(const QString &path, const QList<Row> &rows)
@@ -40,7 +41,7 @@ void writeStore(const QString &path, const QList<Row> &rows)
         QCOMPARE(sqlite3_prepare_v2(db,
                                     "INSERT INTO moz_cookies (originAttributes, name, value, host,"
                                     " path, expiry, lastAccessed, isSecure, isHttpOnly, sameSite)"
-                                    " VALUES (?1, ?2, ?3, ?4, '/', ?5, 1790000000000000, 1, 1, ?6)",
+                                    " VALUES (?1, ?2, ?3, ?4, '/', ?5, 1790000000000000, ?7, 1, ?6)",
                                     -1, &statement, nullptr),
                  SQLITE_OK);
         sqlite3_bind_text(statement, 1, row.originAttributes, -1, SQLITE_STATIC);
@@ -49,6 +50,7 @@ void writeStore(const QString &path, const QList<Row> &rows)
         sqlite3_bind_text(statement, 4, row.host, -1, SQLITE_STATIC);
         sqlite3_bind_int64(statement, 5, row.expiry);
         sqlite3_bind_int(statement, 6, row.sameSite);
+        sqlite3_bind_int(statement, 7, row.secure ? 1 : 0);
         QCOMPARE(sqlite3_step(statement), SQLITE_DONE);
         sqlite3_finalize(statement);
     }
@@ -107,6 +109,8 @@ private slots:
             { "SID", "work", ".youtube.com", m_soon, "^userContextId=2" },
             { "SID", "framed", ".youtube.com", m_soon, "^partitionKey=%28https%2Cexample.com%29" },
             { "SID", "elsewhere", ".example.com", m_soon, "^userContextId=3" },
+            // Ends in "google.com" and is not Google's.
+            { "SID", "lookalike", ".notgoogle.com", m_soon, "^userContextId=4" },
         });
         writeFile(profile + "/containers.json",
                   R"({"identities":[{"userContextId":2,"l10nId":"user-context-work","public":true}]})");
@@ -128,7 +132,7 @@ private slots:
         const QString profile = m_root + "/aaaa.default";
         QVERIFY(QDir().mkpath(profile));
         writeStore(profile + "/cookies.sqlite", {
-            { "SID", "mine", ".youtube.com", m_soon },
+            { "SID", "mine", ".youtube.com", m_soon, "", 0, false },
             { "__Secure-3PSID", "mine3", ".google.com", m_soon * 1000, "", 0 }, // milliseconds
             { "LOGIN_INFO", "info", "music.youtube.com", m_soon, "", 2 },
             { "SID", "old", ".youtube.com", 1000000000 },                // long expired
@@ -156,6 +160,14 @@ private slots:
         QVERIFY(google.isHttpOnly());
         QCOMPARE(google.expirationDate().toSecsSinceEpoch(), m_soon);
         QCOMPARE(google.sameSitePolicy(), QNetworkCookie::SameSite::None);
+        // "None" without Secure is no policy at all (Chromium refuses the pair).
+        QNetworkCookie plain;
+        for (const QNetworkCookie &cookie : jar) {
+            if (cookie.value() == "mine")
+                plain = cookie;
+        }
+        QVERIFY(!plain.isSecure());
+        QCOMPARE(plain.sameSitePolicy(), QNetworkCookie::SameSite::Default);
         QCOMPARE(byValue.value("info").sameSitePolicy(), QNetworkCookie::SameSite::Strict);
     }
 
