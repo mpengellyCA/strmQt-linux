@@ -66,18 +66,43 @@ WebEngineView {
             "sourceCode": "(function () {"
                 + " if (window.__strmqt) return; window.__strmqt = true;"
                 + " function say(m) { console.log('strmqt:' + m); }"
+                // What YouTube has focused, as something that differs
+                // whenever its cursor moved: the element itself, what it
+                // says, where it is, and how far the lists around it have
+                // scrolled. Position alone is not enough — in a shelf the
+                // cursor stays put and the row slides under it.
                 + " function where() {"
                 + "  var a = document.activeElement; if (!a) return '';"
                 + "  var r = a.getBoundingClientRect();"
-                + "  return a.tagName + '|' + Math.round(r.left) + '|' + Math.round(r.top)"
-                + "         + '|' + Math.round(r.width) + '|' + location.hash;"
+                + "  var s = a.tagName + '|' + Math.round(r.left) + '|' + Math.round(r.top)"
+                + "        + '|' + Math.round(r.width) + '|' + location.hash + '|'"
+                + "        + (a.textContent || '').slice(0, 160) + '|'"
+                + "        + ((a.querySelector && a.querySelector('img')) ? a.querySelector('img').src : '');"
+                + "  for (var p = a, i = 0; p && p.style && i < 12; p = p.parentElement, ++i)"
+                + "   s += '|' + p.style.transform + ',' + p.scrollLeft + ',' + p.scrollTop;"
+                + "  return s;"
                 + " }"
                 // While a video is up, Left is a seek and moves no focus.
                 + " function watching() { return location.hash.indexOf('#/watch') === 0; }"
+                // YouTube's own menu is its left-hand edge: an unmoved Left
+                // anywhere else is a list still loading or an animation, not
+                // the edge. Where there is no menu at all (signing in, an
+                // error screen) an unmoved Left is all there is to go on.
+                + " function atLeftSide() {"
+                + "  var guide = document.querySelector('ytlr-guide-response');"
+                + "  if (!guide || guide.getBoundingClientRect().width === 0) return true;"
+                + "  return guide.contains(document.activeElement);"
+                + " }"
                 + " document.addEventListener('keydown', function (e) {"
                 + "  if (e.keyCode !== 37 || e.repeat || watching()) return;"
-                + "  var before = where();"
-                + "  setTimeout(function () { if (where() === before) say('edge-left'); }, 150);"
+                + "  var node = document.activeElement, before = where();"
+                + "  setTimeout(function () {"
+                + "   if (document.activeElement === node && where() === before && atLeftSide())"
+                + "    say('edge-left');"
+                + "  }, 220);"
+                + " }, true);"
+                + " document.addEventListener('playing', function (e) {"
+                + "  if (e.target && !e.target.muted) say('playing');"
                 + " }, true);"
                 // YouTube draws on a fixed 16:9 canvas, centred, and leaves
                 // the rest of the window black. In its own background colour
@@ -95,9 +120,6 @@ WebEngineView {
                 + "  mark();"
                 + "  say('route:' + location.hash);"
                 + " });"
-                + " document.addEventListener('playing', function (e) {"
-                + "  if (e.target && !e.target.muted) say('playing');"
-                + " }, true);"
                 + "})();"
         }
     ]
