@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "WindowFocusKeeper.h"
+#include "platform/streaming/StreamingHost.h"
 #include "input/FocusNavigator.h"
 #include <QQuickWindow>
 #include "controllers/PlaylistController.h"
@@ -108,6 +109,10 @@ int main(int argc, char *argv[])
     // page reachable by a push is never instantiated and a QML type error in it
     // survives a clean-looking startup — which is exactly how M7 shipped a
     // broken PlayerPage.
+    // Settings' "Streaming host" panel. It looks at nothing until asked.
+    strmqt::StreamingHost streamingHost;
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamingHostCtl"), &streamingHost);
+
     // Whether this build carries the YouTube tab (STRMQT_WITH_YOUTUBE). The
     // rail entry and YouTubePage ask.
 #ifdef STRMQT_HAVE_YOUTUBE

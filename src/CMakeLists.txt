@@ -27,6 +27,8 @@ qt_add_library(strmqt_core STATIC
     platform/MprisPlayer.h platform/MprisPlayer.cpp
     platform/PowerInhibit.h platform/PowerInhibit.cpp
     platform/SecretsStore.h platform/SecretsStore.cpp
+    platform/streaming/HostFiles.h platform/streaming/HostFiles.cpp
+    platform/streaming/StreamingHost.h platform/streaming/StreamingHost.cpp
     platform/secrets/DBusTransport.h platform/secrets/DBusTransport.cpp
     platform/secrets/SecretBackend.h platform/secrets/SecretBackend.cpp
     platform/secrets/KWalletBackend.h platform/secrets/KWalletBackend.cpp

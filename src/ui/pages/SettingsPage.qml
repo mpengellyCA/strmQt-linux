@@ -54,6 +54,21 @@ FocusScope {
 
     readonly property bool webRemoteAvailable: page.webRemote !== null && page.webRemote !== undefined
 
+    readonly property var streamingHost: {
+        try {
+            return StreamingHostCtl;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    readonly property var streamingHostSizes: [
+        { "label": qsTr("4K (2160p)"), "value": 2160 },
+        { "label": qsTr("1440p"), "value": 1440 },
+        { "label": qsTr("1080p"), "value": 1080 },
+        { "label": qsTr("720p"), "value": 720 }
+    ]
+
     readonly property string unavailableHint: qsTr("Unavailable: the settings object is not exposed to QML.")
 
     // ── Sections ───────────────────────────────────────────────────────────
@@ -1627,6 +1642,159 @@ FocusScope {
                         StrmButton {
                             text: qsTr("Regenerate TLS Certificate")
                             onClicked: if (page.webRemoteAvailable) page.webRemote.regenerateCertificate()
+                        }
+                    }
+                }
+
+                // ── Streaming host ─────────────────────────────────────────
+                // A headless StrmQt and a Sunshine of its own, as services.
+                // Nothing on this computer is looked at until "Look" is
+                // pressed: showing this page starts no processes.
+                StrmPanel {
+                    id: streamingHostPanel
+
+                    readonly property var host: page.streamingHost
+                    readonly property bool present: host !== null && host !== undefined
+                    property bool looked: false
+
+                    function stateText(state: string): string {
+                        if (state === "active")
+                            return qsTr("Running");
+                        if (state === "activating")
+                            return qsTr("Starting");
+                        if (state === "failed")
+                            return qsTr("Stopped after an error");
+                        return qsTr("Stopped");
+                    }
+
+                    width: parent.width
+                    visible: page.currentKey === "remote" && streamingHostPanel.present
+                    title: qsTr("Streaming host")
+                    subtitle: qsTr("Runs StrmQt on a screen of its own, with no monitor, and streams it with Sunshine to Moonlight on a TV. It starts with this computer and is separate from any Sunshine you use for your desktop.")
+
+                    // The services' states move by themselves (starting, then
+                    // running); asked for only while this is on screen.
+                    Timer {
+                        interval: 2500
+                        repeat: true
+                        running: streamingHostPanel.visible && streamingHostPanel.looked
+                                 && streamingHostPanel.present && streamingHostPanel.host.installed
+                        onTriggered: streamingHostPanel.host.checkState()
+                    }
+
+                    Repeater {
+                        model: streamingHostPanel.present && streamingHostPanel.looked
+                               ? streamingHostPanel.host.problems : []
+
+                        SettingsSections.SectionNote {
+                            required property string modelData
+
+                            width: parent.width
+                            text: modelData
+                        }
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        visible: streamingHostPanel.looked && streamingHostPanel.present
+                                 && streamingHostPanel.host.installed
+                        label: qsTr("Screen and StrmQt")
+                        value: streamingHostPanel.present ? streamingHostPanel.stateText(streamingHostPanel.host.screenState) : ""
+                    }
+
+                    SettingsSections.InfoRow {
+                        width: parent.width
+                        visible: streamingHostPanel.looked && streamingHostPanel.present
+                                 && streamingHostPanel.host.installed
+                        label: qsTr("Sunshine")
+                        value: streamingHostPanel.present
+                               ? qsTr("%1, port %2").arg(streamingHostPanel.stateText(streamingHostPanel.host.sunshineState))
+                                                    .arg(streamingHostPanel.host.port)
+                               : ""
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Screen size")
+                        hint: qsTr("What the headless screen is drawn at. Moonlight can ask for less.")
+
+                        StrmSelect {
+                            objectName: "streamingHostSize"
+                            width: Theme.scale(220)
+                            enabled: streamingHostPanel.present && !streamingHostPanel.host.busy
+                            model: page.streamingHostSizes
+                            currentIndex: page.indexOfValue(page.streamingHostSizes,
+                                                            streamingHostPanel.present ? streamingHostPanel.host.height : 2160)
+                            onActivated: index => {
+                                if (streamingHostPanel.present)
+                                    streamingHostPanel.host.height = page.streamingHostSizes[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Sunshine's own web page on the network")
+                        hint: streamingHostPanel.present
+                              ? qsTr("Off, it answers only on this computer, at %1.").arg(streamingHostPanel.host.webUiAddress)
+                              : ""
+
+                        StrmSwitch {
+                            objectName: "streamingHostWebUi"
+                            enabled: streamingHostPanel.present && !streamingHostPanel.host.busy
+                            checked: streamingHostPanel.present && streamingHostPanel.host.webUiOnNetwork
+                            onToggled: if (streamingHostPanel.present)
+                                           streamingHostPanel.host.webUiOnNetwork = !streamingHostPanel.host.webUiOnNetwork
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: streamingHostPanel.present && streamingHostPanel.host.message.length > 0
+                        text: streamingHostPanel.present ? streamingHostPanel.host.message : ""
+                        iconName: streamingHostPanel.present && streamingHostPanel.host.failed ? "info" : "check"
+                    }
+
+                    Row {
+                        spacing: Theme.spacingTight
+
+                        StrmButton {
+                            objectName: "streamingHostLook"
+                            visible: !streamingHostPanel.looked
+                            text: qsTr("Look at this computer")
+                            iconName: "refresh"
+                            onClicked: {
+                                streamingHostPanel.looked = true;
+                                streamingHostPanel.host.refresh();
+                            }
+                        }
+
+                        StrmButton {
+                            objectName: "streamingHostSetUp"
+                            visible: streamingHostPanel.looked && streamingHostPanel.present
+                                     && !streamingHostPanel.host.installed
+                            enabled: streamingHostPanel.present && streamingHostPanel.host.available
+                                     && !streamingHostPanel.host.busy
+                            text: qsTr("Set up")
+                            onClicked: streamingHostPanel.host.setUp()
+                        }
+
+                        StrmButton {
+                            visible: streamingHostPanel.looked && streamingHostPanel.present
+                                     && streamingHostPanel.host.installed
+                            enabled: streamingHostPanel.present && !streamingHostPanel.host.busy
+                            text: qsTr("Restart")
+                            iconName: "refresh"
+                            onClicked: streamingHostPanel.host.restart()
+                        }
+
+                        StrmButton {
+                            visible: streamingHostPanel.looked && streamingHostPanel.present
+                                     && streamingHostPanel.host.installed
+                            enabled: streamingHostPanel.present && !streamingHostPanel.host.busy
+                            text: qsTr("Remove")
+                            destructive: true
+                            onClicked: streamingHostPanel.host.remove()
                         }
                     }
                 }
