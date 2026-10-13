@@ -1,5 +1,28 @@
+src/ui/Main.qml: Member "focus" not found on type QQuickLoader::item with type QObject [missing-property]	onLoaded: youtubeMusicHost.item.focus = true
+src/ui/Main.qml: Member "focus" not found on type QQuickLoader::item with type QObject [missing-property]	youtubeHost.item.focus = true;
+src/ui/Main.qml: Member "next" not found on type "QObject" [missing-property]	onNextRequested: youtubeMusicHost.item.next()
+src/ui/Main.qml: Member "open" not found on type "QObject" [missing-property]	youtubeHost.item.open(root.youtubePending);
+src/ui/Main.qml: Member "pausePlayback" not found on type "QObject" [missing-property]	youtubeHost.item.pausePlayback();
+src/ui/Main.qml: Member "pausePlayback" not found on type "QObject" [missing-property]	youtubeMusicHost.item.pausePlayback();
+src/ui/Main.qml: Member "pausePlayback" not found on type "QObject" [missing-property]	youtubeMusicHost.item.pausePlayback();
+src/ui/Main.qml: Member "playPause" not found on type "QQuickItem" [missing-property]	root.youtubeMiniView.playPause();
+src/ui/Main.qml: Member "previous" not found on type "QObject" [missing-property]	onPreviousRequested: youtubeMusicHost.item.previous()
+src/ui/Main.qml: Member "profile" not found on type "QObject" [missing-property]	YouTubeSignIn.clear(youtubeMusicHost.item.profile);
+src/ui/Main.qml: Member "profile" not found on type "QObject" [missing-property]	YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
+src/ui/Main.qml: Member "reload" not found on type "QObject" [missing-property]	youtubeMusicHost.item.reload();
+src/ui/Main.qml: Member "resumePlayback" not found on type "QObject" [missing-property]	youtubeHost.item.resumePlayback();
+src/ui/Main.qml: Member "seekBy" not found on type "QQuickItem" [missing-property]	onSeekRequested: seconds => root.youtubeMiniView.seekBy(seconds)
+src/ui/Main.qml: Member "seekTo" not found on type "QQuickItem" [missing-property]	onSeekToRequested: seconds => root.youtubeMiniView.seekTo(seconds)
+src/ui/Main.qml: Member "setMuted" not found on type "QQuickItem" [missing-property]	onMuteRequested: muted => root.youtubeMiniView.setMuted(muted)
+src/ui/Main.qml: Member "setVolume" not found on type "QQuickItem" [missing-property]	onVolumeRequested: volume => root.youtubeMiniView.setVolume(volume)
 src/ui/Main.qml: Member "sleeveRadius" not found on type "QQuickItem" [missing-property]	sleeveFlight.flyTo(target, page.sleeveRadius);
 src/ui/Main.qml: Member "sleeveRect" not found on type "QQuickItem" [missing-property]	const target = page.sleeveRect(root.contentItem);
+src/ui/Main.qml: Member "slot" not found on type "QQuickItem" [missing-property]	&& stack.currentItem.slot !== undefined
+src/ui/Main.qml: Member "slot" not found on type "QQuickItem" [missing-property]	parent: youtubeHost.onPage ? stack.currentItem.slot : youtubeMini.slot
+src/ui/Main.qml: Member "slot" not found on type "QQuickItem" [missing-property]	parent: youtubeMusicHost.onPage ? stack.currentItem.slot : youtubeMusicPark
+src/ui/Main.qml: Member "slot" not found on type "QQuickItem" [missing-property]	readonly property bool onPage: root.youtubeOnTop && stack.currentItem.slot !== undefined
+src/ui/Main.qml: Member "stopPlayback" not found on type "QObject" [missing-property]	youtubeHost.item.stopPlayback();
+src/ui/Main.qml: Member "stopPlayback" not found on type "QQuickItem" [missing-property]	root.youtubeMiniView.stopPlayback();
 src/ui/Main.qml: Unqualified access [unqualified]	&& PlayerCtl.isAudio !== true && !root.playerOnTop
 src/ui/Main.qml: Unqualified access [unqualified]	Accessible.name: qsTr("Picture in picture: %1").arg(PlayerCtl.title)
 src/ui/Main.qml: Unqualified access [unqualified]	HomeCtl.refresh();
@@ -8,13 +31,21 @@ src/ui/Main.qml: Unqualified access [unqualified]	Input.noteInput("keyboard");
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.backend.engineName === "vlc" ? "components/VlcVideoPlane.qml"
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.clearCrashResume();
 src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.playItem(info.itemId, info.title, info.positionMs);
+src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.togglePause();
+src/ui/Main.qml: Unqualified access [unqualified]	PlayerCtl.togglePause();
 src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
+src/ui/Main.qml: Unqualified access [unqualified]	YouTubeSignIn.clear(youtubeMusicHost.item.profile);
+src/ui/Main.qml: Unqualified access [unqualified]	YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
 src/ui/Main.qml: Unqualified access [unqualified]	active: PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	const action = Input.actionForKey(event.key, event.modifiers, "browse");
 src/ui/Main.qml: Unqualified access [unqualified]	function onActionChosen(actionId) { Input.trigger(actionId); }
 src/ui/Main.qml: Unqualified access [unqualified]	function onItemChosen(item) { Actions.openDetails(item); }
 src/ui/Main.qml: Unqualified access [unqualified]	if (!PlayerCtl.isAudio && !root.playerOnTop)
+src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !PlayerCtl.paused)
+src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !PlayerCtl.paused)
+src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !PlayerCtl.paused)
+src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !PlayerCtl.paused)
 src/ui/Main.qml: Unqualified access [unqualified]	if (PlayerCtl.active && !root.playerOnTop) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (Session.authenticated) {
 src/ui/Main.qml: Unqualified access [unqualified]	if (Session.authenticated) {
@@ -36,12 +67,16 @@ src/ui/Main.qml: Unqualified access [unqualified]	target: Actions
 src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
+src/ui/Main.qml: Unqualified access [unqualified]	target: PlayerCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
+src/ui/Main.qml: Unqualified access [unqualified]	target: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
 src/ui/Main.qml: Unqualified access [unqualified]	userName: Session.username
 src/ui/Main.qml: Unqualified access [unqualified]	var crash = PlayerCtl.crashResumeInfo();
+src/ui/Main.qml: Unqualified access [unqualified]	view: youtubeHost
+src/ui/Main.qml: Unqualified access [unqualified]	view: youtubeMusicHost
 src/ui/Main.qml: Unqualified access [unqualified]	{ player: PlayerCtl.backend })
 src/ui/Theme.qml: Unqualified access [unqualified]	? CoverTint.maxWashOpacity : 0.0
 src/ui/Theme.qml: Unqualified access [unqualified]	property bool reducedMotion: typeof Prefs !== "undefined" ? Prefs.reducedMotion : false
@@ -797,6 +832,8 @@ src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	refillActive: Seri
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	target: SeriesCtl.episodes
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: !SeriesCtl.loading && episodeGrid.count === 0
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: SeriesCtl.loading
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	&& page.prefsAvailable && Prefs.youtubeMusicEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	&& typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	? qsTr("%1 is already bound to “%2”. Pick another key.").arg(sequence).arg(Input.displayName(conflictingActionId))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	Input.resetBinding(page.captureActionId);
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	LiveCtl.pollIntervalSeconds = page.pollOptions[index].value;
@@ -804,18 +841,23 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	Session.playback
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	checked: LiveCtl.enabled
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	checked: page.prefsAvailable && Prefs.animateRecord
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	checked: page.prefsAvailable && Prefs.autoPlayNextEpisode
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	checked: page.prefsAvailable && Prefs.youtubeEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	checked: page.prefsAvailable && Prefs.youtubeMusicEnabled
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	const sequence = Input.sequenceForKey(key, modifiers);
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	currentIndex: page.indexOfValue(page.engineOptions, Session.playbackEngine)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	currentIndex: page.indexOfValue(page.pollOptions, LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	enabled: LiveCtl.enabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	enabled: modelData.signedIn
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	if (Input.setBinding(page.captureActionId, sequence))
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "youtubeSignInCopy" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Input.resetAll()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: LiveCtl.refreshNow()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.toggleMute()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Session.logout()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Session.switchUser()
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: youtubeMusicPanel.signIn.request(index)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onCommitted: v => PlayerCtl.setVolume(Math.round(v))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onMoved: v => PlayerCtl.setVolume(Math.round(v))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onResetRequested: Input.resetBinding(bindingRow.modelData.actionId)
@@ -825,7 +867,12 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.animateRecord = !Prefs.animateRecord
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.autoPlayNextEpisode = !Prefs.autoPlayNextEpisode
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.autoPlayNextEpisode = !Prefs.autoPlayNextEpisode
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeEnabled = !Prefs.youtubeEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeEnabled = !Prefs.youtubeEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	target: Input
@@ -841,6 +888,10 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: Session.s
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: Session.username
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	value: String(Session.serverUrl)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	visible: Session.secretBackend.length > 0
+src/ui/pages/YouTubePage.qml: Unqualified access [unqualified]	readonly property bool inBuild: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+src/ui/pages/YouTubePage.qml: Unqualified access [unqualified]	readonly property bool switchedOn: typeof Prefs === "undefined" || Prefs === null
+src/ui/pages/YouTubePage.qml: Unqualified access [unqualified]	|| (page.service === "music" ? Prefs.youtubeMusicEnabled : Prefs.youtubeEnabled)
+src/ui/pages/YouTubePage.qml: Unqualified access [unqualified]	|| (page.service === "music" ? Prefs.youtubeMusicEnabled : Prefs.youtubeEnabled)
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	PlayerCtl.seekTo(Number(panel.chapters[index].startMs));
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	PlayerCtl.seekToChapter(index);
 src/ui/player/ChapterPanel.qml: Unqualified access [unqualified]	if (typeof PlayerCtl.seekToChapter === "function")
@@ -962,3 +1013,5 @@ src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemot
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
+src/ui/shell/YouTubeMini.qml: Unqualified access [unqualified]	Input.noteInput("mouse");
+src/ui/shell/YouTubeMini.qml: Unqualified access [unqualified]	if (Input.actionForKey(event.key, event.modifiers, "browse") === "nav.back") {

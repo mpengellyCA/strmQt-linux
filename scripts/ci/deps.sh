@@ -59,7 +59,9 @@ case "$target" in
         python3 -m venv /opt/aqt
         /opt/aqt/bin/pip install --no-cache-dir --require-hashes --no-deps \
             -r "$(cd "$(dirname "$0")" && pwd)/aqt-requirements.txt"
-        /opt/aqt/bin/aqt install-qt linux desktop 6.11.3 linux_gcc_64 -m qtwebsockets -O /opt/qt
+        # qtwebengine is the YouTube tabs; qtwebchannel and qtpositioning are what it links.
+        /opt/aqt/bin/aqt install-qt linux desktop 6.11.3 linux_gcc_64 \
+            -m qtwebsockets qtwebengine qtwebchannel qtpositioning -O /opt/qt
         curl -fsSL -o /usr/local/bin/appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
         echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /usr/local/bin/appimagetool" | sha256sum -c -

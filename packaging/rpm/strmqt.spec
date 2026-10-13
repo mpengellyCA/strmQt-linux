@@ -1,7 +1,7 @@
 # StrmQt RPM packaging (spec 2026-09-27 §7.3). Built in, and for, one Fedora
 # release's container by scripts/ci/package-rpm.sh; not a Fedora-review spec.
 Name:           strmqt
-Version:        0.8.0
+Version:        0.8.5
 Release:        1%{?dist}
 Summary:        Couch-first Emby client for the Linux desktop
 License:        GPL-3.0-or-later AND OFL-1.1 AND MIT AND LGPL-3.0-or-later
@@ -64,6 +64,10 @@ export QT_QPA_PLATFORM=offscreen
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*
 
 %changelog
+* Tue Oct 13 2026 Mike Pengelly <mike@leadrix.io> - 0.8.5-1
+- YouTube and YouTube Music as destinations (Qt WebEngine), each of which
+  can be switched off; trailers play in the app; a full-screen toggle.
+
 * Mon Oct 12 2026 Mike Pengelly <mike@leadrix.io> - 0.8.0-1
 - One input layer for keyboard, mouse, controller, remote and phone; library
   filters; idle pointer hiding; video upscaling.

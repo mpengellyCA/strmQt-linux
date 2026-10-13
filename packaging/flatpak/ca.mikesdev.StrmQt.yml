@@ -26,6 +26,11 @@ id: ca.mikesdev.StrmQt
 runtime: org.kde.Platform
 runtime-version: '6.11'
 sdk: org.kde.Sdk
+# Qt WebEngine is not in the KDE runtime: the YouTube and YouTube Music tabs
+# are web views, and this base app is how a Flatpak gets the engine without
+# building Chromium. Its version follows the runtime's.
+base: io.qt.qtwebengine.BaseApp
+base-version: '6.11'
 command: strmqt
 
 finish-args:
@@ -75,11 +80,24 @@ finish-args:
   # implementations differ across Plasma versions and non-KDE desktops.
   - --talk-name=org.freedesktop.ScreenSaver
   - --talk-name=org.freedesktop.PowerManagement
+  # ── Firefox's profiles, read-only ──────────────────────────────────────────
+  # Signing in to YouTube Music is done by copying a sign-in from Firefox
+  # (Settings → Server; src/app/FirefoxCookies.h): Google refuses a sign-in
+  # typed into an embedded browser. The three places Firefox keeps profiles —
+  # the distribution's, the Snap's, the Flatpak's. Read only when the user
+  # presses the button, and never written.
+  - --filesystem=~/.mozilla/firefox:ro
+  - --filesystem=~/snap/firefox/common/.mozilla/firefox:ro
+  - --filesystem=~/.var/app/org.mozilla.firefox/.mozilla/firefox:ro
   # ── Environment ────────────────────────────────────────────────────────────
   # Force the OpenGL RHI backend. The mpv render API integration (MpvVideoItem)
   # is written against mpv_render_context with MPV_RENDER_API_TYPE_OPENGL and
   # shares Qt's GL context; letting Qt pick Vulkan at runtime would break it.
   - --env=QSG_RHI_BACKEND=opengl
+
+# The base app's own tidy-up (its documented contract), then:
+cleanup-commands:
+  - /app/cleanup-BaseApp.sh
 
 # Development cruft that must not reach the final tree. Static archives and libtool
 # descriptors in particular would otherwise bloat the image with dead weight.
