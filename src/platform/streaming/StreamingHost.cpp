@@ -1,12 +1,14 @@
 #include "StreamingHost.h"
 
 #include "core/Log.h"
+#include "platform/SecretsStore.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
@@ -19,6 +21,15 @@ namespace strmqt {
 namespace {
 
 constexpr int kStepTimeoutMs = 20'000;
+constexpr char kSunshineUser[] = "strmqt";
+constexpr char kPasswordKey[] = "streaming-host/sunshine-password";
+
+QString newPassword()
+{
+    QByteArray bytes(24, Qt::Uninitialized);
+    QRandomGenerator::system()->fillRange(reinterpret_cast<quint32 *>(bytes.data()), bytes.size() / 4);
+    return QString::fromLatin1(bytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
 
 bool writeText(const QString &path, const QByteArray &text)
 {
@@ -69,6 +80,15 @@ StreamingHost::StreamingHost(Environment environment, QObject *parent)
     m_config.hostUnit = m_env.hostUnit;
     m_config.environment = m_env.strmqtEnvironment;
     loadConfig();
+    m_vault = new SecretsStore(m_env.stateDir + QStringLiteral("/secrets.ini"), this);
+    m_api = new streaming::SunshineApi(this);
+    connectApi();
+    if (QFile::exists(m_env.stateDir + QStringLiteral("/secrets.ini"))) {
+        m_vault->readSecret(QLatin1String(kPasswordKey)).then(this, [this](const Result<QString> &stored) {
+            if (stored.ok() && m_password.isEmpty())
+                m_password = stored.value;
+        });
+    }
 }
 
 StreamingHost::~StreamingHost()
@@ -296,8 +316,21 @@ void StreamingHost::setUp()
     QList<Step> steps{
         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, {}},
         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("enable"), m_env.hostUnit, m_env.sunshineUnit}, {}},
-        {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}},
     };
+    // Sunshine's web page and API want a sign-in, and an instance without one
+    // lets the first visitor choose it. StrmQt chooses, once, and is the only
+    // one who knows it. Sunshine is stopped first: it writes its state file on
+    // the way out and would write the old sign-in back.
+    if (m_password.isEmpty()) {
+        m_password = newPassword();
+        m_vault->writeSecret(QLatin1String(kPasswordKey), m_password);
+        steps << Step{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("stop"), m_env.sunshineUnit}, QStringLiteral("-")}
+              << Step{m_env.sunshine,
+                      {m_env.stateDir + QStringLiteral("/sunshine.conf"), QStringLiteral("--creds"),
+                       QLatin1String(kSunshineUser), m_password},
+                      {}, true};
+    }
+    steps << Step{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}};
     if (m_env.linger) {
         const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
         const QString tolerated = tr("It starts when you log in, not at boot: this computer did not "
@@ -369,9 +402,10 @@ void StreamingHost::next()
                 m_notes << step.toleratedAs;
             next();
         } else {
-            qCWarning(logApp) << "streaming host:" << step.program << step.arguments << "failed:" << output;
+            if (!step.quiet)
+                qCWarning(logApp) << "streaming host:" << step.program << step.arguments << "failed:" << output;
             m_steps.clear();
-            finish(false, output.isEmpty()
+            finish(false, output.isEmpty() || step.quiet
                               ? tr("%1 failed.").arg(QFileInfo(step.program).fileName())
                               : tr("%1 failed: %2").arg(QFileInfo(step.program).fileName(), output));
         }
@@ -405,6 +439,92 @@ void StreamingHost::setMessage(const QString &text, bool failed)
     m_message = text;
     m_failed = failed;
     emit messageChanged();
+}
+
+// ── Pairing ──────────────────────────────────────────────────────────────────
+
+void StreamingHost::connectApi()
+{
+    using streaming::SunshineApi;
+    connect(m_api, &SunshineApi::clientsFetched, this, [this](const QList<SunshineApi::Client> &clients) {
+        QVariantList devices;
+        for (const SunshineApi::Client &client : clients)
+            devices << QVariantMap{{QStringLiteral("name"), client.name}, {QStringLiteral("uuid"), client.uuid}};
+        if (devices == m_devices && m_pairingReachable)
+            return;
+        m_devices = devices;
+        m_pairingReachable = true;
+        emit pairingChanged();
+    });
+    connect(m_api, &SunshineApi::pairingsFetched, this,
+            [this](const QList<SunshineApi::Pairing> &pairings, bool listed) {
+                QVariantList requests;
+                for (const SunshineApi::Pairing &pairing : pairings)
+                    requests << QVariantMap{{QStringLiteral("id"), pairing.id}, {QStringLiteral("name"), pairing.name}};
+                if (requests == m_requests && listed == m_requestsListed)
+                    return;
+                m_requests = requests;
+                m_requestsListed = listed;
+                emit pairingChanged();
+            });
+    connect(m_api, &SunshineApi::unreachable, this, [this](const QString &reason) {
+        m_pairingReachable = false;
+        m_devices.clear();
+        m_requests.clear();
+        setPairingMessage(reason, true);
+    });
+    connect(m_api, &SunshineApi::paired, this, [this](const QString &error) {
+        setPairingMessage(error.isEmpty() ? tr("Paired.") : tr("Pairing failed: %1").arg(error), !error.isEmpty());
+        m_api->fetch();
+    });
+    connect(m_api, &SunshineApi::unpaired, this, [this](const QString &error) {
+        setPairingMessage(error.isEmpty() ? tr("The device was removed.") : tr("Could not remove it: %1").arg(error),
+                          !error.isEmpty());
+        m_api->fetch();
+    });
+}
+
+// Sunshine writes its certificate the first time it runs, so this is asked
+// again on every use rather than once.
+void StreamingHost::configureApi()
+{
+    m_api->configure(streaming::webUiPort(m_config.port), m_env.stateDir + QStringLiteral("/cert.pem"),
+                     QLatin1String(kSunshineUser), m_password);
+}
+
+void StreamingHost::fetchPairing()
+{
+    if (!m_installed)
+        return;
+    configureApi();
+    if (!m_api->ready()) {
+        if (m_pairingReachable) {
+            m_pairingReachable = false;
+            emit pairingChanged();
+        }
+        return;
+    }
+    m_api->fetch();
+}
+
+void StreamingHost::pair(const QString &requestId, const QString &pin, const QString &name)
+{
+    configureApi();
+    const QString label = name.trimmed().isEmpty() ? tr("TV") : name.trimmed();
+    m_api->pair(requestId, pin, label);
+}
+
+void StreamingHost::unpair(const QString &uuid)
+{
+    configureApi();
+    m_api->unpair(uuid);
+}
+
+void StreamingHost::setPairingMessage(const QString &text, bool failed)
+{
+    m_pairingMessage = text;
+    m_pairingFailed = failed;
+    emit pairingChanged();
 }
 
 } // namespace strmqt

@@ -1,15 +1,19 @@
 #pragma once
 
 #include "HostFiles.h"
+#include "SunshineApi.h"
 
 #include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 class QProcess;
 
 namespace strmqt {
+
+class SecretsStore;
 
 // Settings' "Streaming host": sets up, watches and removes the two systemd
 // user services described in HostFiles.h. Everything is asynchronous and
@@ -37,6 +41,17 @@ class StreamingHost : public QObject
     Q_PROPERTY(bool webUiOnNetwork READ webUiOnNetwork WRITE setWebUiOnNetwork NOTIFY configChanged)
     Q_PROPERTY(int port READ port NOTIFY configChanged)
     Q_PROPERTY(QString webUiAddress READ webUiAddress NOTIFY configChanged)
+    // Pairing, through the host Sunshine's own API. Each entry of `devices`
+    // is {name, uuid}; each of `requests` is {id, name}: a Moonlight showing a
+    // PIN right now.
+    Q_PROPERTY(QVariantList devices READ devices NOTIFY pairingChanged)
+    Q_PROPERTY(QVariantList requests READ requests NOTIFY pairingChanged)
+    // False for a Sunshine that cannot say who is asking: the PIN is then
+    // sent on its own and Sunshine matches it to whoever is waiting.
+    Q_PROPERTY(bool requestsListed READ requestsListed NOTIFY pairingChanged)
+    Q_PROPERTY(bool pairingReachable READ pairingReachable NOTIFY pairingChanged)
+    Q_PROPERTY(QString pairingMessage READ pairingMessage NOTIFY pairingChanged)
+    Q_PROPERTY(bool pairingFailed READ pairingFailed NOTIFY pairingChanged)
 
 public:
     // Where things go and what is run. The defaults are the real ones; tests
@@ -79,6 +94,12 @@ public:
     void setWebUiOnNetwork(bool on);
     int port() const { return m_config.port; }
     QString webUiAddress() const;
+    QVariantList devices() const { return m_devices; }
+    QVariantList requests() const { return m_requests; }
+    bool requestsListed() const { return m_requestsListed; }
+    bool pairingReachable() const { return m_pairingReachable; }
+    QString pairingMessage() const { return m_pairingMessage; }
+    bool pairingFailed() const { return m_pairingFailed; }
 
     // Nothing is looked at until this is called: opening Settings must not
     // start processes.
@@ -88,6 +109,10 @@ public:
     Q_INVOKABLE void setUp();
     Q_INVOKABLE void restart();
     Q_INVOKABLE void remove();
+    // Asks Sunshine for the paired devices and for who is asking to pair.
+    Q_INVOKABLE void fetchPairing();
+    Q_INVOKABLE void pair(const QString &requestId, const QString &pin, const QString &name);
+    Q_INVOKABLE void unpair(const QString &uuid);
 
     // What this machine lacks for hosting, given what was found on it.
     static QStringList probeProblems(const Environment &environment);
@@ -100,6 +125,7 @@ signals:
     void busyChanged();
     void messageChanged();
     void configChanged();
+    void pairingChanged();
     // Every queued command has finished, whichever way.
     void settled();
 
@@ -111,6 +137,8 @@ private:
         // A step that may fail without the whole thing having failed, and the
         // sentence to say when it does.
         QString toleratedAs;
+        // Carries a secret: its arguments are never logged or shown.
+        bool quiet = false;
     };
 
     void probe();
@@ -124,6 +152,9 @@ private:
     void finish(bool ok, const QString &text);
     void setMessage(const QString &text, bool failed);
     QString unitPath(const QString &unit) const;
+    void connectApi();
+    void configureApi();
+    void setPairingMessage(const QString &text, bool failed);
 
     Environment m_env;
     streaming::HostConfig m_config;
@@ -140,6 +171,20 @@ private:
     QStringList m_notes;
     QProcess *m_process = nullptr;
     QProcess *m_stateProcess = nullptr;
+    // The host Sunshine's sign-in, which only StrmQt uses. Kept in a vault
+    // file beside the host's other state rather than in the desktop keyring:
+    // the StrmQt that needs it is the headless one, which starts at boot with
+    // no keyring unlocked, and the folder already holds what the password
+    // guards (Sunshine's pairings and private key).
+    SecretsStore *m_vault = nullptr;
+    QString m_password;
+    streaming::SunshineApi *m_api = nullptr;
+    QVariantList m_devices;
+    QVariantList m_requests;
+    bool m_requestsListed = true;
+    bool m_pairingReachable = false;
+    QString m_pairingMessage;
+    bool m_pairingFailed = false;
 };
 
 } // namespace strmqt

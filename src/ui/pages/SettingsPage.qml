@@ -1679,7 +1679,10 @@ FocusScope {
                         repeat: true
                         running: streamingHostPanel.visible && streamingHostPanel.looked
                                  && streamingHostPanel.present && streamingHostPanel.host.installed
-                        onTriggered: streamingHostPanel.host.checkState()
+                        onTriggered: {
+                            streamingHostPanel.host.checkState();
+                            streamingHostPanel.host.fetchPairing();
+                        }
                     }
 
                     Repeater {
@@ -1746,6 +1749,123 @@ FocusScope {
                             onToggled: if (streamingHostPanel.present)
                                            streamingHostPanel.host.webUiOnNetwork = !streamingHostPanel.host.webUiOnNetwork
                         }
+                    }
+
+                    // ── Pairing: Moonlight shows a PIN, it is typed here ──
+                    property string pin: ""
+                    readonly property bool pairingShown: streamingHostPanel.looked && streamingHostPanel.present
+                                                         && streamingHostPanel.host.installed
+                                                         && streamingHostPanel.host.pairingReachable
+
+                    Repeater {
+                        model: streamingHostPanel.pairingShown ? streamingHostPanel.host.devices : []
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.name
+                            hint: qsTr("Paired. It can start the stream without asking.")
+
+                            StrmButton {
+                                objectName: "streamingHostUnpair" + index
+                                text: qsTr("Remove")
+                                destructive: true
+                                onClicked: streamingHostPanel.host.unpair(modelData.uuid)
+                            }
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: streamingHostPanel.pairingShown && streamingHostPanel.host.devices.length === 0
+                        text: qsTr("No device is paired. In Moonlight on the TV, add this computer by its address and port %1; it shows a PIN to type here.")
+                              .arg(streamingHostPanel.present ? streamingHostPanel.host.port : 0)
+                    }
+
+                    // The PIN, by buttons: the host has no keyboard, and a
+                    // remote or a controller can press these.
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        visible: streamingHostPanel.pairingShown
+                                 && (streamingHostPanel.host.requests.length > 0 || !streamingHostPanel.host.requestsListed)
+                        label: qsTr("PIN from the TV")
+                        hint: streamingHostPanel.pin.length > 0 ? streamingHostPanel.pin : qsTr("Four digits.")
+
+                        Row {
+                            spacing: Theme.spacingTight / 2
+
+                            Repeater {
+                                model: 10
+
+                                StrmButton {
+                                    required property int index
+
+                                    objectName: "streamingHostDigit" + index
+                                    text: String(index)
+                                    enabled: streamingHostPanel.pin.length < 4
+                                    onClicked: streamingHostPanel.pin += String(index)
+                                }
+                            }
+
+                            StrmButton {
+                                text: qsTr("Clear")
+                                enabled: streamingHostPanel.pin.length > 0
+                                onClicked: streamingHostPanel.pin = ""
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: streamingHostPanel.pairingShown ? streamingHostPanel.host.requests : []
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.name.length > 0 ? qsTr("%1 is asking to pair").arg(modelData.name)
+                                                             : qsTr("A device is asking to pair")
+                            hint: qsTr("Enter the PIN it is showing, then pair.")
+
+                            StrmButton {
+                                objectName: "streamingHostPair" + index
+                                text: qsTr("Pair")
+                                enabled: streamingHostPanel.pin.length === 4
+                                onClicked: {
+                                    streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
+                                    streamingHostPanel.pin = "";
+                                }
+                            }
+                        }
+                    }
+
+                    // A Sunshine that cannot say who is asking takes the PIN
+                    // alone and matches it to whoever is waiting.
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        visible: streamingHostPanel.pairingShown && !streamingHostPanel.host.requestsListed
+                        label: qsTr("Pair the device showing this PIN")
+                        hint: qsTr("Start pairing in Moonlight first.")
+
+                        StrmButton {
+                            text: qsTr("Pair")
+                            enabled: streamingHostPanel.pin.length === 4
+                            onClicked: {
+                                streamingHostPanel.host.pair("", streamingHostPanel.pin, "");
+                                streamingHostPanel.pin = "";
+                            }
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: streamingHostPanel.looked && streamingHostPanel.present
+                                 && streamingHostPanel.host.installed
+                                 && streamingHostPanel.host.pairingMessage.length > 0
+                        text: streamingHostPanel.present ? streamingHostPanel.host.pairingMessage : ""
+                        iconName: streamingHostPanel.present && streamingHostPanel.host.pairingFailed ? "info" : "check"
                     }
 
                     SettingsSections.SectionNote {

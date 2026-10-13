@@ -1,5 +1,6 @@
 #include "platform/streaming/HostFiles.h"
 #include "platform/streaming/StreamingHost.h"
+#include "platform/streaming/SunshineApi.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -170,10 +171,12 @@ private slots:
         QVERIFY(QFile::exists(env.stateDir + QStringLiteral("/apps.json")));
 
         const QStringList calls = read(dir.filePath(QStringLiteral("calls"))).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        QVERIFY(calls.size() >= 3);
+        QVERIFY(calls.size() >= 4);
         QCOMPARE(calls.at(0), QStringLiteral("--user daemon-reload"));
         QCOMPARE(calls.at(1), QStringLiteral("--user enable t-host.service t-sunshine.service"));
-        QCOMPARE(calls.at(2), QStringLiteral("--user restart t-host.service t-sunshine.service"));
+        // Sunshine is stopped while its sign-in is set (the first time only).
+        QCOMPARE(calls.at(2), QStringLiteral("--user stop t-sunshine.service"));
+        QCOMPARE(calls.at(3), QStringLiteral("--user restart t-host.service t-sunshine.service"));
 
         host.remove();
         QVERIFY(settled.wait(5000));
@@ -209,6 +212,60 @@ private slots:
         QVERIFY(!host.busy());
         QVERIFY(!host.available());
         QVERIFY(!QFile::exists(env.unitDir + QStringLiteral("/t-host.service")));
+    }
+
+    void sunshinesAnswersAreReadTolerantly()
+    {
+        const auto clients = SunshineApi::parseClients(
+            R"({"named_certs":[{"name":"Den TV","uuid":"A1","extra":3},{"uuid":"B2"},{"name":"no id"}],"status":true})");
+        QCOMPARE(clients.size(), 2);
+        QCOMPARE(clients.at(0).name, QStringLiteral("Den TV"));
+        QCOMPARE(clients.at(1).uuid, QStringLiteral("B2"));
+        QVERIFY(!clients.at(1).name.isEmpty());
+        QVERIFY(SunshineApi::parseClients("not json").isEmpty());
+
+        bool listed = false;
+        const auto asking = SunshineApi::parsePairings(R"({"pairings":[{"id":"abc","name":"Fire TV"},{"name":"x"}]})", &listed);
+        QVERIFY(listed);
+        QCOMPARE(asking.size(), 1);
+        QCOMPARE(asking.at(0).id, QStringLiteral("abc"));
+        // An older Sunshine answers this address with an error object.
+        QVERIFY(SunshineApi::parsePairings(R"({"error":"Not Found","status_code":404})", &listed).isEmpty());
+        QVERIFY(!listed);
+
+        QVERIFY(SunshineApi::errorIn(R"({"status":true})").isEmpty());
+        QCOMPARE(SunshineApi::errorIn(R"({"status":false,"error":"wrong pin"})"), QStringLiteral("wrong pin"));
+        QVERIFY(!SunshineApi::errorIn(R"({"status":false})").isEmpty());
+        QVERIFY(!SunshineApi::errorIn("").isEmpty());
+    }
+
+    void setUpGivesSunshineASignInOnlyStrmQtKnows()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        writeScript(env.sunshine, "# zkde_screencast_unstable_v1\necho \"$@\" > \"$CREDS\"\n");
+        qputenv("CREDS", dir.filePath(QStringLiteral("creds")).toUtf8());
+        StreamingHost host(env);
+        QSignalSpy settled(&host, &StreamingHost::settled);
+        host.setUp();
+        QVERIFY(settled.wait(5000));
+        QVERIFY2(!host.failed(), qPrintable(host.message()));
+        const QStringList creds = read(dir.filePath(QStringLiteral("creds"))).trimmed().split(QLatin1Char(' '));
+        QCOMPARE(creds.size(), 4);
+        QCOMPARE(creds.at(0), env.stateDir + QStringLiteral("/sunshine.conf"));
+        QCOMPARE(creds.at(1), QStringLiteral("--creds"));
+        QVERIFY(creds.at(3).size() >= 24);
+        // Kept, owner-only, where the headless StrmQt can read it.
+        QTRY_VERIFY(QFile::exists(env.stateDir + QStringLiteral("/secrets.ini")));
+        QCOMPARE(QFile::permissions(env.stateDir + QStringLiteral("/secrets.ini"))
+                     & (QFileDevice::ReadGroup | QFileDevice::ReadOther),
+                 QFileDevice::Permissions());
+
+        // Chosen once: setting up again does not change it under Sunshine.
+        QFile::remove(dir.filePath(QStringLiteral("creds")));
+        host.setUp();
+        QVERIFY(settled.wait(5000));
+        QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("creds"))));
     }
 
     // The real thing, on this machine: a headless KWin with StrmQt on it and a
@@ -251,6 +308,18 @@ private slots:
         QVERIFY2(log.contains(QStringLiteral("Screencasting with KWin ScreenCast")), qPrintable(log.right(2000)));
         QVERIFY2(log.contains(QStringLiteral("resolution: 3840x2160")), qPrintable(log.right(2000)));
         QVERIFY2(!log.contains(QStringLiteral("Fatal:")), qPrintable(log.right(2000)));
+
+        // Sunshine's API, with the sign-in set-up chose and the certificate
+        // Sunshine wrote: nobody is paired and nobody is asking.
+        host.fetchPairing();
+        QTRY_VERIFY2_WITH_TIMEOUT(host.pairingReachable(), qPrintable(host.pairingMessage()), 10000);
+        QCOMPARE(host.devices().size(), 0);
+        QCOMPARE(host.requests().size(), 0);
+        qInfo() << "requests listed:" << host.requestsListed();
+        QSignalSpy pairing(&host, &StreamingHost::pairingChanged);
+        host.pair(QStringLiteral("00000000000000000000000000000000"), QStringLiteral("1234"), QStringLiteral("Nobody"));
+        QTRY_VERIFY_WITH_TIMEOUT(host.pairingFailed(), 10000);
+        qInfo() << host.pairingMessage();
     }
 
 private:
