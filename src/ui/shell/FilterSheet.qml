@@ -234,7 +234,7 @@ FocusScope {
             objectName: "filterSheetFacets"
 
             anchors.top: heading.bottom
-            anchors.bottom: footer.top
+            anchors.bottom: sheetFooter.top
             anchors.left: parent.left
             anchors.margins: Theme.spacingTight
             width: Math.min(Theme.scale(250), Math.round(surface.width * 0.38))
@@ -373,7 +373,7 @@ FocusScope {
             objectName: "filterSheetOptions"
 
             anchors.top: field.bottom
-            anchors.bottom: footer.top
+            anchors.bottom: sheetFooter.top
             anchors.left: divider.right
             anchors.right: parent.right
             anchors.margins: Theme.spacingTight
@@ -492,7 +492,7 @@ FocusScope {
 
         // ── Footer: the answer so far, and the ways out ────────────────────
         Item {
-            id: footer
+            id: sheetFooter
 
             anchors.left: parent.left
             anchors.right: parent.right
