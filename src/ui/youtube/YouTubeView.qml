@@ -46,10 +46,19 @@ WebEngineView {
         view.runJavaScript("window.__strmqtVideo && (function (v) { if (v)"
                            + " (v.paused ? v.play() : v.pause()); })(window.__strmqtVideo());");
     }
+    function resumePlayback(): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v && v.paused && !v.ended)"
+                           + " v.play(); })(window.__strmqtVideo());");
+    }
     function seekBy(seconds: real): void {
         view.runJavaScript("window.__strmqtVideo && (function (v) { if (v && isFinite(v.duration))"
                            + " v.currentTime = Math.max(0, Math.min(v.duration - 1, v.currentTime + ("
                            + Number(seconds) + "))); })(window.__strmqtVideo());");
+    }
+    function seekTo(seconds: real): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v && isFinite(v.duration))"
+                           + " v.currentTime = Math.max(0, Math.min(v.duration - 1, "
+                           + Number(seconds) + ")); })(window.__strmqtVideo());");
     }
     function setVolume(volume: real): void {
         view.runJavaScript("window.__strmqtVideo && (function (v) { if (v) { v.muted = false;"
@@ -89,6 +98,30 @@ WebEngineView {
     settings.focusOnNavigationEnabled: false
 
     userScripts.collection: [
+        // The page is always on show, as far as it can tell. A TV application
+        // pauses when it is told it has been hidden — that is how a console
+        // suspends it — and it does not resume when it is shown again. Here
+        // "hidden" is the view moving between its page and the mini player,
+        // or the window being minimised with a video the user left playing.
+        // Before any of YouTube's own script, so this listener is the first.
+        {
+            "name": "strmqt-shown",
+            "injectionPoint": WebEngineScript.DocumentCreation,
+            "worldId": WebEngineScript.MainWorld,
+            "runsOnSubFrames": false,
+            "sourceCode": "(function () {"
+                + " if (window.__strmqtShown) return; window.__strmqtShown = true;"
+                + " function fixed(name, value) {"
+                + "  try { Object.defineProperty(Document.prototype, name,"
+                + "   { configurable: true, get: function () { return value; } }); } catch (e) {}"
+                + " }"
+                + " fixed('hidden', false); fixed('webkitHidden', false);"
+                + " fixed('visibilityState', 'visible'); fixed('webkitVisibilityState', 'visible');"
+                + " ['visibilitychange', 'webkitvisibilitychange'].forEach(function (name) {"
+                + "  window.addEventListener(name, function (e) { e.stopImmediatePropagation(); }, true);"
+                + " });"
+                + "})();"
+        },
         {
             "name": "strmqt-bridge",
             "injectionPoint": WebEngineScript.DocumentReady,

@@ -668,6 +668,10 @@ ApplicationWindow {
     property bool youtubeSingle: false
     // An address asked for before the view existed.
     property url youtubePending: ""
+    // Left while it was playing: a pause YouTube makes of its own accord in
+    // the moments after — it takes losing the keyboard for being put away —
+    // is undone, once. A pause the user asks for clears this first.
+    property real youtubeKeepPlayingUntil: 0
 
     function ensureYouTube(): bool {
         if (typeof YouTubeAvailable === "undefined" || !YouTubeAvailable)
@@ -694,8 +698,12 @@ ApplicationWindow {
         }
         // Left with a video up: it plays on in the mini player. Left while
         // browsing: the preview YouTube was playing on a shelf stops.
-        if (youtubeHost.item !== null && root.youtubeState.watching !== true)
+        if (youtubeHost.item === null)
+            return;
+        if (root.youtubeState.watching !== true)
             youtubeHost.item.pausePlayback();
+        else if (root.youtubeState.playing === true)
+            root.youtubeKeepPlayingUntil = Date.now() + 2000;
     }
 
     // `section` optionally names a Settings section to land on ("remote").
@@ -782,7 +790,7 @@ ApplicationWindow {
         // The mini player reserves its own strip rather than floating over the
         // page: without this the bar covers the last row of every grid, which
         // is exactly the row a user scrolls to.
-        anchors.bottomMargin: miniPlayer.reservedHeight
+        anchors.bottomMargin: miniPlayer.reservedHeight + youtubeMini.reservedHeight
         focus: true
         historyLimit: root.navigationHistoryLimit
         livePageLimit: root.navigationLivePageLimit
@@ -1053,7 +1061,8 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         // The bar's reserved strip is animated, so this rides it up and down
         // instead of jumping when the bar arrives.
-        anchors.bottomMargin: miniPlayer.reservedHeight + Theme.spacingValue
+        anchors.bottomMargin: miniPlayer.reservedHeight + youtubeMini.reservedHeight
+                              + Theme.spacingValue
         // Below the bar and the rail, above the pages: it floats over content,
         // never over the chrome that controls it.
         z: 17
@@ -1176,12 +1185,20 @@ ApplicationWindow {
         id: youtubeHost
 
         readonly property bool onPage: root.youtubeOnTop && stack.currentItem.slot !== undefined
+        // The page area as it is without YouTube's own bar under it: the size
+        // the view had on its page, so parking it does not resize it either.
+        readonly property int pageHeight: stack.height + youtubeMini.reservedHeight
 
         active: false
         focus: true
         parent: youtubeHost.onPage ? stack.currentItem.slot : youtubeMini.slot
         width: youtubeHost.onPage ? parent.width : stack.width
-        height: youtubeHost.onPage ? parent.height : stack.height
+        height: youtubeHost.onPage ? parent.height : youtubeHost.pageHeight
+        // Parked with a video up it is on show; parked with nothing up it is
+        // put away. Tied to what YouTube reported and to nothing that changes
+        // at the moment of leaving, so the view is never hidden for a frame
+        // on its way into the picture (YouTubeMini.qml on why that matters).
+        visible: youtubeHost.onPage || root.youtubeState.watching === true
         transformOrigin: Item.TopLeft
         scale: youtubeHost.onPage || youtubeHost.width <= 0 ? 1 : parent.width / youtubeHost.width
 
@@ -1224,6 +1241,14 @@ ApplicationWindow {
         }
         function onStateReported(state) {
             root.youtubeState = state;
+            if (root.youtubeKeepPlayingUntil <= 0)
+                return;
+            if (root.youtubeOnTop || Date.now() > root.youtubeKeepPlayingUntil) {
+                root.youtubeKeepPlayingUntil = 0;
+            } else if (state.watching === true && state.playing !== true) {
+                root.youtubeKeepPlayingUntil = 0;
+                youtubeHost.item.resumePlayback();
+            }
         }
     }
 
@@ -1241,6 +1266,7 @@ ApplicationWindow {
     function yieldYouTube(): void {
         if (youtubeHost.item === null || !PlayerCtl.active || PlayerCtl.paused)
             return;
+        root.youtubeKeepPlayingUntil = 0;
         if (root.youtubeOnTop)
             youtubeHost.item.pausePlayback();
         else
@@ -1251,11 +1277,13 @@ ApplicationWindow {
     YouTubeMini {
         id: youtubeMini
 
+        anchors.left: parent.left
+        anchors.leftMargin: navRail.collapsedWidth
         anchors.right: parent.right
-        anchors.rightMargin: Theme.spacingValue
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: miniPlayer.reservedHeight + Theme.spacingValue
-                              + (pip.shown ? pip.height + Theme.spacingValue : 0)
+        // Above the film's bar on the rare occasion both are up (a paused
+        // film, and a video started after it).
+        anchors.bottomMargin: miniPlayer.reservedHeight
         z: 17
         shown: Session.authenticated && youtubeHost.item !== null && !root.youtubeOnTop
                && !root.playerOnTop && root.youtubeState.watching === true
@@ -1264,16 +1292,22 @@ ApplicationWindow {
                && (root.youtubeState.playing === true || root.youtubeState.duration > 0
                    || root.youtubeState.position > 0)
         state: root.youtubeState
-        aspect: stack.height > 0 ? stack.width / stack.height : 16 / 9
+        aspect: youtubeHost.pageHeight > 0 ? stack.width / youtubeHost.pageHeight : 16 / 9
+        pictureLift: pip.shown ? pip.height + Theme.spacingValue : 0
         navUp: stack
 
         onExpandRequested: root.openYouTube()
         onStopRequested: {
+            root.youtubeKeepPlayingUntil = 0;
             youtubeHost.item.stopPlayback();
             root.focusCurrentPage();
         }
-        onPlayPauseRequested: youtubeHost.item.playPause()
+        onPlayPauseRequested: {
+            root.youtubeKeepPlayingUntil = 0;
+            youtubeHost.item.playPause();
+        }
         onSeekRequested: seconds => youtubeHost.item.seekBy(seconds)
+        onSeekToRequested: seconds => youtubeHost.item.seekTo(seconds)
         onVolumeRequested: volume => youtubeHost.item.setVolume(volume)
         onMuteRequested: muted => youtubeHost.item.setMuted(muted)
         onDismissed: root.focusCurrentPage()
