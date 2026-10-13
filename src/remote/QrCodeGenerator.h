@@ -17,7 +17,9 @@ public:
                         const QString &foreground = QStringLiteral("#0C0B0A"),
                         const QString &background = QStringLiteral("#FFFFFF"));
 
-    // Generates a boolean 2D grid of modules (true = dark, false = light).
+    // Generates a boolean 2D grid of modules (true = dark, false = light),
+    // indexed [row][column]. Empty when the text does not fit: byte mode,
+    // medium correction, versions 1-6, which is 106 bytes of UTF-8.
     static std::vector<std::vector<bool>> encodeText(const QString &text, Ecc ecc = Ecc::Medium);
 };
 

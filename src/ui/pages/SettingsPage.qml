@@ -502,7 +502,7 @@ FocusScope {
     }
 
     PageHeader {
-        id: header
+        id: pageHeader
 
         anchors.top: parent.top
         anchors.left: parent.left
@@ -522,7 +522,7 @@ FocusScope {
     ListView {
         id: sectionList
 
-        anchors.top: header.bottom
+        anchors.top: pageHeader.bottom
         anchors.topMargin: Theme.spacingLoose
         anchors.left: parent.left
         anchors.leftMargin: Theme.pageMarginValue
