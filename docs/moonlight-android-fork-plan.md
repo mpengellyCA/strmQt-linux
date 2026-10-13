@@ -1,0 +1,251 @@
+# Plan: a Moonlight Android TV fork for StrmQt
+
+A brief for an agent working in a **separate repository** (a fork of
+`moonlight-stream/moonlight-android`). It needs no access to the StrmQt
+source; everything it must know about StrmQt is in this file.
+
+Written 2026-10-13. Statements about StrmQt were read from its source at
+`main` (`1d5cebf`). Statements about Moonlight's internals are from memory of
+that project and are marked **[verify]**: confirm them against the code before
+relying on them.
+
+## 1. Goal
+
+StrmQt is a native Emby client (Qt 6, Linux) that runs on a mini PC and is
+streamed with Sunshine to Amazon Fire TV devices. Today the viewer needs a
+second remote paired to the mini PC, because the stock Moonlight client does
+not deliver the Fire TV remote's buttons to StrmQt in a usable form.
+
+Build a Moonlight Android fork, sideloaded on Fire TV, that makes the Fire TV
+behave like a StrmQt appliance:
+
+1. **The Fire TV remote drives StrmQt.** D-pad, Select, Back, Menu,
+   Play/Pause, Rewind and Fast-forward all do the expected thing.
+2. **It connects by itself.** Opening the app goes straight to the StrmQt
+   stream on the configured host, with no host list and no app grid, and
+   reconnects if the stream drops.
+3. **It can start with the device.** Optional, off by default: launch on boot
+   and return to the stream after the device wakes.
+
+Out of scope: any change to Sunshine (it stays stock), game streaming
+features, publishing to an app store, phones and tablets.
+
+## 2. The host side, as it will be
+
+- Host: CachyOS (Arch), Ryzen 7 6800H with Radeon integrated graphics.
+- A stock, recent Sunshine instance dedicated to StrmQt, capturing a headless
+  3840x2160 screen that shows only StrmQt. Target stream: 4K, 30 fps, HEVC.
+- This instance is separate from any desktop Sunshine on the same machine, so
+  **its ports are not the defaults**. The client must let the user set the
+  host address and port, not assume 47989.
+- StrmQt runs its **Web Remote** server on the same host: HTTPS on port 8337
+  by default, self-signed certificate, PIN sign-in. This is the control
+  channel described in section 4.
+
+### Why not just send keyboard keys through Moonlight
+
+Sunshine injects keyboard and mouse input as kernel virtual devices. The
+headless screen StrmQt runs on does not read kernel input devices, so keys
+sent the normal Moonlight way do not reach StrmQt. This was established by a
+spike on 2026-10-13; a real Moonlight connection was not part of that spike.
+
+Game controllers are different: StrmQt reads controllers directly (SDL3), so
+a virtual gamepad created by Sunshine should reach it. That was not tested
+either. It is the fallback transport in section 4.
+
+## 3. What the Fire TV remote can give an app
+
+Delivered to the foreground app as `KeyEvent`s: `DPAD_UP/DOWN/LEFT/RIGHT`,
+`DPAD_CENTER`, `BACK`, `MENU`, `MEDIA_PLAY_PAUSE`, `MEDIA_REWIND`,
+`MEDIA_FAST_FORWARD`. Some remotes add channel, guide or settings keys;
+treat them as optional.
+
+Never delivered: Home, the voice button, the app-shortcut buttons. Volume,
+mute and power go to the TV or receiver by IR/CEC, not to the app.
+
+Log the actual key codes and source device of the target remotes in phase 0
+rather than trusting this list.
+
+## 4. Remote transport
+
+Make the transport an interface with two implementations, chosen in
+settings. Build A first.
+
+### A. StrmQt Web Remote (primary)
+
+The client talks to StrmQt directly over the LAN. It does not depend on
+Sunshine's input path at all.
+
+- Base URL: `https://<host>:8337` (port configurable).
+- TLS: the certificate is self-signed. **Pin it on first use**: store the
+  certificate's SHA-256 at pairing and accept only that certificate
+  afterwards. Do not disable certificate checking.
+- Sign in: `POST /api/auth/pin` with JSON `{"pin": "1234"}`. A correct PIN
+  returns `{"token": "<uuid>"}`. Repeated wrong PINs return `429`; back off.
+  The PIN is shown in StrmQt under Settings, Web Remote. Tokens are held in
+  memory by StrmQt, so **a `401` after a StrmQt restart means sign in again**
+  with the stored PIN.
+- Every other request carries `Authorization: Bearer <token>`.
+- Send a button: `POST /api/action` with JSON `{"action": "<id>"}`. Unknown
+  ids return `400`.
+- `GET /api/status` returns current state (JSON); `GET /api/events` is a
+  server-sent-events stream of state changes. Use these only if a feature
+  needs them (for example, to know whether video is playing).
+
+Action ids the remote needs (all exist in StrmQt today):
+
+| Remote button | Action id | Notes |
+|---|---|---|
+| D-pad | `nav.up`, `nav.down`, `nav.left`, `nav.right` | Repeat while held (see below) |
+| Select | `nav.select` | |
+| Back | `nav.back` | |
+| Menu | `app.toggleMenu` | Long press: `nav.contextMenu` |
+| Play/Pause | `player.togglePause` | |
+| Rewind | `player.seekBackward` | Long press: `player.seekBackwardLong` |
+| Fast-forward | `player.seekForward` | Long press: `player.seekForwardLong` |
+
+Other ids available if useful: `app.home`, `app.settings`, `player.stop`,
+`player.next`, `player.previous`, `player.nextChapter`,
+`player.previousChapter`, `player.toggleOsd`, `player.cycleAudio`,
+`player.cycleSubtitle`, `nav.pageUp`, `nav.pageDown`.
+
+Requirements for A:
+
+- One kept-alive HTTPS connection, requests sent in order off the UI thread.
+  A button press must not wait on a new TLS handshake.
+- Key repeat is the client's job: actions are discrete, so a held D-pad
+  sends the action again on a timer (suggested: 400 ms delay, then every
+  90 ms), and stops on key-up or focus loss.
+- If a request fails, drop queued repeats rather than replaying them late.
+
+Known limits of A, to report rather than work around:
+
+- StrmQt's YouTube and YouTube Music pages are embedded web pages. Whether
+  every `nav.*` action reaches them the same way a key does has not been
+  checked from this API.
+- There is no text entry over this API.
+
+Anything missing on the StrmQt side (a new action, a text-entry endpoint, a
+longer-lived token) is a request to the StrmQt maintainer, not something to
+emulate in the client.
+
+### B. Gamepad buttons through Moonlight (fallback)
+
+Present the remote to the existing controller path as a gamepad: D-pad as
+D-pad, Select as A, Back as B, Menu as Start, Play/Pause as X, Rewind and
+Fast-forward as the shoulder buttons. Sunshine creates a virtual controller
+on the host and StrmQt reads it.
+
+Moonlight may already do part of this for remotes **[verify]**. Phase 0
+establishes what it does today; if stock behaviour already works with the
+headless host, B is a settings default and no code.
+
+## 5. Work, in order
+
+### Phase 0: find out what happens today
+
+No fork changes yet. With stock Moonlight on a Fire TV connected to the
+host:
+
+- Log every `KeyEvent` from the remote (key code, device id, source flags).
+- Trace where Moonlight sends each one. Entry points to read **[verify]**:
+  `com.limelight.Game` (the streaming activity; `handleKeyDown`/`handleKeyUp`),
+  `com.limelight.binding.input.ControllerHandler`,
+  `com.limelight.binding.input.KeyboardTranslator`.
+- On the host, `sudo evtest` shows which virtual devices Sunshine creates and
+  which events arrive.
+
+Deliverable: a short table of button, what Moonlight sends, what arrives on
+the host. This decides how much of B already exists.
+
+### Phase 1: fork and build
+
+- Fork `moonlight-stream/moonlight-android` (GPL-3.0). It uses a git
+  submodule for the streaming core and the Android NDK **[verify]**.
+- New application id and name so it installs beside stock Moonlight. Keep
+  all upstream copyright and licence notices; add a NOTICE describing the
+  fork. The fork stays GPL-3.0 with public source.
+- Produce a debug build that streams from the host unchanged, sideloaded
+  with `adb install`.
+- Keep the diff small and upstream-mergeable: new behaviour in new classes
+  behind settings, minimal edits to upstream files.
+
+### Phase 2: remote mode with transport A
+
+- A "StrmQt remote" setting group: on/off, StrmQt address and port, PIN
+  entry (D-pad friendly numeric entry), transport A or B.
+- Pairing flow: fetch and pin the certificate, sign in with the PIN, store
+  the PIN and pin hash in app-private storage.
+- In the streaming activity, when remote mode is on and the event comes from
+  a remote (not a game controller or a real keyboard), consume it and send
+  the mapped action instead of passing it to the normal input path. Real
+  controllers and keyboards keep working as upstream.
+- An exit gesture that cannot be triggered by normal use, since Back now
+  belongs to StrmQt: hold Back for 2 seconds to open the fork's own menu
+  (disconnect, settings). Show a one-time hint.
+- A visible, non-blocking indicator when the control channel is down.
+
+### Phase 3: appliance behaviour
+
+- "Connect on launch": a configured host, port and app name; the launcher
+  activity goes straight to the stream. Moonlight has a shortcut path that
+  starts a stream from an intent **[verify]** (`ShortcutTrampoline`); reuse
+  it rather than writing a second connection flow.
+- Reconnect with backoff when the stream ends unexpectedly; give up to the
+  fork's menu after a bounded number of tries. Use Moonlight's Wake-on-LAN
+  if the host is asleep.
+- Stream preset for this use: 3840x2160, 30 fps, HEVC, a bitrate setting,
+  frame pacing suited to video. Fall back to 1080p when the device cannot
+  decode 4K.
+- Keep the screen on while streaming.
+
+### Phase 4: start with the device (optional, off by default)
+
+This is the fragile part. Fire OS does not allow replacing the launcher and
+restricts starting an activity from the background.
+
+- A `BOOT_COMPLETED` receiver that starts the stream. On current Fire OS
+  this needs the "display over other apps" permission, granted once with
+  `adb shell appops set <package> SYSTEM_ALERT_WINDOW allow` **[verify on
+  the target Fire OS version]**.
+- "Return on wake": bring the stream back when the device wakes, by the same
+  mechanism.
+- Screensaver and sleep are device settings changed over `adb`; document the
+  commands, do not attempt them from the app.
+- Document clearly that an Amazon update can break this, and that the manual
+  path (open the app) always works.
+
+## 6. Acceptance
+
+On a Fire TV Stick 4K class device, with the headless host running:
+
+1. Fresh install, pair with Sunshine, pair with StrmQt by PIN, without a
+   keyboard.
+2. Every button in the section 4 table does what the table says, on the
+   StrmQt home screen and during video playback.
+3. Holding a D-pad direction scrolls steadily and stops on release, with no
+   run-on after the button is let go.
+4. Restarting StrmQt on the host: the remote recovers by itself within a few
+   seconds.
+5. Closing and reopening the app lands in the stream with no navigation.
+6. A real game controller paired to the Fire TV still works as in upstream.
+7. Hold-Back opens the fork's menu every time and is never triggered by a
+   short press.
+8. With phase 4 enabled and the `adb` permission granted: power-cycling the
+   Fire TV ends in the stream.
+
+Report for each item whether it was tested on a real device or only in an
+emulator. An Android TV emulator cannot stand in for the Fire TV remote or
+for Fire OS boot behaviour.
+
+## 7. Risks to raise early
+
+- Phase 0 may show stock Moonlight already delivers the remote as a gamepad
+  and StrmQt handles it. Then phases 2A and 3 are still worth building, but
+  say so before building them.
+- 4K HEVC at 30 fps decode varies by Fire TV model. Record the model and
+  measured decode time.
+- Input latency of transport A depends on the LAN, not on the video stream.
+  Measure button-to-screen time and report it.
+- Wrong-PIN lockouts on the StrmQt side during development: back off instead
+  of retrying in a loop.
