@@ -66,6 +66,12 @@ ApplicationWindow {
                                         || App.navigationModal === true
     readonly property bool chromeVisible: Session.authenticated && !root.playerOnTop
 
+    // One toggle for the shortcut and for the profile menu's row.
+    function toggleFullScreen(): void {
+        root.visibility = root.visibility === Window.FullScreen
+                        ? Window.Windowed : Window.FullScreen;
+    }
+
     function toggleShortcutSheet(): void {
         shortcutSheetLoader.toggle();
     }
@@ -1220,6 +1226,8 @@ ApplicationWindow {
         onForwardRequested: root.goForward()
         onSettingsRequested: root.openSettings()
         onSignOutRequested: Session.logout()
+        fullScreen: root.visibility === Window.FullScreen
+        onFullScreenRequested: root.toggleFullScreen()
         onSearchDismissed: root.restoreFocusToPage()
         // Down (or Esc) out of the header hands the keyboard back, the mirror
         // of the Up that reached it.
@@ -1400,8 +1408,7 @@ ApplicationWindow {
     MappedShortcut {
         actionId: "app.fullscreen"
         fallback: ["F11", "F"]
-        onActivated: root.visibility = root.visibility === Window.FullScreen
-                     ? Window.Windowed : Window.FullScreen
+        onActivated: root.toggleFullScreen()
     }
 
     // Not in the input map yet, so these carry their own defaults and pick up a

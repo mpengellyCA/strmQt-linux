@@ -37,6 +37,10 @@ Item {
     signal searchDismissed
     signal settingsRequested
     signal signOutRequested
+    // The window's state, for the menu row that toggles it: the row names what
+    // choosing it does. The shortcut (F11) has no place on a pad or a remote.
+    property bool fullScreen: false
+    signal fullScreenRequested
     // The keyboard left the bar downwards; the page takes it back. Without this
     // a Down out of the header went nowhere at all, which made the bar a place
     // an arrow key could enter and not leave.
@@ -372,6 +376,8 @@ Item {
 
         actions: [
             { "text": qsTr("Settings"), "iconName": "settings" },
+            { "text": topBar.fullScreen ? qsTr("Exit full screen") : qsTr("Full screen"),
+              "iconName": topBar.fullScreen ? "fullscreen-exit" : "fullscreen" },
             { "separator": true },
             { "text": qsTr("Sign out"), "iconName": "logout", "destructive": true }
         ]
@@ -379,7 +385,9 @@ Item {
         onTriggered: index => {
             if (index === 0)
                 topBar.settingsRequested();
-            else if (index === 2)
+            else if (index === 1)
+                topBar.fullScreenRequested();
+            else if (index === 3)
                 topBar.signOutRequested();
         }
     }
