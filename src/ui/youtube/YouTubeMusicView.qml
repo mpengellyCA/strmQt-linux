@@ -164,15 +164,49 @@ WebEngineView {
  var BLOCKS = 'ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer,'
   + ' ytmusic-player-queue-item, ytmusic-multi-row-list-item-renderer,'
   + ' ytmusic-navigation-button-renderer, ytmusic-guide-entry-renderer';
+ var ROWS = 'ytmusic-responsive-list-item-renderer, ytmusic-player-queue-item,'
+  + ' ytmusic-multi-row-list-item-renderer, ytmusic-guide-entry-renderer';
  var STOPS = BLOCKS + ', a[href], button, input, [role="button"], [role="tab"],'
   + ' tp-yt-paper-item, tp-yt-paper-icon-button, tp-yt-paper-tab';
 
+ // The cursor is drawn over the page, not on the thing it marks: an
+ // outline on a card in a carousel is cut off by the carousel's edges, and
+ // one on a row sits under the row's neighbours. A frame of its own, fixed
+ // to the window and above everything, follows the focused thing around.
  var paint = document.createElement('style');
- paint.textContent = '[data-strmqt-focus] { outline: 3px solid #fff !important;'
-  + ' outline-offset: 2px; border-radius: 6px; }'
-  + ' ytmusic-responsive-list-item-renderer[data-strmqt-focus],'
-  + ' ytmusic-player-queue-item[data-strmqt-focus] { outline-offset: -3px; }';
+ paint.textContent = '[data-strmqt-focus], [data-strmqt-focus] :focus { outline: none !important; }'
+  + ' #strmqt-cursor { position: fixed; z-index: 2147483647; pointer-events: none;'
+  + ' box-sizing: border-box; border: 3px solid #fff; border-radius: 10px;'
+  + ' box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.35);'
+  + ' display: none; }';
  document.documentElement.appendChild(paint);
+ var cursor = document.createElement('div');
+ cursor.id = 'strmqt-cursor';
+ document.documentElement.appendChild(cursor);
+ var cursorAt = '';
+ function trace() {
+  var el = marked && marked.isConnected ? marked : null, at = '';
+  if (el) {
+   var r = el.getBoundingClientRect(), pad = el.matches(ROWS) ? 0 : 5;
+   // Inside the window, whatever the thing itself runs off.
+   var left = Math.max(2, r.left - pad), top = Math.max(2, r.top - pad);
+   var right = Math.min(innerWidth - 2, r.right + pad), bottom = Math.min(innerHeight - 2, r.bottom + pad);
+   if (r.width > 0 && r.height > 0 && right - left > 8 && bottom - top > 8)
+    at = Math.round(left) + '|' + Math.round(top) + '|' + Math.round(right - left) + '|' + Math.round(bottom - top);
+  }
+  if (at !== cursorAt) {
+   cursorAt = at;
+   if (!at) cursor.style.display = 'none';
+   else {
+    var p = at.split('|');
+    cursor.style.left = p[0] + 'px'; cursor.style.top = p[1] + 'px';
+    cursor.style.width = p[2] + 'px'; cursor.style.height = p[3] + 'px';
+    cursor.style.display = 'block';
+   }
+  }
+  requestAnimationFrame(trace);
+ }
+ requestAnimationFrame(trace);
 
  function typing(el) {
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
