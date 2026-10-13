@@ -106,6 +106,19 @@ endif()
 option(STRMQT_WITH_SDL3 "Build SDL3 gamepad support" ON)
 include(${CMAKE_SOURCE_DIR}/cmake/StrmQtSdl3.cmake)
 
+# YouTube's TV interface is a web page (ui/youtube), so the YouTube tab needs
+# Qt WebEngine: there is no other way to host it. On by default; a distro that
+# will not carry Chromium builds with -DSTRMQT_WITH_YOUTUBE=OFF and gets the
+# same app without the tab.
+option(STRMQT_WITH_YOUTUBE "Build the YouTube tab (needs Qt WebEngine)" ON)
+if(STRMQT_WITH_YOUTUBE)
+    find_package(Qt6 COMPONENTS WebEngineQuick)
+    if(NOT Qt6WebEngineQuick_FOUND)
+        message(FATAL_ERROR "Qt WebEngine (Qt6WebEngineQuick) was not found. "
+            "Install it, or configure with -DSTRMQT_WITH_YOUTUBE=OFF to build without the YouTube tab.")
+    endif()
+endif()
+
 qt_add_executable(strmqt
     app/main.cpp
     app/Application.h app/Application.cpp
@@ -202,6 +215,7 @@ qt_add_qml_module(strmqt
         ui/pages/PersonPage.qml
         ui/pages/MusicHomePage.qml
         ui/pages/MusicBrowsePage.qml
+        ui/pages/YouTubePage.qml
 )
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/ui/shims/Shims.cmake)
@@ -233,6 +247,14 @@ endif()
 # lacks it: PlayerPage loads the plane by URL and never names VlcVideo directly.
 if(LIBVLC_FOUND)
     qt_target_qml_sources(strmqt QML_FILES ui/components/VlcVideoPlane.qml)
+endif()
+
+# The web view is a separate QML file for the same reason: YouTubePage loads it
+# by URL, and a build without Qt WebEngine simply lacks it.
+if(STRMQT_WITH_YOUTUBE)
+    qt_target_qml_sources(strmqt QML_FILES ui/youtube/YouTubeView.qml)
+    target_compile_definitions(strmqt PRIVATE STRMQT_HAVE_YOUTUBE)
+    target_link_libraries(strmqt PRIVATE Qt6::WebEngineQuick)
 endif()
 
 # qmltyperegistrar includes QML_ELEMENT headers by bare file name.

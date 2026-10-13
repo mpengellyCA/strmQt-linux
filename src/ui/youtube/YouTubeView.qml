@@ -1,0 +1,100 @@
+import QtQuick
+import QtWebEngine
+
+// YouTube's own ten-foot interface (youtube.com/tv), in a web view.
+//
+// This file is the only one that names QtWebEngine, and it is in the module
+// only when the build has it (STRMQT_WITH_YOUTUBE): YouTubePage loads it by
+// URL and never names the type, the same arrangement the VLC video plane has.
+//
+// The view holds the keyboard for real. YouTube's interface is built for a
+// remote — arrows, Enter, Back — and every non-pointer device here ends up as
+// exactly those keys delivered to the focused item (ARCHITECTURE.md §5), so a
+// pad, a remote and the phone drive it with no translation layer of ours.
+//
+// What a web view cannot do is DECLINE a key: Chromium accepts every one, so
+// the navigator never hears about an arrow YouTube had no use for. The script
+// below is the stand-in for declining. It watches YouTube's own focus, and a
+// Left that moved nothing is reported to the page, which opens the rail.
+WebEngineView {
+    id: view
+
+    // The route's address; set once by the page before the view loads.
+    property url address: "https://www.youtube.com/tv"
+
+    // Left was pressed and YouTube's focus did not move: its left edge.
+    signal leftEdgeReached
+    // A video started playing with sound the user can hear.
+    signal playbackStarted
+    // YouTube asked to close itself (its own "Exit YouTube" dialog).
+    signal exitRequested
+
+    function pausePlayback(): void {
+        view.runJavaScript("document.querySelectorAll('video').forEach(function (v) {"
+                           + " if (!v.paused) v.pause(); });");
+    }
+
+    url: view.address
+    backgroundColor: "#0f0f0f"
+
+    // A TV identifies itself, and youtube.com/tv redirects anything else to
+    // the desktop site.
+    profile: WebEngineProfile {
+        storageName: "youtube"
+        offTheRecord: false
+        persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
+        httpUserAgent: "Mozilla/5.0 (PS4; Leanback Shell) Gecko/20100101 Firefox/65.0"
+                       + " LeanbackShell/01.00.01.75 Sony PS4/ (PS4, , no, CH)"
+    }
+
+    settings.playbackRequiresUserGesture: false
+    settings.fullScreenSupportEnabled: false
+    settings.javascriptCanOpenWindows: false
+    settings.focusOnNavigationEnabled: false
+
+    userScripts.collection: [
+        {
+            "name": "strmqt-bridge",
+            "injectionPoint": WebEngineScript.DocumentReady,
+            "worldId": WebEngineScript.MainWorld,
+            "runsOnSubFrames": false,
+            "sourceCode": "(function () {"
+                + " if (window.__strmqt) return; window.__strmqt = true;"
+                + " function say(m) { console.log('strmqt:' + m); }"
+                + " function where() {"
+                + "  var a = document.activeElement; if (!a) return '';"
+                + "  var r = a.getBoundingClientRect();"
+                + "  return a.tagName + '|' + Math.round(r.left) + '|' + Math.round(r.top)"
+                + "         + '|' + Math.round(r.width) + '|' + location.hash;"
+                + " }"
+                // While a video is up, Left is a seek and moves no focus.
+                + " function watching() { return location.hash.indexOf('#/watch') === 0; }"
+                + " document.addEventListener('keydown', function (e) {"
+                + "  if (e.keyCode !== 37 || e.repeat || watching()) return;"
+                + "  var before = where();"
+                + "  setTimeout(function () { if (where() === before) say('edge-left'); }, 150);"
+                + " }, true);"
+                + " document.addEventListener('playing', function (e) {"
+                + "  if (e.target && !e.target.muted) say('playing');"
+                + " }, true);"
+                + "})();"
+        }
+    ]
+
+    onJavaScriptConsoleMessage: (level, message, line, source) => {
+        if (message === "strmqt:edge-left")
+            view.leftEdgeReached();
+        else if (message === "strmqt:playing")
+            view.playbackStarted();
+    }
+
+    onWindowCloseRequested: view.exitRequested()
+    // The TV interface opens nothing in a new window of its own accord; a link
+    // that tries (terms, help) stays where it is rather than opening a browser
+    // window nothing in this app could close from a remote.
+    onNewWindowRequested: request => {}
+    onRenderProcessTerminated: (status, code) => {
+        console.warn("YouTube view: render process ended (" + status + "), reloading");
+        view.reload();
+    }
+}

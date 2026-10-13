@@ -122,6 +122,7 @@ Item {
     signal librarySelected(string libraryId, string name, string collectionType)
     signal favoritesRequested
     signal playlistsRequested
+    signal youtubeRequested
     signal searchRequested
     signal settingsRequested
     // Closed without choosing anything; the page takes focus back.
@@ -401,6 +402,15 @@ Item {
                 label: qsTr("Favorites")
                 active: rail.current === "favorites"
                 onChosen: rail.favoritesRequested()
+            }
+
+            // Absent, not disabled, in a build made without the web engine.
+            NavEntry {
+                visible: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                iconName: "youtube"
+                label: qsTr("YouTube")
+                active: rail.current === "youtube"
+                onChosen: rail.youtubeRequested()
             }
 
             NavEntry {

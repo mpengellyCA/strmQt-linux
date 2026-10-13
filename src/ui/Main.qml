@@ -616,6 +616,18 @@ ApplicationWindow {
                         "key": "search", "title": qsTr("Search") });
     }
 
+    // YouTube's ten-foot interface as a destination (YouTubePage.qml). One
+    // history entry however far the user goes inside it: where they are in
+    // YouTube is YouTube's to remember, and Back inside it is YouTube's too.
+    function openYouTube(): void {
+        if (root.currentKey === "youtube") {
+            root.focusCurrentPage();
+            return;
+        }
+        root.pushPage({ "kind": "youtube", "key": "youtube",
+                        "title": qsTr("YouTube") });
+    }
+
     // `section` optionally names a Settings section to land on ("remote").
     function openSettings(section): void {
         if (root.currentKey !== "settings")
@@ -730,6 +742,7 @@ ApplicationWindow {
         seriesPageComponent: seriesComponent
         searchPageComponent: searchComponent
         settingsPageComponent: settingsComponent
+        youtubePageComponent: youtubeComponent
 
         onPrepareRequested: route => root.prepareRoute(route)
 
@@ -753,7 +766,8 @@ ApplicationWindow {
                     ["person", personComponent], ["playlist", playlistComponent],
                     ["artist", artistComponent], ["album", albumComponent],
                     ["musicPlaylist", musicPlaylistComponent],
-                    ["musicHome", musicHomeComponent], ["musicBrowse", musicBrowseComponent]
+                    ["musicHome", musicHomeComponent], ["musicBrowse", musicBrowseComponent],
+                    ["youtube", youtubeComponent]
                 ];
                 let failures = 0;
                 for (let i = 0; i < pages.length; ++i) {
@@ -1145,6 +1159,7 @@ ApplicationWindow {
         onSettingsRequested: root.openSettings()
         onFavoritesRequested: root.openFavorites()
         onPlaylistsRequested: root.openPlaylists()
+        onYoutubeRequested: root.openYouTube()
         onDismissed: root.focusCurrentPage()
     }
 
@@ -1319,6 +1334,23 @@ ApplicationWindow {
     Component {
         id: settingsComponent
         SettingsPage {}
+    }
+
+    Component {
+        id: youtubeComponent
+        YouTubePage {
+            // Left off YouTube's own left edge: a web view cannot decline a
+            // key, so the page reports the edge and this is the navigator's
+            // answer for it (stack.navLeft), asked for by name.
+            onRailRequested: root.focusNavigationRail()
+            // YouTube's own "Exit" leaves the tab the way Back leaves a page.
+            onExitRequested: {
+                if (root.canGoBack)
+                    root.goBack();
+                else
+                    root.goHome();
+            }
+        }
     }
 
     // ── Shortcuts, all resolved through InputMap ───────────────────────────
