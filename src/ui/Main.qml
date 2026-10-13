@@ -626,6 +626,7 @@ ApplicationWindow {
     // history entry however far the user goes inside it: where they are in
     // YouTube is YouTube's to remember, and Back inside it is YouTube's too.
     function openYouTube(): void {
+        root.ensureYouTube();
         if (root.currentKey === "youtube") {
             root.focusCurrentPage();
             return;
@@ -635,18 +636,66 @@ ApplicationWindow {
     }
 
     // One video or a search, asked for by a page (Actions.playOnYouTube /
-    // searchYouTube). A YouTube page already on screen is told where to go;
+    // searchYouTube). A YouTube page already on screen stays where it is;
     // otherwise this is a new history entry, so Back from a trailer is the
     // details page it was opened from and not wherever the YouTube tab was.
+    //
+    // `single`: opened for that one video. When YouTube leaves it — Back in
+    // its player — the page is left too, where a destination opened from the
+    // rail would go on to YouTube's front page.
     function openYouTubeAt(address, single): void {
-        const page = stack.currentItem;
-        if (root.currentKey === "youtube" && page !== null && page.objectName === "youtubePage") {
-            page.open(address, single);
-            root.focusCurrentPage();
+        if (!root.ensureYouTube())
+            return;
+        root.youtubeSingle = single === true;
+        if (youtubeHost.item !== null)
+            youtubeHost.item.address = address;
+        else
+            root.youtubePending = address;
+        root.openYouTube();
+    }
+
+    // ── YouTube: one web view, owned here ───────────────────────────────────
+    // YouTube is one place, however many history entries point at it, and
+    // what it is playing must outlive the page that was showing it: the page
+    // can be left, covered, or evicted from the bounded stack. So the view is
+    // the shell's, created the first time YouTube is opened, and parented to
+    // the YouTube page's slot while that page is up and to the mini player's
+    // frame otherwise — the arrangement the film's video plane has.
+    readonly property bool youtubeOnTop: stack.currentItem !== null
+                                         && stack.currentItem.objectName === "youtubePage"
+    // What the view reported last (YouTubeView.stateReported).
+    property var youtubeState: ({})
+    property bool youtubeSingle: false
+    // An address asked for before the view existed.
+    property url youtubePending: ""
+
+    function ensureYouTube(): bool {
+        if (typeof YouTubeAvailable === "undefined" || !YouTubeAvailable)
+            return false;
+        if (!youtubeHost.active) {
+            youtubeHost.source = Qt.resolvedUrl("youtube/YouTubeView.qml");
+            youtubeHost.active = true;
+        }
+        return true;
+    }
+
+    function leaveYouTube(): void {
+        if (root.canGoBack)
+            root.goBack();
+        else
+            root.goHome();
+    }
+
+    onYoutubeOnTopChanged: {
+        if (root.youtubeOnTop) {
+            // Reached by Back or Forward as well as by the rail.
+            root.ensureYouTube();
             return;
         }
-        root.pushPage({ "kind": "youtube", "key": "youtube", "title": qsTr("YouTube") },
-                      { "address": address, "single": single });
+        // Left with a video up: it plays on in the mini player. Left while
+        // browsing: the preview YouTube was playing on a shelf stops.
+        if (youtubeHost.item !== null && root.youtubeState.watching !== true)
+            youtubeHost.item.pausePlayback();
     }
 
     // `section` optionally names a Settings section to land on ("remote").
@@ -887,7 +936,8 @@ ApplicationWindow {
         // nothing else, which made it the one surface a D-pad could not walk
         // to. Named on the stack, so it is the page's EDGE: Down still goes
         // to whatever the page has further down first (FocusNavigator).
-        property Item navDown: miniPlayer.shown ? miniPlayer : null
+        property Item navDown: miniPlayer.shown ? miniPlayer
+                             : youtubeMini.shown ? youtubeMini : null
         // Entered — by an edge, or by recovery (root.navHome) — on the page
         // that is up, whose own focus scope then says where inside it.
         property Item navEntry: stack.currentItem
@@ -1116,6 +1166,117 @@ ApplicationWindow {
             onClicked: root.showPlayer(false)
             onWheel: wheel => wheel.accepted = true
         }
+    }
+
+    // The one YouTube view (see openYouTubeAt above). Laid out for the page
+    // area wherever it is: parked in the mini player it keeps that size and is
+    // drawn smaller, so YouTube goes on rendering the video it was rendering
+    // instead of re-laying itself out for a window the size of a thumbnail.
+    Loader {
+        id: youtubeHost
+
+        readonly property bool onPage: root.youtubeOnTop && stack.currentItem.slot !== undefined
+
+        active: false
+        focus: true
+        parent: youtubeHost.onPage ? stack.currentItem.slot : youtubeMini.slot
+        width: youtubeHost.onPage ? parent.width : stack.width
+        height: youtubeHost.onPage ? parent.height : stack.height
+        transformOrigin: Item.TopLeft
+        scale: youtubeHost.onPage || youtubeHost.width <= 0 ? 1 : parent.width / youtubeHost.width
+
+        onLoaded: {
+            youtubeHost.item.focus = true;
+            if (root.youtubePending.toString().length > 0) {
+                youtubeHost.item.address = root.youtubePending;
+                root.youtubePending = "";
+            }
+        }
+    }
+
+    Connections {
+        target: youtubeHost.item
+        ignoreUnknownSignals: true
+
+        // Left off YouTube's own left edge: a web view cannot decline a key,
+        // so it reports the edge and this is the navigator's answer for it
+        // (stack.navLeft), asked for by name.
+        function onLeftEdgeReached() {
+            if (root.youtubeOnTop)
+                root.focusNavigationRail();
+        }
+        // YouTube's own "Exit" leaves the tab the way Back leaves a page.
+        function onExitRequested() {
+            if (root.youtubeOnTop)
+                root.leaveYouTube();
+        }
+        function onRouteChanged(route) {
+            if (!root.youtubeSingle || route.indexOf("#/watch") === 0)
+                return;
+            root.youtubeSingle = false;
+            if (root.youtubeOnTop)
+                root.leaveYouTube();
+        }
+        // One engine or the other is heard, never both.
+        function onPlaybackStarted() {
+            if (PlayerCtl.active && !PlayerCtl.paused)
+                PlayerCtl.togglePause();
+        }
+        function onStateReported(state) {
+            root.youtubeState = state;
+        }
+    }
+
+    Connections {
+        target: PlayerCtl
+        enabled: youtubeHost.item !== null
+
+        function onPausedChanged() { root.yieldYouTube() }
+        function onActiveChanged() { root.yieldYouTube() }
+    }
+
+    // The app's own player started: YouTube gives way. On its page that is a
+    // pause; in the mini player it is a stop, because the film's own
+    // picture-in-picture is about to want that corner.
+    function yieldYouTube(): void {
+        if (youtubeHost.item === null || !PlayerCtl.active || PlayerCtl.paused)
+            return;
+        if (root.youtubeOnTop)
+            youtubeHost.item.pausePlayback();
+        else
+            youtubeHost.item.stopPlayback();
+    }
+
+    // ── YouTube, playing under another page ─────────────────────────────────
+    YouTubeMini {
+        id: youtubeMini
+
+        anchors.right: parent.right
+        anchors.rightMargin: Theme.spacingValue
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: miniPlayer.reservedHeight + Theme.spacingValue
+                              + (pip.shown ? pip.height + Theme.spacingValue : 0)
+        z: 17
+        shown: Session.authenticated && youtubeHost.item !== null && !root.youtubeOnTop
+               && !root.playerOnTop && root.youtubeState.watching === true
+               // A video, not a screen standing where one would be (YouTube
+               // asking for a sign-in before it plays).
+               && (root.youtubeState.playing === true || root.youtubeState.duration > 0
+                   || root.youtubeState.position > 0)
+        state: root.youtubeState
+        aspect: stack.height > 0 ? stack.width / stack.height : 16 / 9
+        navUp: stack
+
+        onExpandRequested: root.openYouTube()
+        onStopRequested: {
+            youtubeHost.item.stopPlayback();
+            root.focusCurrentPage();
+        }
+        onPlayPauseRequested: youtubeHost.item.playPause()
+        onSeekRequested: seconds => youtubeHost.item.seekBy(seconds)
+        onVolumeRequested: volume => youtubeHost.item.setVolume(volume)
+        onMuteRequested: muted => youtubeHost.item.setMuted(muted)
+        onDismissed: root.focusCurrentPage()
     }
 
     SleeveFlight {
@@ -1362,17 +1523,7 @@ ApplicationWindow {
     Component {
         id: youtubeComponent
         YouTubePage {
-            // Left off YouTube's own left edge: a web view cannot decline a
-            // key, so the page reports the edge and this is the navigator's
-            // answer for it (stack.navLeft), asked for by name.
-            onRailRequested: root.focusNavigationRail()
-            // YouTube's own "Exit" leaves the tab the way Back leaves a page.
-            onExitRequested: {
-                if (root.canGoBack)
-                    root.goBack();
-                else
-                    root.goHome();
-            }
+            view: youtubeHost
         }
     }
 

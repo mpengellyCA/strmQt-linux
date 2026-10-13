@@ -31,9 +31,40 @@ WebEngineView {
     // YouTube asked to close itself (its own "Exit YouTube" dialog).
     signal exitRequested
 
+    // What YouTube is playing, as the mini player needs it (Main.qml):
+    //   watching  a video is up (as opposed to a preview on a shelf)
+    //   playing, title, position, duration (seconds), volume (0–1), muted
+    signal stateReported(var state)
+
     function pausePlayback(): void {
         view.runJavaScript("document.querySelectorAll('video').forEach(function (v) {"
                            + " if (!v.paused) v.pause(); });");
+    }
+    // The verbs below act on the video YouTube is showing, through the page's
+    // own <video>: there is no other handle on its player.
+    function playPause(): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v)"
+                           + " (v.paused ? v.play() : v.pause()); })(window.__strmqtVideo());");
+    }
+    function seekBy(seconds: real): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v && isFinite(v.duration))"
+                           + " v.currentTime = Math.max(0, Math.min(v.duration - 1, v.currentTime + ("
+                           + Number(seconds) + "))); })(window.__strmqtVideo());");
+    }
+    function setVolume(volume: real): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v) { v.muted = false;"
+                           + " v.volume = " + Math.max(0, Math.min(1, Number(volume)))
+                           + "; } })(window.__strmqtVideo());");
+    }
+    function setMuted(muted: bool): void {
+        view.runJavaScript("window.__strmqtVideo && (function (v) { if (v) v.muted = "
+                           + (muted ? "true" : "false") + "; })(window.__strmqtVideo());");
+    }
+    // Stop is leaving the video: paused, and YouTube back on its front page,
+    // so nothing is "up" any more and the mini player has nothing to show.
+    function stopPlayback(): void {
+        view.pausePlayback();
+        view.runJavaScript("if (location.hash.indexOf('#/watch') === 0) location.hash = '#/';");
     }
 
     url: view.address
@@ -104,6 +135,38 @@ WebEngineView {
                 + " document.addEventListener('playing', function (e) {"
                 + "  if (e.target && !e.target.muted) say('playing');"
                 + " }, true);"
+                // The video YouTube is showing: the one that is playing, else
+                // the one that has something loaded.
+                + " window.__strmqtVideo = function () {"
+                + "  var all = document.querySelectorAll('video'), loaded = null;"
+                + "  for (var i = 0; i < all.length; ++i) {"
+                + "   if (!all[i].paused && !all[i].ended) return all[i];"
+                + "   if (!loaded && all[i].currentSrc && all[i].readyState > 0) loaded = all[i];"
+                + "  }"
+                + "  return loaded;"
+                + " };"
+                + " var told = '';"
+                + " function report() {"
+                + "  var v = window.__strmqtVideo(), meta = null;"
+                + "  try { meta = navigator.mediaSession && navigator.mediaSession.metadata; } catch (e) {}"
+                + "  var state = JSON.stringify({"
+                + "   watching: watching(),"
+                + "   playing: !!v && !v.paused && !v.ended,"
+                + "   title: (meta && meta.title) || document.title || '',"
+                + "   artist: (meta && meta.artist) || '',"
+                + "   position: v ? Math.floor(v.currentTime) : 0,"
+                + "   duration: v && isFinite(v.duration) ? Math.floor(v.duration) : 0,"
+                + "   volume: v ? v.volume : 1,"
+                + "   muted: v ? v.muted : false"
+                + "  });"
+                + "  if (state !== told) { told = state; say('state:' + state); }"
+                + " }"
+                + " ['playing', 'pause', 'ended', 'volumechange', 'durationchange', 'seeked',"
+                + "  'loadedmetadata', 'emptied'].forEach(function (name) {"
+                + "  document.addEventListener(name, report, true);"
+                + " });"
+                + " window.addEventListener('hashchange', report);"
+                + " setInterval(report, 1000);"
                 // YouTube draws on a fixed 16:9 canvas, centred, and leaves
                 // the rest of the window black. In its own background colour
                 // the bars are margin instead of a hole in the page — except
@@ -131,6 +194,13 @@ WebEngineView {
             view.playbackStarted();
         else if (message.startsWith("strmqt:route:"))
             view.routeChanged(message.substring(13));
+        else if (message.startsWith("strmqt:state:")) {
+            // The page's words, so they are parsed as data and nothing more.
+            try {
+                view.stateReported(JSON.parse(message.substring(13)));
+            } catch (error) {
+            }
+        }
     }
 
     onWindowCloseRequested: view.exitRequested()

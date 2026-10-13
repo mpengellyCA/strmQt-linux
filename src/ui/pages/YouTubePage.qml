@@ -6,53 +6,39 @@ import StrmQt
 // other page, and Left off YouTube's own left edge opens the rail exactly as
 // Left off a library grid does.
 //
-// The web view is loaded by URL (ui/youtube/YouTubeView.qml), so a build made
-// with -DSTRMQT_WITH_YOUTUBE=OFF lacks the file and this page says so instead
-// of failing to load. It is also not built for the page self-test: Chromium
-// will not start as root in a CI container, and the self-test is about this
-// app's QML, not about reaching youtube.com.
+// The page does not own the web view. There is one, it belongs to the shell
+// (Main.qml youtubeHost), and it sits in this page's `slot` while the page is
+// up and in the mini player while a video plays on under another page — the
+// arrangement the film's video plane has with the player page. So leaving
+// this page does not end what YouTube is playing, and neither does the
+// navigation stack evicting it.
+//
+// A build made with -DSTRMQT_WITH_YOUTUBE=OFF has no view to host, and this
+// page says so instead of failing to load.
 FocusScope {
     id: page
 
     objectName: "youtubePage"
 
-    // Where to open: the TV interface's front page, or one video / search
-    // (Main.qml openYouTube()).
-    property url address: "https://www.youtube.com/tv"
-    // Opened for one video (a trailer): when YouTube leaves that video — Back
-    // in its player — the page is left too, back to whoever asked for it,
-    // where a destination opened from the rail would go on to YouTube's home.
-    property bool single: false
-
-    function open(address: url, single: bool): void {
-        page.single = single
-        page.address = address
-        if (viewLoader.item)
-            viewLoader.item.address = address
-    }
-
-    signal railRequested
-    signal exitRequested
+    // Where the shell's web view goes while this page is the one on top.
+    readonly property Item slot: viewSlot
+    // The shell's view once it is in the slot; the keyboard is passed to it.
+    property Item view: null
 
     readonly property bool available: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
-                                      && !(typeof SelfTest !== "undefined" && SelfTest)
-    readonly property bool onScreen: page.visible && page.enabled
 
-    // One engine or the other is heard, never both: a YouTube video that
-    // starts pauses the film or the record, and leaving the page (which keeps
-    // it alive in history) pauses YouTube.
-    onOnScreenChanged: {
-        if (!page.onScreen && viewLoader.item)
-            viewLoader.item.pausePlayback()
+    function seatFocus(): void {
+        if (page.view !== null && page.activeFocus && !page.view.activeFocus)
+            page.view.forceActiveFocus()
     }
 
+    onActiveFocusChanged: page.seatFocus()
+    onViewChanged: page.seatFocus()
+
+    // The view arrives in the slot a moment after the page takes the keyboard.
     Connections {
-        target: PlayerCtl
-        enabled: viewLoader.item !== null
-        function onPausedChanged() {
-            if (PlayerCtl.active && !PlayerCtl.paused)
-                viewLoader.item.pausePlayback()
-        }
+        target: page.view
+        function onParentChanged() { Qt.callLater(page.seatFocus) }
     }
 
     Rectangle {
@@ -60,34 +46,11 @@ FocusScope {
         color: "#0f0f0f"
     }
 
-    Loader {
-        id: viewLoader
+    Item {
+        id: viewSlot
 
         anchors.fill: parent
-        focus: true
-        active: page.available
-        source: page.available ? Qt.resolvedUrl("../youtube/YouTubeView.qml") : ""
-        onLoaded: {
-            viewLoader.item.address = page.address
-            viewLoader.item.focus = true
-        }
-    }
-
-    Connections {
-        target: viewLoader.item
-        ignoreUnknownSignals: true
-        function onLeftEdgeReached() { page.railRequested() }
-        function onRouteChanged(route) {
-            if (!page.single || route.indexOf("#/watch") === 0)
-                return
-            page.single = false
-            page.exitRequested()
-        }
-        function onExitRequested() { page.exitRequested() }
-        function onPlaybackStarted() {
-            if (PlayerCtl.active && !PlayerCtl.paused)
-                PlayerCtl.togglePause()
-        }
+        visible: page.available
     }
 
     EmptyState {
