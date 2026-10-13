@@ -123,13 +123,11 @@ std::vector<std::vector<bool>> QrCodeGenerator::encodeText(const QString &text, 
         }
     }
 
-    if (version == 1 && dataCapacity == 0) {
-        // Text is larger than V6, fallback to V6 clamped or default
-        version = 6;
-        dataCapacity = kVersionEccMedium[5].dataCodewords;
-        eccCodewordsPerBlock = kVersionEccMedium[5].eccCodewordsPerBlock;
-        numBlocks = kVersionEccMedium[5].numBlocks;
-    }
+    // More than a version 6 code holds (106 bytes at this correction level),
+    // or more than the 8-bit length field can say. There is no honest code to
+    // draw: the caller shows none rather than one that encodes something else.
+    if (dataCapacity == 0 || dataLen > 255)
+        return {};
 
     // 1. Data encoding (Byte mode = 0100)
     BitBuffer bb;
@@ -271,20 +269,30 @@ std::vector<std::vector<bool>> QrCodeGenerator::encodeText(const QString &text, 
         right -= 2;
     }
 
-    // Format bits for Medium ECC (00) and Mask 0 (000) -> 00000 with BCH(15, 5) -> 0x5412
+    // Format bits for Medium ECC (00) and Mask 0 (000) -> 00000 with BCH(15, 5) -> 0x5412.
+    //
+    // grid is indexed [row][column]. The first copy runs DOWN column 8 from
+    // the top (bits 0-7, skipping the timing row) and then leftwards along
+    // row 8 (bits 8-14, skipping the timing column); the second runs leftwards
+    // along row 8 from the right-hand edge (bits 0-7) and then down column 8
+    // to the bottom (bits 8-14). These were written with the two indices
+    // swapped, which reverses the sequence a reader sees: it could not tell
+    // the mask or the correction level, and no code this produced decoded.
     static const uint16_t formatBits = 0x5412;
+    const auto formatBit = [](int i) -> int8_t { return (formatBits >> i) & 1; };
     for (int i = 0; i < 6; ++i)
-        grid[8][i] = (formatBits >> i) & 1;
-    grid[8][7] = (formatBits >> 6) & 1;
-    grid[8][8] = (formatBits >> 7) & 1;
-    grid[7][8] = (formatBits >> 8) & 1;
+        grid[i][8] = formatBit(i);
+    grid[7][8] = formatBit(6);
+    grid[8][8] = formatBit(7);
+    grid[8][7] = formatBit(8);
     for (int i = 9; i < 15; ++i)
-        grid[14 - i][8] = (formatBits >> i) & 1;
+        grid[8][14 - i] = formatBit(i);
 
     for (int i = 0; i < 8; ++i)
-        grid[size - 1 - i][8] = (formatBits >> i) & 1;
+        grid[8][size - 1 - i] = formatBit(i);
     for (int i = 8; i < 15; ++i)
-        grid[8][size - 15 + i] = (formatBits >> i) & 1;
+        grid[size - 15 + i][8] = formatBit(i);
+    grid[size - 8][8] = 1; // the dark module, which the second copy runs past
 
     std::vector<std::vector<bool>> result(size, std::vector<bool>(size, false));
     for (int y = 0; y < size; ++y) {
@@ -302,6 +310,8 @@ QString QrCodeGenerator::toSvg(const QString &text, int border,
 
     const auto grid = encodeText(text, Ecc::Medium);
     const int size = static_cast<int>(grid.size());
+    if (size == 0)
+        return {};
     const int totalSize = size + border * 2;
 
     std::ostringstream ss;

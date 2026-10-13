@@ -71,6 +71,7 @@
           <li>A pointer left idle for five seconds hides and stops highlighting what it rests on.</li>
           <li>The phone remote can do anything a key can, and switches between the full player and the mini player.</li>
           <li>Video below the window's resolution is upscaled, with the method chosen per title and stepped down on GPUs that cannot keep up.</li>
+          <li>The QR code for setting up the phone remote can be scanned; until now it could not be.</li>
           <li>Episodes are listed in season and episode order, and the first one is offered as Next Up on a show you have not started.</li>
         </ul>
       </description>
