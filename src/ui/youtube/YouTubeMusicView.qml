@@ -322,7 +322,7 @@ WebEngineView {
    playing: !!v && !v.paused && !v.ended,
    title: (meta && meta.title) || '',
    artist: (meta && meta.artist) || '',
-   art: /^https:\/\/[a-z0-9.-]+\.(googleusercontent|ytimg|ggpht)\.com\//i.test(art) ? art : '',
+   art: /^https:\\/\\/[a-z0-9.-]+\\.(googleusercontent|ytimg|ggpht)\\.com\\//i.test(art) ? art : '',
    position: v ? Math.floor(v.currentTime) : 0,
    duration: v && isFinite(v.duration) ? Math.floor(v.duration) : 0,
    volume: v ? v.volume : 1,
