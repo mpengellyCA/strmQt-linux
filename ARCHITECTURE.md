@@ -926,6 +926,10 @@ assertion catches the rot.
 
 ## 10. Known limitations
 
+- **The AppImage has no YouTube or YouTube Music.** It is built with
+  `-DSTRMQT_WITH_YOUTUBE=OFF`: the tabs need Qt WebEngine, and bundling Chromium — its
+  helper process, resources and sandbox — within the bundling rule and the glibc floor
+  of §9 has not been done. The `.deb`, `.rpm`, Arch package and Flatpak all have them.
 - **YouTube and YouTube Music are other people's pages.** The injected scripts lean on
   element names and behaviour neither site promises (§4); either can change under the
   app without notice. The pieces most likely to go first: the D-pad's list of things

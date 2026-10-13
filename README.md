@@ -108,6 +108,8 @@ which one to use. Nothing of Firefox's is opened before you press that button. S
 copies only the `youtube.com` and `google.com` cookies of the one you pick — which is the
 Google session of every account signed in there — and never writes to Firefox's files.
 
+The AppImage does not have these two yet; every other package does.
+
 Don't want them? **Settings → Server → YouTube** switches each off separately, and off is
 gone: out of the menu, nothing playing, and trailers open in your browser as before.
 There is no ad blocking and none is planned.
