@@ -1170,15 +1170,16 @@ void ContentControllersTest::playlistQueuePolicyPreservesDuplicateEntries()
     QCOMPARE(ordered.at(1).toMap().value(QStringLiteral("playlistItemId")).toString(),
              QStringLiteral("entry-b"));
 
+    // Shuffle hands the playlist over in its own order; the queue shuffles it
+    // and can therefore give this order back.
+    QSignalSpy shuffleRequested(&playlists, &PlaylistController::shuffleItemsRequested);
     playlists.requestShuffle();
-    QCOMPARE(played.count(), 2);
-    const QVariantList shuffled = played.at(1).at(0).toList();
-    QCOMPARE(shuffled.size(), ordered.size());
-    QCOMPARE(played.at(1).at(1).toInt(), 0);
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(shuffleRequested.count(), 1);
+    const QVariantList shuffled = shuffleRequested.first().at(0).toList();
     QStringList shuffledEntries;
     for (const QVariant &record : shuffled)
         shuffledEntries.append(record.toMap().value(QStringLiteral("playlistItemId")).toString());
-    shuffledEntries.sort();
     QCOMPARE(shuffledEntries,
              QStringList({QStringLiteral("entry-a"), QStringLiteral("entry-b"),
                           QStringLiteral("entry-c")}));

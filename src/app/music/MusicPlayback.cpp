@@ -1,9 +1,5 @@
 #include "app/music/MusicPlayback.h"
 
-#include <QRandomGenerator>
-
-#include <algorithm>
-
 #include "app/ItemActions.h"
 #include "app/models/MediaItemModel.h"
 #include "app/music/MusicRepository.h"
@@ -49,11 +45,15 @@ void MusicPlayback::playResolved(QFuture<Result<QList<Track>>> future, quint64 g
             reportFailure(result.error);
             return;
         }
-        QList<Track> tracks = std::move(result.value);
+        // A shuffle hands the tracks over in the order they were resolved in
+        // and lets the queue do the shuffling (ItemActions::shuffleAllFrom):
+        // shuffling here made the scrambled list the queue's "original" order,
+        // so the shuffle indicator stayed dark and could not be turned off.
         if (order == Order::Shuffled)
-            std::shuffle(tracks.begin(), tracks.end(), *QRandomGenerator::global());
-        m_actions->playAllFromIfCurrent(toMaps(tracks), order == Order::Shuffled ? 0 : startIndex,
-                                        generation, sourceLabel);
+            m_actions->shuffleAllFromIfCurrent(toMaps(result.value), generation, sourceLabel);
+        else
+            m_actions->playAllFromIfCurrent(toMaps(result.value), startIndex, generation,
+                                            sourceLabel);
     });
 }
 
@@ -73,7 +73,10 @@ void MusicPlayback::shuffleAlbum(const QString &albumId, const QString &title)
 void MusicPlayback::shuffleArtist(const QString &artistId, const QString &name)
 {
     const quint64 generation = m_actions->reservePlaybackIntent();
-    playResolved(m_repository->artistTracks(artistId), generation, 0, Order::AsGiven,
+    // The server's draw is already random, and it is still a shuffle: the
+    // queue is flagged as one, and the draw is the order it un-shuffles to
+    // (there is no better one for a sample of a whole discography).
+    playResolved(m_repository->artistTracks(artistId), generation, 0, Order::Shuffled,
                  tr("Shuffle · %1").arg(name));
 }
 
@@ -131,8 +134,9 @@ void MusicPlayback::playStationTile(const QString &libraryId, const QVariantMap 
 void MusicPlayback::shuffleQuery(const MusicQuery &query, const QString &label)
 {
     const quint64 generation = m_actions->reservePlaybackIntent();
-    // sampleTracks is already random server-side; no second shuffle.
-    playResolved(m_repository->sampleTracks(query), generation, 0, Order::AsGiven,
+    // sampleTracks is already random server-side. As with shuffleArtist(), the
+    // sample is the order the queue un-shuffles to.
+    playResolved(m_repository->sampleTracks(query), generation, 0, Order::Shuffled,
                  tr("Shuffle · %1").arg(label));
 }
 

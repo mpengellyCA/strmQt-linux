@@ -346,23 +346,37 @@ void PlayQueue::enrichEntry(const MediaItem &item)
 {
     if (item.id.isEmpty())
         return;
+    // Every occurrence, not the first: the same item may legitimately be queued
+    // twice, and stopping early left the repeats on the bare seed for good.
+    bool enriched = false;
+    bool currentEnriched = false;
     for (int row = 0; row < m_entries.size(); ++row) {
         if (m_entries.at(row).item.id != item.id)
             continue;
         // The identity survives: shuffling and re-ordering track the key, not
         // the payload, so replacing what an entry HOLDS must not disturb where
         // it sits or what it is.
+        //
+        // That includes which playlist ENTRY this row is. The server's record
+        // of an item knows nothing about the playlist it was played from, so
+        // an id the record does not carry is the entry's own and stays.
+        QString entryId = std::move(m_entries[row].item.playlistItemId);
         m_entries[row].item = item;
+        if (item.playlistItemId.isEmpty())
+            m_entries[row].item.playlistItemId = std::move(entryId);
         const QModelIndex idx = index(row);
         emit dataChanged(idx, idx);
-        if (row == m_currentIndex)
-            emit currentItemChanged();
-        // What the surfaces bind through: they read itemAt(currentIndex), so a
-        // changed payload has to announce itself as a queue change or nothing
-        // re-reads it.
-        emit queueChanged();
-        return;
+        enriched = true;
+        currentEnriched = currentEnriched || row == m_currentIndex;
     }
+    if (!enriched)
+        return;
+    if (currentEnriched)
+        emit currentItemChanged();
+    // What the surfaces bind through: they read itemAt(currentIndex), so a
+    // changed payload has to announce itself as a queue change or nothing
+    // re-reads it.
+    emit queueChanged();
 }
 
 int PlayQueue::originalPositionOf(quint64 key) const

@@ -103,6 +103,10 @@ private slots:
     void capabilityMatrixSeparatesContainersFromPlayableItems();
     void menuPoliciesOwnOrderFlagsAndTargets();
     void checkedPolicyAndDispatchUseFreshState();
+    void musicMenuStateStartsFromTheMap_data();
+    void musicMenuStateStartsFromTheMap();
+    void failedMusicToggleRollsBackToTheMapState();
+    void registeredModelStateBeatsTheMap();
     void navigationVerbsEmitRequests();
     void refreshMetadataReportsThatItIsNotWired();
 
@@ -635,6 +639,150 @@ void ItemActionsTest::checkedPolicyAndDispatchUseFreshState()
                                QStringLiteral("favorite"));
     QVERIFY(!descriptor.value(QStringLiteral("checked")).toBool());
     QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), favoritePath(kItemId)), 1);
+}
+
+// The music models are not MediaItemModels and are never registered, so for an
+// album, an artist or a track the map a delegate hands over is the only place
+// the server's answer lives. The menu used to read "not a favourite" for every
+// one of them and the verb then POSTed a favourite that was already set, so a
+// record could not be un-favourited from its own menu.
+void ItemActionsTest::musicMenuStateStartsFromTheMap_data()
+{
+    QTest::addColumn<QString>("type");
+    QTest::addColumn<QString>("profile");
+    QTest::addColumn<QString>("favoriteKey");
+
+    // AlbumGridModel exposes both spellings; TrackListModel only the British.
+    QTest::newRow("album, favorite") << QStringLiteral("MusicAlbum") << QStringLiteral("musicBrowse")
+                                     << QStringLiteral("favorite");
+    QTest::newRow("album, favourite") << QStringLiteral("MusicAlbum")
+                                      << QStringLiteral("musicBrowse") << QStringLiteral("favourite");
+    QTest::newRow("track, favourite") << QStringLiteral("Audio") << QString()
+                                      << QStringLiteral("favourite");
+    QTest::newRow("artist, favorite") << QStringLiteral("MusicArtist")
+                                      << QStringLiteral("musicBrowse") << QStringLiteral("favorite");
+}
+
+void ItemActionsTest::musicMenuStateStartsFromTheMap()
+{
+    QFETCH(QString, type);
+    QFETCH(QString, profile);
+    QFETCH(QString, favoriteKey);
+
+    const QString id = QStringLiteral("music-only");
+    QVariantMap item = itemMap(type, id);
+    item.insert(favoriteKey, true);
+    item.insert(QStringLiteral("played"), true);
+    QVERIFY(m_actions->itemFor(id).isEmpty()); // no registered model holds it
+
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
+    m_mock->addRoute(QStringLiteral("DELETE"), favoritePath(id), 204, {});
+
+    const auto menu = [&] { return m_actions->itemMenuPolicy(item, true, false, false, false, profile); };
+    QVariantMap descriptor = descriptorFor(menu(), QStringLiteral("favorite"));
+    QCOMPARE(descriptor.value(QStringLiteral("presentation")).toString(),
+             QStringLiteral("removeFavorite"));
+    QVERIFY(descriptor.value(QStringLiteral("checked")).toBool());
+    const bool hasPlayed = type == QLatin1String("Audio");
+    if (hasPlayed) {
+        QCOMPARE(descriptorFor(menu(), QStringLiteral("played"))
+                     .value(QStringLiteral("presentation"))
+                     .toString(),
+                 QStringLiteral("markUnplayed"));
+    }
+
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(favorite.first().at(0).toString(), id);
+    QCOMPARE(favorite.first().at(1).toBool(), false);
+    QVERIFY(!m_actions->isFavorite(id));
+    QTRY_COMPARE(requestCount(QStringLiteral("DELETE"), favoritePath(id)), 1);
+    QCOMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 0);
+
+    // The menu is reopened over the SAME map, which still says "favourite":
+    // what was just done wins, during the request and after it settled.
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    descriptor = descriptorFor(menu(), QStringLiteral("favorite"));
+    QCOMPARE(descriptor.value(QStringLiteral("presentation")).toString(),
+             QStringLiteral("addFavorite"));
+    QVERIFY(!descriptor.value(QStringLiteral("checked")).toBool());
+    // ...and toggling one field did not reset the other to a default.
+    if (hasPlayed) {
+        QCOMPARE(descriptorFor(menu(), QStringLiteral("played"))
+                     .value(QStringLiteral("presentation"))
+                     .toString(),
+                 QStringLiteral("markUnplayed"));
+        QVERIFY(m_actions->isPlayed(id));
+    }
+
+    // And back again, still over the stale map.
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QVERIFY(m_actions->isFavorite(id));
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 1);
+}
+
+// The rollback baseline is the map's state too: a failed un-favourite puts the
+// item back to "favourite", not to the `false` an unknown item defaults to.
+void ItemActionsTest::failedMusicToggleRollsBackToTheMapState()
+{
+    const QString id = QStringLiteral("music-only");
+    QVariantMap item = itemMap(QStringLiteral("Audio"), id);
+    item.insert(QStringLiteral("favourite"), true);
+    item.insert(QStringLiteral("played"), true);
+
+    // No routes: both requests fail with the mock's 404.
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+    QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(favorite.first().at(1).toBool(), false);
+    QTRY_COMPARE(failed.count(), 1);
+    QCOMPARE(favorite.count(), 2);
+    QCOMPARE(favorite.last().at(1).toBool(), true);
+    QVERIFY(m_actions->isFavorite(id));
+    QCOMPARE(descriptorFor(m_actions->itemMenuPolicy(item, true, false, false, false, {}),
+                           QStringLiteral("favorite"))
+                 .value(QStringLiteral("presentation"))
+                 .toString(),
+             QStringLiteral("removeFavorite"));
+
+    m_actions->performItemVerb(QStringLiteral("played"), item);
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(played.first().at(1).toBool(), false);
+    QTRY_COMPARE(failed.count(), 2);
+    QCOMPARE(played.count(), 2);
+    QCOMPARE(played.last().at(1).toBool(), true);
+    QVERIFY(m_actions->isPlayed(id));
+}
+
+// The map is the fallback, not the answer. A registered model is patched by
+// every toggle and every live update, so where one holds the item it is newer
+// than whatever snapshot a delegate is still carrying.
+void ItemActionsTest::registeredModelStateBeatsTheMap()
+{
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(kItemId), 204, {});
+
+    QVariantMap stale = m_model->get(0);
+    stale.insert(QStringLiteral("favorite"), true);
+    stale.insert(QStringLiteral("played"), true);
+    QVERIFY(!m_model->get(0).value(QStringLiteral("favorite")).toBool());
+
+    const QVariantList policy = m_actions->itemMenuPolicy(stale, true, false, false, false, {});
+    QCOMPARE(descriptorFor(policy, QStringLiteral("favorite"))
+                 .value(QStringLiteral("presentation"))
+                 .toString(),
+             QStringLiteral("addFavorite"));
+    QCOMPARE(descriptorFor(policy, QStringLiteral("played"))
+                 .value(QStringLiteral("presentation"))
+                 .toString(),
+             QStringLiteral("markWatched"));
+
+    m_actions->performItemVerb(QStringLiteral("favorite"), stale);
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(kItemId)), 1);
 }
 
 void ItemActionsTest::navigationVerbsEmitRequests()

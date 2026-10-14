@@ -100,6 +100,13 @@ public:
     // the queue is replaced, so PlayQueue's reset does not wipe it.
     void playAllFromIfCurrent(const QVariantList &items, int startIndex, quint64 generation,
                               const QString &sourceLabel = QString());
+    // Shuffle items the caller already has. They are handed over in their
+    // NATURAL order — never pre-shuffled — and it is the queue that shuffles
+    // them, from a random first item: PlayQueue::shuffled() is then true and
+    // turning shuffle off gives back the order they were handed over in.
+    Q_INVOKABLE void shuffleAllFrom(const QVariantList &items);
+    void shuffleAllFromIfCurrent(const QVariantList &items, quint64 generation,
+                                 const QString &sourceLabel = QString());
 
     // ── Batch verbs (MUSIC.md §7) ─────────────────────────────────────────
     // What a multi-selection in a track table can be done to. Both are the
@@ -262,9 +269,19 @@ private:
     // page to the player as a queue. `randomStart` picks the first item at
     // random, which is what makes a shuffle of an ordered fetch a real shuffle.
     void fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart);
+    // "Shuffle" on a container small enough to have an order worth keeping.
+    void shuffleInOrder(const QString &parentId, const QString &collectionType);
+    void replaceQueueIfCurrent(const QVariantList &items, int startIndex, bool shuffled,
+                               quint64 generation, const QString &sourceLabel);
     void continueCollectionWalk(const std::shared_ptr<CollectionWalk> &walk);
     bool requireQueueTarget();
-    UserState knownState(const QString &itemId) const;
+    // `fallback` is the caller's item map, consulted only for an item that
+    // neither the cache nor a registered model holds (every music item).
+    UserState knownState(const QString &itemId, const QVariantMap &fallback = {}) const;
+    static UserState stateFromMap(const QVariantMap &map);
+    // True when the cache or a registered model already answers for the item.
+    bool hasSettledState(const QString &itemId) const;
+    void adoptStateFromMap(const QString &itemId, const QVariantMap &map);
     void rememberState(const QString &itemId, const UserState &state);
     void syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow);
     bool admitUserState(const QString &itemId);

@@ -518,6 +518,8 @@ void HomeController::updateAllModels(const QString &itemId, bool played, bool fa
     m_favorites->updateUserData(itemId, played, favorite);
     for (MediaItemModel *model : std::as_const(m_railModels))
         model->updateUserData(itemId, played, favorite);
+    for (MediaItemModel *model : std::as_const(m_genreModels))
+        model->updateUserData(itemId, played, favorite);
 }
 
 void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite,

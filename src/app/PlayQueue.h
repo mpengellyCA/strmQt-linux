@@ -95,7 +95,9 @@ public:
     // bare play knows an id, a title and a type — not the artwork, the series
     // or the episode number — so every now-playing surface had nothing to draw
     // for anything played straight from a card, while music (which arrives as
-    // a queue of complete items) looked right. Matched by id, never by row.
+    // a queue of complete items) looked right. Matched by id, never by row —
+    // so every entry holding that item is enriched, and each keeps the
+    // playlistItemId it was queued with when the record carries none.
     void enrichEntry(const MediaItem &item);
 
     // Derived from what the queue HOLDS, not remembered from the verb that

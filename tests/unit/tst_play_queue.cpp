@@ -76,6 +76,7 @@ private slots:
     void playCountSurvivesTheRoundTrip();
     void contextLabelNamesTheRecordTheQueueCameFrom();
     void sourceLabelFollowsTheQueueItDescribes();
+    void enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds();
 };
 
 void PlayQueueTest::initTestCase()
@@ -739,6 +740,70 @@ void PlayQueueTest::sourceLabelFollowsTheQueueItDescribes()
     QCOMPARE(queue.sourceLabel(), QStringLiteral("Sunburned Almanac")); // nothing added: kept
     queue.clear();
     QCOMPARE(queue.sourceLabel(), QString());
+}
+
+// A playlist may hold the same track twice. Enrichment is matched by item id,
+// so both rows are that item and both get the record — and each stays the
+// playlist ENTRY it was queued as, which the server's record of the item
+// knows nothing about.
+void PlayQueueTest::enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds()
+{
+    const auto entry = [](const QString &id, const QString &entryId) {
+        MediaItem item;
+        item.id = id;
+        item.name = QStringLiteral("seed");
+        item.type = QStringLiteral("Audio");
+        item.playlistItemId = entryId;
+        return item;
+    };
+    PlayQueue queue;
+    queue.setItems({entry(QStringLiteral("same"), QStringLiteral("entry-a")),
+                    entry(QStringLiteral("other"), QStringLiteral("entry-b")),
+                    entry(QStringLiteral("same"), QStringLiteral("entry-c"))},
+                   2);
+
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy cursorSpy(&queue, &PlayQueue::currentItemChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+
+    MediaItem record;
+    record.id = QStringLiteral("same");
+    record.name = QStringLiteral("The whole record");
+    record.type = QStringLiteral("Audio");
+    record.album = QStringLiteral("Sunburned Almanac");
+    queue.enrichEntry(record);
+
+    for (const int row : {0, 2}) {
+        QCOMPARE(queue.itemAt(row).value(QStringLiteral("name")).toString(),
+                 QStringLiteral("The whole record"));
+        QCOMPARE(queue.itemAt(row).value(QStringLiteral("album")).toString(),
+                 QStringLiteral("Sunburned Almanac"));
+    }
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(queue.itemAt(2).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-c"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("name")).toString(), QStringLiteral("seed"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-b"));
+
+    // One gesture: a row signal per occurrence, one announcement for the queue,
+    // and one for the cursor because the current row was among them.
+    QCOMPARE(dataSpy.count(), 2);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(cursorSpy.count(), 1);
+    QCOMPARE(queue.currentIndex(), 2);
+
+    // A record that does name an entry is believed.
+    record.playlistItemId = QStringLiteral("entry-z");
+    queue.enrichEntry(record);
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-z"));
+
+    // No occurrence, no announcement.
+    record.id = QStringLiteral("absent");
+    queue.enrichEntry(record);
+    QCOMPARE(queueSpy.count(), 2);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

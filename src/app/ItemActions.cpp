@@ -207,6 +207,18 @@ QString playAllSortFor(const QStringList &types)
     return QStringLiteral("SortName");
 }
 
+// A container's children in the order the container plays them in.
+ItemsQuery orderedChildrenQuery(const QString &parentId, const QString &collectionType)
+{
+    ItemsQuery query;
+    query.parentId = parentId;
+    query.recursive = true;
+    query.includeItemTypes = playableTypesFor(collectionType);
+    query.sortBy = playAllSortFor(query.includeItemTypes);
+    query.limit = kQueueFetchLimit;
+    return query;
+}
+
 QString titleFor(const QVariantMap &item)
 {
     const QString label = item.value(QStringLiteral("label")).toString();
@@ -520,9 +532,27 @@ bool ItemActions::isPlaybackIntentCurrent(quint64 generation) const
 void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex,
                                        quint64 generation, const QString &sourceLabel)
 {
+    replaceQueueIfCurrent(items, startIndex, false, generation, sourceLabel);
+}
+
+void ItemActions::shuffleAllFrom(const QVariantList &items)
+{
+    const quint64 generation = beginPlaybackIntent();
+    shuffleAllFromIfCurrent(items, generation);
+}
+
+void ItemActions::shuffleAllFromIfCurrent(const QVariantList &items, quint64 generation,
+                                          const QString &sourceLabel)
+{
+    replaceQueueIfCurrent(items, 0, true, generation, sourceLabel);
+}
+
+void ItemActions::replaceQueueIfCurrent(const QVariantList &items, int startIndex, bool shuffled,
+                                        quint64 generation, const QString &sourceLabel)
+{
     if (!isPlaybackIntentCurrent(generation))
         return;
-    QVariantList playable;
+    QList<MediaItem> playable;
     playable.reserve(items.size());
     int playableBeforeStart = 0;
     for (int index = 0; index < items.size(); ++index) {
@@ -532,7 +562,7 @@ void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex
             continue;
         if (index < startIndex)
             ++playableBeforeStart;
-        playable.append(map);
+        playable.append(PlayQueue::itemFromVariant(map));
     }
     if (playable.isEmpty()) {
         emit actionFailed(tr("There is nothing to play here."));
@@ -540,9 +570,19 @@ void ItemActions::playAllFromIfCurrent(const QVariantList &items, int startIndex
     }
     if (!requireQueueTarget())
         return;
-    const int playableStart =
-        std::clamp(playableBeforeStart, 0, static_cast<int>(playable.size()) - 1);
-    m_player->playQueue(playable, playableStart);
+    const int count = static_cast<int>(playable.size());
+    // A shuffle is queued in the order it was GIVEN and shuffled by the queue,
+    // which is the only way the queue can know the order to give back when the
+    // user turns shuffle off. Shuffling the list first and queueing the result
+    // made the scrambled order the "original" and left the indicator unlit.
+    //
+    // PlayQueue::setShuffled() keeps the current row where it is, so the random
+    // start is what makes the first thing heard random too — the same shape as
+    // shuffleSeries().
+    const int playableStart = shuffled
+                                  ? (count > 1 ? int(QRandomGenerator::global()->bounded(count)) : 0)
+                                  : std::clamp(playableBeforeStart, 0, count - 1);
+    m_player->playQueueItems(std::move(playable), playableStart, shuffled);
     m_player->queue()->setSourceLabel(sourceLabel);
     emit queueChanged();
 }
@@ -812,13 +852,21 @@ void ItemActions::playAll(const QString &parentId, const QString &collectionType
         qCWarning(logApp) << "ItemActions: playAll without a parent id";
         return;
     }
-    ItemsQuery query;
-    query.parentId = parentId;
-    query.recursive = true;
-    query.includeItemTypes = playableTypesFor(collectionType);
-    query.sortBy = playAllSortFor(query.includeItemTypes);
-    query.limit = kQueueFetchLimit;
-    fetchIntoQueue(query, false, false);
+    fetchIntoQueue(orderedChildrenQuery(parentId, collectionType), false, false);
+}
+
+void ItemActions::shuffleInOrder(const QString &parentId, const QString &collectionType)
+{
+    if (parentId.isEmpty()) {
+        qCWarning(logApp) << "ItemActions: shuffle without a parent id";
+        return;
+    }
+    // A record and a season are small and have an order of their own, so they
+    // are fetched in it and shuffled by the queue: turning shuffle off then
+    // gives back the track list, not whichever draw the server happened to
+    // make. shuffle() below is for a set too large to fetch whole, where the
+    // server's Random is what keeps a capped fetch a fair sample.
+    fetchIntoQueue(orderedChildrenQuery(parentId, collectionType), true, true);
 }
 
 void ItemActions::shuffle(const QString &parentId, const QString &collectionType)
@@ -892,7 +940,30 @@ void ItemActions::shuffleSeries(const QString &seriesId)
 
 // ── User state ────────────────────────────────────────────────────────────────
 
-ItemActions::UserState ItemActions::knownState(const QString &itemId) const
+bool ItemActions::hasSettledState(const QString &itemId) const
+{
+    if (m_state.contains(itemId))
+        return true;
+    for (const QPointer<MediaItemModel> &model : m_models) {
+        if (model.isNull())
+            continue;
+        for (const MediaItem &item : model->items()) {
+            if (item.id == itemId)
+                return true;
+        }
+    }
+    return false;
+}
+
+// Precedence, strongest first: a request on the wire, then what this session
+// already holds (the cache, then a registered model), and only then the
+// caller's own map. The map is last because it is a snapshot taken when a
+// delegate was built — but it is not nothing: the music models are not
+// MediaItemModels and are never registered here, so for an album, an artist
+// or a track the map is the ONLY place the server's answer lives until the
+// first toggle caches it.
+ItemActions::UserState ItemActions::knownState(const QString &itemId,
+                                               const QVariantMap &fallback) const
 {
     UserState state;
     bool found = false;
@@ -915,6 +986,8 @@ ItemActions::UserState ItemActions::knownState(const QString &itemId) const
                 break;
         }
     }
+    if (!found)
+        state = stateFromMap(fallback);
 
     // A bounded cache may evict an item while its request is still running.
     // The request tables therefore remain the source for optimistic fields;
@@ -927,6 +1000,32 @@ ItemActions::UserState ItemActions::knownState(const QString &itemId) const
         state.favorite =
             favoriteRequest->hasQueued ? favoriteRequest->queued : favoriteRequest->requested;
     return state;
+}
+
+// The music models spell the role "favourite" and several of them expose only
+// that spelling; MediaItemModel says "favorite". Either is the same fact.
+ItemActions::UserState ItemActions::stateFromMap(const QVariantMap &map)
+{
+    UserState state;
+    state.played = map.value(QStringLiteral("played")).toBool();
+    const auto favorite = map.constFind(QStringLiteral("favorite"));
+    state.favorite = favorite != map.cend() ? favorite->toBool()
+                                            : map.value(QStringLiteral("favourite")).toBool();
+    return state;
+}
+
+// A toggle on an item this session has never held starts from the map, so the
+// map's whole user state is adopted before the write. Without this the cache
+// entry the toggle creates would carry the map's answer for the field being
+// toggled and a default `false` for the other one, and the request's rollback
+// baseline would be `false` whatever the server had said.
+void ItemActions::adoptStateFromMap(const QString &itemId, const QVariantMap &map)
+{
+    if (itemId.isEmpty() || hasSettledState(itemId) || hasPendingUserState(itemId))
+        return;
+    if (!admitUserState(itemId))
+        return; // setPlayed()/setFavorite() report the pressure; nothing to seed
+    rememberState(itemId, stateFromMap(map));
 }
 
 void ItemActions::rememberState(const QString &itemId, const UserState &state)
@@ -1127,14 +1226,10 @@ void ItemActions::togglePlayed(const QVariant &item)
         qCWarning(logApp) << "ItemActions: togglePlayed without an item id";
         return;
     }
-    bool current = false;
-    if (m_state.contains(itemId) || m_playedRequests.contains(itemId))
-        current = knownState(itemId).played; // newest intent wins over a stale map
-    else if (map.contains(QStringLiteral("played")))
-        current = map.value(QStringLiteral("played")).toBool();
-    else
-        current = knownState(itemId).played;
-    setPlayed(itemId, !current);
+    // Newest intent wins over a stale map; the map answers only for an item
+    // nothing here has held yet (knownState()).
+    adoptStateFromMap(itemId, map);
+    setPlayed(itemId, !knownState(itemId, map).played);
 }
 
 void ItemActions::setFavorite(const QString &itemId, bool favorite)
@@ -1205,14 +1300,8 @@ void ItemActions::toggleFavorite(const QVariant &item)
         qCWarning(logApp) << "ItemActions: toggleFavorite without an item id";
         return;
     }
-    bool current = false;
-    if (m_state.contains(itemId) || m_favoriteRequests.contains(itemId))
-        current = knownState(itemId).favorite;
-    else if (map.contains(QStringLiteral("favorite")))
-        current = map.value(QStringLiteral("favorite")).toBool();
-    else
-        current = knownState(itemId).favorite;
-    setFavorite(itemId, !current);
+    adoptStateFromMap(itemId, map);
+    setFavorite(itemId, !knownState(itemId, map).favorite);
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -1326,8 +1415,10 @@ QVariantList ItemActions::itemMenuPolicy(const QVariant &item, bool allowDetails
         return {};
 
     const QVariantMap capabilities = itemCapabilities(classified.item);
-    const bool played = isPlayed(classified.id);
-    const bool favorite = isFavorite(classified.id);
+    // The caller's map is the fallback, not the answer: see knownState().
+    const UserState userState = knownState(classified.id, classified.item);
+    const bool played = userState.played;
+    const bool favorite = userState.favorite;
     QVariantList descriptors;
 
     const auto append = [&descriptors](const QString &verb, const QString &presentation,
@@ -1557,6 +1648,8 @@ void ItemActions::performItemVerb(const QString &verb, const QVariant &item)
             return;
         if (classified.kind == ItemKind::Series)
             shuffleSeries(classified.id);
+        else if (classified.kind == ItemKind::Season || classified.kind == ItemKind::MusicAlbum)
+            shuffleInOrder(classified.id, containerCollectionType(classified.kind));
         else
             shuffle(classified.id, containerCollectionType(classified.kind));
     } else if (verb == QLatin1String("instantMix")) {
@@ -1564,10 +1657,10 @@ void ItemActions::performItemVerb(const QString &verb, const QVariant &item)
             instantMix(map);
     } else if (verb == QLatin1String("played")) {
         if (capabilities.value(QStringLiteral("markPlayed")).toBool())
-            setPlayed(classified.id, !isPlayed(classified.id));
+            togglePlayed(map);
     } else if (verb == QLatin1String("favorite")) {
         if (capabilities.value(QStringLiteral("favorite")).toBool())
-            setFavorite(classified.id, !isFavorite(classified.id));
+            toggleFavorite(map);
     } else if (verb == QLatin1String("series") || verb == QLatin1String("goToSeason")) {
         if (capabilities.value(QStringLiteral("seriesNavigation")).toBool() ||
             !map.value(QStringLiteral("seriesId")).toString().isEmpty() ||

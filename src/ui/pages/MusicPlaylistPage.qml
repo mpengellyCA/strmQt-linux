@@ -192,6 +192,10 @@ FocusScope {
             if (page.StackView.status === StackView.Active)
                 Actions.playAllFrom(items, startIndex)
         }
+        function onShuffleItemsRequested(items) {
+            if (page.StackView.status === StackView.Active)
+                Actions.shuffleAllFrom(items)
+        }
         function onQueueItemsRequested(items) {
             if (page.StackView.status === StackView.Active)
                 Actions.addAllToQueue(items)

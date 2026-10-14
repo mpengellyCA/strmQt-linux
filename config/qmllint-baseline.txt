@@ -591,6 +591,7 @@ src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.add
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, startIndex)
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(PlaylistCtl.selectedItemIds(memberList.selectedRows), true)
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.setFavoriteAll(PlaylistCtl.selectedItemIds(memberList.selectedRows), true)
+src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.shuffleAllFrom(items)
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	Actions.toggleFavorite(item)
 src/ui/pages/MusicPlaylistPage.qml: Unqualified access [unqualified]	MusicPlay.radio(String(item.itemId), String(item.name))
@@ -731,6 +732,7 @@ src/ui/pages/PlayerPage.qml: Unqualified access [unqualified]	visible: PlayerCtl
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	.arg(PlaylistCtl.currentName)
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.addAllToQueue(items);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.playAllFrom(items, startIndex);
+src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	Actions.shuffleAllFrom(items);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.create(name, []);
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.ensureAllPlaylists();
 src/ui/pages/PlaylistPage.qml: Unqualified access [unqualified]	PlaylistCtl.filterText = "";
