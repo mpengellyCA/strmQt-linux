@@ -3,6 +3,7 @@
 #include "playback/PlayerBackend.h"
 
 #include <QCoreApplication>
+#include <QList>
 #include <QStringList>
 #include <QTimer>
 
@@ -10,6 +11,7 @@
 #include <memory>
 
 struct mpv_handle;
+struct mpv_event_property;
 
 namespace strmqt {
 
@@ -254,6 +256,12 @@ private:
     // Re-read `track-list` and rebuild both lists; emits tracksChanged on change.
     void refreshTracks();
     void setTrackProperty(const char *name, int id);
+    // The loadId of the load() that queued this mpv playlist entry; 0 for one
+    // that is not ours to report on.
+    LoadId takeLoadIdForEntry(qint64 entryId);
+    // The observed properties that belong to the core rather than to a file.
+    // True when `change` was one of them and has been handled.
+    bool handleCoreProperty(const mpv_event_property &change);
     void applyVideoProcessing();
     void updateVideoFormat(const QVariantMap &params);
     void noteLogForShaderFailure(const QString &text);
@@ -272,9 +280,24 @@ private:
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
     bool m_loadInFlight = false;
+    // m_loadId is what the caller last asked for; m_eventLoadId is the load
+    // whose file mpv's event stream is currently talking about. The second
+    // follows the events, never the commands: mpv names the playlist entry in
+    // START_FILE, and m_pendingLoads says which load() queued that entry. Two
+    // loads issued before the first START_FILE is drained therefore cannot
+    // lend the first file's events to the second load, and an entry replaced
+    // before it ever started simply never shows up.
     LoadId m_loadId = 0;
     LoadId m_eventLoadId = 0;
-    LoadId m_pendingLoadId = 0;
+    struct PendingLoad
+    {
+        qint64 entryId = 0;
+        LoadId loadId = 0;
+    };
+    QList<PendingLoad> m_pendingLoads;
+    // Only for a libmpv whose loadfile reply names no entry (before 0.33): the
+    // most recent load, attributed the old way.
+    LoadId m_untrackedLoadId = 0;
     bool m_buffering = false;
     QString m_hwdecCurrent;
 
@@ -294,6 +317,9 @@ private:
     // VideoProcessing means these, not "whatever the last chain left".
     QByteArray m_defaultScale;
     QByteArray m_defaultCscale;
+    // mpv's own subtitle face, read the same way: an empty font in the
+    // subtitle style means this one, not "whatever was chosen last".
+    QByteArray m_defaultSubFont;
     bool m_shaderFailureReported = false;
     QSize m_videoSize;
     bool m_videoHdr = false;

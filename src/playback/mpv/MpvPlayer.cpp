@@ -183,6 +183,7 @@ bool MpvPlayer::ensureInitialized()
     mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
     m_defaultScale = readStringProperty(m_mpv, "scale");
     m_defaultCscale = readStringProperty(m_mpv, "cscale");
+    m_defaultSubFont = readStringProperty(m_mpv, "sub-font");
     applyDeferredSettings();
     emit renderHandleChanged();
     return true;
@@ -305,6 +306,10 @@ void MpvPlayer::destroyCore()
     mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
     mpv_terminate_destroy(m_mpv);
     m_mpv = nullptr;
+    // Playlist entry ids belong to the core that issued them; the next core
+    // counts from one again.
+    m_pendingLoads.clear();
+    m_untrackedLoadId = 0;
 }
 
 bool MpvPlayer::command(const char *args[])
@@ -327,7 +332,6 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
         emit renderHandleChanged();
     }
     m_loadId = loadId;
-    m_pendingLoadId = loadId;
     // Publish the requested position directly. A synthetic zero stamped with
     // the new load id would be accepted by PlayerController and could erase
     // the recovery point before this load produces its first time-pos event.
@@ -348,7 +352,38 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
     setState(State::Loading, loadId);
     const QByteArray urlUtf8 = url.toString(QUrl::FullyEncoded).toUtf8();
     const char *args[] = {"loadfile", urlUtf8.constData(), "replace", nullptr};
-    command(args);
+    // The reply names the playlist entry this load became, which is what ties
+    // the START_FILE/END_FILE that follow to this loadId. A command that fails
+    // queues nothing, so it records nothing.
+    mpv_node reply{};
+    const int rc = mpv_command_ret(m_mpv, args, &reply);
+    if (rc < 0) {
+        qCWarning(logPlayback) << "mpv command loadfile failed:" << mpv_error_string(rc);
+        return;
+    }
+    const QVariant entry = variantFromNode(reply).toMap().value(QStringLiteral("playlist_entry_id"));
+    mpv_free_node_contents(&reply);
+    if (entry.isValid()) {
+        m_pendingLoads.append({entry.toLongLong(), loadId});
+        m_untrackedLoadId = 0;
+    } else {
+        m_untrackedLoadId = loadId;
+    }
+}
+
+MpvPlayer::LoadId MpvPlayer::takeLoadIdForEntry(qint64 entryId)
+{
+    LoadId loadId = 0;
+    // Entry ids only grow, so anything older than the entry now starting was
+    // replaced before mpv got to it and will never be heard from.
+    m_pendingLoads.removeIf([entryId, &loadId](const PendingLoad &pending) {
+        if (pending.entryId == entryId)
+            loadId = pending.loadId;
+        return pending.entryId <= entryId;
+    });
+    if (loadId == 0 && m_untrackedLoadId != 0)
+        loadId = m_untrackedLoadId;
+    return loadId;
 }
 
 void MpvPlayer::setPaused(bool paused)
@@ -365,8 +400,11 @@ void MpvPlayer::stop()
         const char *args[] = {"stop", nullptr};
         command(args);
     }
+    // m_eventLoadId is deliberately left alone. It still names the file whose
+    // events are in mpv's queue, which is what keeps them from being read as
+    // news about "no load" (id 0) once m_loadId is zero too: a time-pos queued
+    // just before this stop would otherwise undo the reset below.
     m_loadId = 0;
-    m_pendingLoadId = 0;
     resetPerLoadState(0, 0);
     setState(State::Idle, 0);
     scheduleCoreRelease();
@@ -524,12 +562,14 @@ void MpvPlayer::setSubtitleStyle(const QString &font, int scale, const QString &
     if (!m_mpv)
         return;
 
-    // Empty means "leave mpv's own choice alone" — sub-font does not accept an
-    // empty string, and writing one would drop styling entirely.
-    if (!m_subtitleFont.isEmpty()) {
-        const QByteArray family = m_subtitleFont.toUtf8();
-        mpv_set_property_string(m_mpv, "sub-font", family.constData());
-    }
+    // Empty means mpv's own face, and it has to be written: skipping the call
+    // left the previously chosen family in place, so "Default" could not be
+    // chosen again. sub-font does not accept an empty string, hence the name
+    // read back when the core started ("sans-serif" unless mpv changes it).
+    const QByteArray family = !m_subtitleFont.isEmpty() ? m_subtitleFont.toUtf8()
+                              : !m_defaultSubFont.isEmpty() ? m_defaultSubFont
+                                                            : QByteArrayLiteral("sans-serif");
+    mpv_set_property_string(m_mpv, "sub-font", family.constData());
 
     double sub = m_subtitleScale / 100.0;
     mpv_set_property(m_mpv, "sub-scale", MPV_FORMAT_DOUBLE, &sub);
@@ -752,8 +792,12 @@ void MpvPlayer::updateVideoFormat(const QVariantMap &params)
         size = {};
     const QString gamma = params.value(QStringLiteral("gamma")).toString();
     const bool hdr = gamma == QLatin1String("pq") || gamma == QLatin1String("hlg");
+    // The selected track's own rate first, which is the figure videoStats()
+    // calls "fps"; container-fps is the fallback for a core without it.
     double fps = 0.0;
-    if (!m_mpv || mpv_get_property(m_mpv, "container-fps", MPV_FORMAT_DOUBLE, &fps) < 0)
+    if (!m_mpv ||
+        (mpv_get_property(m_mpv, "current-tracks/video/demux-fps", MPV_FORMAT_DOUBLE, &fps) < 0 &&
+         mpv_get_property(m_mpv, "container-fps", MPV_FORMAT_DOUBLE, &fps) < 0))
         fps = 0.0;
     if (size == m_videoSize && hdr == m_videoHdr && qFuzzyCompare(1.0 + fps, 1.0 + m_videoFps))
         return;
@@ -885,6 +929,39 @@ void MpvPlayer::wakeup(void *ctx)
     QMetaObject::invokeMethod(player, "drainEvents", Qt::QueuedConnection);
 }
 
+bool MpvPlayer::handleCoreProperty(const mpv_event_property &change)
+{
+    const bool isDouble = change.format == MPV_FORMAT_DOUBLE;
+    const double number = isDouble ? *static_cast<double *>(change.data) : 0.0;
+    if (qstrcmp(change.name, "volume") == 0) {
+        if (isDouble)
+            emit volumeChanged(qBound(0, static_cast<int>(qRound(number)), kMaxVolume));
+    } else if (qstrcmp(change.name, "mute") == 0) {
+        if (change.format == MPV_FORMAT_FLAG)
+            emit mutedChanged(*static_cast<int *>(change.data) != 0);
+    } else if (qstrcmp(change.name, "speed") == 0) {
+        if (isDouble && !qFuzzyCompare(number, m_speed)) {
+            m_speed = number;
+            emit playbackSpeedChanged();
+        }
+    } else if (qstrcmp(change.name, "audio-delay") == 0) {
+        const int ms = static_cast<int>(qRound(number * 1000.0));
+        if (isDouble && ms != m_audioDelayMs) {
+            m_audioDelayMs = ms;
+            emit audioDelayChanged();
+        }
+    } else if (qstrcmp(change.name, "sub-delay") == 0) {
+        const int ms = static_cast<int>(qRound(number * 1000.0));
+        if (isDouble && ms != m_subtitleDelayMs) {
+            m_subtitleDelayMs = ms;
+            emit subtitleDelayChanged();
+        }
+    } else {
+        return false;
+    }
+    return true;
+}
+
 void MpvPlayer::drainEvents()
 {
     m_wakeupGate.beginDrain();
@@ -898,7 +975,8 @@ void MpvPlayer::drainEvents()
 
         switch (event->event_id) {
         case MPV_EVENT_START_FILE:
-            m_eventLoadId = m_pendingLoadId;
+            m_eventLoadId = takeLoadIdForEntry(
+                static_cast<mpv_event_start_file *>(event->data)->playlist_entry_id);
             break;
         case MPV_EVENT_FILE_LOADED: {
             if (m_eventLoadId != m_loadId)
@@ -922,15 +1000,25 @@ void MpvPlayer::drainEvents()
                 setState(State::Ended, m_eventLoadId);
                 emit endReached(m_eventLoadId);
             }
+            // A playlist URL is not played, it is replaced by its entries, and
+            // those start under ids of their own. They are still this load.
+            if (end->reason == MPV_END_FILE_REASON_REDIRECT && m_eventLoadId != 0) {
+                for (int i = 0; i < end->playlist_insert_num_entries; ++i)
+                    m_pendingLoads.append({end->playlist_insert_id + i, m_eventLoadId});
+            }
             // STOP/REDIRECT/QUIT: state handled by the caller (stop()).
             if (end->reason == MPV_END_FILE_REASON_ERROR || end->reason == MPV_END_FILE_REASON_EOF)
                 scheduleCoreRelease();
             break;
         }
         case MPV_EVENT_PROPERTY_CHANGE: {
+            const auto *change = static_cast<mpv_event_property *>(event->data);
+            // Before the per-load guard: these are the core's, not a file's, and
+            // they change between load() and START_FILE and while nothing plays.
+            if (handleCoreProperty(*change))
+                break;
             if (m_eventLoadId != m_loadId)
                 break;
-            const auto *change = static_cast<mpv_event_property *>(event->data);
             if (qstrcmp(change->name, "time-pos") == 0 && change->format == MPV_FORMAT_DOUBLE) {
                 m_positionMs = msFromSeconds(*static_cast<double *>(change->data));
                 emit positionChanged(m_positionMs, m_eventLoadId);
@@ -948,13 +1036,6 @@ void MpvPlayer::drainEvents()
                     emit decoderInfoChanged();
                     emit videoStatsChanged();
                 }
-            } else if (qstrcmp(change->name, "volume") == 0 &&
-                       change->format == MPV_FORMAT_DOUBLE) {
-                const int percent = qBound(
-                    0, static_cast<int>(qRound(*static_cast<double *>(change->data))), kMaxVolume);
-                emit volumeChanged(percent);
-            } else if (qstrcmp(change->name, "mute") == 0 && change->format == MPV_FORMAT_FLAG) {
-                emit mutedChanged(*static_cast<int *>(change->data) != 0);
             } else if ((qstrcmp(change->name, "aid") == 0 || qstrcmp(change->name, "sid") == 0) &&
                        change->format == MPV_FORMAT_STRING) {
                 // The list surface follows every selection change, including the
@@ -997,29 +1078,6 @@ void MpvPlayer::drainEvents()
                     (ahead == 0 && m_lastBufferedMs != 0)) {
                     m_lastBufferedMs = ahead;
                     emit bufferedMsChanged();
-                }
-            } else if (qstrcmp(change->name, "speed") == 0 &&
-                       change->format == MPV_FORMAT_DOUBLE) {
-                const qreal speed = *static_cast<double *>(change->data);
-                if (!qFuzzyCompare(speed, m_speed)) {
-                    m_speed = speed;
-                    emit playbackSpeedChanged();
-                }
-            } else if (qstrcmp(change->name, "audio-delay") == 0 &&
-                       change->format == MPV_FORMAT_DOUBLE) {
-                const int ms = static_cast<int>(
-                    qRound(*static_cast<double *>(change->data) * 1000.0));
-                if (ms != m_audioDelayMs) {
-                    m_audioDelayMs = ms;
-                    emit audioDelayChanged();
-                }
-            } else if (qstrcmp(change->name, "sub-delay") == 0 &&
-                       change->format == MPV_FORMAT_DOUBLE) {
-                const int ms = static_cast<int>(
-                    qRound(*static_cast<double *>(change->data) * 1000.0));
-                if (ms != m_subtitleDelayMs) {
-                    m_subtitleDelayMs = ms;
-                    emit subtitleDelayChanged();
                 }
             } else if (qstrcmp(change->name, "video-params") == 0) {
                 updateVideoFormat(change->format == MPV_FORMAT_NODE

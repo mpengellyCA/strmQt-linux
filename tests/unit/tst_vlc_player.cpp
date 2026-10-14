@@ -20,13 +20,16 @@ class VlcPlayerTest : public QObject
 
 private slots:
     void loadPlayReloadStopDestroy();
+    void resumedLoadOpensAtTheResumePoint();
 };
 
 namespace {
 
 // Tiny video-only clip: no audio track, so the test does not depend on a sound
 // device. mpeg4-in-avi uses ffmpeg's built-in encoder — no libx264 requirement.
-QString generateClip(QTemporaryDir &dir)
+// A keyframe every second, so a seek has somewhere exact to land.
+QString generateClip(QTemporaryDir &dir,
+                     const QString &source = QStringLiteral("testsrc=duration=2:size=64x64:rate=10"))
 {
     const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
     if (ffmpeg.isEmpty())
@@ -36,8 +39,8 @@ QString generateClip(QTemporaryDir &dir)
     process.start(ffmpeg,
                   {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
                    QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
-                   QStringLiteral("testsrc=duration=2:size=64x64:rate=10"),
-                   QStringLiteral("-c:v"), QStringLiteral("mpeg4"), path});
+                   source, QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-g"),
+                   QStringLiteral("10"), path});
     if (!process.waitForFinished(15000) || process.exitCode() != 0)
         return {};
     return path;
@@ -89,6 +92,47 @@ void VlcPlayerTest::loadPlayReloadStopDestroy()
     delete player;
     QCoreApplication::sendPostedEvents();
     QCoreApplication::processEvents();
+}
+
+// A resume that is not paused used to open the file at 0:00 and seek only once
+// libvlc reported Playing, so the opening of the film was decoded and shown
+// before the jump. The input has to open at the resume point whether or not
+// the load starts paused. The clip is black for its first half and white for
+// its second, so a single dark picture is the opening having been shown.
+void VlcPlayerTest::resumedLoadOpensAtTheResumePoint()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(
+        dir, QStringLiteral("color=black:duration=15:size=64x64:rate=10[a];"
+                            "color=white:duration=15:size=64x64:rate=10[b];[a][b]concat"));
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate smoke-test media");
+
+    VlcPlayer player;
+    QSignalSpy errorSpy(&player, &PlayerBackend::errorOccurred);
+    int pictures = 0;
+    int darkPictures = 0;
+    connect(&player, &VlcPlayer::frameReady, &player, [&] {
+        const QImage frame = player.currentFrame();
+        if (frame.isNull())
+            return;
+        ++pictures;
+        if (frame.pixelColor(frame.width() / 2, frame.height() / 2).lightness() < 128)
+            ++darkPictures;
+    });
+
+    constexpr qint64 kResumeMs = 20'000;
+    player.load(QUrl::fromLocalFile(clip), kResumeMs, 1);
+    // The requested position is published at once, not a synthetic zero.
+    QCOMPARE(player.positionMs(), kResumeMs);
+    QTRY_VERIFY_WITH_TIMEOUT(player.state() == PlayerBackend::State::Playing && pictures >= 5,
+                             15000);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(darkPictures, 0);
+    QVERIFY2(player.positionMs() >= kResumeMs - 2000,
+             qPrintable(QString::number(player.positionMs())));
+    player.stop();
 }
 
 QTEST_GUILESS_MAIN(VlcPlayerTest)

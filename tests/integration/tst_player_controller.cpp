@@ -68,6 +68,7 @@ private slots:
     void recoveryBurstStartsOnlyOneRefresh();
     void crashResumePersistsAndClears();
     void ladderDemotesOnStartupFailure();
+    void transcodeResumeStartsTheEngineAtTheResumePoint();
     void allRungsFailingSurfacesError();
     void endReachedReportsFullRuntime();
     void stopReportsAndDeactivates();
@@ -329,6 +330,56 @@ void PlayerControllerTest::ladderDemotesOnStartupFailure()
     m_backend->simulateError(QStringLiteral("still failing"));
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QVERIFY(m_backend->loadedUrls[2].path().endsWith(QStringLiteral("master.m3u8")));
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+}
+
+// A Transcode rung is resumed the way the other two are: the engine is told
+// where to start. Emby is given StartTimeTicks in the PlaybackInfo request, but
+// the HLS TranscodingUrl it answers with carries no offset of its own and
+// describes the whole runtime on the item's own timeline — the recorded
+// fixtures show the first, and seeking and position reports on a transcode
+// rely on the second. Withholding the start from the engine would therefore
+// play a resumed transcode from 0:00 (AUDIT.md §4.4 proposed exactly that).
+void PlayerControllerTest::transcodeResumeStartsTheEngineAtTheResumePoint()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/999/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_transcode_only.json"))));
+    m_controller->setTimingForTests(20, 1000, 10); // not about the watchdog
+
+    m_controller->playItem(QStringLiteral("999"), QStringLiteral("Transcode only"), 60'000);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    QVERIFY(m_backend->loadedUrls[0].path().endsWith(QStringLiteral("master.m3u8")));
+
+    // The server was told the resume point...
+    const QJsonObject asked =
+        QJsonDocument::fromJson(m_mock
+                                    ->lastRequestFor(QStringLiteral("POST"),
+                                                     QStringLiteral("/Items/999/PlaybackInfo"))
+                                    .body)
+            .object();
+    QCOMPARE(static_cast<qint64>(asked.value(QLatin1String("StartTimeTicks")).toDouble()),
+             Q_INT64_C(600000000));
+    // ...its URL does not start there by itself...
+    QVERIFY(!m_backend->loadedUrls[0].query().contains(QLatin1String("StartTimeTicks"),
+                                                       Qt::CaseInsensitive));
+    // ...so the engine is.
+    QCOMPARE(m_backend->loadedStarts[0], Q_INT64_C(60000));
+
+    // And the engine's position is the item's position: no offset is added to
+    // what a transcode reports.
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(61'000);
+    m_controller->togglePause();
+    QTRY_VERIFY([this] {
+        const auto request = m_mock->lastRequestFor(QStringLiteral("POST"),
+                                                    QStringLiteral("/Sessions/Playing/Progress"));
+        const QJsonObject body = QJsonDocument::fromJson(request.body).object();
+        return body.value(QLatin1String("IsPaused")).toBool() &&
+               static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()) ==
+                   Q_INT64_C(610000000);
+    }());
     QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
 }
 

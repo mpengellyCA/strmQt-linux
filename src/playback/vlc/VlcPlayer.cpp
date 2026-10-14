@@ -22,6 +22,12 @@ enum EventCode
     EvBuffering,
     EvBufferingDone,
 };
+
+// How far short of the requested start an input may open and still count as
+// having honoured :start-time. A seek lands on a keyframe, which is before the
+// target; the opening of the file is not within this of any resume point that
+// matters.
+constexpr qint64 kStartSeekSlackMs = 5000;
 } // namespace
 
 VlcPlayer::VlcPlayer(QObject *parent) : PlayerBackend(parent)
@@ -158,7 +164,11 @@ void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
     switch (type) {
     case EvPlaying:
         if (m_pendingStartMs > 0) {
-            libvlc_media_player_set_time(m_player, m_pendingStartMs);
+            // load() asked the input to open at the resume point. Seek only if
+            // it did not (an input that ignores :start-time): a second seek to
+            // where playback already is flushes what was just buffered.
+            if (libvlc_media_player_get_time(m_player) < m_pendingStartMs - kStartSeekSlackMs)
+                libvlc_media_player_set_time(m_player, m_pendingStartMs);
             m_pendingStartMs = 0;
         }
         setState(State::Playing, loadId);
@@ -224,13 +234,14 @@ void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
         return;
     }
     libvlc_media_add_option(media, ":http-user-agent=StrmQt");
-    if (initiallyPaused) {
+    if (initiallyPaused)
         libvlc_media_add_option(media, ":start-paused");
-        if (startMs > 0) {
-            const QByteArray startOption =
-                QByteArrayLiteral(":start-time=") + QByteArray::number(startMs / 1000.0, 'f', 3);
-            libvlc_media_add_option(media, startOption.constData());
-        }
+    // The input opens at the resume point. Seeking only once Playing arrives
+    // decoded and showed the opening of the file first on every resume.
+    if (startMs > 0) {
+        const QByteArray startOption =
+            QByteArrayLiteral(":start-time=") + QByteArray::number(startMs / 1000.0, 'f', 3);
+        libvlc_media_add_option(media, startOption.constData());
     }
 
     m_pendingStartMs = startMs;

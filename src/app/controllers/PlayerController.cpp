@@ -817,6 +817,13 @@ void PlayerController::startAttempt(qint64 startMs)
     setBusy(true);
     emit streamMethodChanged();
     m_expectedLoadId = ++m_nextLoadId;
+    // Every rung starts the engine at startMs, Transcode included. The only
+    // video transcode this client asks for is HLS (EmbyClient's
+    // TranscodingProfile), and the TranscodingUrl that comes back carries no
+    // start offset: the playlist is treated as being on the item's own
+    // timeline, which is what seeking and every position report on a
+    // transcode already assume. Dropping the start here without adding a
+    // stream offset to those would play a resume from 0:00 or report it wrong.
     m_backend->load(candidate.url, startMs, m_expectedLoadId, m_initiallyPaused);
     m_governor->noteTransient();
     // Some engines reset their audio state per media; re-assert ours.
