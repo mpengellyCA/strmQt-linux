@@ -317,6 +317,28 @@ void NowPlayingMusicController::toggleFavourite()
         m_actions->setFavorite(m_trackId, !favourite());
 }
 
+void NowPlayingMusicController::resetSessionState()
+{
+    const bool wasFavourite = favourite();
+    m_favouriteOverrides.clear();
+
+    // Retire the album and lyrics replies still in flight for the old identity
+    // and drop what they already delivered.
+    ++m_albumGeneration;
+    m_tracksAlbumId.clear();
+    m_loadedAlbumId.clear();
+    if (m_tracks->rowCount() > 0)
+        m_tracks->clear();
+    setAlbumSummary(QString());
+    clearLyrics();
+
+    // Everything else is derived from the queue and the player, so it is
+    // re-derived rather than cleared by hand.
+    refreshTrack();
+    if (favourite() != wasFavourite)
+        emit favouriteChanged();
+}
+
 void NowPlayingMusicController::setLyricsEnabledForTests(bool enabled)
 {
     m_lyricsEnabled = enabled;

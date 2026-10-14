@@ -76,6 +76,16 @@ class DetailsController : public QObject
     Q_PROPERTY(bool upcomingEpisodesLoading READ upcomingEpisodesLoading NOTIFY upcomingEpisodesChanged)
     Q_PROPERTY(QVariantMap nextEpisode READ nextEpisode NOTIFY upcomingEpisodesChanged)
     Q_PROPERTY(bool hasNextEpisode READ hasNextEpisode NOTIFY upcomingEpisodesChanged)
+    // User data of the item named by itemId: seeded by the primary details
+    // reply, then kept current by live UserDataChanged records and by
+    // ItemActions' own changes. The route's item map is a snapshot taken when
+    // the page was opened, so without these a resume point moved on a phone
+    // never reaches a page that is already showing. All four are the defaults
+    // while no item owns the controller.
+    Q_PROPERTY(bool played READ played NOTIFY userStateChanged)
+    Q_PROPERTY(bool favorite READ favorite NOTIFY userStateChanged)
+    Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY userStateChanged)
+    Q_PROPERTY(bool resumable READ resumable NOTIFY userStateChanged)
 
 public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -104,6 +114,11 @@ public:
     bool upcomingEpisodesLoading() const { return m_upcomingEpisodesLoading; }
     QVariantMap nextEpisode() const { return m_nextEpisode; }
     bool hasNextEpisode() const { return !m_nextEpisode.isEmpty(); }
+    bool played() const { return m_played; }
+    bool favorite() const { return m_favorite; }
+    qint64 positionMs() const { return m_positionMs; }
+    // MediaItem::isResumable()'s rule, so this and a model row cannot disagree.
+    bool resumable() const { return m_positionMs > 0 && !m_played; }
 
     void bindLiveUpdates(LiveUpdateService *service);
     Q_INVOKABLE void refreshUpcomingEpisodes();
@@ -121,8 +136,17 @@ public:
     // "more like this" requests, which mean nothing for a person.
     Q_INVOKABLE void loadPerson(const QString &personId);
 
+public slots:
+    // ItemActions::playedChanged / favoriteChanged. Only the loaded item's own
+    // id matters here; the rails are models ItemActions patches itself.
+    void notePlayed(const QString &itemId, bool played);
+    void noteFavorite(const QString &itemId, bool favorite);
+
 signals:
     void detailsChanged();
+    // played / favorite / positionMs / resumable. Emitted only when one of
+    // them actually moved.
+    void userStateChanged();
     void collectionsChanged();
     void personChanged();
     void similarStatusChanged();
@@ -131,6 +155,8 @@ signals:
 private:
     void cancelRequests();
     void setSimilarLoading(bool loading);
+    void onUserDataPatched(const QVariantList &entries);
+    void setUserState(bool played, bool favorite, qint64 positionMs);
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
@@ -161,6 +187,13 @@ private:
     bool m_isSeries = false;
     int m_upcomingEpisodesGeneration = 0;
     emby::RequestHandle m_upcomingEpisodesRequest;
+    bool m_played = false;
+    bool m_favorite = false;
+    qint64 m_positionMs = 0;
+    // The load generation in which user state last arrived from somewhere
+    // newer than that load's own REST reply (a live record, or a change made
+    // here). The reply was requested first, so it must not seed over it.
+    int m_userStateGeneration = -1;
 };
 
 } // namespace strmqt

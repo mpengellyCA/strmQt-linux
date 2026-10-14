@@ -18,14 +18,59 @@ void SeriesController::bindLiveUpdates(LiveUpdateService *service)
 {
     if (!service)
         return;
+    // The rich socket patch carries the whole record, so the loaded season's
+    // rows follow a phone or another client at once and without a request.
+    connect(service, &LiveUpdateService::userDataPatched, this,
+            &SeriesController::onUserDataPatched);
     // A rich socket patch and a polling invalidation converge here after the
     // server owns the new watched state. The changed id may belong to an
-    // unloaded season, so every delivered burst becomes one bounded refetch.
+    // unloaded season, so every delivered burst becomes one bounded refetch
+    // of what is next and one of the seasons' unplayed counts.
     connect(service, &LiveUpdateService::userDataInvalidated, this,
             [this](const QStringList &) {
-                if (!m_seriesId.isEmpty())
-                    refreshNextUnwatched();
+                if (m_seriesId.isEmpty())
+                    return;
+                refreshNextUnwatched();
+                refreshSeasonCounts();
             });
+}
+
+void SeriesController::onUserDataPatched(const QVariantList &entries)
+{
+    if (m_seriesId.isEmpty())
+        return;
+    const QString nextId = m_nextUnwatched.value(QStringLiteral("itemId")).toString();
+    for (const QVariant &value : entries) {
+        const QVariantMap entry = value.toMap();
+        const QString itemId = entry.value(QStringLiteral("itemId")).toString();
+        if (itemId.isEmpty())
+            continue;
+        m_episodes->updateUserData(itemId, entry.value(QStringLiteral("played")).toBool(),
+                                   entry.value(QStringLiteral("favorite")).toBool(),
+                                   entry.value(QStringLiteral("positionTicks")).toLongLong(),
+                                   entry.value(QStringLiteral("playCount")).toInt());
+        if (itemId != nextId)
+            continue;
+        // The "continue" button reads its resume point from this map. When the
+        // episode is in the loaded season its patched row is the authority, so
+        // the user-data keys are copied from there rather than re-derived.
+        // Whether it is still the next one is the server's answer and arrives
+        // with the invalidation.
+        const QList<MediaItem> &episodes = m_episodes->items();
+        for (int row = 0; row < episodes.size(); ++row) {
+            if (episodes.at(row).id != itemId)
+                continue;
+            const QVariantMap patched = m_episodes->get(row);
+            QVariantMap next = m_nextUnwatched;
+            for (const QString &key :
+                 {QStringLiteral("played"), QStringLiteral("playCount"),
+                  QStringLiteral("favorite"), QStringLiteral("resumable"),
+                  QStringLiteral("progress"), QStringLiteral("positionMs")})
+                next.insert(key, patched.value(key));
+            setNextUnwatched(std::move(next));
+            break;
+        }
+    }
 }
 
 void SeriesController::resetSessionState()
@@ -33,6 +78,7 @@ void SeriesController::resetSessionState()
     ++m_generation;
     ++m_seriesGeneration;
     ++m_nextUnwatchedGeneration;
+    ++m_seasonCountsGeneration;
     m_seasons->clear();
     m_episodes->clear();
     m_seriesId.clear();
@@ -93,6 +139,7 @@ void SeriesController::startOpen(const QString &seriesId, const QString &seriesN
 {
     const int generation = ++m_generation;
     const int seriesGeneration = ++m_seriesGeneration;
+    ++m_seasonCountsGeneration;
     m_seriesId = seriesId;
     m_seriesName = seriesName;
     m_scopeUsable = false;
@@ -230,6 +277,41 @@ void SeriesController::notePlayed(const QString &itemId, bool)
     // one bounded request and cannot contaminate this series' answer because
     // ParentId remains the current series.
     refreshNextUnwatched();
+    refreshSeasonCounts();
+}
+
+void SeriesController::refreshSeasonCounts()
+{
+    // Nothing to reconcile until the seasons themselves have landed; the
+    // request that is filling them carries the same counts.
+    if (m_seriesId.isEmpty() || !m_scopeUsable || m_seasons->rowCount() == 0)
+        return;
+
+    const int generation = ++m_seasonCountsGeneration;
+    m_client->seasons(m_seriesId).then(this, [this, generation](const Result<ItemsPage> &result) {
+        if (generation != m_seasonCountsGeneration)
+            return;
+        if (!result.ok()) {
+            qCWarning(logApp) << "season counts refresh failed:" << result.error;
+            return;
+        }
+        // Only the user data is being reconciled. A season added or removed is
+        // a library change, and replacing the list under the selected row here
+        // would move the selection without telling anyone.
+        const QList<MediaItem> &current = m_seasons->items();
+        const QList<MediaItem> &fresh = result.value.items;
+        if (fresh.size() != current.size())
+            return;
+        bool moved = false;
+        for (int row = 0; row < fresh.size(); ++row) {
+            if (fresh.at(row).id != current.at(row).id)
+                return;
+            moved = moved || fresh.at(row).unplayedItemCount != current.at(row).unplayedItemCount
+                    || fresh.at(row).played != current.at(row).played;
+        }
+        if (moved)
+            m_seasons->setItems(fresh, result.value.totalRecordCount);
+    });
 }
 
 void SeriesController::refreshNextUnwatched()

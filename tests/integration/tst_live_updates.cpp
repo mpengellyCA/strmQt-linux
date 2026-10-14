@@ -2,9 +2,11 @@
 #include <QtTest>
 
 #include "MockEmbyServer.h"
+#include "app/controllers/DetailsController.h"
 #include "app/controllers/HomeController.h"
 #include "app/controllers/LibraryController.h"
 #include "app/controllers/LiveUpdateService.h"
+#include "app/controllers/SeriesController.h"
 #include "app/models/MediaItemModel.h"
 #include "core/Settings.h"
 #include "server/emby/EmbyClient.h"
@@ -86,9 +88,15 @@ private slots:
     void homeInvalidationBehindAnInFlightRefreshIsNotLost();
     void homeRefreshNowCostsOneSnapshot();
     void libraryGridAnnouncesNewItemsInsteadOfReloading();
+    void seriesEpisodesFollowALivePatch();
+    void seriesSeasonCountsAreRefetchedNotInvented();
+    void detailsRailsAndItemStateFollowALivePatch();
+    void detailsReplyDoesNotOverwriteANewerLiveRecord();
 
 private:
     void routeHomeFixtures();
+    void routeSeriesFixtures();
+    int requestsFor(const QString &path) const;
 
     MockEmbyServer *m_mock = nullptr;
     QTemporaryDir *m_dir = nullptr;
@@ -139,6 +147,41 @@ void LiveUpdatesTest::routeHomeFixtures()
     QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
                                      QStringLiteral("/Users/%1/Items").arg(kUserId),
                                      fixturePath(QStringLiteral("items_movies.json"))));
+}
+
+int LiveUpdatesTest::requestsFor(const QString &path) const
+{
+    int count = 0;
+    for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests()) {
+        if (request.path == path)
+            ++count;
+    }
+    return count;
+}
+
+// Breaking Bad from the fixtures: season 1 (400100) fully watched, season 2
+// (400200) with five to go and the two episodes 402001 (watched) and 402002
+// (unwatched, 13:20 in). 402002 is also what the bounded next-unwatched query
+// answers.
+void LiveUpdatesTest::routeSeriesFixtures()
+{
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"), QStringLiteral("/Shows/400001/Seasons"),
+                                     fixturePath(QStringLiteral("seasons.json"))));
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Shows/400001/Episodes"),
+                                     fixturePath(QStringLiteral("episodes.json"))));
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/400001").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Id\":\"400001\",\"Name\":\"Breaking Bad\","
+                                       "\"Type\":\"Series\"}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral(
+                         "{\"Items\":[{\"Id\":\"402002\",\"Name\":\"Grilled\","
+                         "\"Type\":\"Episode\",\"ParentIndexNumber\":2,\"IndexNumber\":2,"
+                         "\"RunTimeTicks\":28230000000,"
+                         "\"UserData\":{\"PlaybackPositionTicks\":8000000000,"
+                         "\"Played\":false,\"IsFavorite\":false}}],"
+                         "\"TotalRecordCount\":1}"));
 }
 
 void LiveUpdatesTest::liveSettingsDefaultAndValidate()
@@ -692,6 +735,317 @@ void LiveUpdatesTest::libraryGridAnnouncesNewItemsInsteadOfReloading()
     library.onLibraryInvalidated({});
     QTRY_VERIFY(!library.loading());
     QVERIFY(!library.updatesPending());
+}
+
+// SeriesController listened for the invalidation only, and that refreshes one
+// thing: which episode is next. The episode rows themselves were never told,
+// so an episode watched on a phone kept its unwatched tick and its old progress
+// bar on a series page that was already open.
+void LiveUpdatesTest::seriesEpisodesFollowALivePatch()
+{
+    routeSeriesFixtures();
+
+    SeriesController series(m_client);
+    LiveUpdateService live(m_client, m_settings);
+    // The invalidation is held back so that what is asserted below is the
+    // patch's doing and not a refetch's.
+    live.setDebounceForTests(20, 2000, 4000);
+    series.bindLiveUpdates(&live);
+
+    series.open(QStringLiteral("400001"), QStringLiteral("Breaking Bad"));
+    QTRY_COMPARE_WITH_TIMEOUT(series.episodes()->rowCount(), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+                              QStringLiteral("402002"), 5000);
+    QCOMPARE(series.currentSeasonId(), QStringLiteral("400200"));
+    QCOMPARE(series.episodes()->get(1).value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("402002"));
+    QVERIFY(!series.episodes()->get(1).value(QStringLiteral("played")).toBool());
+    QCOMPARE(series.nextUnwatched().value(QStringLiteral("positionMs")).toLongLong(), 800'000);
+
+    const int requestsBefore = m_mock->requestCount();
+    QSignalSpy rowsChanged(series.episodes(), &QAbstractItemModel::dataChanged);
+    QSignalSpy nextChanged(&series, &SeriesController::nextUnwatchedChanged);
+
+    // Twenty minutes in on the phone, and favourited there.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("402002"), false, true,
+                                                   12'000'000'000, 0));
+    QCOMPARE(rowsChanged.count(), 1);
+    const QVariantMap row = series.episodes()->get(1);
+    QVERIFY(row.value(QStringLiteral("favorite")).toBool());
+    QVERIFY(!row.value(QStringLiteral("played")).toBool());
+    QCOMPARE(row.value(QStringLiteral("positionMs")).toLongLong(), 1'200'000);
+    QVERIFY(row.value(QStringLiteral("resumable")).toBool());
+    // The "continue" button reads its resume point from nextUnwatched.
+    QCOMPARE(nextChanged.count(), 1);
+    QCOMPARE(series.nextUnwatched().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("402002"));
+    QCOMPARE(series.nextUnwatched().value(QStringLiteral("positionMs")).toLongLong(), 1'200'000);
+    QVERIFY(series.nextUnwatched().value(QStringLiteral("favorite")).toBool());
+    QCOMPARE(series.nextUnwatched().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Grilled"));
+
+    // Finished there.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("402002"), true, true, 0, 1));
+    QVERIFY(series.episodes()->get(1).value(QStringLiteral("played")).toBool());
+    QVERIFY(!series.episodes()->get(1).value(QStringLiteral("resumable")).toBool());
+    QCOMPARE(series.episodes()->get(1).value(QStringLiteral("playCount")).toInt(), 1);
+
+    // An item that is not on this page is nobody's business here.
+    const int changesBefore = static_cast<int>(rowsChanged.count());
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("elsewhere"), true, true));
+    QCOMPARE(rowsChanged.count(), changesBefore);
+
+    // None of it cost a request, and none of it reloaded the season.
+    QCOMPARE(m_mock->requestCount(), requestsBefore);
+    QVERIFY(!series.loading());
+    QCOMPARE(series.episodes()->rowCount(), 2);
+}
+
+// A season's unplayed badge is the server's rollup. It cannot be recounted
+// here — the episode that changed may be in a season that was never loaded —
+// so after the burst the seasons are asked again, and the answer is applied
+// only as far as it is the same seasons with different numbers.
+void LiveUpdatesTest::seriesSeasonCountsAreRefetchedNotInvented()
+{
+    routeSeriesFixtures();
+    const QString seasonsPath = QStringLiteral("/Shows/400001/Seasons");
+    const auto seasonsBody = [](int firstUnplayed, int secondUnplayed, bool third = false) {
+        QString body = QStringLiteral(
+                           "{\"Items\":[{\"Id\":\"400100\",\"Name\":\"Season 1\","
+                           "\"Type\":\"Season\",\"IndexNumber\":1,"
+                           "\"UserData\":{\"UnplayedItemCount\":%1,\"Played\":%3}},"
+                           "{\"Id\":\"400200\",\"Name\":\"Season 2\",\"Type\":\"Season\","
+                           "\"IndexNumber\":2,"
+                           "\"UserData\":{\"UnplayedItemCount\":%2,\"Played\":false}}")
+                           .arg(firstUnplayed)
+                           .arg(secondUnplayed)
+                           .arg(firstUnplayed == 0 ? QStringLiteral("true")
+                                                   : QStringLiteral("false"));
+        if (third)
+            body += QStringLiteral(",{\"Id\":\"400300\",\"Name\":\"Season 3\","
+                                   "\"Type\":\"Season\",\"IndexNumber\":3,"
+                                   "\"UserData\":{\"UnplayedItemCount\":9}}");
+        body += QStringLiteral("],\"TotalRecordCount\":%1}").arg(third ? 3 : 2);
+        return body.toUtf8();
+    };
+
+    SeriesController series(m_client);
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(20, 10, 500);
+    series.bindLiveUpdates(&live);
+
+    series.open(QStringLiteral("400001"), QStringLiteral("Breaking Bad"));
+    QTRY_COMPARE_WITH_TIMEOUT(series.episodes()->rowCount(), 2, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!series.loading(), 5000);
+    QCOMPARE(series.seasons()->rowCount(), 2);
+    QCOMPARE(series.seasons()->get(0).value(QStringLiteral("unplayedCount")).toInt(), 0);
+    QCOMPARE(series.seasons()->get(1).value(QStringLiteral("unplayedCount")).toInt(), 5);
+    QCOMPARE(requestsFor(seasonsPath), 1);
+
+    QSignalSpy seasonsReset(series.seasons(), &QAbstractItemModel::modelReset);
+    QSignalSpy seasonMoved(&series, &SeriesController::currentSeasonChanged);
+    QSignalSpy loadingChanged(&series, &SeriesController::loadingChanged);
+    const int episodeRequests = requestsFor(QStringLiteral("/Shows/400001/Episodes"));
+
+    // Someone rewatched nothing here: an episode of season ONE, which is not
+    // the loaded season, was marked unwatched elsewhere, and one of season two
+    // was finished. The server's rollups say so; no row on this page does.
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 200, seasonsBody(1, 4));
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("401009"), false, false));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.seasons()->get(0).value(QStringLiteral("unplayedCount")).toInt(), 1, 5000);
+    QCOMPARE(series.seasons()->get(1).value(QStringLiteral("unplayedCount")).toInt(), 4);
+    QVERIFY(!series.seasons()->get(0).value(QStringLiteral("played")).toBool());
+    QCOMPARE(requestsFor(seasonsPath), 2);
+    QCOMPARE(seasonsReset.count(), 1);
+    // The selection and the loaded season are untouched.
+    QCOMPARE(series.currentSeasonId(), QStringLiteral("400200"));
+    QCOMPARE(seasonMoved.count(), 0);
+    QCOMPARE(loadingChanged.count(), 0);
+    QCOMPARE(series.episodes()->rowCount(), 2);
+    QCOMPARE(requestsFor(QStringLiteral("/Shows/400001/Episodes")), episodeRequests);
+
+    // The same answer again is not news.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("401009"), false, false));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), 3, 5000);
+    QTest::qWait(100);
+    QCOMPARE(seasonsReset.count(), 1);
+
+    // A committed local toggle (ItemActions::playedCommitted) asks as well.
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 200, seasonsBody(1, 3));
+    series.notePlayed(QStringLiteral("402002"), true);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        series.seasons()->get(1).value(QStringLiteral("unplayedCount")).toInt(), 3, 5000);
+    QCOMPARE(seasonsReset.count(), 2);
+
+    // A different season LIST is a library change, not a user-data one.
+    // Swapping it in under the selected row is not this path's job.
+    m_mock->addRoute(QStringLiteral("GET"), seasonsPath, 200, seasonsBody(0, 0, true));
+    const int asked = requestsFor(seasonsPath);
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("401009"), true, false));
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(seasonsPath), asked + 1, 5000);
+    QTest::qWait(100);
+    QCOMPARE(series.seasons()->rowCount(), 2);
+    QCOMPARE(series.seasons()->get(1).value(QStringLiteral("unplayedCount")).toInt(), 3);
+    QCOMPARE(seasonsReset.count(), 2);
+    QCOMPARE(series.currentSeasonId(), QStringLiteral("400200"));
+}
+
+// DetailsController listened for the invalidation only, and only to refetch a
+// series' upcoming episodes. Its rails and the loaded item's own state were a
+// snapshot from when the page opened.
+void LiveUpdatesTest::detailsRailsAndItemStateFollowALivePatch()
+{
+    // The Matrix (301001): watched and favourited, nothing to resume.
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                                     fixturePath(QStringLiteral("item_details.json"))));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Similar"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"sim-1\",\"Name\":\"Dark City\","
+                                       "\"Type\":\"Movie\",\"RunTimeTicks\":60000000000}]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    DetailsController details(m_client);
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(20, 2000, 4000);
+    details.bindLiveUpdates(&live);
+    QSignalSpy state(&details, &DetailsController::userStateChanged);
+    QSignalSpy detailsChanged(&details, &DetailsController::detailsChanged);
+
+    details.load(QStringLiteral("301001"));
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading() && !details.similarLoading(), 5000);
+    QCOMPARE(details.itemId(), QStringLiteral("301001"));
+    QCOMPARE(details.similar()->rowCount(), 1);
+    // Seeded by the reply, once.
+    QVERIFY(details.played());
+    QVERIFY(details.favorite());
+    QCOMPARE(details.positionMs(), 0);
+    QVERIFY(!details.resumable());
+    QCOMPARE(state.count(), 1);
+
+    const int requestsBefore = m_mock->requestCount();
+    const int detailsSignals = static_cast<int>(detailsChanged.count());
+
+    // Rewatching it on a phone: unwatched again, 42 s in.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("301001"), false, true,
+                                                   420'000'000, 3));
+    QVERIFY(!details.played());
+    QVERIFY(details.favorite());
+    QCOMPARE(details.positionMs(), 42'000);
+    QVERIFY(details.resumable());
+    QCOMPARE(state.count(), 2);
+
+    // The same record again (a progress report that moved nothing) is silent.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("301001"), false, true,
+                                                   420'000'000, 3));
+    QCOMPARE(state.count(), 2);
+
+    // A row of "More like this" is patched; the page's own state is not it.
+    QVERIFY(!details.similar()->get(0).value(QStringLiteral("played")).toBool());
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("sim-1"), true, true, 0, 1));
+    QVERIFY(details.similar()->get(0).value(QStringLiteral("played")).toBool());
+    QVERIFY(details.similar()->get(0).value(QStringLiteral("favorite")).toBool());
+    QCOMPARE(state.count(), 2);
+    QVERIFY(!details.played());
+
+    // ItemActions' own changes arrive through the same door, by id.
+    details.noteFavorite(QStringLiteral("sim-1"), false);
+    QCOMPARE(state.count(), 2);
+    details.noteFavorite(QStringLiteral("301001"), false);
+    QVERIFY(!details.favorite());
+    QCOMPARE(state.count(), 3);
+    details.notePlayed(QStringLiteral("301001"), true);
+    QVERIFY(details.played());
+    QVERIFY(!details.resumable());
+    QCOMPARE(state.count(), 4);
+    details.notePlayed(QStringLiteral("301001"), true);
+    QCOMPARE(state.count(), 4);
+
+    // No request, and no detailsChanged: that signal re-seats the whole page.
+    QCOMPARE(m_mock->requestCount(), requestsBefore);
+    QCOMPARE(detailsChanged.count(), detailsSignals);
+
+    // Nothing owns the controller after a reset, so nothing is patched into it.
+    details.resetSessionState();
+    QVERIFY(!details.played());
+    QVERIFY(!details.favorite());
+    QCOMPARE(details.positionMs(), 0);
+    const int afterReset = static_cast<int>(state.count());
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("301001"), true, true,
+                                                   420'000'000, 3));
+    details.notePlayed(QStringLiteral("301001"), true);
+    details.notePlayed(QString(), true);
+    QCOMPARE(state.count(), afterReset);
+    QVERIFY(!details.played());
+}
+
+// Two answers about the same item race: the REST reply that load() asked for,
+// and a socket record that arrives while it is in flight. The reply was
+// requested first, so whatever it says is older; and a record for the item the
+// page has just left must not land on the one it has moved to.
+void LiveUpdatesTest::detailsReplyDoesNotOverwriteANewerLiveRecord()
+{
+    const QString slowPath = QStringLiteral("/Users/%1/Items/slow").arg(kUserId);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                                     fixturePath(QStringLiteral("item_details.json"))));
+    m_mock->addRoute(QStringLiteral("GET"), slowPath, 200,
+                     QByteArrayLiteral("{\"Id\":\"slow\",\"Name\":\"Slow\",\"Type\":\"Movie\","
+                                       "\"UserData\":{\"Played\":false,\"IsFavorite\":false,"
+                                       "\"PlaybackPositionTicks\":0}}"));
+    m_mock->setRouteDelay(QStringLiteral("GET"), slowPath, 300);
+    for (const QString &id : {QStringLiteral("301001"), QStringLiteral("slow")})
+        m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/%1/Similar").arg(id), 200,
+                         QByteArrayLiteral("{\"Items\":[]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+    DetailsController details(m_client);
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(20, 2000, 4000);
+    details.bindLiveUpdates(&live);
+
+    details.load(QStringLiteral("301001"));
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QVERIFY(details.played());
+    QVERIFY(details.favorite());
+
+    // Moving on: the previous item's state is not this one's, even for the
+    // moment before anything is known about it.
+    details.load(QStringLiteral("slow"));
+    QVERIFY(details.itemLoading());
+    QVERIFY(!details.played());
+    QVERIFY(!details.favorite());
+
+    // A late record for the item just left.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("301001"), true, true,
+                                                   90'000'000, 1));
+    QVERIFY(!details.played());
+    QCOMPARE(details.positionMs(), 0);
+
+    // A record for the item being loaded, ahead of its own reply.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("slow"), false, true,
+                                                   300'000'000, 0));
+    QVERIFY(details.favorite());
+    QCOMPARE(details.positionMs(), 30'000);
+
+    QSignalSpy state(&details, &DetailsController::userStateChanged);
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QCOMPARE(details.itemId(), QStringLiteral("slow"));
+    // The reply said "not a favourite, nothing to resume". It was older.
+    QVERIFY(details.favorite());
+    QCOMPARE(details.positionMs(), 30'000);
+    QVERIFY(details.resumable());
+    QCOMPARE(state.count(), 0);
+
+    // The guard is per load: the next load seeds from its reply again.
+    details.load(QStringLiteral("301001"));
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    QVERIFY(details.played());
+    QVERIFY(details.favorite());
+    QCOMPARE(details.positionMs(), 0);
 }
 
 QTEST_GUILESS_MAIN(LiveUpdatesTest)

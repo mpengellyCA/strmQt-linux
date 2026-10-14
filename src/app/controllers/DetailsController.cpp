@@ -6,6 +6,8 @@
 #include "server/dto/ItemsQuery.h"
 #include "server/emby/EmbyClient.h"
 
+#include <utility>
+
 namespace strmqt {
 
 DetailsController::DetailsController(emby::EmbyClient *client, QObject *parent)
@@ -52,6 +54,7 @@ void DetailsController::resetSessionState()
     emit collectionsChanged();
     emit personChanged();
     emit upcomingEpisodesChanged();
+    setUserState(false, false, 0);
 }
 
 void DetailsController::loadPerson(const QString &personId)
@@ -70,6 +73,7 @@ void DetailsController::loadPerson(const QString &personId)
     m_itemLoading = false;
     if (retiredItemOwner)
         emit detailsChanged();
+    setUserState(false, false, 0);
     m_person.clear();
     emit personChanged();
     if (personId.isEmpty())
@@ -110,6 +114,7 @@ void DetailsController::load(const QString &itemId)
     const int generation = ++m_generation;
     ++m_upcomingEpisodesGeneration;
     cancelRequests();
+    const bool sameItem = itemId == m_itemId;
     m_itemId = itemId;
     m_itemLoading = !itemId.isEmpty();
     m_isSeries = false;
@@ -130,6 +135,10 @@ void DetailsController::load(const QString &itemId)
     m_premiereDate.clear();
     m_criticRating = 0.0;
     emit detailsChanged();
+    // The previous item's state must not be read as this one's while the
+    // reply is in flight. A reload of the same item keeps what is known.
+    if (!sameItem)
+        setUserState(false, false, 0);
     m_similar->clear();
     setSimilarLoading(!itemId.isEmpty());
 
@@ -159,6 +168,7 @@ void DetailsController::load(const QString &itemId)
             emit upcomingEpisodesChanged();
             qCWarning(logApp) << "item details load failed:" << result.error;
             emit detailsChanged();
+            setUserState(false, false, 0);
             return;
         }
         const ItemDetails &details = result.value;
@@ -230,6 +240,10 @@ void DetailsController::load(const QString &itemId)
             refreshUpcomingEpisodes();
 
         emit detailsChanged();
+        // This reply was requested before anything that has since arrived
+        // over the socket or been changed here, so it only seeds.
+        if (m_userStateGeneration != generation)
+            setUserState(details.item.played, details.item.favorite, details.item.positionMs());
     });
 
     // Collection membership. A separate request because the item payload has no
@@ -268,6 +282,10 @@ void DetailsController::bindLiveUpdates(LiveUpdateService *service)
 {
     if (!service)
         return;
+    // The rich socket patch carries the whole record: the rails and the loaded
+    // item's own state follow another client without a request.
+    connect(service, &LiveUpdateService::userDataPatched, this,
+            &DetailsController::onUserDataPatched);
     connect(service, &LiveUpdateService::userDataInvalidated, this,
             [this](const QStringList &) {
                 if (m_isSeries && !m_itemId.isEmpty())
@@ -278,6 +296,63 @@ void DetailsController::bindLiveUpdates(LiveUpdateService *service)
                 if (m_isSeries && !m_itemId.isEmpty())
                     refreshUpcomingEpisodes();
             });
+}
+
+void DetailsController::onUserDataPatched(const QVariantList &entries)
+{
+    for (const QVariant &value : entries) {
+        const QVariantMap entry = value.toMap();
+        const QString itemId = entry.value(QStringLiteral("itemId")).toString();
+        if (itemId.isEmpty())
+            continue;
+        const bool played = entry.value(QStringLiteral("played")).toBool();
+        const bool favorite = entry.value(QStringLiteral("favorite")).toBool();
+        const qint64 positionTicks = entry.value(QStringLiteral("positionTicks")).toLongLong();
+        const int playCount = entry.value(QStringLiteral("playCount")).toInt();
+        m_similar->updateUserData(itemId, played, favorite, positionTicks, playCount);
+        m_upcomingEpisodes->updateUserData(itemId, played, favorite, positionTicks, playCount);
+        if (itemId == m_itemId) {
+            m_userStateGeneration = m_generation;
+            setUserState(played, favorite, positionTicks / kTicksPerMs);
+        }
+    }
+
+    // nextEpisode is a snapshot of the rail's first row, so it has to follow
+    // the row. Which episode is next is the server's answer and arrives with
+    // the invalidation.
+    if (!m_nextEpisode.isEmpty() && m_upcomingEpisodes->rowCount() > 0) {
+        QVariantMap next = m_upcomingEpisodes->get(0);
+        if (next != m_nextEpisode) {
+            m_nextEpisode = std::move(next);
+            emit upcomingEpisodesChanged();
+        }
+    }
+}
+
+void DetailsController::notePlayed(const QString &itemId, bool played)
+{
+    if (itemId.isEmpty() || itemId != m_itemId)
+        return;
+    m_userStateGeneration = m_generation;
+    setUserState(played, m_favorite, m_positionMs);
+}
+
+void DetailsController::noteFavorite(const QString &itemId, bool favorite)
+{
+    if (itemId.isEmpty() || itemId != m_itemId)
+        return;
+    m_userStateGeneration = m_generation;
+    setUserState(m_played, favorite, m_positionMs);
+}
+
+void DetailsController::setUserState(bool played, bool favorite, qint64 positionMs)
+{
+    if (m_played == played && m_favorite == favorite && m_positionMs == positionMs)
+        return;
+    m_played = played;
+    m_favorite = favorite;
+    m_positionMs = positionMs;
+    emit userStateChanged();
 }
 
 namespace {

@@ -121,6 +121,11 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     connect(m_actions, &ItemActions::playedCommitted, m_series, &SeriesController::notePlayed);
     connect(m_actions, &ItemActions::playedCommitted, m_details,
             [this](const QString &, bool) { m_details->refreshUpcomingEpisodes(); });
+    // The details page's own item is not a row in any model, so its user state
+    // follows ItemActions directly (and live records, through bindLiveUpdates).
+    connect(m_actions, &ItemActions::playedChanged, m_details, &DetailsController::notePlayed);
+    connect(m_actions, &ItemActions::favoriteChanged, m_details,
+            &DetailsController::noteFavorite);
 
     // Latest rails are built lazily by HomeController::refresh(); registerModel dedupes.
     const auto registerRailModels = [this](const QVariantList &rails) {
@@ -210,6 +215,32 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     m_musicRelay->addModel(m_artistCtl->similar());
     connect(m_actions, &ItemActions::favoriteChanged, m_artistCtl,
             &music::ArtistController::noteFavourite);
+
+    // Everything else that shows user data but has no live binding of its own.
+    // Home, Library, Series and Details bind themselves above and the music
+    // models go through the relay; what is left is the search results, the
+    // playlist page and the open album's and artist's own heart, none of which
+    // is reached by either. Patching a row is a hash lookup and no request, so
+    // this runs for every record rather than guessing which surface is showing.
+    connect(m_live, &LiveUpdateService::userDataPatched, this,
+            [this](const QVariantList &entries) {
+                for (const QVariant &value : entries) {
+                    const QVariantMap entry = value.toMap();
+                    const QString itemId = entry.value(QStringLiteral("itemId")).toString();
+                    if (itemId.isEmpty())
+                        continue;
+                    const bool played = entry.value(QStringLiteral("played")).toBool();
+                    const bool favorite = entry.value(QStringLiteral("favorite")).toBool();
+                    const qint64 positionTicks =
+                        entry.value(QStringLiteral("positionTicks")).toLongLong();
+                    const int playCount = entry.value(QStringLiteral("playCount")).toInt();
+                    for (MediaItemModel *model :
+                         {m_search->model(), m_playlists->items(), m_playlists->playlists()})
+                        model->updateUserData(itemId, played, favorite, positionTicks, playCount);
+                    m_albumCtl->noteFavourite(itemId, favorite);
+                    m_artistCtl->noteFavourite(itemId, favorite);
+                }
+            });
 
     connect(m_session, &SessionController::authenticatedChanged, this, [this] {
         if (m_session->authenticated())
@@ -334,6 +365,9 @@ void Application::teardownAuthenticatedSession()
     m_musicBrowse->resetSessionState();
     m_albumCtl->resetSessionState();
     m_artistCtl->resetSessionState();
+    // After the player's boundary shutdown above has emptied the queue, so
+    // this re-reads an idle queue instead of re-fetching the old user's album.
+    m_nowPlayingMusic->resetSessionState();
 
     // ItemActions retires optimistic mutations and asynchronous queue builders,
     // and clears any dynamically registered rail model not owned above.

@@ -88,6 +88,12 @@ public:
     Q_INVOKABLE void playAlbumFrom(int row);
     Q_INVOKABLE void toggleFavourite();
 
+    // Authentication boundary. The favourite overrides are keyed by item id
+    // and belong to the account that set them; the album rows and lyrics are
+    // that account's fetches. Application calls this after the player's own
+    // boundary shutdown has emptied the queue.
+    void resetSessionState();
+
     // caps::kLyricsAvailable is constexpr; tests drive both branches.
     void setLyricsEnabledForTests(bool enabled);
 

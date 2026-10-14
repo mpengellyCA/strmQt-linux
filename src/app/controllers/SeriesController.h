@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantList>
 #include <QVariantMap>
 
 namespace strmqt {
@@ -96,6 +97,17 @@ private:
     void setLoading(bool loading);
     void refreshNextUnwatched();
     void setNextUnwatched(QVariantMap next);
+    // A complete UserDataChanged record from the socket: patches the loaded
+    // season's rows in place. Network-free, so it runs even while live updates
+    // are suspended; anything that needs the server (next-unwatched, the season
+    // counts) waits for the debounced invalidation that follows every patch.
+    void onUserDataPatched(const QVariantList &entries);
+    // Re-reads the seasons for their UserData.UnplayedItemCount, which is the
+    // server's rollup and cannot be derived here: the changed episode may sit
+    // in a season that was never loaded. Applied only when the season list is
+    // still the same seasons in the same order, and only when a count or a
+    // watched flag actually moved.
+    void refreshSeasonCounts();
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_seasons;
@@ -114,6 +126,7 @@ private:
     // open()'s own seasons reply performs, which bumps m_generation.
     int m_seriesGeneration = 0;
     int m_nextUnwatchedGeneration = 0;
+    int m_seasonCountsGeneration = 0;
 };
 
 } // namespace strmqt
