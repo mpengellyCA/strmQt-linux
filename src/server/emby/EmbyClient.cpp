@@ -63,6 +63,31 @@ QString versionString()
 #endif
 }
 
+// One value of the X-Emby-Authorization field list, made safe to sit between
+// its quotes. The device name is the machine's hostname and the device id comes
+// out of the settings file, so neither is ours to trust.
+//
+// The characters that could change what the header means are dropped rather
+// than backslash-escaped: a quote would end the value and let the rest pose as
+// fields of its own, and nothing documents the server unescaping `\"`, so an
+// escape would only reach the device list as a literal backslash. Line breaks
+// and other control characters go too: Qt refuses a header that contains one,
+// and the request would leave with no X-Emby-Authorization at all.
+QString authFieldValue(const QString &value)
+{
+    QString clean;
+    clean.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('"') || ch == QLatin1Char('\\'))
+            continue;
+        if (ch.category() == QChar::Other_Control || ch == QChar::LineSeparator
+            || ch == QChar::ParagraphSeparator)
+            continue;
+        clean.append(ch);
+    }
+    return clean.trimmed();
+}
+
 } // namespace
 
 struct RequestHandle::State
@@ -176,12 +201,12 @@ QNetworkRequest EmbyClient::baseRequest(const QUrl &url, const RequestContext &c
     QNetworkRequest request(url);
     request.setTransferTimeout(kTransferTimeoutMs);
     request.setRawHeader("Accept", "application/json");
+    const QString deviceName = authFieldValue(context.deviceName);
     const QString authorization =
         QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%2\", DeviceId=\"%3\", "
                        "Version=\"%4\"")
-            .arg(kClientName,
-                 context.deviceName.isEmpty() ? QStringLiteral("linux") : context.deviceName,
-                 context.deviceId, versionString());
+            .arg(kClientName, deviceName.isEmpty() ? QStringLiteral("linux") : deviceName,
+                 authFieldValue(context.deviceId), authFieldValue(versionString()));
     request.setRawHeader("X-Emby-Authorization", authorization.toUtf8());
     if (!context.accessToken.isEmpty())
         request.setRawHeader("X-Emby-Token", context.accessToken.toUtf8());
@@ -892,6 +917,11 @@ QJsonObject deviceProfileJson(int maxBitrateKbps = 0,
     transcoding.insert(QLatin1String("AudioCodec"), QLatin1String("aac,ac3"));
     transcoding.insert(QLatin1String("Protocol"), QLatin1String("hls"));
 
+    // Embed only, deliberately. "Method": "External" would let the server
+    // direct-play a file and return its sidecar subtitle as a DeliveryUrl for
+    // the client to fetch — and nothing here fetches one: MediaStream carries
+    // no delivery fields and no player backend is handed a subtitle URL. Until
+    // that exists, declaring it trades a burned-in subtitle for none at all.
     QJsonArray subtitles;
     for (const char *format : {"srt", "subrip", "ass", "ssa", "pgssub", "sub", "vtt"}) {
         QJsonObject profile;

@@ -46,6 +46,9 @@ private slots:
     void unauthenticatedCallsFailFast();
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
+    void subtitleProfilesStayEmbedOnly();
+    void authorizationHeaderSurvivesHostileDeviceNames_data();
+    void authorizationHeaderSurvivesHostileDeviceNames();
     void sessionChangeCancelsOutstandingRequests();
     void authenticationAdoptionCancelsOutstandingRequests();
     void reassertingTheSameIdentityKeepsRequestsAlive();
@@ -348,6 +351,97 @@ void EmbyClientTest::deviceProfileCoversLosslessAudio()
             hasAudioTranscode = true;
     }
     QVERIFY(hasAudioTranscode);
+}
+
+// Declaring "Method": "External" tells the server it may direct-play a file
+// and hand its sidecar subtitle back as a DeliveryUrl for the client to fetch.
+// Nothing in this client fetches one: the DTOs carry no delivery fields and no
+// player backend is ever given a subtitle URL. Declared today, a viewer whose
+// default subtitle is a sidecar .srt would trade a burned-in subtitle for none
+// at all. This flips to expecting External in the commit that loads it.
+void EmbyClientTest::subtitleProfilesStayEmbedOnly()
+{
+    m_client->setSession(kToken, kUserId);
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Items/501/PlaybackInfo"), 200,
+                     QByteArrayLiteral("{\"MediaSources\":[],\"PlaySessionId\":\"x\"}"));
+    waitFor(m_client->playbackInfo(QStringLiteral("501")));
+
+    const QJsonObject body =
+        QJsonDocument::fromJson(
+            m_mock->lastRequestFor(QStringLiteral("POST"),
+                                   QStringLiteral("/Items/501/PlaybackInfo"))
+                .body)
+            .object();
+    const QJsonArray profiles = body.value(QLatin1String("DeviceProfile"))
+                                    .toObject()
+                                    .value(QLatin1String("SubtitleProfiles"))
+                                    .toArray();
+    QStringList formats;
+    for (const QJsonValue &entry : profiles) {
+        QCOMPARE(entry.toObject().value(QLatin1String("Method")).toString(),
+                 QStringLiteral("Embed"));
+        formats.append(entry.toObject().value(QLatin1String("Format")).toString());
+    }
+    for (const QString &format : {QStringLiteral("srt"), QStringLiteral("ass"),
+                                  QStringLiteral("pgssub"), QStringLiteral("vtt")})
+        QVERIFY2(formats.contains(format), qPrintable(format));
+}
+
+void EmbyClientTest::authorizationHeaderSurvivesHostileDeviceNames_data()
+{
+    QTest::addColumn<QString>("deviceName");
+    QTest::addColumn<QString>("deviceId");
+    QTest::addColumn<QByteArray>("expected");
+
+    const auto header = [](const QByteArray &device, const QByteArray &id) {
+        return QByteArray("MediaBrowser Client=\"StrmQt\", Device=\"" + device
+                          + "\", DeviceId=\"" + id + "\", Version=\"" STRMQT_VERSION "\"");
+    };
+
+    QTest::newRow("plain hostname")
+        << QStringLiteral("living-room.lan") << QStringLiteral("test-device-id")
+        << header("living-room.lan", "test-device-id");
+    // Sent as UTF-8, as it always was; sanitising must not mangle it.
+    QTest::newRow("non-ascii hostname")
+        << QString::fromUtf8("caf\xc3\xa9-\xe5\xb1\x85\xe9\x96\x93 \xf0\x9f\x93\xba")
+        << QStringLiteral("test-device-id")
+        << header("caf\xc3\xa9-\xe5\xb1\x85\xe9\x96\x93 \xf0\x9f\x93\xba", "test-device-id");
+    // A quote would close the value early and let the rest pose as fields.
+    QTest::newRow("quote injects a field")
+        << QStringLiteral("tv\", DeviceId=\"stolen") << QStringLiteral("test-device-id")
+        << header("tv, DeviceId=stolen", "test-device-id");
+    QTest::newRow("backslash") << QStringLiteral("a\\b\\") << QStringLiteral("test-device-id")
+                               << header("ab", "test-device-id");
+    // A line break would end the header and start one of the attacker's own.
+    QTest::newRow("line break injects a header")
+        << QStringLiteral("tv\r\nX-Emby-Token: stolen") << QStringLiteral("id\n\t1\x7f")
+        << header("tvX-Emby-Token: stolen", "id1");
+    QTest::newRow("nothing left falls back")
+        << QStringLiteral("\"\r\n\\ ") << QStringLiteral("test-device-id")
+        << header("linux", "test-device-id");
+}
+
+void EmbyClientTest::authorizationHeaderSurvivesHostileDeviceNames()
+{
+    QFETCH(QString, deviceName);
+    QFETCH(QString, deviceId);
+    QFETCH(QByteArray, expected);
+
+    m_client->setDeviceName(deviceName);
+    m_client->setDeviceId(deviceId);
+    m_client->setSession(kToken, kUserId);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Views").arg(kUserId),
+                                     fixturePath(QStringLiteral("views.json"))));
+
+    const auto result = waitFor(m_client->userViews());
+    QVERIFY2(result.ok(), qPrintable(result.error));
+
+    const auto request = m_mock->lastRequestFor(QStringLiteral("GET"),
+                                                QStringLiteral("/Users/%1/Views").arg(kUserId));
+    QCOMPARE(request.headers.value("x-emby-authorization"), expected);
+    // The token is still the real one, and still the only one.
+    QCOMPARE(request.headers.value("x-emby-token"), kToken.toLatin1());
 }
 
 void EmbyClientTest::sessionChangeCancelsOutstandingRequests()

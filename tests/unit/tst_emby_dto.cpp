@@ -4,6 +4,7 @@
 #include <QtTest>
 
 #include "server/dto/ItemsQuery.h"
+#include "server/dto/PlaybackTicket.h"
 #include "server/emby/EmbyDtoMapper.h"
 
 using namespace strmqt;
@@ -37,6 +38,7 @@ private slots:
     void squareArtPrefersTheAlbumCover();
     void musicGenresMapAndPageOnTheArray();
     void artistIdsLineUpWithTheNamesTheyBelongTo();
+    void streamUrlKeepsPercentEncodedQueryValues();
 };
 
 // /MusicGenres, from a payload recorded off the live 4.9.5.0 server.
@@ -403,6 +405,40 @@ void EmbyDtoTest::artistIdsLineUpWithTheNamesTheyBelongTo()
     })json").object());
     QCOMPARE(namesOnly.artists, QStringList{QStringLiteral("Main Band")});
     QVERIFY(namesOnly.artistIds.isEmpty());
+}
+
+// The server hands back a finished stream URL and the client's whole job is to
+// put a host in front of it. A value the server percent-encoded has to arrive
+// as the same bytes: decoding `%26` to `&` on the way through turns one
+// parameter into two, and `%2B` to `+` turns a plus into a space.
+void EmbyDtoTest::streamUrlKeepsPercentEncodedQueryValues()
+{
+    const QString query =
+        QStringLiteral("DeviceId=test-device&Tag=a%26b%3Dc&Plus=1%2B1&Path=%2Fmnt%2Fa%20b"
+                       "&Pct=100%25&Hash=a%23b&Name=caf%C3%A9&api_key=tok%2Ben");
+    QJsonObject source;
+    source.insert(QLatin1String("Id"), QStringLiteral("ms1"));
+    source.insert(QLatin1String("SupportsTranscoding"), true);
+    source.insert(QLatin1String("TranscodingUrl"),
+                  QStringLiteral("/videos/1/master.m3u8?") + query);
+    source.insert(QLatin1String("TranscodingContainer"), QStringLiteral("ts"));
+    QJsonObject json;
+    json.insert(QLatin1String("MediaSources"), QJsonArray{source});
+    json.insert(QLatin1String("PlaySessionId"), QStringLiteral("ps1"));
+
+    const PlaybackTicket ticket =
+        emby::parsePlaybackTicket(json, QUrl(QStringLiteral("https://server.example/emby")),
+                                  QStringLiteral("1"), QStringLiteral("other-token"),
+                                  QStringLiteral("test-device"));
+    QVERIFY(ticket.isValid());
+    const StreamCandidate *hls = ticket.candidate(0, 0);
+    QVERIFY(hls);
+    QCOMPARE(hls->method, PlayMethod::Transcode);
+    QCOMPARE(hls->url.path(), QStringLiteral("/emby/videos/1/master.m3u8"));
+    // Byte for byte what the server sent, and no second api_key appended.
+    QCOMPARE(hls->url.query(QUrl::FullyEncoded), query);
+    QCOMPARE(QString::fromLatin1(hls->url.toEncoded()),
+             QStringLiteral("https://server.example/emby/videos/1/master.m3u8?") + query);
 }
 
 QTEST_GUILESS_MAIN(EmbyDtoTest)

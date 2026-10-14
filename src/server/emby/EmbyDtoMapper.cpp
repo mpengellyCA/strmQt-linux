@@ -330,7 +330,9 @@ QUrl resolveStreamUrl(const QUrl &baseUrl, const QString &pathAndQuery, const QS
         basePath.chop(1);
     url.setPath(basePath + relative.path());
 
-    QUrlQuery query(relative.query());
+    // Carried across in the server's own encoding, so a value it escaped
+    // (`%26`, `%2B`) is never read back as a delimiter.
+    QUrlQuery query(relative.query(QUrl::FullyEncoded));
     if (!query.hasQueryItem(QStringLiteral("api_key")))
         query.addQueryItem(QStringLiteral("api_key"), accessToken);
     url.setQuery(query);

@@ -3,7 +3,6 @@
 qt_add_library(strmqt_core STATIC
     core/Log.h core/Log.cpp
     core/Settings.h core/Settings.cpp
-    server/MediaServerBackend.h server/MediaServerBackend.cpp
     server/dto/ItemsPage.h
     server/dto/Library.h
     server/dto/MediaItem.h
