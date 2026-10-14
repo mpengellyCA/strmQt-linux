@@ -168,15 +168,8 @@ FocusScope {
         ({ "text": "2 Mbps", "value": 2000 })
     ]
 
-    readonly property var colorOptions: [
-        ({ "text": qsTr("White"), "value": "#FFFFFF" }),
-        ({ "text": qsTr("Soft white"), "value": "#E8E4DC" }),
-        ({ "text": qsTr("Yellow"), "value": "#FFE066" }),
-        ({ "text": qsTr("Cyan"), "value": "#8AE0FF" }),
-        ({ "text": qsTr("Green"), "value": "#8CE08C" }),
-        ({ "text": qsTr("Grey"), "value": "#BFBFBF" }),
-        ({ "text": qsTr("Black"), "value": "#000000" })
-    ]
+    // Theme's list, which Settings draws its swatches from too.
+    readonly property var colorOptions: Theme.subtitleColors
 
     readonly property var versionOptions: {
         const out = [];
@@ -202,14 +195,9 @@ FocusScope {
         return -1;
     }
 
-    readonly property int colorIndex: {
-        const wanted = panel.subtitleColor.toUpperCase();
-        for (let i = 0; i < panel.colorOptions.length; ++i) {
-            if (String(panel.colorOptions[i].value).toUpperCase() === wanted)
-                return i;
-        }
-        return -1;
-    }
+    // Through Theme, so a shade an older list wrote is shown under the name
+    // that replaced it.
+    readonly property int colorIndex: Theme.subtitleColorIndex(panel.subtitleColor)
 
     // ── Formatting ──────────────────────────────────────────────────────────
     function formatSpeed(value: real): string {
@@ -1106,9 +1094,9 @@ FocusScope {
                                 width: Math.min(Theme.scale(200), parent.width * 0.6)
                                 model: panel.colorOptions
                                 currentIndex: panel.colorIndex
-                                // A colour set elsewhere shows as its hex code
-                                // rather than as an empty control.
-                                placeholder: panel.subtitleColor
+                                // A colour set elsewhere says so, with its
+                                // code, rather than showing an empty control.
+                                placeholder: Theme.subtitleColorName(panel.subtitleColor)
 
 
                                 // Settings refuses anything that is not #RRGGBB,

@@ -10,6 +10,19 @@ import QtQuick
 // It covers what the callers use: active, sourceComponent, item, loaded(),
 // focus scope, and Loader's sizing (a loader given a size sizes its item;
 // otherwise the loader takes the item's size).
+//
+// "The item's size" is its width, not its implicitWidth, and that is Loader's
+// rule rather than a shortcut taken here: a card that declares `width: 90`
+// over wider content makes an unsized Loader 90 wide. A sized loader's item
+// keeps the loader's size even when it declares a width binding of its own —
+// Loader's does too, so the assignment in fit() takes nothing away from it.
+// Both are held against the full tier's Loader by tst_crate_tokens, which runs
+// the same expectations in either build.
+//
+// Two things a Loader does are left out because nothing reads them: a sized
+// Loader reports its item's implicit size as its own implicit size (this one
+// reports its width), and a Loader made inactive keeps the size its last item
+// gave it (this one goes to 0 x 0).
 FocusScope {
     id: loader
 

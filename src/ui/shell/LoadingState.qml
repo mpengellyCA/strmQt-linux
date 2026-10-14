@@ -25,9 +25,10 @@ Item {
     // "rails" | "grid" | "list" | "details"
     property string shape: "rails"
     property bool active: true
-    // Forwarded to every StrmSkeleton; the caller owns the reduced-motion
-    // decision until Theme grows a token for it.
-    property bool reduceMotion: false
+    // Forwarded to every StrmSkeleton. It follows the preference unless a
+    // caller says otherwise; left at `false`, as it was, it overrode the
+    // skeleton's own default and every page shimmered under reduced motion.
+    property bool reduceMotion: Theme.reducedMotion
     property int margins: Theme.pageMarginValue
 
     visible: loading.active

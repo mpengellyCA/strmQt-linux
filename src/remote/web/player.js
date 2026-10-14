@@ -120,13 +120,17 @@ const MODES = [
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3];
 
+// The desktop's list (Theme.subtitleColors), so a colour picked on either
+// side shows as picked on the other.
 const SUB_COLOURS = [
   { value: '#FFFFFF', label: 'White' },
-  { value: '#E8E4DC', label: 'Warm white' },
-  { value: '#FFE066', label: 'Yellow' },
-  { value: '#8AE0FF', label: 'Cyan' },
+  { value: '#E8E2D6', label: 'Soft white' },
+  { value: '#F0A02A', label: 'Amber' },
+  { value: '#F2E14C', label: 'Yellow' },
+  { value: '#7FD8E8', label: 'Cyan' },
   { value: '#8CE08C', label: 'Green' },
-  { value: '#BFBFBF', label: 'Grey' },
+  { value: '#A0A0A0', label: 'Grey' },
+  { value: '#000000', label: 'Black' },
 ];
 
 function speedLabel(speed) {
