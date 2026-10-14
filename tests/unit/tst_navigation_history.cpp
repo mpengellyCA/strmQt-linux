@@ -42,6 +42,7 @@ private slots:
     void pendingRestoreIsNotResurrected();
     void preservesFavoriteStateAcrossReconstruction();
     void preservesBaseAndKeepsTransientPagesOutOfHistory();
+    void goHomePreparesTheRootRouteExactlyOnce();
     void audioPlaylistRouteSelectsTheMusicPlaylistPage();
     void playlistRouteFollowsTheSurfaceItWasOpenedFrom();
     void evictedAudioPlaylistIsRebuiltFromItsRoute();
@@ -73,6 +74,10 @@ Item {
     property string musicBrowseState: ""
     property string seriesSeasonId: ""
     property string preparedSeriesSeasonId: ""
+    // What existed at the moment the last route was prepared: where in the
+    // pop/rebuild a prepare lands is part of its contract.
+    property int createdCountAtPrepare: -1
+    property int pageGraphsAtPrepare: -1
     property int refillBatch: 0
     property int virtualNearEndCount: 0
     property bool virtualRefillActive: false
@@ -393,6 +398,8 @@ Item {
     function prepareRoute(route): void {
         root.preparedRoutes = root.preparedRoutes.concat(
                     [route.kind + ":" + (route.kind === "search" ? route.query : route.id)]);
+        root.createdCountAtPrepare = root.createdCount;
+        root.pageGraphsAtPrepare = history.pageGraphCount;
         if (route.kind === "details")
             root.preparedDetailsId = route.id;
         else if (route.kind === "album")
@@ -2431,6 +2438,60 @@ void NavigationHistoryTest::preservesBaseAndKeepsTransientPagesOutOfHistory()
     QVERIFY(invoke(root, "goHome"));
     QCOMPARE(history->property("currentEntry").toMap().value(QStringLiteral("kind")).toString(),
              QStringLiteral("login"));
+}
+
+// goHome() is a Back to the root route, and the root's controller is as
+// process-wide as any other: whatever was opened above it may have retargeted
+// it. It is prepared once — after the pages above it have gone, and before a
+// root that fell out of the live window is constructed again.
+void NavigationHistoryTest::goHomePreparesTheRootRouteExactlyOnce()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view);
+    QVERIFY(root);
+    QVERIFY(history);
+
+    const QStringList rootOnly{QStringLiteral("details:base")};
+
+    // The root is still inside the live window: goHome pops down to it.
+    QVERIFY(invoke(root, "resetRoute", QStringLiteral("base")));
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+    root->setProperty("preparedRoutes", QStringList());
+    QVERIFY(invoke(root, "goHome"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("base"));
+    QCOMPARE(root->property("preparedRoutes").toStringList(), rootOnly);
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("base"));
+    // After the pop: the page that was above the root never saw the retarget.
+    QCOMPARE(root->property("pageGraphsAtPrepare").toInt(), 1);
+    QCOMPARE(history->property("pageGraphCount").toInt(), 1);
+
+    // The root has been evicted: goHome rebuilds it from its descriptor.
+    for (int id = 1; id <= 3; ++id)
+        QVERIFY(invoke(root, "pushRoute", id));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("3"));
+    QCOMPARE(history->property("pageGraphCount").toInt(), 2);
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("base"));
+    const int createdBefore = root->property("createdCount").toInt();
+    root->setProperty("preparedRoutes", QStringList());
+    root->setProperty("preparedDetailsId", QStringLiteral("3"));
+    QVERIFY(invoke(root, "goHome"));
+    QTRY_COMPARE(currentItem(history)->property("routeId").toString(), QStringLiteral("base"));
+    QCOMPARE(root->property("preparedRoutes").toStringList(), rootOnly);
+    QCOMPARE(root->property("preparedDetailsId").toString(), QStringLiteral("base"));
+    // Between the clear and the rebuild: no page is live while the controller
+    // changes scope, and the root's page is constructed against the new one.
+    QCOMPARE(root->property("pageGraphsAtPrepare").toInt(), 0);
+    QCOMPARE(root->property("createdCountAtPrepare").toInt(), createdBefore);
+    QCOMPARE(root->property("createdCount").toInt(), createdBefore + 1);
+    QCOMPARE(history->property("pageGraphCount").toInt(), 1);
+
+    // Already home: nothing moved, so nothing is prepared again.
+    root->setProperty("preparedRoutes", QStringList());
+    QVERIFY(invoke(root, "goHome"));
+    QCOMPARE(root->property("preparedRoutes").toStringList(), QStringList());
 }
 
 void NavigationHistoryTest::audioPlaylistRouteSelectsTheMusicPlaylistPage()

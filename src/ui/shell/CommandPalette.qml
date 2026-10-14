@@ -28,6 +28,9 @@ Item {
     // How many results each source may contribute, so one source with hundreds
     // of matches cannot bury the other two.
     property int perSourceLimit: 6
+    // Where the pointer last was, in the scene; (-1, -1) until it is seen
+    // (PlaylistPicker has the same guard, for the same reason).
+    property point _hoverAt: Qt.point(-1, -1)
 
     signal libraryChosen(string libraryId, string name, string collectionType)
     signal itemChosen(var item)
@@ -38,6 +41,7 @@ Item {
 
     function open(): void {
         palette.opened = true;
+        palette._hoverAt = Qt.point(-1, -1);
         field.forceActiveFocus(Qt.OtherFocusReason);
         field.selectAll();
         palette.rebuild();
@@ -381,9 +385,22 @@ Item {
 
                 // Hover previews the row; it never commits and never takes the
                 // keyboard's focus away from the field the user is typing in.
+                // Only a pointer that MOVED previews. Every keystroke rebuilds
+                // this list, and a row built under a mouse left resting on the
+                // palette is hovered too — which took the selection off the
+                // best match and put it on whatever landed under the cursor.
                 HoverHandler {
+                    id: rowHover
                     cursorShape: Qt.PointingHandCursor
-                    onHoveredChanged: if (hovered) list.currentIndex = row.index
+                    onPointChanged: {
+                        const at = rowHover.point.scenePosition;
+                        if (at.x === palette._hoverAt.x && at.y === palette._hoverAt.y)
+                            return;
+                        const first = palette._hoverAt.x < 0;
+                        palette._hoverAt = at;
+                        if (!first && rowHover.hovered)
+                            list.currentIndex = row.index;
+                    }
                 }
 
                 TapHandler {

@@ -890,6 +890,10 @@ StackView {
 
         // Home usually falls out of the live window long before this runs, in
         // which case it is rebuilt from its descriptor like any other deep Back.
+        //
+        // Either way the root route is prepared once, where goBack() prepares
+        // its target: after the pages above it are gone, so none of them sees
+        // its controller retargeted, and before a rebuilt page is constructed.
         if (navigation.instantiatedTokens.length > 0
                 && navigation.instantiatedTokens[0] === home.token) {
             while (navigation.instantiatedTokens.length > 1) {
@@ -900,8 +904,10 @@ StackView {
                 if (navigation.instantiatedTokens.length >= before)
                     break;
             }
+            navigation.prepareRequested(home);
         } else {
             navigation.clearLivePages();
+            navigation.prepareRequested(home);
             navigation.pushResolved(home, null, StackView.Immediate);
         }
         navigation.pruneFocusMemory();

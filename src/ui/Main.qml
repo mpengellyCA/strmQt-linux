@@ -163,6 +163,20 @@ ApplicationWindow {
         stack.focusCurrentPage();
     }
 
+    // A shell prompt (crash-resume, the phone-remote offer) hands the keyboard
+    // back to wherever it was when the prompt went up — the rail, the header
+    // or the docked bar as readily as the page. `remembered` is that item, and
+    // it may have gone, been hidden, or never have been anything: a prompt
+    // raised at startup finds the window's bare content holding the keyboard.
+    // Then it is the page's.
+    function returnFocusFromPrompt(remembered: Item): void {
+        if (remembered !== null && remembered !== root.contentItem
+                && remembered.parent !== null && remembered.visible && remembered.enabled)
+            remembered.forceActiveFocus(Qt.OtherFocusReason);
+        else
+            root.focusCurrentPage();
+    }
+
     function pushPage(route, initialProperties): void {
         // Player is a transient overlay, not a history entry. A remote route
         // can arrive while it is visible; remove that overlay before mutating
@@ -2339,14 +2353,37 @@ ApplicationWindow {
         id: resumePrompt
 
         property var info: ({})
-        property bool navModal: true
+        // Arrows and Back stop at the prompt's edge, and a keyboard found
+        // outside it is put back on Resume (FocusNavigator).
+        property bool navModal: resumePrompt.visible
+        property Item navEntry: resumeButton
+        // Where the keyboard was when the prompt went up. Typed Item, so QML
+        // nulls it if that item is destroyed while the prompt is showing.
+        property Item focusEscrow: null
 
         visible: false
         anchors.fill: parent
         color: Theme.scrimColor
         z: 950
 
-        onVisibleChanged: if (visible) promptScope.forceActiveFocus()
+        // The button and not the scope: a bare scope holding the keyboard
+        // draws no ring, so the prompt opened looking as if nothing was
+        // selected.
+        onVisibleChanged: {
+            if (!visible)
+                return;
+            resumePrompt.focusEscrow = root.activeFocusItem;
+            resumeButton.forceActiveFocus(Qt.OtherFocusReason);
+        }
+
+        // The input floor (MiniPlayer.qml): a scrim is a plain Rectangle and
+        // accepts no press, so a click beside the prompt opened the card
+        // underneath it. Declared first, so the buttons still get theirs.
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onWheel: wheel => wheel.accepted = true
+        }
 
         FocusScope {
             id: promptScope
@@ -2391,9 +2428,11 @@ ApplicationWindow {
                         spacing: Theme.spacingTight
 
                         StrmButton {
+                            id: resumeButton
                             text: qsTr("Resume")
                             variant: "primary"
                             iconName: "play"
+                            focus: true
                             onClicked: resumePrompt.accept()
                         }
                         StrmButton {
@@ -2413,19 +2452,21 @@ ApplicationWindow {
             }
         }
 
+        // The keyboard goes back BEFORE the prompt hides, both times: hiding
+        // it can raise the phone-remote offer in the same breath (its
+        // `visible` waits on this one), and that offer has to find — and later
+        // return to — the place this prompt came from, not this prompt.
         function accept() {
             var info = resumePrompt.info;
+            root.returnFocusFromPrompt(resumePrompt.focusEscrow);
             resumePrompt.visible = false;
-            if (stack.currentItem)
-                stack.currentItem.forceActiveFocus();
             PlayerCtl.playItem(info.itemId, info.title, info.positionMs);
             root.showPlayer(false);
         }
         function dismiss() {
             PlayerCtl.clearCrashResume();
+            root.returnFocusFromPrompt(resumePrompt.focusEscrow);
             resumePrompt.visible = false;
-            if (stack.currentItem)
-                stack.currentItem.forceActiveFocus();
         }
     }
 
@@ -2436,7 +2477,11 @@ ApplicationWindow {
         id: remoteOffer
 
         readonly property var remote: typeof WebRemoteCtl !== "undefined" ? WebRemoteCtl : null
-        property bool navModal: true
+        // As the crash-resume prompt above: fenced, entered on its default
+        // answer, and it remembers where the keyboard came from.
+        property bool navModal: remoteOffer.visible
+        property Item navEntry: remoteSetupButton
+        property Item focusEscrow: null
 
         visible: remoteOffer.remote !== null && remoteOffer.remote.offerSetup
                  && !resumePrompt.visible && !root.playerOnTop
@@ -2444,7 +2489,18 @@ ApplicationWindow {
         color: Theme.scrimColor
         z: 950
 
-        onVisibleChanged: if (visible) remoteOfferScope.forceActiveFocus()
+        onVisibleChanged: {
+            if (!visible)
+                return;
+            remoteOffer.focusEscrow = root.activeFocusItem;
+            remoteSetupButton.forceActiveFocus(Qt.OtherFocusReason);
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onWheel: wheel => wheel.accepted = true
+        }
 
         FocusScope {
             id: remoteOfferScope
@@ -2489,8 +2545,10 @@ ApplicationWindow {
                         spacing: Theme.spacingTight
 
                         StrmButton {
+                            id: remoteSetupButton
                             text: qsTr("Set up")
                             variant: "primary"
+                            focus: true
                             onClicked: remoteOffer.accept()
                         }
                         StrmButton {
@@ -2511,14 +2569,16 @@ ApplicationWindow {
         }
 
         // Turns the remote on with a PIN and shows its QR code and PIN.
+        // The keyboard goes back first here too, so the push to Settings
+        // remembers the place the user was in rather than a hidden button.
         function accept() {
+            root.returnFocusFromPrompt(remoteOffer.focusEscrow);
             remoteOffer.remote.acceptSetup();
             root.openSettings("remote");
         }
         function decline() {
+            root.returnFocusFromPrompt(remoteOffer.focusEscrow);
             remoteOffer.remote.declineSetup();
-            if (stack.currentItem)
-                stack.currentItem.forceActiveFocus();
         }
     }
 
