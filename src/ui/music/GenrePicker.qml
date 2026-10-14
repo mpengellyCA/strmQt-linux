@@ -32,6 +32,8 @@ FocusScope {
     // behind the scrim (FocusNavigator).
     property bool navModal: picker.opened
     property Item navEntry: field
+    // Where the pointer last was, in the scene; (-1, -1) until it is seen.
+    property point _hoverAt: Qt.point(-1, -1)
 
     signal genresChosen(var ids)
     signal dismissed
@@ -46,6 +48,7 @@ FocusScope {
         }
         picker.picked = selected;
         picker.opened = true;
+        picker._hoverAt = Qt.point(-1, -1);
         field.text = "";
         picker.rebuild();
         field.forceActiveFocus(Qt.OtherFocusReason);
@@ -68,6 +71,16 @@ FocusScope {
         }
         picker.rows = out;
         list.currentIndex = out.length > 0 ? Math.min(Math.max(list.currentIndex, 0), out.length - 1) : -1;
+        picker.revealCurrent();
+    }
+
+    // The rows never hold the keyboard and the view draws no highlight, so
+    // nothing of the ListView's own follows `currentIndex`: moved from the
+    // field, the cursor walked off the bottom of the list and Return ticked a
+    // row nobody could see (measured: contentY stays 0 at row 29).
+    function revealCurrent(): void {
+        if (list.currentIndex >= 0)
+            list.positionViewAtIndex(list.currentIndex, ListView.Contain);
     }
 
     function isPicked(id): bool {
@@ -184,12 +197,15 @@ FocusScope {
                 property Item navRight: applyButton
 
                 Keys.onUpPressed: {
-                    if (list.count > 0)
+                    if (list.count > 0) {
                         list.currentIndex = Math.max(0, list.currentIndex - 1);
+                        picker.revealCurrent();
+                    }
                 }
                 Keys.onDownPressed: event => {
                     if (list.count > 0 && list.currentIndex < list.count - 1) {
                         list.currentIndex = list.currentIndex + 1;
+                        picker.revealCurrent();
                         return;
                     }
                     // A held Down stops on the last row; leaving takes a
@@ -209,6 +225,7 @@ FocusScope {
 
         ListView {
             id: list
+            objectName: "genrePickerList"
 
             anchors.top: head.bottom
             anchors.left: parent.left
@@ -300,18 +317,23 @@ FocusScope {
                 }
 
                 // Hover previews the row and never takes the caret out of the field.
+                // Only a pointer that MOVED previews: a row that scrolls, is
+                // rebuilt by the filter or is reused under a stationary one is
+                // hovered too, and that used to snatch the cursor back from
+                // the arrow keys and from what was being typed (PlaylistPicker
+                // and StrmMenu have the same rule).
                 HoverHandler {
                     id: rowHover
                     cursorShape: Qt.PointingHandCursor
-                    onHoveredChanged: {
-                        if (rowHover.hovered)
+                    onPointChanged: {
+                        const at = rowHover.point.scenePosition;
+                        if (at.x === picker._hoverAt.x && at.y === picker._hoverAt.y)
+                            return;
+                        const first = picker._hoverAt.x < 0;
+                        picker._hoverAt = at;
+                        if (!first && rowHover.hovered)
                             list.currentIndex = row.index;
                     }
-                }
-
-                ListView.onReused: {
-                    if (rowHover.hovered)
-                        list.currentIndex = row.index;
                 }
 
                 TapHandler {

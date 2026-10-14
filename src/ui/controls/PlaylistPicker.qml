@@ -215,14 +215,20 @@ FocusScope {
                 onEscapePressed: picker.dismiss()
                 onAccepted: picker.activate(pickerList.currentIndex)
 
+                // The list has no highlight, so it does not follow its
+                // currentIndex on its own: keep the cursor in view.
                 Keys.onUpPressed: {
-                    if (pickerList.count > 0)
+                    if (pickerList.count > 0) {
                         pickerList.currentIndex = Math.max(0, pickerList.currentIndex - 1)
+                        pickerList.positionViewAtIndex(pickerList.currentIndex, ListView.Contain)
+                    }
                 }
                 Keys.onDownPressed: {
-                    if (pickerList.count > 0)
+                    if (pickerList.count > 0) {
                         pickerList.currentIndex = Math.min(pickerList.count - 1,
                                                            pickerList.currentIndex + 1)
+                        pickerList.positionViewAtIndex(pickerList.currentIndex, ListView.Contain)
+                    }
                 }
                 Keys.onReturnPressed: event => {
                     if (!event.isAutoRepeat)
