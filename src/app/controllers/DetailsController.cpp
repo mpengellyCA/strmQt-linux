@@ -37,6 +37,7 @@ void DetailsController::resetSessionState()
     m_upcomingEpisodesLoading = false;
     m_isSeries = false;
     m_tagline.clear();
+    m_logoUrl.clear();
     m_mediaSources.clear();
     m_chapters.clear();
     m_people.clear();
@@ -134,6 +135,11 @@ void DetailsController::load(const QString &itemId)
     m_trailers.clear();
     m_premiereDate.clear();
     m_criticRating = 0.0;
+    // Kept across a reload of the same item: the title box is sized by
+    // whether there is a logo, and dropping it for the round trip would
+    // collapse the box and grow it back.
+    if (!sameItem)
+        m_logoUrl.clear();
     emit detailsChanged();
     // The previous item's state must not be read as this one's while the
     // reply is in flight. A reload of the same item keeps what is known.
@@ -157,6 +163,7 @@ void DetailsController::load(const QString &itemId)
             // state. A failed primary response is not useful state: retire
             // the id so the next ensureLoaded() honestly retries it.
             m_itemId.clear();
+            m_logoUrl.clear();
             m_collectionsRequest.cancel();
             m_similarRequest.cancel();
             m_upcomingEpisodesRequest.cancel();
@@ -173,6 +180,9 @@ void DetailsController::load(const QString &itemId)
         }
         const ItemDetails &details = result.value;
         m_tagline = details.tagline;
+        const MediaItem::ImageRef logo = details.item.logoSource();
+        m_logoUrl = logo.isValid() ? embyImageSource(logo.itemId, logo.imageType, logo.tag)
+                                   : QString();
 
         // The index travels with the map so a picker can hand it straight back
         // to PlayerController::playItem(..., preferredSourceIndex) — the two

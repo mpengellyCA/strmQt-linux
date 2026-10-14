@@ -107,6 +107,17 @@ MediaItem PlayQueue::itemFromVariant(const QVariant &value)
         refFromImageSource(map.value(QStringLiteral("backdropUrl")).toString()).tag;
     if (!backdrop.isEmpty())
         item.backdropImageTags = {backdrop};
+    // An episode's logo is its series', so it is restored under whichever
+    // field named it, exactly as the poster above: the player's title reads
+    // the entry, and the full record only arrives with the playback start.
+    const MediaItem::ImageRef logo =
+        refFromImageSource(map.value(QStringLiteral("logoUrl")).toString());
+    if (logo.isValid() && logo.itemId == item.id) {
+        item.logoImageTag = logo.tag;
+    } else if (logo.isValid()) {
+        item.parentLogoItemId = logo.itemId;
+        item.parentLogoImageTag = logo.tag;
+    }
     return item;
 }
 

@@ -655,17 +655,20 @@ FocusScope {
                 // otherwise run 150 characters to the line.
                 readonly property int proseWidth: Math.min(heroColumn.width, Theme.scale(820))
 
-                Text {
+                // The series' ClearLogo when it has one, its name otherwise and
+                // while the logo loads (TitleLogo). The record in hand may be
+                // the placeholder until SeriesCtl.series arrives; the logo
+                // comes with the full record.
+                TitleLogo {
                     width: parent.width
-                    text: SeriesCtl.seriesName
-                    color: Theme.textPrimaryColor
-                    font.family: Theme.fontDisplay
+                    title: SeriesCtl.seriesName
+                    logoUrl: page.seriesItem.logoUrl ? String(page.seriesItem.logoUrl) : ""
+                    logoMaxWidth: Theme.scale(480)
                     // The title is the first thing to give ground when the hero
                     // folds: it is still the largest thing on screen either way.
-                    font.pixelSize: page.heroCollapsed ? Theme.fontTitle
-                                                       : Theme.fontDisplaySize
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    logoMaxHeight: page.heroCollapsed ? Theme.scale(40) : Theme.scale(110)
+                    decodeMaxHeight: Theme.scale(110)
+                    pixelSize: page.heroCollapsed ? Theme.fontTitle : Theme.fontDisplaySize
                     maximumLineCount: 1
                     // No Behavior on the size: heroBox's height is BOUND to this
                     // column's implicit height, so animating the type would feed

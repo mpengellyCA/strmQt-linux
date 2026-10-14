@@ -31,6 +31,10 @@ class DetailsController : public QObject
     // failure or when the shared request lane is handed to a Person page.
     Q_PROPERTY(bool itemLoading READ itemLoading NOTIFY detailsChanged)
     Q_PROPERTY(QString tagline READ tagline NOTIFY detailsChanged)
+    // The item's ClearLogo as the details reply describes it (its own, else its
+    // series'), or empty. The route's item map carries the same role when it
+    // came from a model; a page opened from a bare id has only this.
+    Q_PROPERTY(QString logoUrl READ logoUrl NOTIFY detailsChanged)
     // Playable versions of this item, one QVariantMap per MediaSource (the
     // MediaSource::toVariantMap() shape, plus an "index"). A later wave builds
     // the version picker and the media-info panel on top of this; the details
@@ -94,6 +98,7 @@ public:
     QString itemId() const { return m_itemId; }
     bool itemLoading() const { return m_itemLoading; }
     QString tagline() const { return m_tagline; }
+    QString logoUrl() const { return m_logoUrl; }
     QVariantList mediaSources() const { return m_mediaSources; }
     int mediaSourceCount() const { return static_cast<int>(m_mediaSources.size()); }
     QVariantList chapters() const { return m_chapters; }
@@ -163,6 +168,7 @@ private:
     QString m_itemId;
     bool m_itemLoading = false;
     QString m_tagline;
+    QString m_logoUrl;
     QVariantList m_mediaSources;
     QVariantList m_chapters;
     QVariantList m_people;

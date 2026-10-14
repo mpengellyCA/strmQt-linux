@@ -18,7 +18,7 @@ namespace strmqt {
 // and "play all" are five features that were all blocked on this one concept.
 //
 // It is a QAbstractListModel so the queue panel can reuse the same delegates as
-// every rail and grid: the roles below MediaItemModel::SubtitleRole *are*
+// every rail and grid: the roles up to MediaItemModel::LogoUrlRole *are*
 // MediaItemModel's roles, with the same names and the same values. Both model
 // surfaces use MediaItemModel's shared role conversion, so the queue does not
 // need a second copy of every item. Two extra roles (queueIndex, isCurrent) are
@@ -56,7 +56,7 @@ public:
     // Queue-only roles; everything below these is MediaItemModel's, unchanged.
     enum Role
     {
-        QueueIndexRole = MediaItemModel::SubtitleRole + 1,
+        QueueIndexRole = MediaItemModel::LogoUrlRole + 1,
         IsCurrentRole,
     };
     Q_ENUM(Role)

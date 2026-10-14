@@ -176,6 +176,15 @@ MediaItem parseMediaItem(const QJsonObject &json)
     item.parentPrimaryImageItemId =
         json.value(QLatin1String("ParentPrimaryImageItemId")).toVariant().toString();
     item.parentPrimaryImageTag = json.value(QLatin1String("ParentPrimaryImageTag")).toString();
+
+    // ClearLogo. A film or series has its own under ImageTags; an episode or
+    // season names its series' instead, as the parent backdrop does above.
+    item.logoImageTag = json.value(QLatin1String("ImageTags"))
+                            .toObject()
+                            .value(QLatin1String("Logo"))
+                            .toString();
+    item.parentLogoItemId = json.value(QLatin1String("ParentLogoItemId")).toVariant().toString();
+    item.parentLogoImageTag = json.value(QLatin1String("ParentLogoImageTag")).toString();
     return item;
 }
 

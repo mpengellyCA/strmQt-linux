@@ -211,6 +211,7 @@ codebase look the way they do.
 | **List queries hide track play counts and last-played dates** | An `Audio` list sorted by `DatePlayed` is correctly ordered, but each row reports `PlayCount: 0` and no `LastPlayedDate`. `Fields=UserDataPlayCount,UserDataLastPlayedDate` makes the list carry the real values. |
 | Audio lists carry `MediaStreams` and album lists carry `RunTimeTicks` | Format badges and album runtimes need no per-item fetch. |
 | `GenreItems[].Id` is a JSON number | Artist ids on the same item are strings. Id parsing accepts both. |
+| An episode's or season's logo is its parent's | It comes as `ParentLogoItemId` + `ParentLogoImageTag` (the id can be a number); `SeriesId` is not a logo source. A season or episode with `ImageTags.Logo` of its own uses that. |
 
 ---
 
@@ -474,6 +475,17 @@ the page's normal empty-state focus) without fetching extra pages.
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Search ·
 Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·
 Music Playlist.
+
+**Home opens on a stage**: one featured item over its own fanart, with its
+ClearLogo (`TitleLogo`, which shows the title text until the logo has loaded
+and again if it fails), metadata and Play/Resume and More info. `HomeController`
+chooses it from rails Home already fetched — the first Continue Watching row,
+else Next Up, else the newest item of the first Latest rail — so it costs no
+request. It does not rotate: it answers "what's next for me", and a carousel
+turns that into something to wait out or chase under a focus ring. The stage
+is drawn over room reserved at the top of the first rail's cell rather than as
+a list header, so the list's own highlight range keeps it fully on screen when
+focus returns to the first rail.
 
 **A film or TV library is narrowed by its metadata** — genre, year, studio (or
 network), age rating, community rating, series status, and for films resolution,

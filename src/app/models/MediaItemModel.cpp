@@ -224,6 +224,10 @@ QVariant MediaItemModel::dataForItem(const MediaItem &item, int role)
         return item.unplayedItemCount;
     case SubtitleRole:
         return subtitleOf(item);
+    case LogoUrlRole: {
+        const MediaItem::ImageRef ref = item.logoSource();
+        return ref.isValid() ? embyImageSource(ref.itemId, ref.imageType, ref.tag) : QString();
+    }
     default:
         return {};
     }
@@ -269,6 +273,7 @@ const QHash<int, QByteArray> &MediaItemModel::mediaRoleNames()
         {OfficialRatingRole, "officialRating"},
         {UnplayedCountRole, "unplayedCount"},
         {SubtitleRole, "subtitle"},
+        {LogoUrlRole, "logoUrl"},
     };
     return roles;
 }

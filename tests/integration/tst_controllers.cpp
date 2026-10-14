@@ -612,6 +612,31 @@ void ControllersTest::homeRefreshBuildsRails()
     QCOMPARE(home.latestRails().first().toMap()
                  .value(QStringLiteral("model")).value<MediaItemModel *>(),
              railModel);
+    // The Home stage features the first thing in progress.
+    QCOMPARE(home.featured().value(QStringLiteral("itemId")).toString(), QStringLiteral("402014"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredKind")).toString(),
+             QStringLiteral("resume"));
+
+    // With nothing in progress and nothing next, the newest arrival of the
+    // first library takes the stage, labelled with that library, over its own
+    // fanart. Settled once, not flickered through the snapshot's rail swaps.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/Resume").arg(kUserId),
+                     200, QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/NextUp"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    QSignalSpy featuredSpy(&home, &HomeController::featuredChanged);
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+    QCOMPARE(home.resume()->rowCount(), 0);
+    QCOMPARE(home.nextUp()->rowCount(), 0);
+    QCOMPARE(featuredSpy.count(), 1);
+    QCOMPARE(home.featured().value(QStringLiteral("itemId")).toString(), QStringLiteral("301099"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredKind")).toString(),
+             QStringLiteral("latest"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredLabel")).toString(),
+             QStringLiteral("New in Movies"));
+    QVERIFY(home.featured().value(QStringLiteral("artUrl")).toString().endsWith(
+        QStringLiteral("/301099/Backdrop/33cc44dd")));
 }
 
 void ControllersTest::libraryPaging()

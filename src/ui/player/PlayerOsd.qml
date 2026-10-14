@@ -91,8 +91,22 @@ Item {
 
     // Structured queue roles, never punctuation parsed back out of a rendered
     // label. MiniPlayer and the audio page consume this same presentation.
-    readonly property var titleParts: ({ "title": NowPlayingInfo.title,
-                                         "subline": NowPlayingInfo.videoContext })
+    //
+    // With a ClearLogo, an episode is named by its series' logo, and the line
+    // under it becomes the episode's own ("S5E15  ·  Granite State"). The
+    // shape is decided by whether there is a logo URL at all, which arrives
+    // with the entry: the series' name holds the logo's place while it loads
+    // or if it fails, so nothing under it moves either way. Without one the
+    // top bar reads exactly as it always has.
+    readonly property bool seriesMark: NowPlayingInfo.seriesName.length > 0
+                                       && NowPlayingInfo.logoUrl.length > 0
+    readonly property var titleParts: osd.seriesMark
+        ? ({ "title": NowPlayingInfo.seriesName,
+             "subline": NowPlayingInfo.episodeCode.length > 0
+                        ? NowPlayingInfo.episodeCode + "  ·  " + NowPlayingInfo.title
+                        : NowPlayingInfo.title })
+        : ({ "title": NowPlayingInfo.title,
+             "subline": NowPlayingInfo.videoContext })
 
     // Technical readouts, mono, as chips. Same information the old OSD put in
     // one grey line at the top right.
@@ -338,14 +352,18 @@ Item {
                 anchors.rightMargin: osd.safeMargin
                 spacing: Theme.scale(4)
 
-                Text {
+                // The film's (or the series') logo over the picture, sized for
+                // a top bar rather than a page header; the title in its place
+                // when there is none.
+                TitleLogo {
                     width: parent.width
-                    text: osd.titleParts.title
-                    color: Theme.textPrimaryColor
-                    font.family: Theme.fontDisplay
-                    font.pixelSize: Theme.fontHeading
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    title: osd.titleParts.title
+                    logoUrl: NowPlayingInfo.logoUrl
+                    logoMaxWidth: osd.compactGeometry ? Theme.scale(240) : Theme.scale(360)
+                    logoMaxHeight: osd.compactGeometry ? Theme.scale(44) : Theme.scale(72)
+                    decodeMaxHeight: Theme.scale(72)
+                    pixelSize: Theme.fontHeading
+                    maximumLineCount: 1
                 }
 
                 Text {

@@ -36,8 +36,13 @@ strmqt_add_test(tst_models unit/tst_models.cpp)
 strmqt_add_test(tst_music_models unit/tst_music_models.cpp)
 strmqt_add_test(tst_music_lane unit/tst_music_lane.cpp)
 strmqt_add_test(tst_search_sections unit/tst_search_sections.cpp)
-strmqt_add_test(tst_home_rails unit/tst_home_rails.cpp)
+# Also stages the real HomePage and drives it through FocusNavigator, which is
+# QtQuick and lives in the executable, so it is compiled straight in.
+strmqt_add_test(tst_home_rails unit/tst_home_rails.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/FocusNavigator.cpp)
+target_include_directories(tst_home_rails PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_home_rails PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_home_rails PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_home_rails PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 strmqt_add_test(tst_playback_ticket unit/tst_playback_ticket.cpp)
 strmqt_add_test(tst_media_source unit/tst_media_source.cpp)

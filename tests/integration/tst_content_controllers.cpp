@@ -394,7 +394,8 @@ void ContentControllersTest::detailsClearsBetweenItems()
 {
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/a").arg(kUserId), 200,
                      QByteArrayLiteral("{\"Id\":\"a\",\"Name\":\"A\",\"Type\":\"Movie\","
-                                       "\"Genres\":[\"Action\"],\"CriticRating\":93}"));
+                                       "\"Genres\":[\"Action\"],\"CriticRating\":93,"
+                                       "\"ImageTags\":{\"Logo\":\"logo-a\"}}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/b").arg(kUserId), 200,
                      QByteArrayLiteral("{\"Id\":\"b\",\"Name\":\"B\",\"Type\":\"Movie\"}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/a/Similar"), 200,
@@ -408,6 +409,7 @@ void ContentControllersTest::detailsClearsBetweenItems()
     details.load(QStringLiteral("a"));
     QCOMPARE(details.itemId(), QStringLiteral("a"));
     QTRY_COMPARE_WITH_TIMEOUT(details.criticRating(), 93.0, 5000);
+    QCOMPARE(details.logoUrl(), QStringLiteral("image://emby/test-session/a/Logo/logo-a"));
 
     // The second item has no rating and no genres. Anything left over would be
     // shown as if it belonged to this item — the failure the user actually
@@ -418,6 +420,8 @@ void ContentControllersTest::detailsClearsBetweenItems()
     QVERIFY(details.genres().isEmpty());
     QVERIFY(details.trailers().isEmpty());
     QVERIFY(details.collections().isEmpty());
+    // Nor its logo: the header would set B's title in A's ClearLogo.
+    QVERIFY(details.logoUrl().isEmpty());
 }
 
 void ContentControllersTest::detailsEnsureJoinsUsableStateAndRetriesFailure()

@@ -36,6 +36,7 @@ private slots:
     void emptyJsonDoesNotCrash();
     void wideArtPicksPerItemKind();
     void squareArtPrefersTheAlbumCover();
+    void clearLogoIsOwnThenTheSeries();
     void musicGenresMapAndPageOnTheArray();
     void artistIdsLineUpWithTheNamesTheyBelongTo();
     void streamUrlKeepsPercentEncodedQueryValues();
@@ -162,6 +163,53 @@ void EmbyDtoTest::wideArtPicksPerItemKind()
         "Id": "6", "Name": "Bare", "Type": "Episode"
     })json").object());
     QVERIFY(!bareEpisode.thumbSource().isValid());
+}
+
+// ClearLogo. Hand-written payloads in the BaseItemDto shape: a film or series
+// carries ImageTags.Logo; an episode or season carries none of its own and
+// names its series' through ParentLogoItemId / ParentLogoImageTag, the same
+// pairing as the parent backdrop (which this server sends as a number).
+void EmbyDtoTest::clearLogoIsOwnThenTheSeries()
+{
+    const MediaItem episode = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "402015", "Name": "Granite State", "Type": "Episode",
+        "SeriesId": "400001",
+        "ImageTags": { "Primary": "still-tag" },
+        "ParentLogoItemId": 400001,
+        "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QVERIFY(episode.logoImageTag.isEmpty());
+    QCOMPARE(episode.parentLogoItemId, QStringLiteral("400001"));
+    MediaItem::ImageRef ref = episode.logoSource();
+    QVERIFY(ref.isValid());
+    // The series' tag against the SERIES' id: the episode has no such image.
+    QCOMPARE(ref.itemId, QStringLiteral("400001"));
+    QCOMPARE(ref.imageType, QStringLiteral("Logo"));
+    QCOMPARE(ref.tag, QStringLiteral("series-logo-tag"));
+
+    // An item's own logo wins over a parent's.
+    const MediaItem season = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "400500", "Name": "Season 5", "Type": "Season",
+        "ImageTags": { "Logo": "season-logo-tag" },
+        "ParentLogoItemId": "400001", "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QCOMPARE(season.logoSource().itemId, QStringLiteral("400500"));
+    QCOMPARE(season.logoSource().tag, QStringLiteral("season-logo-tag"));
+
+    // A tag without the item it belongs to addresses nothing, and SeriesId is
+    // never used to guess one: the server says when the series has a logo.
+    const MediaItem orphanTag = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "402016", "Type": "Episode", "SeriesId": "400001",
+        "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QVERIFY(!orphanTag.logoSource().isValid());
+
+    // Wrong types on the wire are absence, not a crash (AGENTS.md).
+    const MediaItem drift = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "9", "Type": "Movie", "ImageTags": { "Logo": 17 },
+        "ParentLogoImageTag": ["x"]
+    })json").object());
+    QVERIFY(!drift.logoSource().isValid());
 }
 
 // The square is the unit for music, and for a TRACK the trustworthy square is
@@ -300,6 +348,11 @@ void EmbyDtoTest::itemsPage()
     QCOMPARE(matrix.primaryImageTag, QStringLiteral("aaa111"));
     QCOMPARE(matrix.backdropImageTags,
              (QStringList{QStringLiteral("ccc333"), QStringLiteral("ddd444")}));
+    QCOMPARE(matrix.logoImageTag, QStringLiteral("bbb222"));
+    QCOMPARE(matrix.logoSource().itemId, QStringLiteral("301001"));
+    QCOMPARE(matrix.logoSource().imageType, QStringLiteral("Logo"));
+    // No logo on the wire is the common case, and it is no logo — not a guess.
+    QVERIFY(!page.items[1].logoSource().isValid());
 
     const MediaItem &bladeRunner = page.items[1];
     QVERIFY(bladeRunner.isResumable());

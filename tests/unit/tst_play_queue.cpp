@@ -515,6 +515,30 @@ void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
     again.setItems({restoredTrack});
     QCOMPARE(again.get(0).value(QStringLiteral("posterUrl")).toString(),
              map.value(QStringLiteral("posterUrl")).toString());
+
+    // A ClearLogo makes the same trip: an episode's is its series' (a parent
+    // id), a film's its own, and the URL out is the URL back in, so the OSD can
+    // still set the title as a logo after the entry passed through QML.
+    MediaItem withSeriesLogo = episode(5);
+    withSeriesLogo.parentLogoItemId = QStringLiteral("400001");
+    withSeriesLogo.parentLogoImageTag = QStringLiteral("series-logo");
+    MediaItem film;
+    film.id = QStringLiteral("301001");
+    film.type = QStringLiteral("Movie");
+    film.logoImageTag = QStringLiteral("film-logo");
+    MediaItemModel logos;
+    logos.setItems({withSeriesLogo, film});
+    const MediaItem restoredEpisode = PlayQueue::itemFromVariant(logos.get(0));
+    QCOMPARE(restoredEpisode.logoSource().itemId, QStringLiteral("400001"));
+    QCOMPARE(restoredEpisode.logoSource().tag, QStringLiteral("series-logo"));
+    QVERIFY(restoredEpisode.logoImageTag.isEmpty());
+    const MediaItem restoredFilm = PlayQueue::itemFromVariant(logos.get(1));
+    QCOMPARE(restoredFilm.logoImageTag, QStringLiteral("film-logo"));
+    MediaItemModel logosAgain;
+    logosAgain.setItems({restoredEpisode, restoredFilm});
+    for (int row = 0; row < 2; ++row)
+        QCOMPARE(logosAgain.get(row).value(QStringLiteral("logoUrl")).toString(),
+                 logos.get(row).value(QStringLiteral("logoUrl")).toString());
 }
 
 // An album or a playlist plays through Actions.playAllFrom() → playQueue(), i.e.

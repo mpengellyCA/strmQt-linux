@@ -82,6 +82,15 @@ FocusScope {
         return live
     }
 
+    // ── ClearLogo ──────────────────────────────────────────────────────────
+    // The route's map carries the role when the item came from a model; the
+    // controller's reply carries it for an item opened from a bare id. The
+    // two name the same image whenever both have one.
+    readonly property string logoUrl: (page.mine && DetailsCtl.logoUrl.length > 0)
+                                      ? DetailsCtl.logoUrl
+                                      : (page.item.logoUrl ? String(page.item.logoUrl) : "")
+    readonly property bool seriesMark: page.isEpisode && page.logoUrl.length > 0
+
     // Cached projections of Actions' state, not a second copy of it: QML cannot
     // bind to a Q_INVOKABLE, so the value is re-read whenever Actions says it
     // changed. Nothing on this page ever assigns them from a click handler.
@@ -1177,26 +1186,50 @@ FocusScope {
                         readonly property int proseWidth: Math.min(infoColumn.width,
                                                                    Theme.scale(820))
 
-                        Text {
+                        // An episode's logo is its series' (logoUrl falls back
+                        // to the parent's), so for an episode it stands over
+                        // the title as the series' mark, in place of the
+                        // series' name in the line below — the episode's own
+                        // name stays the heading. While it loads, or if it
+                        // fails, the series' name sits in its box instead.
+                        TitleLogo {
                             width: parent.width
-                            text: page.item.name ? page.item.name : ""
-                            color: Theme.textPrimaryColor
-                            font.family: Theme.fontDisplay
-                            font.pixelSize: Theme.fontDisplaySize
-                            font.weight: Font.DemiBold
-                            wrapMode: Text.Wrap
+                            visible: page.seriesMark
+                            title: page.item.seriesName ? String(page.item.seriesName) : ""
+                            logoUrl: page.seriesMark ? page.logoUrl : ""
+                            logoMaxWidth: Theme.scale(360)
+                            logoMaxHeight: Theme.scale(72)
+                            fontFamily: Theme.fontBody
+                            pixelSize: Theme.fontTitle
+                            fontWeight: Font.Normal
+                            color: Theme.textSecondaryColor
+                            maximumLineCount: 1
+                        }
+
+                        TitleLogo {
+                            width: parent.width
+                            title: page.item.name ? String(page.item.name) : ""
+                            logoUrl: page.isEpisode ? "" : page.logoUrl
+                            logoMaxWidth: Theme.scale(560)
+                            logoMaxHeight: Theme.scale(140)
+                            pixelSize: Theme.fontDisplaySize
                             maximumLineCount: 2
-                            elide: Text.ElideRight
                         }
 
                         Text {
                             width: parent.width
-                            visible: page.isEpisode
-                            text: (page.item.seriesName ? page.item.seriesName : "")
-                                  + (page.item.parentIndexNumber >= 0
-                                     ? "  ·  " + qsTr("Season %1, Episode %2")
-                                           .arg(page.item.parentIndexNumber).arg(page.item.indexNumber)
-                                     : "")
+                            visible: page.isEpisode && text.length > 0
+                            text: {
+                                const series = !page.seriesMark && page.item.seriesName
+                                               ? String(page.item.seriesName) : ""
+                                const where = page.item.parentIndexNumber >= 0
+                                              ? qsTr("Season %1, Episode %2")
+                                                    .arg(page.item.parentIndexNumber)
+                                                    .arg(page.item.indexNumber)
+                                              : ""
+                                return series.length > 0 && where.length > 0
+                                       ? series + "  ·  " + where : series + where
+                            }
                             color: Theme.textSecondaryColor
                             font.family: Theme.fontBody
                             font.pixelSize: Theme.fontTitle

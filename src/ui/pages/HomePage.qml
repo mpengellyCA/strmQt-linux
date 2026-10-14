@@ -41,6 +41,129 @@ FocusScope {
     readonly property bool showEmpty: !HomeCtl.busy && !page.hasContent
                                       && HomeCtl.errorMessage.length === 0
 
+    // ── The stage ──────────────────────────────────────────────────────────
+    // One item, featured above the rails: full-bleed art, its logo (or its
+    // title), why it is here, and the two verbs that matter — play it, or read
+    // about it. HomeController chooses it (Continue Watching, else Next Up,
+    // else the newest arrival) from rails it has already fetched; nothing here
+    // decides which.
+    //
+    // It does not rotate. The stage answers "what is next for me", and a
+    // carousel turns that answer into a slideshow the user has to wait out
+    // or chase, at ten feet, under a focus ring. It changes when the answer
+    // does: a refresh, or a resume point moved anywhere.
+    //
+    // It is not a row of the rail list. The first rail's cell leaves room
+    // above its shelf (`stageInset`) and the stage is drawn over that room,
+    // scrolling with it (`stageY`), so it is a sibling of the list rather
+    // than its descendant: the list's own Up/Down then never sees a key
+    // pressed on the stage, and Down from the stage is the navigator's
+    // ordinary step to the nearest shelf below — the first rail, on the
+    // column the button sat in (NavigationColumn).
+    //
+    // The room is part of the first rail's cell, not a top margin, so the
+    // list's highlight range needs no special case: that cell is taller than
+    // the range, and the view brings an oversized current item to the top of
+    // its range — which, for the first rail, is the stage whole on screen.
+    // (A range that switched with the cursor was overtaken by the view's own
+    // move animation: Down off the first rail left the second one below the
+    // window.)
+    readonly property var featured: HomeCtl.featured
+    readonly property bool heroShown: page.hasContent && page.featured !== undefined
+                                      && page.featured !== null
+                                      && page.featured.itemId !== undefined
+                                      && String(page.featured.itemId).length > 0
+    readonly property var heroCapabilities: page.heroShown ? Actions.itemCapabilities(page.featured)
+                                                           : ({})
+    readonly property bool heroEpisode: page.heroCapabilities.episode === true
+    // A share of the window, inside a floor and a ceiling. 0.42 is what still
+    // leaves the first rail — a 16:9 shelf, which is what Continue Watching
+    // and Next Up are — whole on screen below it at 1280×720 in TV density.
+    readonly property int heroHeight: Math.round(Math.max(Theme.scale(240),
+                                                          Math.min(Theme.scale(520),
+                                                                   page.height * 0.42)))
+    // How far the stage has scrolled. The first cell starts at the list's
+    // top margin and the stage a margin above it, so the stage is at 0 while
+    // the list is at its beginning.
+    readonly property real stageY: page.heroShown
+                                   ? railList.originY - railList.contentY - Theme.pageMarginValue
+                                   : 0
+    // While most of the stage is on screen the stage is the room, and the
+    // focus wash behind the top of the page steps aside for it.
+    readonly property bool stageInView: page.heroShown
+                                        && page.stageY + page.heroHeight > page.heroHeight * 0.4
+    // Photographic art behind type. Higher than a page backdrop's 0.35
+    // (DetailsPage) because the stage's own scrims, not the image's opacity,
+    // carry the text's contrast here.
+    readonly property real stageArtOpacity: 0.6
+
+    // Put the list back at its beginning, where the stage is whole.
+    function restOnStage(): void {
+        if (!page.heroShown)
+            return
+        railList.contentY = railList.originY - railList.topMargin
+    }
+
+    // The stage arriving (first load, or after an empty Home) grows the first
+    // cell under a list that may have moved meanwhile. Unless the user has
+    // gone somewhere, the page opens on the stage.
+    // And one leaving (its item finished, Home emptied) with the keyboard on
+    // it hands the keyboard to the rails: the page's scope would otherwise
+    // keep its focus on a stage that is no longer there, and Return or a
+    // Down back from the header would land on nothing.
+    onHeroShownChanged: {
+        if (page.heroShown) {
+            if (railList.currentIndex <= 0)
+                Qt.callLater(page.restOnStage)
+        } else if (stage.focus) {
+            railList.focus = true
+        }
+    }
+
+    function formatRuntime(ms): string {
+        if (!ms || ms <= 0)
+            return ""
+        const minutes = Math.round(ms / 60000)
+        return minutes >= 60 ? Math.floor(minutes / 60) + " h " + (minutes % 60) + " min"
+                             : minutes + " min"
+    }
+
+    function formatPosition(ms): string {
+        const totalSeconds = Math.floor(ms / 1000)
+        const hours = Math.floor(totalSeconds / 3600)
+        const minutes = Math.floor((totalSeconds / 60) % 60)
+        const seconds = totalSeconds % 60
+        function pad(value) { return (value < 10 ? "0" : "") + value }
+        return hours > 0 ? hours + ":" + pad(minutes) + ":" + pad(seconds)
+                         : minutes + ":" + pad(seconds)
+    }
+
+    // Year · certificate · runtime, as the details page writes it.
+    readonly property string heroMeta: {
+        if (!page.heroShown)
+            return ""
+        const parts = []
+        if (page.featured.year > 0)
+            parts.push(String(page.featured.year))
+        if (page.featured.officialRating)
+            parts.push(String(page.featured.officialRating))
+        if (page.featured.runtimeMs > 0)
+            parts.push(page.formatRuntime(page.featured.runtimeMs))
+        return parts.join("  ·  ")
+    }
+
+    // An episode is named by its series (the logo, or the title in its
+    // place) and then by this line: "S5E15  ·  Granite State".
+    readonly property string heroEpisodeLine: {
+        if (!page.heroEpisode)
+            return ""
+        const code = MediaKinds.episodeCode(page.featured.parentIndexNumber,
+                                            page.featured.indexNumber)
+        const name = page.featured.name ? String(page.featured.name) : ""
+        return code.length > 0 && name.length > 0 ? code + "  ·  " + name
+             : code.length > 0 ? code : name
+    }
+
     // BoundedNavigationStack cannot find a semantic owner that a virtual
     // ListView has not instantiated. Position the outer rail by its stable key;
     // the stack's next bounded retry then discovers the real StrmRail and lets
@@ -231,9 +354,11 @@ FocusScope {
         // 0.18 was the hardcoded default and stays the shipped one (ARCHITECTURE.md
         // §2.8: a wash, not a wallpaper). Turning it off must also stop the
         // work, not just hide it — a blurred layer at opacity 0 is
-        // still a full offscreen render every frame.
+        // still a full offscreen render every frame. It also steps aside
+        // while the stage is on screen: the stage is the room then, and a
+        // second, different picture blurred under it is mud.
         visible: Prefs.backdropEnabled && wash.opacity > 0.001
-        opacity: Prefs.backdropEnabled ? Prefs.backdropOpacity / 100 : 0
+        opacity: Prefs.backdropEnabled && !page.stageInView ? Prefs.backdropOpacity / 100 : 0
 
         Behavior on opacity {
             NumberAnimation { duration: Theme.animNormalMs; easing.type: Theme.easeStandard }
@@ -305,6 +430,101 @@ FocusScope {
             GradientStop { position: 0.0; color: "transparent" }
             GradientStop { position: 0.5; color: "transparent" }
             GradientStop { position: 1.0; color: Theme.ground }
+        }
+    }
+
+    // ── Stage art ──────────────────────────────────────────────────────────
+    // Behind the rails (z −1, like the wash) so the art can run on under the
+    // first shelf's heading and fade there, instead of stopping at a line. It
+    // is all ground by the top of that shelf's cards: anything still showing
+    // there would be cut by the shelf's own edge fades, which paint ground.
+    // The colour of the room comes off the same picture through CoverWash,
+    // already clamped in C++ (CoverTint); the picture itself is drawn crisp,
+    // its legibility carried by the two scrims over it. Turning backdrops off
+    // turns this off too: it is decoration, and Settings has one switch for it.
+    Item {
+        id: stageArt
+
+        y: page.stageY
+        width: page.width
+        height: page.heroHeight + Theme.railGap + Theme.fontTitle + Theme.spacingValue
+        z: -1
+        visible: page.heroShown && Prefs.backdropEnabled && stageArt.y + stageArt.height > 0
+
+        readonly property string url: page.heroShown && page.featured.artUrl
+                                      ? String(page.featured.artUrl) : ""
+
+        // Two layers, so a change of featured item is a crossfade rather
+        // than a fade to the ground and back (the wash above does the same).
+        property string front: ""
+        property string back: ""
+        property bool frontActive: true
+
+        onUrlChanged: {
+            if (stageArt.url === (stageArt.frontActive ? stageArt.front : stageArt.back))
+                return
+            if (stageArt.frontActive) {
+                stageArt.back = stageArt.url
+                stageArt.frontActive = false
+            } else {
+                stageArt.front = stageArt.url
+                stageArt.frontActive = true
+            }
+        }
+        Component.onCompleted: stageArt.front = stageArt.url
+
+        CoverWash {
+            anchors.fill: parent
+            source: stageArt.url
+        }
+
+        component StageLayer: StrmImage {
+            id: stageLayer
+
+            property bool shown: false
+
+            anchors.fill: parent
+            // Faces and horizons sit high in fanart; a band this wide keeps
+            // the top of the frame and lets the bottom go under the fade.
+            verticalAlignment: Image.AlignTop
+            readyOpacity: stageLayer.shown ? page.stageArtOpacity : 0
+            fadeDuration: Theme.animSlow
+            suppressWarnings: true
+            visible: stageLayer.source.toString().length > 0
+        }
+
+        StageLayer {
+            source: stageArt.front
+            shown: stageArt.frontActive
+        }
+
+        StageLayer {
+            source: stageArt.back
+            shown: !stageArt.frontActive
+        }
+
+        // The type sits on the left: the ground comes in from that side far
+        // enough to hold it, and the right is left to the picture.
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: Theme.ground }
+                GradientStop { position: 0.32; color: Theme.veil }
+                GradientStop { position: 0.72; color: "transparent" }
+            }
+        }
+
+        // Under the header at the top, into the ground at the bottom: the
+        // stage is a lit band of the page, not a picture pasted onto it.
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.veil }
+                GradientStop { position: 0.18; color: "transparent" }
+                GradientStop { position: 0.55; color: "transparent" }
+                GradientStop { position: 1.0; color: Theme.ground }
+            }
         }
     }
 
@@ -405,8 +625,13 @@ FocusScope {
                 return (item && item.backdropUrl) ? item.backdropUrl : ""
             }
 
+            // The stage's room, above the first rail's shelf (see the stage).
+            readonly property int stageInset: cell.index === 0 && page.heroShown
+                                              ? page.heroHeight + Theme.railGap - Theme.pageMarginValue
+                                              : 0
+
             width: railList.width
-            height: cell.isLibraryRail ? libraryRail.height : mediaRail.height
+            height: cell.stageInset + (cell.isLibraryRail ? libraryRail.height : mediaRail.height)
             focus: cell.isCurrent
 
             onIsCurrentChanged: page.claimFocus(cell.isCurrent, cell.focusBackdropUrl)
@@ -445,6 +670,7 @@ FocusScope {
 
                 // No anchors: StrmRail binds its own width to parent.width, and
                 // anchoring left/right from here would override that binding.
+                y: cell.stageInset
                 visible: !cell.isLibraryRail
                 enabled: !cell.isLibraryRail
                 focus: !cell.isLibraryRail
@@ -547,6 +773,7 @@ FocusScope {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
+                anchors.topMargin: cell.stageInset
                 visible: cell.isLibraryRail
                 enabled: cell.isLibraryRail
                 focus: cell.isLibraryRail
@@ -680,6 +907,280 @@ FocusScope {
                         if (libList.activeFocus)
                             NavigationColumn.applyTo(libList)
                     }
+                }
+            }
+        }
+    }
+
+    // ── Stage ──────────────────────────────────────────────────────────────
+    // Over the list (it is drawn on the list's top margin) so its buttons take
+    // the pointer; a press or a wheel turn anywhere else on it falls through
+    // to the list underneath, which scrolls as if the stage were part of it.
+    FocusScope {
+        id: stage
+
+        y: page.stageY
+        width: page.width
+        height: page.heroHeight
+        visible: page.heroShown
+        enabled: page.heroShown
+
+        // Back-stack focus memory (BoundedNavigationStack): a semantic owner,
+        // so coming back from the details page it opened lands on the button
+        // that opened it — not on a child-index path through a page whose
+        // rails are virtual.
+        readonly property string navigationFocusKey: "home-hero"
+
+        function navigationFocusSnapshot(): var {
+            return {
+                "valid": page.heroShown,
+                "identity": page.heroShown ? String(page.featured.itemId) : "",
+                "index": heroInfo.activeFocus ? 1 : 0
+            }
+        }
+        // The featured item may have changed while the user was away (they
+        // finished it); the stage is still where they were, so its button is
+        // still the answer. Refused only when there is no stage to land on.
+        function restoreNavigationFocus(identity, index): bool {
+            if (!page.heroShown)
+                return false
+            const target = (index === 1 || !heroPlay.visible) ? heroInfo : heroPlay
+            target.forceActiveFocus(Qt.OtherFocusReason)
+            return true
+        }
+
+        Accessible.role: Accessible.Pane
+        Accessible.name: heroTitle.title
+
+        // On the stage, the list is at its beginning and its cursor on the
+        // first rail: that is where Down goes, and the first rail as current
+        // is what keeps the stage whole (see `stageInset`). The list does not
+        // hold the keyboard here, so moving its cursor moves no focus.
+        onActiveFocusChanged: {
+            if (!stage.activeFocus)
+                return
+            page._railCursorPlaced = true
+            if (railList.currentIndex !== 0 && railList.count > 0)
+                railList.currentIndex = 0
+            page.restOnStage()
+        }
+
+        // A vertical step keeps the column (NavigationColumn): the shelf below
+        // lands on the card under the button the step started from. The key
+        // itself is the navigator's.
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+                const from = heroInfo.activeFocus ? heroInfo : heroPlay
+                const point = from.mapToItem(null, from.width / 2, 0)
+                NavigationColumn.arm(point.x)
+            }
+            event.accepted = false
+        }
+
+        Column {
+            id: stageText
+
+            // Everything that is not the logo is a fixed height; the logo's
+            // box takes what is left, between a floor and a ceiling, and the
+            // synopsis is shown only when the box can keep a useful size
+            // beside it. Bottom-aligned, so spare height goes to the picture.
+            readonly property int fixedHeight: Theme.spacingLoose
+                + heroKicker.implicitHeight + heroMetaRow.height
+                + (heroEpisodeText.visible ? heroEpisodeText.implicitHeight + stageText.spacing : 0)
+                + heroButtons.height + stageText.spacing * 3 + Theme.spacingValue
+            readonly property int overviewHeight: Math.ceil(Theme.fontSmall * Theme.lineNormal * 2)
+                                                  + stageText.spacing
+            readonly property int room: page.heroHeight - stageText.fixedHeight
+            readonly property bool overviewFits: heroOverview.text.length > 0
+                && stageText.room - stageText.overviewHeight >= Theme.scale(72)
+            readonly property int logoBox: Math.max(Theme.scale(56), Math.min(Theme.scale(150),
+                stageText.room - (stageText.overviewFits ? stageText.overviewHeight : 0)))
+
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: Theme.pageMarginValue
+            width: Math.min(stage.width - Theme.pageMarginValue * 2, Theme.scale(760))
+            spacing: Theme.spacingTight
+
+            // Why this item: "Continue watching", "Up next", "New in Movies".
+            // The booth gear label (mono, uppercase, tracked out) that the
+            // details page puts over its fields.
+            Text {
+                id: heroKicker
+
+                width: parent.width
+                text: page.heroShown && page.featured.featuredLabel
+                      ? String(page.featured.featuredLabel).toUpperCase() : ""
+                color: Theme.textSecondaryColor
+                font.family: Theme.fontMono
+                font.pixelSize: Theme.fontCaption
+                font.letterSpacing: Theme.fontCaption * Theme.trackLabel
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+            }
+
+            TitleLogo {
+                id: heroTitle
+
+                width: parent.width
+                // An episode is the series' to name: its logo, or its title.
+                title: !page.heroShown ? ""
+                       : page.heroEpisode && page.featured.seriesName
+                         ? String(page.featured.seriesName)
+                         : String(page.featured.name || "")
+                logoUrl: page.heroShown && page.featured.logoUrl
+                         ? String(page.featured.logoUrl) : ""
+                logoMaxWidth: Theme.scale(480)
+                logoMaxHeight: stageText.logoBox
+                decodeMaxHeight: Theme.scale(150)
+                // The column grows upward from the buttons, so the box can
+                // hug the logo: what moves when it lands is the label above.
+                reserveBox: false
+                pixelSize: Theme.fontDisplaySize
+                // Two lines only where the box has room for them.
+                maximumLineCount: stageText.logoBox >= Math.round(Theme.fontDisplaySize * 2.4)
+                                  ? 2 : 1
+            }
+
+            Text {
+                id: heroEpisodeText
+
+                width: parent.width
+                visible: page.heroEpisodeLine.length > 0
+                text: page.heroEpisodeLine
+                color: Theme.textPrimaryColor
+                font.family: Theme.fontBody
+                font.pixelSize: Theme.fontBodyLarge
+                font.weight: Font.Medium
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+            }
+
+            Row {
+                id: heroMetaRow
+
+                spacing: Theme.spacingValue
+                height: Math.ceil(Theme.fontBodySize * 1.4)
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: page.heroMeta.length > 0
+                    text: page.heroMeta
+                    color: Theme.textSecondaryColor
+                    font.family: Theme.fontBody
+                    font.pixelSize: Theme.fontBodySize
+                    textFormat: Text.PlainText
+                }
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: page.heroShown && page.featured.communityRating > 0
+                    spacing: Theme.scale(6)
+
+                    StrmIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "star"
+                        size: Theme.fontBodySize
+                        color: Theme.accentColor
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.heroShown ? Number(page.featured.communityRating).toFixed(1) : ""
+                        color: Theme.accentColor
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontBodySize
+                    }
+                }
+
+                // How far in, for something already started: the same
+                // accent line a card's progress bar is.
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: page.heroCapabilities.resume === true
+                             && page.featured.runtimeMs > 0
+                    spacing: Theme.spacingTight
+
+                    Rectangle {
+                        id: heroProgress
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Theme.scale(96)
+                        height: Theme.scale(3)
+                        radius: height / 2
+                        color: Theme.hairline
+                        Accessible.role: Accessible.ProgressBar
+                        Accessible.name: qsTr("Progress")
+
+                        Rectangle {
+                            width: heroProgress.width
+                                   * Math.max(0, Math.min(1, Number(page.featured.progress || 0)))
+                            height: heroProgress.height
+                            radius: heroProgress.radius
+                            color: Theme.accentColor
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.heroShown
+                              ? qsTr("%1 left").arg(page.formatRuntime(Math.max(0,
+                                    page.featured.runtimeMs - page.featured.positionMs)))
+                              : ""
+                        color: Theme.textSecondaryColor
+                        font.family: Theme.fontBody
+                        font.pixelSize: Theme.fontSmall
+                        textFormat: Text.PlainText
+                    }
+                }
+            }
+
+            Text {
+                id: heroOverview
+
+                width: Math.min(parent.width, Theme.scale(640))
+                visible: stageText.overviewFits
+                text: page.heroShown && page.featured.overview ? String(page.featured.overview) : ""
+                color: Theme.textPrimaryColor
+                font.family: Theme.fontBody
+                font.pixelSize: Theme.fontSmall
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                lineHeight: Theme.lineNormal
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
+
+            Item { width: 1; height: Theme.spacingValue - stageText.spacing }
+
+            Row {
+                id: heroButtons
+
+                spacing: Theme.spacingTight
+                height: Theme.controlHeight
+
+                // Resume decides as a card and the details page do: the
+                // item's own capability (ItemActions), which is a playable
+                // item with a resume point. The verb is Actions', the
+                // position the one the item map carries.
+                StrmButton {
+                    id: heroPlay
+
+                    visible: page.heroCapabilities.play === true
+                    variant: "primary"
+                    iconName: "play"
+                    text: page.heroCapabilities.resume === true
+                          ? qsTr("Resume %1").arg(page.formatPosition(page.featured.positionMs))
+                          : qsTr("Play")
+                    onClicked: Actions.play(page.featured)
+                }
+
+                StrmButton {
+                    id: heroInfo
+
+                    iconName: "info"
+                    text: qsTr("More info")
+                    onClicked: Actions.openDetails(page.featured)
                 }
             }
         }

@@ -27,6 +27,9 @@ QtObject {
     readonly property int episodeNumber: numberField("indexNumber", -1)
     readonly property string episodeCode: MediaKinds.episodeCode(info.seasonNumber,
                                                                  info.episodeNumber)
+    // ClearLogo of the entry (MediaItemModel's logoUrl role): the film's own,
+    // or for an episode its series'. Empty when the server has none.
+    readonly property string logoUrl: field("logoUrl")
     readonly property string videoContext: {
         const parts = [];
         if (info.seriesName.length > 0)
