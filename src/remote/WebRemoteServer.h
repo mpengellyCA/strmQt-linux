@@ -102,6 +102,12 @@ public:
     // Replaces the monotonic clock the PIN lockout runs on (milliseconds).
     void setClockForTests(std::function<qint64()> nowMs);
 
+    // What failed PINs are counted against: the address for IPv4 (an
+    // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6. One host
+    // commonly holds a whole /64, so anything narrower is a fresh allowance
+    // per address it cares to use.
+    static QString pinPeerKey(const QHostAddress &peer);
+
 signals:
     void runningChanged(bool running);
     void connectedClientsChanged(int count);
@@ -206,7 +212,14 @@ private:
         qint64 lockedUntil = 0;
         qint64 lastMiss = 0;
     };
-    QHash<QString, PinFailures> m_pinFailures; // by peer address
+    QHash<QString, PinFailures> m_pinFailures; // by pinPeerKey()
+    // Misses by peers that have not shown the PIN, across all of them; one is
+    // forgiven per kPinGlobalForgiveMs, counted from m_pinGlobalSince.
+    int m_pinGlobalMisses = 0;
+    qint64 m_pinGlobalSince = 0;
+    // Peers (by pinPeerKey()) that gave the current PIN: the limit shared by
+    // strangers does not lock them out.
+    QSet<QString> m_pinKnownPeers;
     QElapsedTimer m_pinClock;
     std::function<qint64()> m_clock;
     std::function<QHostAddress(const QString &)> m_bindResolver;

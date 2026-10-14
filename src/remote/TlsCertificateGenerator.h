@@ -14,7 +14,8 @@ public:
     static QString defaultPrivateKeyPath();
 
     // Ensures a valid self-signed certificate and private key exist at the given or default paths.
-    // If missing, expired, or forceRegenerate is true, generates a new self-signed cert with SANs.
+    // If missing, expired, lacking a current IPv4 address or host name, or forceRegenerate is
+    // true, generates a new self-signed cert with SANs.
     static bool ensureCertificate(const QStringList &sanAddresses = {},
                                  bool forceRegenerate = false,
                                  const QString &certPath = {},

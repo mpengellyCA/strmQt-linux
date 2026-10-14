@@ -74,14 +74,37 @@ qint64 writeBacklog(const QSslSocket *socket)
     return socket->bytesToWrite() + socket->encryptedBytesToWrite();
 }
 
-// Per peer address: the fifth miss in a row locks that address out for 2 s;
-// each further miss once the lockout has passed doubles it, up to 5 min.
-// Every try while locked out is 429, even the right PIN. Nothing is shared
-// between addresses, and an address idle for 10 min is forgotten.
+// Per peer (WebRemoteServer::pinPeerKey: an IPv4 address or an IPv6 /64): the
+// fifth miss in a row locks that peer out for 2 s; each further miss once the
+// lockout has passed doubles it, up to 5 min. Every try while locked out is
+// 429, even the right PIN. A peer idle for 10 min is forgotten.
 constexpr int kMaxFailedPins = 5;
 constexpr qint64 kPinLockoutMs = 2000;
 constexpr qint64 kPinMaxLockoutMs = 5 * 60 * 1000;
 constexpr qint64 kPinFailureIdleMs = 10 * 60 * 1000;
+
+// Across peers: someone with many addresses (a routed IPv6 prefix, a /24 of
+// claimed IPv4 addresses) gets four free tries from each under the rule
+// above, so misses are also counted together. Twenty are allowed in a burst
+// and one more every 5 min — the rate one address is held to once its lockout
+// has reached the cap. With none left a PIN is not looked at (429): 288 tries
+// a day against 10 000 PINs, however many addresses they come from.
+//
+// The price: anyone on the network can spend that allowance and keep a new
+// phone from signing in. So the shared count binds only peers that have not
+// given the current PIN yet. A phone that has (kept across stop(), forgotten
+// with the PIN) is held to its own lockout alone, and a new PIN from Settings
+// clears every count, which is the way out for the person at the desktop.
+constexpr int kPinGlobalMisses = 20;
+constexpr qint64 kPinGlobalForgiveMs = 5 * 60 * 1000;
+constexpr qsizetype kMaxKnownPinPeers = 64;
+
+// The shared allowance keeps m_pinFailures to a few dozen peers (twenty, two
+// more per idle period, and the known ones). This is the backstop: nothing is
+// ever evicted to make room — that would be a fresh allowance for whoever was
+// evicted — so past it a peer not already in the table is refused until
+// entries age out.
+constexpr qsizetype kMaxPinPeers = 256;
 
 // Fixed-length XOR over the expected PIN. The time taken depends on the PIN's
 // length only, never on how many leading digits a guess got right.
@@ -375,6 +398,12 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
         // A new PIN signs out every phone that signed in with the old one.
         connect(m_settings, &Settings::webRemotePinChanged, this, [this] {
             m_authorizedTokens.clear();
+            // Misses were guesses at the old PIN, and knowing it proves
+            // nothing now. Only the desktop can change the PIN, so this is
+            // not a reset a remote peer can ask for.
+            m_pinFailures.clear();
+            m_pinKnownPeers.clear();
+            m_pinGlobalMisses = 0;
             // An open event stream was authorised with the old PIN: close it
             // too. Swapped out first: abort() emits disconnected synchronously,
             // and that handler edits m_sseClients.
@@ -1037,25 +1066,58 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
     return !queryToken.isEmpty() && m_authorizedTokens.contains(queryToken);
 }
 
+QString WebRemoteServer::pinPeerKey(const QHostAddress &peer)
+{
+    bool isV4 = false;
+    const quint32 v4 = peer.toIPv4Address(&isV4); // also IPv4-mapped IPv6
+    if (isV4)
+        return QHostAddress(v4).toString();
+    if (peer.protocol() != QAbstractSocket::IPv6Protocol)
+        return QStringLiteral("unknown");
+    // The network half only. The scope id is not part of it: it names one of
+    // this computer's interfaces, not the peer.
+    const Q_IPV6ADDR raw = peer.toIPv6Address();
+    return QString::fromLatin1(QByteArray(reinterpret_cast<const char *>(raw.c), 8).toHex())
+           + QLatin1String("/64");
+}
+
 void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &body)
 {
     const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
     m_pinFailures.removeIf([now](const QHash<QString, PinFailures>::iterator it) {
         return now >= it->lockedUntil && now - it->lastMiss > kPinFailureIdleMs;
     });
-    // The same client over IPv4 and IPv4-mapped IPv6 is one address.
-    QHostAddress peer = socket->peerAddress();
-    bool isV4 = false;
-    const quint32 v4 = peer.toIPv4Address(&isV4);
-    if (isV4)
-        peer = QHostAddress(v4);
-    const QString peerKey = peer.toString();
+    if (m_pinGlobalMisses > 0) {
+        // One miss forgiven per period; the remainder of a period carries over.
+        const qint64 periods = (now - m_pinGlobalSince) / kPinGlobalForgiveMs;
+        if (periods >= m_pinGlobalMisses) {
+            m_pinGlobalMisses = 0;
+        } else if (periods > 0) {
+            m_pinGlobalMisses -= static_cast<int>(periods);
+            m_pinGlobalSince += periods * kPinGlobalForgiveMs;
+        } else if (now < m_pinGlobalSince) {
+            m_pinGlobalSince = now; // a clock set back forgives nothing
+        }
+    }
+    const QString peerKey = pinPeerKey(socket->peerAddress());
+    const bool known = m_pinKnownPeers.contains(peerKey);
 
-    const auto found = m_pinFailures.constFind(peerKey);
-    if (found != m_pinFailures.cend() && now < found->lockedUntil) {
+    const auto tooMany = [this, socket] {
         QJsonObject err;
         err[QStringLiteral("error")] = QStringLiteral("Too many failed attempts. Please wait.");
         sendJson(socket, 429, err);
+    };
+    const auto found = m_pinFailures.constFind(peerKey);
+    if (found != m_pinFailures.cend() && now < found->lockedUntil) {
+        tooMany();
+        return;
+    }
+    if (!known && m_pinGlobalMisses >= kPinGlobalMisses) {
+        tooMany();
+        return;
+    }
+    if (found == m_pinFailures.cend() && m_pinFailures.size() >= kMaxPinPeers) {
+        tooMany();
         return;
     }
 
@@ -1063,7 +1125,14 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
     const QString expected = m_settings ? m_settings->webRemotePin() : QString();
     if (!pin.isEmpty() && !expected.isEmpty()
         && constantTimeEquals(pin.toUtf8(), expected.toUtf8())) {
+        // This peer's own count starts over. The shared one does not: that
+        // someone knows the PIN says nothing about the others' guesses.
         m_pinFailures.remove(peerKey);
+        if (!known) {
+            if (m_pinKnownPeers.size() >= kMaxKnownPinPeers)
+                m_pinKnownPeers.erase(m_pinKnownPeers.cbegin()); // costs a peer its exemption only
+            m_pinKnownPeers.insert(peerKey);
+        }
         const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
         m_authorizedTokens.insert(token);
         QJsonObject resp;
@@ -1078,6 +1147,11 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
         failures.lockMs = failures.lockMs == 0 ? kPinLockoutMs
                                                : std::min(failures.lockMs * 2, kPinMaxLockoutMs);
         failures.lockedUntil = now + failures.lockMs;
+    }
+    if (!known) {
+        if (m_pinGlobalMisses == 0)
+            m_pinGlobalSince = now;
+        ++m_pinGlobalMisses;
     }
     QJsonObject err;
     err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
@@ -1868,9 +1942,10 @@ void WebRemoteServer::handleApiPlayback(QSslSocket *socket, const QJsonObject &b
         m_player->frameStep(val.toInt() < 0 ? -1 : 1);
     } else if (action == QLatin1String("screenshot")) {
         const QString path = m_player->takeScreenshot();
+        // Where it was saved is this computer's business: the path carries the
+        // user name and the directory layout, and the phone has no use for it.
         QJsonObject resp;
         resp[QStringLiteral("ok")] = !path.isEmpty();
-        resp[QStringLiteral("path")] = path;
         sendJson(socket, path.isEmpty() ? 500 : 200, resp);
         return;
     } else {
