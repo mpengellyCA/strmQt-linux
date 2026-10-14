@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <clocale>
+#include <utility>
 #include <vector>
 
 #if defined(__GLIBC__)
@@ -303,6 +304,7 @@ void MpvPlayer::destroyCore()
     m_coreReleasing = false;
     if (!m_mpv)
         return;
+    cancelSubtitleAdds();
     mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
     mpv_terminate_destroy(m_mpv);
     m_mpv = nullptr;
@@ -332,6 +334,8 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
         emit renderHandleChanged();
     }
     m_loadId = loadId;
+    // The outgoing file's external subtitles are not this one's.
+    cancelSubtitleAdds();
     // Publish the requested position directly. A synthetic zero stamped with
     // the new load id would be accepted by PlayerController and could erase
     // the recovery point before this load produces its first time-pos event.
@@ -396,6 +400,7 @@ void MpvPlayer::setPaused(bool paused)
 
 void MpvPlayer::stop()
 {
+    cancelSubtitleAdds();
     if (m_mpv) {
         const char *args[] = {"stop", nullptr};
         command(args);
@@ -522,6 +527,100 @@ void MpvPlayer::setAudioTrack(int id)
 void MpvPlayer::setSubtitleTrack(int id)
 {
     setTrackProperty("sid", id);
+}
+
+void MpvPlayer::addExternalSubtitle(const QUrl &url, const QString &title,
+                                    const QString &language, bool select)
+{
+    // mpv adds a track to the file it is playing; before FILE_LOADED there is
+    // none, and after stop() or a failure there is none either.
+    if (!m_mpv || !url.isValid() || (m_state != State::Playing && m_state != State::Paused))
+        return;
+    m_pendingSubtitles.append(
+        {url.toString(QUrl::FullyEncoded).toUtf8(), title.toUtf8(), language.toUtf8(), select});
+    startNextSubtitleAdd();
+}
+
+void MpvPlayer::startNextSubtitleAdd()
+{
+    while (m_mpv && m_subtitleAddInFlight == 0 && !m_pendingSubtitles.isEmpty()) {
+        const PendingSubtitle next = m_pendingSubtitles.takeFirst();
+        // mpv's "select" and "auto" both add a second track for a file it has
+        // already read. Attached again, it is the same subtitle.
+        if (const int existing = externalTrackId(next.url); existing >= 0) {
+            if (next.select)
+                setTrackProperty("sid", existing);
+            continue;
+        }
+        // Always "auto" — add it and leave the selection alone, and keep it out
+        // of mpv's own default selection — and select it ourselves once it is
+        // there. sub-add's own "select" switches tracks from mpv's worker
+        // thread, and on libmpv 0.41 that deadlocks the core when the file is
+        // replaced around it (reproduced; the reason for cancelSubtitleAdds).
+        // Title and language are positional; title is never empty: mpv would
+        // name the track after the file, and a server's file name is a URL
+        // whose query carries the access token.
+        const QByteArray title = !next.title.isEmpty()      ? next.title
+                                 : !next.language.isEmpty() ? next.language
+                                                            : QByteArrayLiteral("External");
+        const char *args[] = {"sub-add", next.url.constData(), "auto", title.constData(),
+                              next.language.isEmpty() ? nullptr : next.language.constData(),
+                              nullptr};
+        // Asynchronous: the fetch is a network round trip, and mpv_command()
+        // would spend it on the GUI thread.
+        const quint64 token = ++m_nextSubtitleAddToken;
+        const int rc = mpv_command_async(m_mpv, token, args);
+        if (rc < 0) {
+            // The URL carries the access token: say which command, never what.
+            qCWarning(logPlayback) << "mpv command sub-add failed:" << mpv_error_string(rc);
+            continue;
+        }
+        m_subtitleAdding = next;
+        m_subtitleAddInFlight = token;
+    }
+}
+
+void MpvPlayer::cancelSubtitleAdds()
+{
+    m_pendingSubtitles.clear();
+    if (m_subtitleAddInFlight == 0)
+        return;
+    const quint64 token = m_subtitleAddInFlight;
+    m_subtitleAddInFlight = 0;
+    m_subtitleAdding = {};
+    if (!m_mpv)
+        return;
+    // Not optional. With a subtitle shown, a sub-add still running when the
+    // file is replaced hangs the core of libmpv 0.41 (v0.41.0-1102-g6c092d978)
+    // for good — and the GUI thread with it, at its next mpv call. Reproduced
+    // against the bare C API within a few dozen replacements, "auto" adds and
+    // "select" adds alike. With "auto" adds aborted and waited for first, as
+    // here, it did not happen in 300 replacements and 200 stops at random
+    // timings ("select" adds hung even then, hence startNextSubtitleAdd). The
+    // wait is short: the abort cancels the fetch, measured under a millisecond
+    // against a server that never answers. The reply stays queued, ignored.
+    mpv_abort_async_command(m_mpv, token);
+    mpv_wait_async_requests(m_mpv);
+}
+
+int MpvPlayer::externalTrackId(const QByteArray &url) const
+{
+    if (!m_mpv)
+        return -1;
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "track-list", MPV_FORMAT_NODE, &node) < 0)
+        return -1;
+    const QVariantList tracks = variantFromNode(node).toList();
+    mpv_free_node_contents(&node);
+    const QString wanted = QString::fromUtf8(url);
+    for (const QVariant &entry : tracks) {
+        const QVariantMap track = entry.toMap();
+        if (track.value(QStringLiteral("type")).toString() == QLatin1String("sub") &&
+            track.value(QStringLiteral("external")).toBool() &&
+            track.value(QStringLiteral("external-filename")).toString() == wanted)
+            return track.value(QStringLiteral("id")).toInt();
+    }
+    return -1;
 }
 
 qint64 MpvPlayer::bufferedMs() const
@@ -1106,6 +1205,24 @@ void MpvPlayer::drainEvents()
                 setState(*static_cast<int *>(change->data) ? State::Paused : State::Playing,
                          m_eventLoadId);
             }
+            break;
+        }
+        case MPV_EVENT_COMMAND_REPLY: {
+            // The only asynchronous command this player issues is sub-add. A
+            // reply for one that was cancelled belongs to a file that is gone.
+            if (event->reply_userdata == 0 || event->reply_userdata != m_subtitleAddInFlight)
+                break;
+            m_subtitleAddInFlight = 0;
+            const PendingSubtitle added = std::exchange(m_subtitleAdding, {});
+            if (event->error < 0) {
+                qCWarning(logPlayback) << "an external subtitle could not be loaded:"
+                                       << mpv_error_string(event->error);
+            } else if (added.select) {
+                // Found by where it was read from: the reply carries no id.
+                if (const int id = externalTrackId(added.url); id >= 0)
+                    setTrackProperty("sid", id);
+            }
+            startNextSubtitleAdd();
             break;
         }
         case MPV_EVENT_LOG_MESSAGE: {

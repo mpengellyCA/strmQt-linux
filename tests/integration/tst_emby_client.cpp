@@ -46,7 +46,7 @@ private slots:
     void unauthenticatedCallsFailFast();
     void imageUrlBuilder();
     void deviceProfileCoversLosslessAudio();
-    void subtitleProfilesStayEmbedOnly();
+    void externalSubtitlesAreDeclaredAndResolved();
     void authorizationHeaderSurvivesHostileDeviceNames_data();
     void authorizationHeaderSurvivesHostileDeviceNames();
     void sessionChangeCancelsOutstandingRequests();
@@ -354,37 +354,101 @@ void EmbyClientTest::deviceProfileCoversLosslessAudio()
 }
 
 // Declaring "Method": "External" tells the server it may direct-play a file
-// and hand its sidecar subtitle back as a DeliveryUrl for the client to fetch.
-// Nothing in this client fetches one: the DTOs carry no delivery fields and no
-// player backend is ever given a subtitle URL. Declared today, a viewer whose
-// default subtitle is a sidecar .srt would trade a burned-in subtitle for none
-// at all. This flips to expecting External in the commit that loads it.
-void EmbyClientTest::subtitleProfilesStayEmbedOnly()
+// and hand its sidecar subtitle back as a DeliveryUrl for the client to fetch,
+// and that a text subtitle need not be burned into a transcode. The client
+// half exists (this test's second part, tst_player_controller and
+// tst_mpv_video_item), but the server half has not been seen live, so the
+// declaration is opt-in: by default the profile stays Embed-only, and with
+// STRMQT_EXTERNAL_SUBTITLES=1 it adds External for the text formats only.
+// Making it the default is one line in deviceProfileJson() and this test.
+void EmbyClientTest::externalSubtitlesAreDeclaredAndResolved()
 {
     m_client->setSession(kToken, kUserId);
-    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Items/501/PlaybackInfo"), 200,
-                     QByteArrayLiteral("{\"MediaSources\":[],\"PlaySessionId\":\"x\"}"));
-    waitFor(m_client->playbackInfo(QStringLiteral("501")));
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/7700/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_external_subtitle.json"))));
 
-    const QJsonObject body =
-        QJsonDocument::fromJson(
-            m_mock->lastRequestFor(QStringLiteral("POST"),
-                                   QStringLiteral("/Items/501/PlaybackInfo"))
-                .body)
-            .object();
-    const QJsonArray profiles = body.value(QLatin1String("DeviceProfile"))
-                                    .toObject()
-                                    .value(QLatin1String("SubtitleProfiles"))
-                                    .toArray();
-    QStringList formats;
-    for (const QJsonValue &entry : profiles) {
-        QCOMPARE(entry.toObject().value(QLatin1String("Method")).toString(),
-                 QStringLiteral("Embed"));
-        formats.append(entry.toObject().value(QLatin1String("Format")).toString());
+    const auto declared = [this](bool optedIn) {
+        if (optedIn)
+            qputenv("STRMQT_EXTERNAL_SUBTITLES", "1");
+        else
+            qunsetenv("STRMQT_EXTERNAL_SUBTITLES");
+        const auto result = waitFor(m_client->playbackInfo(QStringLiteral("7700")));
+        qunsetenv("STRMQT_EXTERNAL_SUBTITLES");
+        const QJsonObject body =
+            QJsonDocument::fromJson(
+                m_mock->lastRequestFor(QStringLiteral("POST"),
+                                       QStringLiteral("/Items/7700/PlaybackInfo"))
+                    .body)
+                .object();
+        return std::pair{result, body.value(QLatin1String("DeviceProfile"))
+                                     .toObject()
+                                     .value(QLatin1String("SubtitleProfiles"))
+                                     .toArray()};
+    };
+    const auto split = [](const QJsonArray &profiles, QStringList &embedded,
+                          QStringList &external) {
+        for (const QJsonValue &entry : profiles) {
+            const QString format = entry.toObject().value(QLatin1String("Format")).toString();
+            const QString method = entry.toObject().value(QLatin1String("Method")).toString();
+            if (method == QLatin1String("Embed")) {
+                // Embed first: a stream that is in the file stays in the file.
+                QVERIFY2(external.isEmpty(), "an Embed profile is listed after an External one");
+                embedded.append(format);
+            } else if (method == QLatin1String("External")) {
+                external.append(format);
+            } else {
+                QFAIL(qPrintable(QStringLiteral("unexpected subtitle method ") + method));
+            }
+        }
+    };
+    const QStringList text{QStringLiteral("srt"), QStringLiteral("subrip"), QStringLiteral("ass"),
+                           QStringLiteral("ssa"), QStringLiteral("vtt")};
+    const QStringList everything = text + QStringList{QStringLiteral("pgssub"), QStringLiteral("sub")};
+
+    // ── By default: Embed only ───────────────────────────────────────────────
+    {
+        const auto [result, profiles] = declared(false);
+        QVERIFY2(result.ok(), qPrintable(result.error));
+        QStringList embedded;
+        QStringList external;
+        split(profiles, embedded, external);
+        for (const QString &format : everything)
+            QVERIFY2(embedded.contains(format), qPrintable(format));
+        QVERIFY(external.isEmpty());
     }
-    for (const QString &format : {QStringLiteral("srt"), QStringLiteral("ass"),
-                                  QStringLiteral("pgssub"), QStringLiteral("vtt")})
-        QVERIFY2(formats.contains(format), qPrintable(format));
+
+    // ── Opted in: External as well, for the text formats only ─────────────────
+    const auto [result, profiles] = declared(true);
+    QVERIFY2(result.ok(), qPrintable(result.error));
+    QStringList embedded;
+    QStringList external;
+    split(profiles, embedded, external);
+    for (const QString &format : everything)
+        QVERIFY2(embedded.contains(format), qPrintable(format));
+    // Image subtitles never: nothing here loads one from a URL.
+    QCOMPARE(external, text);
+
+    // ── What comes back is loadable ──────────────────────────────────────────
+    const MediaSource &source = result.value.sources.at(0).source;
+    QCOMPARE(source.defaultSubtitleStreamIndex, 3);
+    QList<int> delivered;
+    for (const MediaStream &stream : source.streams) {
+        if (!stream.isDeliveredExternally())
+            continue;
+        delivered.append(stream.index);
+        // The mock server's own address and port, like the stream candidates.
+        QCOMPARE(stream.externalUrl.scheme(), m_mock->baseUrl().scheme());
+        QCOMPARE(stream.externalUrl.host(), m_mock->baseUrl().host());
+        QCOMPARE(stream.externalUrl.port(), m_mock->baseUrl().port());
+        QVERIFY(stream.externalUrl.path().contains(
+            QStringLiteral("/Subtitles/%1/0/Stream.").arg(stream.index)));
+        // Authenticated in the URL — the engine cannot send our headers — and
+        // exactly once, whether or not the server had put a key there already.
+        const QUrlQuery query(stream.externalUrl);
+        QCOMPARE(query.allQueryItemValues(QStringLiteral("api_key")), QStringList{kToken});
+    }
+    QCOMPARE(delivered, (QList<int>{3, 4, 6}));
 }
 
 void EmbyClientTest::authorizationHeaderSurvivesHostileDeviceNames_data()

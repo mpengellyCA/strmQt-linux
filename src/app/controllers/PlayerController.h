@@ -529,6 +529,15 @@ private:
     void rememberCurrentTracks();
     // Applies a remembered pair once the engine has published its track list.
     void restoreRememberedTracks();
+    // The subtitles of the selected source that the engine will not find in
+    // the stream the current rung opens, and so has to be handed separately.
+    QList<MediaStream> externalSubtitlesForCurrentRung() const;
+    // Hands those to the engine, once per load: every retry, demotion and
+    // reload is a new file to the engine and starts without them.
+    void attachExternalSubtitles();
+    // A remembered subtitle that was not in the engine's list when the choice
+    // was restored, because it is one of the external ones still on its way.
+    void applyDeferredSubtitleTrack();
     void setBusy(bool busy);
     // The answer isAudio() caches, and the one place that recomputes it. Both
     // inputs — the queue's cursor and the chosen media source — move on their
@@ -653,6 +662,9 @@ private:
     bool m_restoringTracks = false;
     std::optional<int> m_pendingAudioTrack;
     std::optional<int> m_pendingSubtitleTrack;
+    std::optional<int> m_deferredSubtitleTrack;
+    // The load whose external subtitles have been attached; 0 for none yet.
+    PlayerBackend::LoadId m_externalSubtitlesLoadId = 0;
 
     // Hold-to-fast-forward. m_fastForwarding spans from the moment a press
     // became a hold to its release; the speed and the mute it overrode are put

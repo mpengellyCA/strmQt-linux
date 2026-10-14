@@ -117,6 +117,32 @@ public:
     virtual void setAudioTrack(int id) { Q_UNUSED(id); }    // -1 = off/none
     virtual void setSubtitleTrack(int id) { Q_UNUSED(id); } // -1 = off
 
+    // Attach a subtitle that is not in the media itself: a file the server
+    // delivers on a URL of its own (a sidecar .srt next to a direct-played
+    // film, a text subtitle held out of a transcode). It belongs to the load
+    // that is current when this is called and goes with it — the next load()
+    // starts without it, and whoever wants it there attaches it again.
+    //   url       absolute and self-authenticating, like a stream URL. It
+    //             carries the access token: engines must not log it and must
+    //             not publish it in subtitleTracks().
+    //   title     what the track list shows for it
+    //   language  ISO code, may be empty
+    //   select    show it now. False adds it to the list and leaves the
+    //             selection alone, whatever the engine's own defaults say.
+    // Only valid once the load has reached Playing or Paused. The fetch is the
+    // engine's and asynchronous: the track shows up in subtitleTracks() (with
+    // isExternal set) when it has been read, and a file that cannot be read
+    // costs that one subtitle, never the playback. Calls are honoured in order,
+    // so the ids the tracks get do not depend on which download finished first.
+    virtual void addExternalSubtitle(const QUrl &url, const QString &title,
+                                     const QString &language, bool select)
+    {
+        Q_UNUSED(url);
+        Q_UNUSED(title);
+        Q_UNUSED(language);
+        Q_UNUSED(select);
+    }
+
     // ── Scrubber / stats surface ──────────────────────────────────────────────
     virtual qint64 bufferedMs() const { return 0; }
     virtual qreal playbackSpeed() const { return 1.0; }

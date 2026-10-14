@@ -21,6 +21,7 @@ class VlcPlayerTest : public QObject
 private slots:
     void loadPlayReloadStopDestroy();
     void resumedLoadOpensAtTheResumePoint();
+    void selectedExternalSubtitleIsDrawn();
 };
 
 namespace {
@@ -132,6 +133,67 @@ void VlcPlayerTest::resumedLoadOpensAtTheResumePoint()
     QCOMPARE(darkPictures, 0);
     QVERIFY2(player.positionMs() >= kResumeMs - 2000,
              qPrintable(QString::number(player.positionMs())));
+    player.stop();
+}
+
+// PlayerController hands this engine the subtitle the server delivers outside
+// the stream. libVLC has no track list here to look it up in, so the evidence
+// is the picture: the clip is black from start to end, and the only thing that
+// can put a light pixel into a frame is subtitle text drawn over it.
+void VlcPlayerTest::selectedExternalSubtitleIsDrawn()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip =
+        generateClip(dir, QStringLiteral("color=black:duration=60:size=320x180:rate=10"));
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate smoke-test media");
+    // Named unlike the clip, so libVLC's own sidecar detection cannot find it.
+    const QString subtitle = dir.filePath(QStringLiteral("sidecar-en.srt"));
+    {
+        QFile file(subtitle);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("1\n00:00:00,000 --> 00:00:59,000\nMMMMMMMMMMMM\nMMMMMMMMMMMM\n");
+    }
+
+    VlcPlayer player;
+    QSignalSpy errorSpy(&player, &PlayerBackend::errorOccurred);
+    int pictures = 0;
+    int litPictures = 0;
+    connect(&player, &VlcPlayer::frameReady, &player, [&] {
+        const QImage frame = player.currentFrame();
+        if (frame.isNull())
+            return;
+        ++pictures;
+        for (int y = 0; y < frame.height(); ++y) {
+            for (int x = 0; x < frame.width(); ++x) {
+                if (frame.pixelColor(x, y).lightness() > 160) {
+                    ++litPictures;
+                    return;
+                }
+            }
+        }
+    });
+
+    // Before the input runs there is nothing to attach to: ignored.
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), {}, {}, true);
+    player.load(QUrl::fromLocalFile(clip), 0, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(player.state() == PlayerBackend::State::Playing && pictures >= 5,
+                             15000);
+    // Offered but not to be shown: this engine could never have it picked, so
+    // it is not fetched, and the picture stays black.
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), QStringLiteral("English"),
+                               QStringLiteral("eng"), false);
+    const int before = pictures;
+    QTRY_VERIFY_WITH_TIMEOUT(pictures >= before + 10, 15000);
+    QCOMPARE(litPictures, 0);
+
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), QStringLiteral("English"),
+                               QStringLiteral("eng"), true);
+    QTRY_VERIFY2_WITH_TIMEOUT(litPictures > 0, "the attached subtitle never reached the picture",
+                              20000);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(player.state(), PlayerBackend::State::Playing);
     player.stop();
 }
 

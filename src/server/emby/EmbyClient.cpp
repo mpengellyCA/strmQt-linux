@@ -917,17 +917,34 @@ QJsonObject deviceProfileJson(int maxBitrateKbps = 0,
     transcoding.insert(QLatin1String("AudioCodec"), QLatin1String("aac,ac3"));
     transcoding.insert(QLatin1String("Protocol"), QLatin1String("hls"));
 
-    // Embed only, deliberately. "Method": "External" would let the server
-    // direct-play a file and return its sidecar subtitle as a DeliveryUrl for
-    // the client to fetch — and nothing here fetches one: MediaStream carries
-    // no delivery fields and no player backend is handed a subtitle URL. Until
-    // that exists, declaring it trades a burned-in subtitle for none at all.
+    // Embed for everything mpv reads out of the container, listed first so a
+    // stream that is in the file keeps being delivered in the file.
     QJsonArray subtitles;
     for (const char *format : {"srt", "subrip", "ass", "ssa", "pgssub", "sub", "vtt"}) {
         QJsonObject profile;
         profile.insert(QLatin1String("Format"), QLatin1String(format));
         profile.insert(QLatin1String("Method"), QLatin1String("Embed"));
         subtitles.append(profile);
+    }
+    // "Method": "External" for the text formats would let the server
+    // direct-play a file whose subtitle is a sidecar, and stop burning a text
+    // subtitle into a transcode, handing it over as MediaStream.DeliveryUrl
+    // instead. The client half exists — the mapper resolves the URL, and
+    // PlayerController attaches each such stream to the engine once the file is
+    // up — but what the server does with the declaration has not been seen
+    // against a live server yet: which subtitle it marks default
+    // (DefaultSubtitleStreamIndex), and whether a subtitle delivered beside an
+    // HLS transcode lines up with the transcode after a resume. Until it has,
+    // it is opt-in (STRMQT_EXTERNAL_SUBTITLES=1), so it can be tried without a
+    // build. Image subtitles (pgssub, VobSub "sub") stay Embed-only either way:
+    // a text profile does not cover them.
+    if (qEnvironmentVariableIntValue("STRMQT_EXTERNAL_SUBTITLES") == 1) {
+        for (const char *format : {"srt", "subrip", "ass", "ssa", "vtt"}) {
+            QJsonObject profile;
+            profile.insert(QLatin1String("Format"), QLatin1String(format));
+            profile.insert(QLatin1String("Method"), QLatin1String("External"));
+            subtitles.append(profile);
+        }
     }
 
     QJsonObject deviceProfile;

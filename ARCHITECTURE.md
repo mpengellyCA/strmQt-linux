@@ -763,7 +763,7 @@ network blinks.
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 80 suites
+ctest --preset dev                     # 87 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
@@ -992,11 +992,15 @@ assertion catches the rot.
 - **The Secret Service backend's session is unencrypted on the session bus**
   (`plain`, §8) — the same exposure KWallet's own API already has. A
   negotiated DH-AES session is follow-up work.
-- **Season badges go stale outside the loaded season.** `SeriesController`'s seasons
-  model is not registered with `ItemActions` and nothing recomputes its unplayed
-  counts, so marking an episode watched updates the badge only for the season
-  currently on screen. A real fix needs the server's `UserData.UnplayedItemCount`
-  refetched per season, not a UI hook.
+- **External subtitle delivery is off by default.** The client can load a
+  subtitle the server delivers as a separate file (`PlayerBackend::addExternalSubtitle`,
+  mpv `sub-add`), but the device profile declares `External` only with
+  `STRMQT_EXTERNAL_SUBTITLES=1` until it has been checked against a live server:
+  that the server's default subtitle index is filled in, and that a resumed
+  transcode's sidecar stays in sync. libmpv 0.41 can deadlock when a file is
+  replaced while a `sub-add` is in flight with a subtitle selected; `MpvPlayer`
+  adds with `auto` only, selects through `sid`, and aborts and waits for any
+  add before every `loadfile`, `stop` and core destruction.
 - **Horizontal repeat in player context is floored everywhere.** Held seeks are
   floored at 250 ms, and so is the OSD button row, because `GamepadManager` can
   see the action and the context but not which control has focus. Held volume

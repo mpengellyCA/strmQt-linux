@@ -6,6 +6,7 @@
 
 #include <QOpenGLContext>
 #include <QElapsedTimer>
+#include <QJsonDocument>
 #include <QMutex>
 #include <QProcess>
 #include <QQuickWindow>
@@ -13,6 +14,7 @@
 #include <QSGRendererInterface>
 #include <QStandardPaths>
 #include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -72,6 +74,98 @@ bool failLoad(MpvPlayer &player, PlayerBackend::LoadId loadId)
     });
 }
 
+// A short clip mpv can keep open with no render context: without one it gives
+// up on the picture, and a file with nothing left to play is a failed load. The
+// silent audio track is what stays. mpeg4 and PCM are ffmpeg's own encoders.
+// Empty when there is no ffmpeg to make it with.
+QString generateClip(QTemporaryDir &dir, const QString &name = QStringLiteral("clip.avi"))
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        return {};
+    const QString path = dir.filePath(name);
+    QProcess process;
+    process.start(ffmpeg, {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                           QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                           QStringLiteral("testsrc2=duration=20:size=64x64:rate=10"),
+                           QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                           QStringLiteral("anullsrc=r=8000:cl=mono"), QStringLiteral("-shortest"),
+                           QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-c:a"),
+                           QStringLiteral("pcm_s16le"), path});
+    if (!process.waitForFinished(30000) || process.exitCode() != 0)
+        return {};
+    return path;
+}
+
+// Brings the core up (with a load that fails, which also leaves the event
+// queue empty) and points its audio at mpv's null device, so a clip plays in
+// real time without opening a sound device on the machine running the tests.
+bool startCoreWithoutSound(MpvPlayer &player, PlayerBackend::LoadId loadId)
+{
+    return failLoad(player, loadId) && player.handle() != nullptr &&
+           mpv_set_property_string(player.handle(), "ao", "null") >= 0;
+}
+
+// A subtitle file named so that mpv's own sidecar matching (same base name as
+// the media) cannot be what loaded it.
+QString writeSubtitle(QTemporaryDir &dir, const QString &name, const QString &line)
+{
+    const QString path = dir.filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return {};
+    file.write(QStringLiteral("1\n00:00:00,000 --> 00:00:19,000\n%1\n").arg(line).toUtf8());
+    return path;
+}
+
+// Everything the player said about load ids, in the order it said it.
+struct LoadEvents
+{
+    explicit LoadEvents(MpvPlayer &player)
+        : states(&player, &PlayerBackend::stateChanged),
+          errors(&player, &PlayerBackend::errorOccurred)
+    {
+    }
+
+    bool sawState(PlayerBackend::State state, PlayerBackend::LoadId loadId) const
+    {
+        for (const QList<QVariant> &event : states) {
+            if (event.at(0).value<PlayerBackend::State>() == state &&
+                event.at(1).value<PlayerBackend::LoadId>() == loadId)
+                return true;
+        }
+        return false;
+    }
+    QList<PlayerBackend::LoadId> idsWithState(PlayerBackend::State state) const
+    {
+        QList<PlayerBackend::LoadId> ids;
+        for (const QList<QVariant> &event : states) {
+            if (event.at(0).value<PlayerBackend::State>() == state)
+                ids.append(event.at(1).value<PlayerBackend::LoadId>());
+        }
+        return ids;
+    }
+    QList<PlayerBackend::LoadId> errorIds() const
+    {
+        QList<PlayerBackend::LoadId> ids;
+        for (const QList<QVariant> &event : errors)
+            ids.append(event.at(1).value<PlayerBackend::LoadId>());
+        return ids;
+    }
+
+    QSignalSpy states;
+    QSignalSpy errors;
+};
+
+// Long enough for mpv's own thread to start a missing local file, fail it and
+// queue both events — while this thread, which is the one that drains them,
+// does nothing. That is the state every attribution test below needs: events
+// of one load sitting in the queue when the next load() is issued.
+void letMpvRunUndrained()
+{
+    QThread::msleep(150);
+}
+
 } // namespace
 
 class MpvVideoItemTest : public QObject
@@ -98,6 +192,16 @@ private slots:
     void outputPixelSizeFollowsTheItem();
     void framesAreHandedOverWhenDue();
     void renderingAFrameDoesNotWaitForItsDisplayTime();
+    void corePropertiesAreDeliveredWithNoFileLoaded();
+    void corePropertiesAreDeliveredWhileALoadIsStarting();
+    void aReplacedLoadsFailureIsNotTheNextLoads();
+    void rapidAlternatingLoadsEndWithOnlyTheLastPlaying();
+    void stopThenLoadAttributesToTheNewLoad();
+    void emptySubtitleFontRestoresMpvsDefault();
+    void externalSubtitlesJoinTheTrackListInOrder();
+    void externalSubtitlesBelongToTheirLoad();
+    void anUnreadableExternalSubtitleCostsOnlyItself();
+    void externalSubtitleIsFetchedFromItsUrl();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -798,6 +902,482 @@ void MpvVideoItemTest::renderingAFrameDoesNotWaitForItsDisplayTime()
                             .arg(median)
                             .arg(passes.last())
                             .arg(passes.size())));
+}
+
+// ── Wave 1 regressions (commit 07ccbd0) ───────────────────────────────────────
+
+// volume, mute, speed and the two delays are the core's, not a file's: they
+// can be changed with nothing loaded, and the change has to reach whoever
+// mirrors them. They used to sit behind the per-load guard, which is shut
+// whenever the load the events talk about is not the one last asked for —
+// after every stop().
+void MpvVideoItemTest::corePropertiesAreDeliveredWithNoFileLoaded()
+{
+    MpvPlayer player;
+    QVERIFY(failLoad(player, 1));
+    player.stop();
+    QCOMPARE(player.state(), PlayerBackend::State::Idle);
+    QVERIFY(player.hasCore());
+
+    QSignalSpy volume(&player, &PlayerBackend::volumeChanged);
+    QSignalSpy muted(&player, &PlayerBackend::mutedChanged);
+    QSignalSpy speed(&player, &PlayerBackend::playbackSpeedChanged);
+    QSignalSpy audioDelay(&player, &PlayerBackend::audioDelayChanged);
+    QSignalSpy subtitleDelay(&player, &PlayerBackend::subtitleDelayChanged);
+
+    player.setVolume(42);
+    player.setMuted(true);
+    player.setPlaybackSpeed(1.5);
+    player.setAudioDelayMs(120);
+    player.setSubtitleDelayMs(-80);
+
+    QTRY_VERIFY(!volume.isEmpty());
+    QCOMPARE(volume.constLast().at(0).toInt(), 42);
+    QTRY_VERIFY(!muted.isEmpty());
+    QCOMPARE(muted.constLast().at(0).toBool(), true);
+    // These three are mirrored: the getter is only as good as the event.
+    QTRY_COMPARE(player.playbackSpeed(), 1.5);
+    QTRY_COMPARE(player.audioDelayMs(), 120);
+    QTRY_COMPARE(player.subtitleDelayMs(), -80);
+    QVERIFY(!speed.isEmpty());
+    QVERIFY(!audioDelay.isEmpty());
+    QVERIFY(!subtitleDelay.isEmpty());
+    player.stop();
+}
+
+// The same guard is also shut from load() until that load's START_FILE has
+// been drained. That window does not reproduce from outside: mpv reports
+// property changes only once its other events are out, so START_FILE always
+// arrives first, and this test passes against the old guard as well. What it
+// does pin is the everyday case around it — settings changed just before and
+// during a load that never gets anywhere (a stalled stream) still arrive.
+void MpvVideoItemTest::corePropertiesAreDeliveredWhileALoadIsStarting()
+{
+    // Accepts and never answers: the load stays in Loading.
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+    const QUrl stalled(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort()));
+
+    MpvPlayer player;
+    QVERIFY(failLoad(player, 1));
+    QSignalSpy volume(&player, &PlayerBackend::volumeChanged);
+    QSignalSpy muted(&player, &PlayerBackend::mutedChanged);
+
+    // Changed and given time to be queued before the load is even issued, so
+    // the change is ahead of START_FILE in the queue whatever mpv's timing.
+    player.setVolume(37);
+    player.setMuted(true);
+    player.setPlaybackSpeed(2.0);
+    player.setAudioDelayMs(60);
+    player.setSubtitleDelayMs(40);
+    letMpvRunUndrained();
+    player.load(stalled, 0, 2);
+
+    QTRY_VERIFY(!volume.isEmpty());
+    QCOMPARE(volume.constLast().at(0).toInt(), 37);
+    QTRY_VERIFY(!muted.isEmpty());
+    QCOMPARE(muted.constLast().at(0).toBool(), true);
+    QTRY_COMPARE(player.playbackSpeed(), 2.0);
+    QTRY_COMPARE(player.audioDelayMs(), 60);
+    QTRY_COMPARE(player.subtitleDelayMs(), 40);
+    QCOMPARE(player.state(), PlayerBackend::State::Loading);
+
+    // And once more with the load under way and nothing loaded yet.
+    volume.clear();
+    player.setVolume(64);
+    QTRY_VERIFY(!volume.isEmpty());
+    QCOMPARE(volume.constLast().at(0).toInt(), 64);
+    player.stop();
+}
+
+// load(A) fails inside mpv before anyone drains its events, and load(B) is
+// issued on top. START_FILE and END_FILE for A are then read with B as the
+// current load. They used to be stamped with "the pending load", which by then
+// was B: a healthy B was reported failed, and PlayerController demoted or gave
+// up on a stream that was fine.
+void MpvVideoItemTest::aReplacedLoadsFailureIsNotTheNextLoads()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 1));
+    LoadEvents events(player);
+
+    player.load(kMissingMedia, 0, 2);
+    letMpvRunUndrained();
+    player.load(QUrl::fromLocalFile(clip), 0, 3, true);
+
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Paused, 3), 15000);
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+    QTest::qWait(100);
+    QVERIFY2(!events.errorIds().contains(3), "the replaced load's failure was reported for its successor");
+    QVERIFY(!events.sawState(PlayerBackend::State::Error, 3));
+    // The failure is the missing file's, and it is said to be the missing file's.
+    QCOMPARE(events.errorIds(), QList<PlayerBackend::LoadId>{2});
+    QVERIFY(!events.sawState(PlayerBackend::State::Paused, 2));
+    QVERIFY(!events.sawState(PlayerBackend::State::Playing, 2));
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+    player.stop();
+}
+
+// The same, at the pace of a held "next" key: missing and playable files in
+// turn, some given time to start and fail and some replaced at once. Whatever
+// mpv got round to, a failure belongs to a missing file, a ready state to a
+// playable one, and the player ends on the last load and nothing else.
+void MpvVideoItemTest::rapidAlternatingLoadsEndWithOnlyTheLastPlaying()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 1));
+    LoadEvents events(player);
+
+    // Odd ids are missing files, even ids the clip.
+    constexpr PlayerBackend::LoadId kFirst = 11;
+    constexpr PlayerBackend::LoadId kLast = 40;
+    for (PlayerBackend::LoadId id = kFirst; id <= kLast; ++id) {
+        const bool missing = id % 2 == 1;
+        player.load(missing ? kMissingMedia : QUrl::fromLocalFile(clip), 0, id, true);
+        if (id % 3 == 0)
+            letMpvRunUndrained(); // let this one get as far as it can, undrained
+        else if (id % 5 == 0)
+            QTest::qWait(20); // and drain in the middle of some
+    }
+
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Paused, kLast), 15000);
+    QTest::qWait(150);
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+
+    for (const PlayerBackend::LoadId id : events.errorIds())
+        QVERIFY2(id % 2 == 1, qPrintable(QStringLiteral("a failure was reported for clip load %1").arg(id)));
+    for (const PlayerBackend::State ready :
+         {PlayerBackend::State::Playing, PlayerBackend::State::Paused}) {
+        for (const PlayerBackend::LoadId id : events.idsWithState(ready))
+            QVERIFY2(id % 2 == 0,
+                     qPrintable(QStringLiteral("missing-file load %1 was reported ready").arg(id)));
+    }
+    QVERIFY(!events.errorIds().contains(kLast));
+    QVERIFY(!events.sawState(PlayerBackend::State::Error, kLast));
+    // Ready once, for the last load, and it is still what the player says.
+    QCOMPARE(events.idsWithState(PlayerBackend::State::Paused).count(kLast), 1);
+    QCOMPARE(events.idsWithState(PlayerBackend::State::Paused).constLast(), kLast);
+    QCOMPARE(player.positionMs(), Q_INT64_C(0));
+    player.stop();
+}
+
+// stop() between the two changes nothing about whose events are in the queue.
+void MpvVideoItemTest::stopThenLoadAttributesToTheNewLoad()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 1));
+    LoadEvents events(player);
+
+    player.load(kMissingMedia, 0, 2);
+    letMpvRunUndrained();
+    player.stop();
+    QCOMPARE(player.state(), PlayerBackend::State::Idle);
+    player.load(QUrl::fromLocalFile(clip), 0, 3, true);
+
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Paused, 3), 15000);
+    QTest::qWait(100);
+    QVERIFY2(!events.errorIds().contains(3), "a stopped load's failure was reported for the next load");
+    QVERIFY(!events.sawState(PlayerBackend::State::Error, 3));
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+
+    // The other way round: a playing file stopped, and a missing one loaded.
+    // The failure is the new load's, and nothing of the old file's follows it.
+    player.setPaused(false);
+    QTRY_VERIFY(events.sawState(PlayerBackend::State::Playing, 3));
+    QTRY_VERIFY(player.positionMs() > 0);
+    player.stop();
+    QCOMPARE(player.positionMs(), Q_INT64_C(0));
+    player.load(kMissingMedia, 0, 4);
+    QTRY_VERIFY(events.errorIds().contains(4));
+    QCOMPARE(player.state(), PlayerBackend::State::Error);
+    QCOMPARE(player.positionMs(), Q_INT64_C(0));
+    QCOMPARE(events.errorIds(), (QList<PlayerBackend::LoadId>{2, 4}));
+    player.stop();
+}
+
+// "Default" in the subtitle font picker is the empty family. It used to be
+// skipped rather than written, so once a face had been chosen there was no
+// way back to mpv's own.
+void MpvVideoItemTest::emptySubtitleFontRestoresMpvsDefault()
+{
+    MpvPlayer player;
+    player.load(kMissingMedia, 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+    const QString defaultFont = stringProperty(handle, "sub-font");
+    QVERIFY(!defaultFont.isEmpty());
+    QCOMPARE(defaultFont, stringProperty(handle, "option-info/sub-font/default-value"));
+
+    player.setSubtitleStyle(QStringLiteral("Noto Serif"), 100, QStringLiteral("#FFFFFF"), 0, 100);
+    QCOMPARE(stringProperty(handle, "sub-font"), QStringLiteral("Noto Serif"));
+    player.setSubtitleStyle(QString(), 100, QStringLiteral("#FFFFFF"), 0, 100);
+    QCOMPARE(stringProperty(handle, "sub-font"), defaultFont);
+    player.setSubtitleStyle(QStringLiteral("Noto Sans Mono"), 100, QStringLiteral("#FFFFFF"), 0, 100);
+    QCOMPARE(stringProperty(handle, "sub-font"), QStringLiteral("Noto Sans Mono"));
+
+    // A core that starts with a face already chosen still knows mpv's own.
+    player.setCoreIdleReleaseDelayForTests(20);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+    player.load(kMissingMedia, 0, 2);
+    handle = player.handle();
+    QVERIFY(handle != nullptr);
+    QCOMPARE(stringProperty(handle, "sub-font"), QStringLiteral("Noto Sans Mono"));
+    player.setSubtitleStyle(QString(), 100, QStringLiteral("#FFFFFF"), 0, 100);
+    QCOMPARE(stringProperty(handle, "sub-font"), defaultFont);
+    player.stop();
+}
+
+// ── External subtitles (PlayerBackend::addExternalSubtitle) ───────────────────
+
+// What the track panel and PlayerController rely on: an attached subtitle is
+// an ordinary entry of subtitleTracks() with an id setSubtitleTrack() takes,
+// carrying the title and language it was attached with; `select` decides
+// whether it is shown; and ids follow the order of the calls.
+void MpvVideoItemTest::externalSubtitlesJoinTheTrackListInOrder()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+    const QString dutch = writeSubtitle(dir, QStringLiteral("sidecar-nl.srt"), QStringLiteral("Hallo"));
+    const QString english = writeSubtitle(dir, QStringLiteral("sidecar-en.srt"), QStringLiteral("Hello"));
+    const QString german = writeSubtitle(dir, QStringLiteral("sidecar-de.srt"), QStringLiteral("Hallo!"));
+    QVERIFY(!dutch.isEmpty() && !english.isEmpty() && !german.isEmpty());
+
+    MpvPlayer player;
+    // Before there is a core, and before the file is up: ignored, not queued
+    // for some later file.
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Early"), {}, true);
+    QVERIFY(startCoreWithoutSound(player, 9));
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Early"), {}, true);
+    QSignalSpy errors(&player, &PlayerBackend::errorOccurred);
+    player.load(QUrl::fromLocalFile(clip), 0, 1, true);
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Early"), {}, true);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+    QTest::qWait(100);
+    QVERIFY2(player.subtitleTracks().isEmpty(), "the clip has no subtitle of its own");
+    QCOMPARE(player.currentSubtitleTrackId(), -1);
+
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Dutch (SRT)"),
+                               QStringLiteral("nld"), true);
+    player.addExternalSubtitle(QUrl::fromLocalFile(english), QStringLiteral("English (SRT)"),
+                               QStringLiteral("eng"), false);
+    player.addExternalSubtitle(QUrl::fromLocalFile(german), QString(), QString(), false);
+    QTRY_COMPARE(player.subtitleTracks().size(), 3);
+
+    const QVariantMap first = player.subtitleTracks().at(0).toMap();
+    const QVariantMap second = player.subtitleTracks().at(1).toMap();
+    const QVariantMap third = player.subtitleTracks().at(2).toMap();
+    QCOMPARE(first.value(QStringLiteral("id")).toInt(), 1);
+    QCOMPARE(first.value(QStringLiteral("title")).toString(), QStringLiteral("Dutch (SRT)"));
+    QCOMPARE(first.value(QStringLiteral("language")).toString(), QStringLiteral("nld"));
+    QCOMPARE(first.value(QStringLiteral("isExternal")).toBool(), true);
+    QCOMPARE(second.value(QStringLiteral("id")).toInt(), 2);
+    QCOMPARE(second.value(QStringLiteral("title")).toString(), QStringLiteral("English (SRT)"));
+    QCOMPARE(second.value(QStringLiteral("language")).toString(), QStringLiteral("eng"));
+    QCOMPARE(second.value(QStringLiteral("isExternal")).toBool(), true);
+    QCOMPARE(third.value(QStringLiteral("id")).toInt(), 3);
+    // Neither title nor language: not the file name (see the leak check below).
+    QCOMPARE(third.value(QStringLiteral("title")).toString(), QStringLiteral("External"));
+
+    // The one asked for is shown; the others are only offered.
+    QTRY_COMPARE(player.currentSubtitleTrackId(), 1);
+    QCOMPARE(player.subtitleTracks().at(0).toMap().value(QStringLiteral("selected")).toBool(), true);
+    QCOMPARE(player.subtitleTracks().at(1).toMap().value(QStringLiteral("selected")).toBool(), false);
+    QCOMPARE(player.subtitleTracks().at(2).toMap().value(QStringLiteral("selected")).toBool(), false);
+
+    // The list is published to QML and to the web remote. Where a subtitle was
+    // fetched from is not in it: on a server that is a URL with the token.
+    for (const QVariant &track : player.subtitleTracks()) {
+        const QByteArray published =
+            QJsonDocument::fromVariant(track.toMap()).toJson(QJsonDocument::Compact);
+        QVERIFY2(!published.contains("sidecar-"), published.constData());
+        QVERIFY2(!published.contains(dir.path().toUtf8()), published.constData());
+    }
+
+    // Picked in the track panel like any other track, and turned off like one.
+    player.setSubtitleTrack(2);
+    QTRY_COMPARE(player.currentSubtitleTrackId(), 2);
+    player.setSubtitleTrack(-1);
+    QTRY_COMPARE(player.currentSubtitleTrackId(), -1);
+
+    // Attached again for the same file, it is the same track, not a second one.
+    player.addExternalSubtitle(QUrl::fromLocalFile(english), QStringLiteral("English (SRT)"),
+                               QStringLiteral("eng"), true);
+    QTRY_COMPARE(player.currentSubtitleTrackId(), 2);
+    QCOMPARE(player.subtitleTracks().size(), 3);
+
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+    QVERIFY(errors.isEmpty());
+    player.stop();
+}
+
+// A retry, a demotion and a reload are each a new file to mpv, which starts
+// without the last one's subtitles — and without any still on their way to it.
+void MpvVideoItemTest::externalSubtitlesBelongToTheirLoad()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+    const QString dutch = writeSubtitle(dir, QStringLiteral("sidecar-nl.srt"), QStringLiteral("Hallo"));
+    const QString english = writeSubtitle(dir, QStringLiteral("sidecar-en.srt"), QStringLiteral("Hello"));
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 9));
+    player.load(QUrl::fromLocalFile(clip), 0, 1, true);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Dutch"), {}, true);
+    QTRY_COMPARE(player.subtitleTracks().size(), 1);
+
+    // Queued for load 1, then load 2 arrives before mpv has heard of them.
+    player.addExternalSubtitle(QUrl::fromLocalFile(english), QStringLiteral("English"), {}, true);
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Dutch again"), {}, true);
+    player.load(QUrl::fromLocalFile(clip), 0, 2, true);
+    QVERIFY(player.subtitleTracks().isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+    QTest::qWait(300);
+    QVERIFY2(player.subtitleTracks().isEmpty(),
+             "a subtitle attached to the previous load turned up in the next one");
+    QCOMPARE(player.currentSubtitleTrackId(), -1);
+
+    // Attached again, they are there again, numbered from one.
+    player.addExternalSubtitle(QUrl::fromLocalFile(english), QStringLiteral("English"), {}, false);
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("Dutch"), {}, true);
+    QTRY_COMPARE(player.subtitleTracks().size(), 2);
+    QCOMPARE(player.subtitleTracks().at(0).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("English"));
+    QCOMPARE(player.subtitleTracks().at(0).toMap().value(QStringLiteral("id")).toInt(), 1);
+    QTRY_COMPARE(player.currentSubtitleTrackId(), 2);
+
+    player.stop();
+    QVERIFY(player.subtitleTracks().isEmpty());
+    player.addExternalSubtitle(QUrl::fromLocalFile(dutch), QStringLiteral("After stop"), {}, true);
+    QTest::qWait(200);
+    QVERIFY(player.subtitleTracks().isEmpty());
+}
+
+// The server can name a subtitle it then fails to serve. That costs the one
+// subtitle: playback carries on and the ones behind it in the queue still load.
+void MpvVideoItemTest::anUnreadableExternalSubtitleCostsOnlyItself()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+    const QString english = writeSubtitle(dir, QStringLiteral("sidecar-en.srt"), QStringLiteral("Hello"));
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 9));
+    LoadEvents events(player);
+    player.load(QUrl::fromLocalFile(clip), 0, 1, true);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+
+    player.addExternalSubtitle(QUrl::fromLocalFile(dir.filePath(QStringLiteral("gone.srt"))),
+                               QStringLiteral("Gone"), {}, true);
+    player.addExternalSubtitle(QUrl::fromLocalFile(english), QStringLiteral("English"),
+                               QStringLiteral("eng"), false);
+    QTRY_COMPARE(player.subtitleTracks().size(), 1);
+    QCOMPARE(player.subtitleTracks().at(0).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("English"));
+    QCOMPARE(player.currentSubtitleTrackId(), -1);
+    QTest::qWait(100);
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+    QVERIFY(events.errorIds().isEmpty());
+    player.stop();
+}
+
+// The shape PlayerController hands over: an http URL on the server, with the
+// stream path Emby uses and the token in the query. mpv has to ask for exactly
+// that, and what it is given has to become the subtitle.
+void MpvVideoItemTest::externalSubtitleIsFetchedFromItsUrl()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QByteArrayList requestLines;
+    connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            connect(socket, &QTcpSocket::readyRead, socket, [socket, &requestLines] {
+                if (!socket->canReadLine())
+                    return;
+                requestLines.append(socket->readLine().trimmed());
+                socket->readAll();
+                const QByteArray body = "1\n00:00:00,000 --> 00:00:19,000\nOver the wire\n";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/x-subrip\r\n"
+                              "Connection: close\r\nContent-Length: "
+                              + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+                socket->disconnectFromHost();
+            });
+            connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+        }
+    });
+    const QString path = QStringLiteral("/emby/Videos/7700/ms7700/Subtitles/3/0/Stream.srt");
+    const QString query = QStringLiteral("api_key=not-a-real-token-fixture-only");
+    QUrl url(QStringLiteral("http://127.0.0.1:%1%2").arg(server.serverPort()).arg(path));
+    url.setQuery(query);
+
+    MpvPlayer player;
+    QVERIFY(startCoreWithoutSound(player, 9));
+    player.load(QUrl::fromLocalFile(clip), 0, 1, true);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+    player.addExternalSubtitle(url, QStringLiteral("Dutch (SRT)"), QStringLiteral("nld"), true);
+
+    QTRY_COMPARE_WITH_TIMEOUT(player.subtitleTracks().size(), 1, 15000);
+    QVERIFY(!requestLines.isEmpty());
+    QCOMPARE(requestLines.constFirst(),
+             QByteArray("GET " + path.toUtf8() + "?" + query.toUtf8() + " HTTP/1.1"));
+    const QVariantMap track = player.subtitleTracks().at(0).toMap();
+    QCOMPARE(track.value(QStringLiteral("title")).toString(), QStringLiteral("Dutch (SRT)"));
+    QCOMPARE(track.value(QStringLiteral("codec")).toString(), QStringLiteral("subrip"));
+    QTRY_COMPARE(player.currentSubtitleTrackId(), 1);
+
+    // Untitled, mpv would name the track after the file it read — here
+    // "Stream.srt?api_key=…". It is named after its language instead.
+    QUrl untitled = url;
+    untitled.setPath(QStringLiteral("/emby/Videos/7700/ms7700/Subtitles/4/0/Stream.srt"));
+    player.addExternalSubtitle(untitled, QString(), QStringLiteral("eng"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(player.subtitleTracks().size(), 2, 15000);
+    QCOMPARE(player.subtitleTracks().at(1).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("eng"));
+    QCOMPARE(player.currentSubtitleTrackId(), 1);
+
+    // The token went to the server and nowhere a listener of the list sees.
+    for (const QVariant &entry : player.subtitleTracks()) {
+        const QByteArray published =
+            QJsonDocument::fromVariant(entry.toMap()).toJson(QJsonDocument::Compact);
+        QVERIFY2(!published.contains("api_key"), published.constData());
+        QVERIFY2(!published.contains("not-a-real-token"), published.constData());
+        QVERIFY2(!published.contains("Stream.srt"), published.constData());
+    }
+    player.stop();
 }
 
 QTEST_MAIN(MpvVideoItemTest)

@@ -353,6 +353,9 @@ MediaStream parseMediaStream(const QJsonObject &json)
     stream.isDefault = json.value(QLatin1String("IsDefault")).toBool(false);
     stream.isForced = json.value(QLatin1String("IsForced")).toBool(false);
     stream.isExternal = json.value(QLatin1String("IsExternal")).toBool(false);
+    stream.deliveryMethod = json.value(QLatin1String("DeliveryMethod")).toString();
+    stream.deliveryUrl = json.value(QLatin1String("DeliveryUrl")).toString();
+    stream.isExternalUrl = json.value(QLatin1String("IsExternalUrl")).toBool(false);
 
     stream.width = json.value(QLatin1String("Width")).toInt(0);
     stream.height = json.value(QLatin1String("Height")).toInt(0);
@@ -406,6 +409,9 @@ MediaSource parseMediaSource(const QJsonObject &json)
         for (const QString &text : reasons.toString().split(QLatin1Char(','), Qt::SkipEmptyParts))
             source.transcodeReasons.append(text.trimmed());
     }
+
+    source.defaultSubtitleStreamIndex =
+        json.value(QLatin1String("DefaultSubtitleStreamIndex")).toInt(-1);
 
     const QJsonArray streams = json.value(QLatin1String("MediaStreams")).toArray();
     source.streams.reserve(streams.size());
@@ -483,6 +489,29 @@ QList<StreamCandidate> buildLadder(const MediaSource &source, const QUrl &baseUr
     return ladder;
 }
 
+// Where the engine fetches a subtitle the server delivers outside the stream.
+// Empty for anything that is not such a delivery, and for a URL that cannot be
+// handed to an engine safely.
+QUrl externalSubtitleUrl(const MediaStream &stream, const QUrl &baseUrl,
+                         const QString &accessToken)
+{
+    if (!stream.isSubtitle() || stream.deliveryUrl.isEmpty() ||
+        stream.deliveryMethod.compare(QLatin1String("External"), Qt::CaseInsensitive) != 0)
+        return {};
+    if (stream.isExternalUrl) {
+        // Somebody else's host: taken as it is, and it never gets our token.
+        // Only http(s) — the engine would open a file: or a device just as
+        // readily, and the server does not get to name those.
+        const QUrl url(stream.deliveryUrl);
+        const QString scheme = url.scheme().toLower();
+        if (!url.isValid() || url.host().isEmpty() ||
+            (scheme != QLatin1String("http") && scheme != QLatin1String("https")))
+            return {};
+        return url;
+    }
+    return resolveStreamUrl(baseUrl, stream.deliveryUrl, accessToken);
+}
+
 } // namespace
 
 PlaybackTicket parsePlaybackTicket(const QJsonObject &json, const QUrl &baseUrl,
@@ -498,6 +527,8 @@ PlaybackTicket parsePlaybackTicket(const QJsonObject &json, const QUrl &baseUrl,
     for (const MediaSource &source : sources) {
         MediaSourceCandidates entry;
         entry.source = source;
+        for (MediaStream &stream : entry.source.streams)
+            stream.externalUrl = externalSubtitleUrl(stream, baseUrl, accessToken);
         entry.candidates =
             buildLadder(source, baseUrl, itemId, accessToken, deviceId, ticket.playSessionId);
         ticket.sources.append(entry);

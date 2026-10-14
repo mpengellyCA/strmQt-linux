@@ -102,6 +102,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
                 m_restoringTracks = false;
                 return;
             }
+            applyDeferredSubtitleTrack();
             // A pending id survives until the engine actually reports it.
             // Clearing it on the first tracksChanged regardless of content lost
             // the user's choice whenever the engine re-emitted the list for an
@@ -535,6 +536,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     // Cleared before the fetch that refills them, so a failed lookup cannot
     // leave the previous episode's series attached to this one.
     m_currentSeriesId.clear();
@@ -764,6 +766,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     clearChapters();
     m_rung = 0;
     m_sourceIndex = -1;
@@ -807,6 +810,7 @@ void PlayerController::startAttempt(qint64 startMs)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     m_watchdogLastPos = -1;
     m_stallTicks = 0;
     // A hold cancelled by this item change must not lend its grace to the new
@@ -862,6 +866,10 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
         setBusy(false);
         updateUpNext();
         m_initiallyPaused = false;
+        // Now, and not at load(): an engine can only add a subtitle to a file
+        // it has open. m_started is cleared by every startAttempt(), so a
+        // retry, a demotion and a reload each get theirs again.
+        attachExternalSubtitles();
         if (state == PlayerBackend::State::Playing)
             m_watchdog.start();
         if (m_reporting) {
@@ -1733,6 +1741,7 @@ void PlayerController::cycleAudioTrack()
 
 void PlayerController::cycleSubtitleTrack()
 {
+    m_deferredSubtitleTrack.reset();
     m_trackSelectionPending = true;
     m_backend->cycleSubtitleTrack();
 }
@@ -1749,6 +1758,7 @@ void PlayerController::setSubtitleTrack(int id)
 {
     if (!m_backend)
         return;
+    m_deferredSubtitleTrack.reset();
     m_pendingSubtitleTrack = id;
     m_backend->setSubtitleTrack(id);
 }
@@ -1881,9 +1891,89 @@ void PlayerController::restoreRememberedTracks()
         m_backend->setAudioTrack(remembered.first);
     // A remembered -1 for subtitles is "the user turned them off" and is
     // applied; that is why hasRememberedTracks() had to exist.
-    if ((remembered.second < 0 || known(subtitles, remembered.second))
-        && remembered.second != m_backend->currentSubtitleTrackId())
+    if (remembered.second >= 0 && !known(subtitles, remembered.second)) {
+        // Not in the list yet is not the same as gone: an external subtitle is
+        // fetched after the file is up and joins the list when it has been
+        // read. Wait for it rather than dropping the choice.
+        if (!externalSubtitlesForCurrentRung().isEmpty())
+            m_deferredSubtitleTrack = remembered.second;
+    } else if (remembered.second != m_backend->currentSubtitleTrackId()) {
         m_backend->setSubtitleTrack(remembered.second);
+    }
+}
+
+void PlayerController::applyDeferredSubtitleTrack()
+{
+    if (!m_deferredSubtitleTrack || !m_backend)
+        return;
+    // The user chose something in the meantime; theirs stands.
+    if (m_pendingSubtitleTrack || m_trackSelectionPending) {
+        m_deferredSubtitleTrack.reset();
+        return;
+    }
+    const int wanted = *m_deferredSubtitleTrack;
+    const QVariantList subtitles = m_backend->subtitleTracks();
+    const bool arrived =
+        std::any_of(subtitles.cbegin(), subtitles.cend(), [wanted](const QVariant &track) {
+            return track.toMap().value(QStringLiteral("id")).toInt() == wanted;
+        });
+    if (!arrived)
+        return;
+    m_deferredSubtitleTrack.reset();
+    if (wanted == m_backend->currentSubtitleTrackId())
+        return;
+    m_restoringTracks = true;
+    m_backend->setSubtitleTrack(wanted);
+    m_restoringTracks = false;
+}
+
+QList<MediaStream> PlayerController::externalSubtitlesForCurrentRung() const
+{
+    // The ticket has to be this item's: across an item change it still
+    // describes the previous one until the next PlaybackInfo reply lands.
+    if (m_ticketItemId.isEmpty() || m_ticketItemId != m_itemId)
+        return {};
+    const MediaSourceCandidates *entry = m_ticket.source(m_sourceIndex);
+    const StreamCandidate *candidate = currentCandidate();
+    // Music has no picture to draw a subtitle on; its lyrics go another way.
+    if (!entry || !candidate || !entry->source.videoStream())
+        return {};
+    QList<MediaStream> external;
+    for (const MediaStream &stream : entry->source.streams) {
+        if (!stream.isDeliveredExternally())
+            continue;
+        // Direct play opens the original file, and a stream that lives in that
+        // file is already in the engine's list whatever delivery the server
+        // wrote next to it. Only a sidecar is missing. A remux or a transcode
+        // is the server's own output, so there its word is taken.
+        if (candidate->method == PlayMethod::DirectPlay && !stream.isExternal)
+            continue;
+        external.append(stream);
+    }
+    return external;
+}
+
+void PlayerController::attachExternalSubtitles()
+{
+    if (!m_backend || m_expectedLoadId == 0 || m_externalSubtitlesLoadId == m_expectedLoadId)
+        return;
+    m_externalSubtitlesLoadId = m_expectedLoadId;
+    const QList<MediaStream> streams = externalSubtitlesForCurrentRung();
+    if (streams.isEmpty())
+        return;
+    const MediaSource &source = m_ticket.source(m_sourceIndex)->source;
+    // The server's pick is the default, shown the way a burned-in one was. A
+    // choice the user made for this item and version outranks it, "off"
+    // included; restoreRememberedTracks() applies that one.
+    const bool remembered = m_settings && m_settings->hasRememberedTracks(m_itemId, source.id);
+    for (const MediaStream &stream : streams) {
+        const bool select = !remembered && stream.index >= 0
+                            && stream.index == source.defaultSubtitleStreamIndex;
+        // The stream's index, never its URL: that carries the access token.
+        qCInfo(logPlayback) << "attaching external subtitle stream" << stream.index
+                            << (select ? "(selected)" : "(not selected)");
+        m_backend->addExternalSubtitle(stream.externalUrl, stream.label(), stream.language, select);
+    }
 }
 
 PlaybackProgress PlayerController::progressNow() const
@@ -2019,6 +2109,7 @@ void PlayerController::finishSession(TerminationReason reason)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     m_sourceIndex = -1;
     m_rung = 0;
     m_preferredSourceIndex = -1;

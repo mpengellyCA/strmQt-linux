@@ -298,6 +298,24 @@ void VlcPlayer::setVolume(int percent)
         libvlc_audio_set_volume(m_player, qBound(0, percent, 130));
 }
 
+void VlcPlayer::addExternalSubtitle(const QUrl &url, const QString &title,
+                                    const QString &language, bool select)
+{
+    // libVLC names a slave after its file and reads its language from nowhere.
+    Q_UNUSED(title);
+    Q_UNUSED(language);
+    // A slave joins the input that is running; before Playing there is none.
+    if (!m_player || !select || !url.isValid() ||
+        (m_state != State::Playing && m_state != State::Paused))
+        return;
+    // Asynchronous inside libVLC: the input thread fetches it. The URL carries
+    // the access token, so a failure is reported without it.
+    if (libvlc_media_player_add_slave(m_player, libvlc_media_slave_type_subtitle,
+                                      url.toString(QUrl::FullyEncoded).toUtf8().constData(),
+                                      true) != 0)
+        qCWarning(logPlayback) << "libvlc: an external subtitle could not be attached";
+}
+
 void VlcPlayer::setState(State state, LoadId loadId)
 {
     if (loadId != m_loadId)

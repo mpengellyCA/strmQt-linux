@@ -187,6 +187,8 @@ public:
     int currentSubtitleTrackId() const override { return m_subtitleTrackId; }
     void setAudioTrack(int id) override;
     void setSubtitleTrack(int id) override;
+    void addExternalSubtitle(const QUrl &url, const QString &title, const QString &language,
+                             bool select) override;
 
     // Cached, not read live: the value is a *delta* against positionMs, and
     // recomputing it from the stored cache end keeps it correct between mpv's
@@ -262,6 +264,8 @@ private:
     // The observed properties that belong to the core rather than to a file.
     // True when `change` was one of them and has been handled.
     bool handleCoreProperty(const mpv_event_property &change);
+    // Hands mpv the next queued external subtitle, if none is being fetched.
+    void startNextSubtitleAdd();
     void applyVideoProcessing();
     void updateVideoFormat(const QVariantMap &params);
     void noteLogForShaderFailure(const QString &text);
@@ -298,6 +302,28 @@ private:
     // Only for a libmpv whose loadfile reply names no entry (before 0.33): the
     // most recent load, attributed the old way.
     LoadId m_untrackedLoadId = 0;
+    // External subtitles waiting for `sub-add`, for the file that is loaded
+    // now. One at a time: mpv fetches each on a thread of its own and numbers
+    // the track when the fetch ends, so two issued together would get their ids
+    // in download order, and a remembered track id would name a different
+    // subtitle from one play to the next.
+    struct PendingSubtitle
+    {
+        QByteArray url;
+        QByteArray title;
+        QByteArray language;
+        bool select = false;
+    };
+    QList<PendingSubtitle> m_pendingSubtitles;
+    // The sub-add mpv is working on, and its reply_userdata (0: none).
+    PendingSubtitle m_subtitleAdding;
+    quint64 m_subtitleAddInFlight = 0;
+    quint64 m_nextSubtitleAddToken = 0;
+    // Drops the queue and makes sure mpv has no sub-add running. Called before
+    // anything that ends the file — see the .cpp for why that is not optional.
+    void cancelSubtitleAdds();
+    // mpv's id for the external track it read from `url`, or -1.
+    int externalTrackId(const QByteArray &url) const;
     bool m_buffering = false;
     QString m_hwdecCurrent;
 

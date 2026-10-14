@@ -82,6 +82,11 @@ private slots:
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
     void trackPersistenceWaitsForBackendReadback();
+    void externalSubtitlesAreAttachedOncePerLoad();
+    void directPlaySkipsSubtitlesTheFileAlreadyCarries();
+    void rememberedChoiceOutranksTheServerDefaultSubtitle();
+    void rememberedExternalSubtitleWaitsForItsTrack();
+    void pickingASubtitleCancelsTheWaitForARememberedOne();
     void playbackSettingsFollowBackendReadback();
     void screenshotSuccessRequiresBackendConfirmation();
     void positionSnapshotsBoundQmlChurn();
@@ -111,6 +116,7 @@ private slots:
 
 private:
     void expectReport(const QString &path, const QString &method, bool paused = false);
+    void startSidecarItem();
     void startUpscaling();
 
     MockEmbyServer *m_mock = nullptr;
@@ -933,6 +939,258 @@ void PlayerControllerTest::trackPersistenceWaitsForBackendReadback()
     m_backend->simulateTrackDescription(QStringLiteral("Audio: Commentary"));
     QCOMPARE(toast.count(), 1);
     QCOMPARE(toast.takeFirst().constFirst().toString(), QStringLiteral("Audio: Commentary"));
+}
+
+// ── External (sidecar) subtitles ──────────────────────────────────────────────
+// EmbyClient's device profile declares "Method": "External" for text
+// subtitles, so the server no longer puts a sidecar subtitle into the stream:
+// it names a URL per stream and the client has to hand each one to the engine.
+// Item 7700 is a film with an in-file subrip (2), two sidecars (3 srt — the
+// server's default for this user — and 4 ass), an in-file PGS (5), and an
+// in-file ass the server marked External as well (6).
+
+namespace {
+const auto kSidecarItem = QStringLiteral("7700");
+const auto kSidecarSource = QStringLiteral("ms7700");
+
+QStringList subtitlePaths(const QList<FakePlayerBackend::ExternalSubtitle> &subtitles,
+                          PlayerBackend::LoadId loadId)
+{
+    QStringList paths;
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : subtitles) {
+        if (subtitle.loadId == loadId)
+            paths.append(subtitle.url.path());
+    }
+    return paths;
+}
+} // namespace
+
+void PlayerControllerTest::startSidecarItem()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/7700/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_external_subtitle.json"))));
+    m_controller->playItem(kSidecarItem, QStringLiteral("Sidecar"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectPlay"));
+}
+
+void PlayerControllerTest::externalSubtitlesAreAttachedOncePerLoad()
+{
+    startSidecarItem();
+    // An engine can only add a subtitle to a file it has open.
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+    m_backend->simulateTracks({FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+    const PlayerBackend::LoadId first = m_backend->loadedIds.at(0);
+
+    // Stream 3: the server's default, so it is shown — the subtitle a viewer
+    // used to get burned into a transcode. Its DeliveryUrl came with a key.
+    const FakePlayerBackend::ExternalSubtitle &dutch = m_backend->externalSubtitles.at(0);
+    QCOMPARE(dutch.loadId, first);
+    QCOMPARE(dutch.url.scheme(), m_mock->baseUrl().scheme());
+    QCOMPARE(dutch.url.host(), m_mock->baseUrl().host());
+    QCOMPARE(dutch.url.port(), m_mock->baseUrl().port());
+    QCOMPARE(dutch.url.path(), QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"));
+    QCOMPARE(QUrlQuery(dutch.url).allQueryItemValues(QStringLiteral("api_key")),
+             QStringList{kToken});
+    QCOMPARE(dutch.title, QStringLiteral("Dutch (SRT)"));
+    QCOMPARE(dutch.language, QStringLiteral("nld"));
+    QVERIFY(dutch.select);
+
+    // Stream 4: offered, not shown. Its DeliveryUrl had no key; it has ours.
+    const FakePlayerBackend::ExternalSubtitle &english = m_backend->externalSubtitles.at(1);
+    QCOMPARE(english.url.path(), QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass"));
+    QCOMPARE(QUrlQuery(english.url).allQueryItemValues(QStringLiteral("api_key")),
+             QStringList{kToken});
+    QCOMPARE(english.title, QStringLiteral("English (ASS)"));
+    QCOMPARE(english.language, QStringLiteral("eng"));
+    QVERIFY(!english.select);
+
+    // The default arriving selected is the server's choice, not the user's:
+    // nothing is remembered for it.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+         FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)"), {}, {}, true)});
+    QVERIFY(!m_settings->hasRememberedTracks(kSidecarItem, kSidecarSource));
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+
+    // Pausing, resuming and buffering are the same file: nothing is added again.
+    m_backend->simulateState(PlayerBackend::State::Paused);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateBuffering(true);
+    m_backend->simulateBuffering(false);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+
+    // The user picking it in the track panel is an ordinary engine track id.
+    m_controller->setSubtitleTrack(1);
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, 1);
+
+    // A reload is a new file to the engine, which starts without them.
+    m_controller->reloadStream();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    const PlayerBackend::LoadId second = m_backend->loadedIds.at(1);
+    QVERIFY(second != first);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, second).isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, second),
+             (QStringList{QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass")}));
+    // By now the user has chosen for this item, so the server's default is no
+    // longer forced on top of that choice.
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : m_backend->externalSubtitles) {
+        if (subtitle.loadId == second)
+            QVERIFY(!subtitle.select);
+    }
+    QCOMPARE(m_backend->externalSubtitles.size(), 4);
+
+    // Nothing leaks into the next thing played.
+    m_controller->playUrl(QUrl(QStringLiteral("file:///tmp/no-ticket.mkv")), QStringLiteral("Raw"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 4);
+}
+
+// Direct play opens the original file, and stream 6 is in it: mpv lists it by
+// itself, so attaching the server's copy would show it twice. A remux or a
+// transcode is the server's own output, and there an External delivery is the
+// only place the subtitle exists.
+void PlayerControllerTest::directPlaySkipsSubtitlesTheFileAlreadyCarries()
+{
+    startSidecarItem();
+    // The rung fails before it starts, twice: DirectPlay → DirectStream →
+    // Transcode. Nothing was attached to a file that never opened.
+    m_backend->simulateError(QStringLiteral("network stream error"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectStream"));
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+
+    const QStringList all{QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/6/0/Stream.ass")};
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, m_backend->loadedIds.at(1)), all);
+    // Still the server's default that is shown, on every rung.
+    QVERIFY(m_backend->externalSubtitles.at(0).select);
+    QVERIFY(!m_backend->externalSubtitles.at(1).select);
+    QVERIFY(!m_backend->externalSubtitles.at(2).select);
+
+    // A stall: nudge, then the watchdog reloads the same rung, then demotes.
+    // Each of those is a new file to the engine and gets its subtitles again.
+    m_backend->simulatePosition(100'000);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectStream"));
+    const PlayerBackend::LoadId reload = m_backend->loadedIds.at(2);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, reload).isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, reload), all);
+
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 4);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    const PlayerBackend::LoadId transcode = m_backend->loadedIds.at(3);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, transcode).isEmpty());
+    m_backend->simulateBuffering(true); // hold the watchdog off the last rung
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, transcode), all);
+    QCOMPARE(m_backend->externalSubtitles.size(), 9);
+    // Never the embedded-and-Embed ones, on any rung.
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : m_backend->externalSubtitles) {
+        QVERIFY(!subtitle.url.path().contains(QStringLiteral("/Subtitles/2/")));
+        QVERIFY(!subtitle.url.path().contains(QStringLiteral("/Subtitles/5/")));
+    }
+}
+
+// "Off" is a choice. A viewer who turned subtitles off for this film does not
+// get the server's default turned back on by the attach.
+void PlayerControllerTest::rememberedChoiceOutranksTheServerDefaultSubtitle()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, -1);
+    startSidecarItem();
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+    QVERIFY(!m_backend->externalSubtitles.at(0).select);
+    QVERIFY(!m_backend->externalSubtitles.at(1).select);
+
+    // The engine came up with its own default on; the remembered "off" wins.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{-1});
+    // The sidecars joining the list later change nothing.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+         FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+         FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{-1});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, -1);
+}
+
+// A remembered sidecar is not in the engine's list when the list is first
+// published: it is fetched after the file is up. Its choice has to survive
+// until the track arrives, and be applied exactly once.
+void PlayerControllerTest::rememberedExternalSubtitleWaitsForItsTrack()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, 3);
+    startSidecarItem();
+    const QVariantList audio{FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)};
+    // mpv publishes the container's tracks before it reports Playing.
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QVERIFY(!m_backend->externalSubtitles.at(0).select);
+
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)"))});
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+                               FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+    QCOMPARE(m_backend->currentSubtitleTrackId(), 3);
+    m_backend->republishTracksUnchanged();
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource), qMakePair(1, 3));
+
+    // An item with nothing external does not wait for a track that will never
+    // come: a remembered id its list lacks is dropped, as before.
+    m_settings->rememberTracks(QStringLiteral("301001"), QStringLiteral("ms301001"), 1, 9);
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2); // the first item's, none new
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(9, QStringLiteral("Late"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+}
+
+void PlayerControllerTest::pickingASubtitleCancelsTheWaitForARememberedOne()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, 3);
+    startSidecarItem();
+    const QVariantList audio{FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)};
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+
+    m_controller->setSubtitleTrack(1);
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+                               FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    QCOMPARE(m_backend->currentSubtitleTrackId(), 1);
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, 1);
 }
 
 void PlayerControllerTest::playbackSettingsFollowBackendReadback()

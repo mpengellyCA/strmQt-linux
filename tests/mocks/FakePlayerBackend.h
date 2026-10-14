@@ -79,6 +79,12 @@ public:
         emit tracksChanged();
     }
 
+    void addExternalSubtitle(const QUrl &url, const QString &title, const QString &language,
+                             bool select) override
+    {
+        externalSubtitles.append({m_loadId, url, title, language, select});
+    }
+
     qint64 bufferedMs() const override { return m_bufferedMs; }
     qreal playbackSpeed() const override { return m_speed; }
     void setPlaybackSpeed(qreal speed) override
@@ -253,6 +259,15 @@ public:
     }
     void simulateShaderFailure(const QString &path) { emit videoShaderFailed(path); }
 
+    struct ExternalSubtitle
+    {
+        LoadId loadId = 0; // the load that was current when it was attached
+        QUrl url;
+        QString title;
+        QString language;
+        bool select = false;
+    };
+    QList<ExternalSubtitle> externalSubtitles;
     QList<QUrl> loadedUrls;
     QList<qint64> loadedStarts;
     QList<LoadId> loadedIds;
