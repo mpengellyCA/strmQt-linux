@@ -50,16 +50,34 @@ struct RepeatTuning
     // action and the context but not which control has focus, and the scrub
     // is the case worth protecting.
     int seekFloorMs = 250;
+    // A held right stick is a volume ramp, and every step is 5%. On the ladder
+    // above it reached the 38 ms floor after six steps and crossed the whole
+    // range in under a second and a half from the first movement — faster than
+    // a hand can let go, and the way up is the one that hurts. One steady rate
+    // instead, with no acceleration: there are only twenty steps to cross, so
+    // there is nothing for a ramp to save. 150 ms is the full range in three
+    // seconds, and about one step (5%) of overshoot at a 200 ms reaction time.
+    int volumeMs = 150;
+};
+
+// What a held direction is doing, which is what decides how fast it may repeat.
+enum class RepeatPace
+{
+    Ladder, // a cursor: fastMs, then fastestMs
+    Seek,   // a scrub in the player: the ladder, floored at seekFloorMs
+    Volume, // the right stick's volume: steady at volumeMs
 };
 
 // Milliseconds until the next repeat step. `emitted` is the number of steps
 // already sent *including* the initial press, so the first call after a hold
 // starts sees 2.
-inline int repeatIntervalMs(int emitted, bool seeking,
+inline int repeatIntervalMs(int emitted, RepeatPace pace,
                             const RepeatTuning &tuning = RepeatTuning())
 {
+    if (pace == RepeatPace::Volume)
+        return tuning.volumeMs;
     const int interval = emitted > tuning.stepsBeforeAccel + 1 ? tuning.fastestMs : tuning.fastMs;
-    return seeking ? std::max(interval, tuning.seekFloorMs) : interval;
+    return pace == RepeatPace::Seek ? std::max(interval, tuning.seekFloorMs) : interval;
 }
 
 // Which held directions scrub. Only the horizontal pair, and only in the
@@ -67,11 +85,28 @@ inline int repeatIntervalMs(int emitted, bool seeking,
 // is unarmed, a 10 s nudge per step once armed — so a held horizontal is a
 // scrub or nothing, and the fast ladder's 38 ms floor would turn the armed
 // case into ~260 s of media per real second. Up/Down enter or leave the OSD
-// instead, and the right stick's volume has its own slot; neither is clamped.
+// instead and keep the ladder; the right stick's volume has its own slot and
+// its own pace (isVolumeRepeat).
 inline bool isSeekRepeat(const QString &context, const QString &actionId)
 {
     return context == QLatin1String("player")
         && (actionId == QLatin1String("nav.left") || actionId == QLatin1String("nav.right"));
+}
+
+// The held commands that are a volume ramp. Named by action rather than by the
+// stick's slot: the pace belongs to what is being changed, and the action id is
+// all a repeat carries. Both are player-context actions, so no context is asked.
+inline bool isVolumeRepeat(const QString &actionId)
+{
+    return actionId == QLatin1String("player.volumeUp")
+        || actionId == QLatin1String("player.volumeDown");
+}
+
+inline RepeatPace repeatPace(bool seeking, const QString &actionId)
+{
+    if (seeking)
+        return RepeatPace::Seek;
+    return isVolumeRepeat(actionId) ? RepeatPace::Volume : RepeatPace::Ladder;
 }
 
 // ── A button with two meanings ──────────────────────────────────────────────
@@ -135,11 +170,25 @@ private:
 
 // ── Keys a text field would eat ─────────────────────────────────────────────
 
-// A key a text editor treats as typing rather than as a command. Qt spells
-// printable keys as their Latin-1 code point (Key_Space 0x20 … Key_ydiaeresis
-// 0xff); every navigation key — arrows, Esc, Return, Tab, Backspace, the
-// function keys — lives above 0x01000000, so this is a range check rather than
-// a list that has to be maintained.
+// A key a text editor treats as typing rather than as a command: one that
+// changes the text. Qt spells printable keys as their Latin-1 code point
+// (Key_Space 0x20 … Key_ydiaeresis 0xff), so those are a range check; the two
+// keys that take a character out are named.
+//
+// Backspace and Delete are here because a rebind can make either the key a
+// button resolves to — Backspace is already a secondary nav.back binding — and
+// "Back" must not rub out what was typed in the search box. It is the same
+// call RemoteBackKeyFilter makes for a remote: Backspace stays an edit.
+//
+// This is deliberately NOT InputMap's isTypableKey (InputMap.cpp), which also
+// lists the arrows, Home/End, paging, Return and Tab. That one answers "should
+// a window Shortcut stand aside for the field?", and for a caret key the answer
+// is yes. This one answers "may a pad or a phone deliver this key to the
+// field?", and for the same keys the answer is also yes: they only move, and
+// they are the only way out. QQuickTextInput declines Up/Down, and Left/Right
+// at the ends of the text, so they go on to FocusNavigator; Return submits.
+// Suppressing them here would leave a pad with no way to leave a search box
+// and no way to run the search.
 //
 // Ctrl/Alt/Meta make a chord, and a chord is never typing: Ctrl+K must still
 // open the command palette with the search box focused. Shift does not count —
@@ -150,6 +199,8 @@ inline bool isTypableKey(int key, int modifiers)
         static_cast<int>(Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
     if ((modifiers & kChordModifiers) != 0)
         return false;
+    if (key == static_cast<int>(Qt::Key_Backspace) || key == static_cast<int>(Qt::Key_Delete))
+        return true;
     return key >= static_cast<int>(Qt::Key_Space) && key <= 0xff;
 }
 

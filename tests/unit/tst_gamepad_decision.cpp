@@ -16,6 +16,7 @@ private slots:
     void browseRepeatAccelerates();
     void playerSeekIsClampedToAUsableScrub();
     void onlyHorizontalPlayerDirectionsCountAsSeeking();
+    void heldVolumeIsASteadyRampNotALadder();
     void typableKeysAreTheOnesAFieldWouldEat();
     void suppressionOnlyAppliesWhileAFieldHasFocus();
     void disconnectReleasesOnlyItsDevice();
@@ -30,10 +31,10 @@ void GamepadDecisionTest::browseRepeatAccelerates()
     const RepeatTuning tuning;
     // Crossing a 1300-item grid is the case this ladder exists for: six steps at
     // the first rate, then the fast one for as long as it is held.
-    QCOMPARE(repeatIntervalMs(2, false, tuning), tuning.fastMs);
-    QCOMPARE(repeatIntervalMs(7, false, tuning), tuning.fastMs);
-    QCOMPARE(repeatIntervalMs(8, false, tuning), tuning.fastestMs);
-    QCOMPARE(repeatIntervalMs(400, false, tuning), tuning.fastestMs);
+    QCOMPARE(repeatIntervalMs(2, RepeatPace::Ladder, tuning), tuning.fastMs);
+    QCOMPARE(repeatIntervalMs(7, RepeatPace::Ladder, tuning), tuning.fastMs);
+    QCOMPARE(repeatIntervalMs(8, RepeatPace::Ladder, tuning), tuning.fastestMs);
+    QCOMPARE(repeatIntervalMs(400, RepeatPace::Ladder, tuning), tuning.fastestMs);
 }
 
 void GamepadDecisionTest::playerSeekIsClampedToAUsableScrub()
@@ -42,9 +43,9 @@ void GamepadDecisionTest::playerSeekIsClampedToAUsableScrub()
     // Every step is a 10 s seek and a server round-trip. At the grid's floor a
     // held stick asks for over four minutes of media a second.
     QVERIFY(tuning.seekFloorMs > tuning.fastestMs);
-    QCOMPARE(repeatIntervalMs(2, true, tuning), tuning.seekFloorMs);
-    QCOMPARE(repeatIntervalMs(8, true, tuning), tuning.seekFloorMs);
-    QCOMPARE(repeatIntervalMs(400, true, tuning), tuning.seekFloorMs);
+    QCOMPARE(repeatIntervalMs(2, RepeatPace::Seek, tuning), tuning.seekFloorMs);
+    QCOMPARE(repeatIntervalMs(8, RepeatPace::Seek, tuning), tuning.seekFloorMs);
+    QCOMPARE(repeatIntervalMs(400, RepeatPace::Seek, tuning), tuning.seekFloorMs);
 
     // A scrub the user can stop on a scene: roughly 40 s of media per real
     // second, an hour of runtime in a minute and a half of holding.
@@ -58,12 +59,45 @@ void GamepadDecisionTest::onlyHorizontalPlayerDirectionsCountAsSeeking()
     const QString browse = QStringLiteral("browse");
     QVERIFY(isSeekRepeat(player, QStringLiteral("nav.left")));
     QVERIFY(isSeekRepeat(player, QStringLiteral("nav.right")));
-    // Up/Down are volume, and the OSD's own lists still want the fast ladder.
+    // Up/Down enter and leave the OSD, whose own lists still want the fast ladder.
     QVERIFY(!isSeekRepeat(player, QStringLiteral("nav.up")));
     QVERIFY(!isSeekRepeat(player, QStringLiteral("nav.down")));
     // Browsing is untouched: this clamp must not slow a 1300-item grid down.
     QVERIFY(!isSeekRepeat(browse, QStringLiteral("nav.left")));
     QVERIFY(!isSeekRepeat(browse, QStringLiteral("nav.right")));
+}
+
+void GamepadDecisionTest::heldVolumeIsASteadyRampNotALadder()
+{
+    const RepeatTuning tuning;
+    const QString up = QStringLiteral("player.volumeUp");
+    const QString down = QStringLiteral("player.volumeDown");
+    QVERIFY(isVolumeRepeat(up));
+    QVERIFY(isVolumeRepeat(down));
+    QVERIFY(!isVolumeRepeat(QStringLiteral("nav.up")));
+    QVERIFY(!isVolumeRepeat(QStringLiteral("player.seekForward")));
+
+    // What GamepadManager asks on every step of a hold.
+    QCOMPARE(repeatPace(false, up), RepeatPace::Volume);
+    QCOMPARE(repeatPace(false, down), RepeatPace::Volume);
+    QCOMPARE(repeatPace(false, QStringLiteral("nav.down")), RepeatPace::Ladder);
+    QCOMPARE(repeatPace(true, QStringLiteral("nav.left")), RepeatPace::Seek);
+
+    // No acceleration, however long it is held.
+    for (const int emitted : {2, 7, 8, 9, 400})
+        QCOMPARE(repeatIntervalMs(emitted, repeatPace(false, up), tuning), tuning.volumeMs);
+
+    // Each step is 5% (PlayerPage adjustVolume), so the whole range is twenty
+    // of them. From the first movement to the far end must take long enough to
+    // let go in — on the ladder it was under a second and a half.
+    // The first step is immediate, the second waits out the delay, and each one
+    // after that waits the interval asked for once its predecessor was sent.
+    int sweepMs = tuning.delayMs;
+    for (int emitted = 2; emitted < 20; ++emitted)
+        sweepMs += repeatIntervalMs(emitted, RepeatPace::Volume, tuning);
+    QVERIFY2(sweepMs >= 2500, qPrintable(QString::number(sweepMs)));
+    // And not so long that turning it down is a chore.
+    QVERIFY2(sweepMs <= 4500, qPrintable(QString::number(sweepMs)));
 }
 
 void GamepadDecisionTest::typableKeysAreTheOnesAFieldWouldEat()
@@ -85,10 +119,20 @@ void GamepadDecisionTest::typableKeysAreTheOnesAFieldWouldEat()
     QVERIFY(!isTypableKey(Qt::Key_Return, Qt::NoModifier));
     QVERIFY(!isTypableKey(Qt::Key_Enter, Qt::NoModifier));
     QVERIFY(!isTypableKey(Qt::Key_Tab, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Backspace, Qt::NoModifier));
+    QVERIFY(!isTypableKey(Qt::Key_Home, Qt::NoModifier));
+    QVERIFY(!isTypableKey(Qt::Key_End, Qt::NoModifier));
+    QVERIFY(!isTypableKey(Qt::Key_Backtab, Qt::ShiftModifier));
     QVERIFY(!isTypableKey(Qt::Key_PageUp, Qt::NoModifier));
     QVERIFY(!isTypableKey(Qt::Key_PageDown, Qt::NoModifier));
     QVERIFY(!isTypableKey(Qt::Key_F2, Qt::NoModifier));
+
+    // The two keys that take a character out are typing, though they are not
+    // characters: "Back" resolved to Backspace must not edit the search box.
+    QVERIFY(isTypableKey(Qt::Key_Backspace, Qt::NoModifier));
+    QVERIFY(isTypableKey(Qt::Key_Delete, Qt::NoModifier));
+    QVERIFY(isTypableKey(Qt::Key_Backspace, Qt::ShiftModifier));
+    // Ctrl+Backspace is a chord like any other.
+    QVERIFY(!isTypableKey(Qt::Key_Backspace, Qt::ControlModifier));
 
     // A chord is never typing: Ctrl+K opens the command palette from inside the
     // search box, which is exactly where a user reaches for it.
@@ -104,6 +148,20 @@ void GamepadDecisionTest::suppressionOnlyAppliesWhileAFieldHasFocus()
     QVERIFY(shouldSuppressKey(Qt::Key_M, Qt::NoModifier, true));
     QVERIFY(!shouldSuppressKey(Qt::Key_Escape, Qt::NoModifier, true));
     QVERIFY(!shouldSuppressKey(Qt::Key_K, Qt::ControlModifier, true));
+
+    // An editing key is suppressed in a field and is an ordinary key out of one
+    // — Backspace is a nav.back binding and must still go back from a grid.
+    QVERIFY(shouldSuppressKey(Qt::Key_Backspace, Qt::NoModifier, true));
+    QVERIFY(shouldSuppressKey(Qt::Key_Delete, Qt::NoModifier, true));
+    QVERIFY(!shouldSuppressKey(Qt::Key_Backspace, Qt::NoModifier, false));
+    QVERIFY(!shouldSuppressKey(Qt::Key_Delete, Qt::NoModifier, false));
+
+    // The way out of a field, and the way to submit it, are never suppressed:
+    // a pad has no other.
+    for (const int key : {Qt::Key_Up, Qt::Key_Down, Qt::Key_Left, Qt::Key_Right, Qt::Key_Return,
+                          Qt::Key_Enter, Qt::Key_Tab, Qt::Key_Escape, Qt::Key_PageUp,
+                          Qt::Key_PageDown})
+        QVERIFY2(!shouldSuppressKey(key, Qt::NoModifier, true), qPrintable(QString::number(key)));
 }
 
 void GamepadDecisionTest::disconnectReleasesOnlyItsDevice()

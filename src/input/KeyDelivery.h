@@ -67,6 +67,20 @@ inline void postKey(QWindow *window, int key, int modifiers, bool pressed, bool 
 // later by the page it landed on. The on-screen hints followed, and each flip
 // was a settings write. While a delivered key is being handled, a "keyboard"
 // stamp is not believed.
+//
+// The hold is let go on the next turn of the loop, because a filter is told
+// when delivery starts and never when it ends. That leaves it standing for
+// whatever else is dispatched in the same turn, and a keystroke from the real
+// keyboard queued behind the pad's would not be believed either. So a key that
+// came from the window system ends the hold at once: nothing delivered here is
+// spontaneous, and nothing a keyboard sends is not. The test is not "any key
+// that is not a DeliveredKey" — RemoteOkKeyFilter and RemoteBackKeyFilter
+// answer a delivered key by sending a plain QKeyEvent in its place, from
+// inside its delivery, and that one is still the pad's.
+//
+// A keystroke Qt matches to a window Shortcut is not seen here at all — it is
+// taken before any event reaches the window — so that one case still waits for
+// the timer.
 class DeliveredKeyStamp final : public QObject
 {
 public:
@@ -79,13 +93,17 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)
-            && m_input && dynamic_cast<DeliveredKey *>(event)) {
-            m_input->setKeyboardStampHeld(true);
-            // Delivery is synchronous from here; the next turn of the loop is
-            // after every handler has run.
-            QTimer::singleShot(0, m_input, [input = m_input] {
-                input->setKeyboardStampHeld(false);
-            });
+            && m_input) {
+            if (dynamic_cast<DeliveredKey *>(event)) {
+                m_input->setKeyboardStampHeld(true);
+                // Delivery is synchronous from here; the next turn of the loop
+                // is after every handler has run.
+                QTimer::singleShot(0, m_input, [input = m_input] {
+                    input->setKeyboardStampHeld(false);
+                });
+            } else if (event->spontaneous()) {
+                m_input->setKeyboardStampHeld(false);
+            }
         }
         return QObject::eventFilter(watched, event);
     }

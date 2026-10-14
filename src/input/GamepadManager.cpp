@@ -325,7 +325,8 @@ void GamepadManager::handleAxis(quint32 deviceId, int axis, int value)
     // player verb with no button left over for it, and a slider a pad cannot
     // focus. Player context only: everywhere else the stick keeps having no
     // verb, and the "+"/"-" keys it would send have no handler either. A held
-    // direction auto-repeats through the same machinery as the D-pad.
+    // direction auto-repeats through the same machinery as the D-pad, at a
+    // steady pace of its own rather than the cursor's ladder (repeatPace).
     if (axis == SDL_GAMEPAD_AXIS_RIGHTY) {
         const int held = state.axisState.value(axis, 0); // 0, or ±1 for up/down
         int dir = 0;
@@ -487,7 +488,8 @@ void GamepadManager::pump()
                 sendKey(repeat.key, repeat.modifiers, true, true);
             }
             ++repeat.emitted;
-            const int interval = repeatIntervalMs(repeat.emitted, repeat.seeking, kRepeat);
+            const int interval = repeatIntervalMs(
+                repeat.emitted, repeatPace(repeat.seeking, repeat.actionId), kRepeat);
             // Advance from the scheduled time, not from now, so a late frame does
             // not slow the whole repeat down.
             repeat.nextAtMs += interval;

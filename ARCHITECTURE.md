@@ -591,7 +591,10 @@ the pad and the phone with it, and a gamepad hint shown in the UI is the binding
 that actually fires. A navigation action with a gamepad hint must resolve to
 exactly one key — asserted in tests, because a hint without a working binding is
 worse than no hint. Keys posted to a background window still land because
-`WindowFocusKeeper` stops Qt clearing the focus chain on deactivation.
+`WindowFocusKeeper` stops Qt clearing the focus chain on deactivation. Because
+focus is kept, it also releases any key the real keyboard was holding when the
+window lost focus — the release itself goes to whichever application was
+clicked — while a key a pad is holding is left alone.
 
 ### Where an arrow goes
 
@@ -994,12 +997,11 @@ assertion catches the rot.
   counts, so marking an episode watched updates the badge only for the season
   currently on screen. A real fix needs the server's `UserData.UnplayedItemCount`
   refetched per season, not a UI hook.
-- **Held volume on a gamepad is unclamped.** Held horizontal seeks in the player
-  are floored at 250 ms, but the right stick's volume runs the fast ladder — at
-  its 38 ms floor, 5% per step sweeps the whole range in well under a second.
-  Horizontal repeat in player context is floored everywhere, including the OSD
-  button row, because `GamepadManager` can see the action and the context but
-  not which control has focus.
+- **Horizontal repeat in player context is floored everywhere.** Held seeks are
+  floored at 250 ms, and so is the OSD button row, because `GamepadManager` can
+  see the action and the context but not which control has focus. Held volume
+  on the right stick has its own steady 150 ms step (about three seconds across
+  the range) rather than the accelerating ladder.
 - **`Component.onDestruction` cannot read a delegate's `index`** — it has already
   been reset to -1 by then. Any cleanup keyed on index there is dead code; track
   the delegate's identity instead (`StrmRail`, `StrmGrid`, `HomePage` do).
