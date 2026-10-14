@@ -6,6 +6,7 @@
 #include "FakePlayerBackend.h"
 #include "MockEmbyServer.h"
 #include "app/ItemActions.h"
+#include "app/PlayQueue.h"
 #include "app/controllers/PlayerController.h"
 #include "app/models/MediaItemModel.h"
 #include "core/Settings.h"
@@ -107,11 +108,23 @@ private slots:
     void musicMenuStateStartsFromTheMap();
     void failedMusicToggleRollsBackToTheMapState();
     void registeredModelStateBeatsTheMap();
+    void liveRecordMovesTheAnswerAndAnnouncesItOnce();
+    void liveRecordForAModelRowPatchesItBeforeAnnouncing();
+    void liveRecordDuringAToggleKeepsTheIntentAndMovesTheRollback();
+    void liveRecordReplacesAStateThisSessionToggled();
+    void liveRecordLeavesAbsentFieldsAlone();
+    void liveRecordsStayInsideTheBoundedCache();
+    void liveRecordPatchesTheQueueWithoutRestartingIt();
+    void localToggleReachesTheQueueEntry();
     void navigationVerbsEmitRequests();
     void refreshMetadataReportsThatItIsNotWired();
 
 private:
     int requestCount(const QString &method, const QString &path) const;
+    // Leaves the queue holding `items` with the first one current and nothing
+    // playing: what the app looks like when the server's record for the item
+    // that just stopped comes back.
+    void playThenStop(const QList<MediaItem> &items);
 
     MockEmbyServer *m_mock = nullptr;
     emby::EmbyClient *m_client = nullptr;
@@ -131,6 +144,20 @@ int ItemActionsTest::requestCount(const QString &method, const QString &path) co
             ++count;
     }
     return count;
+}
+
+void ItemActionsTest::playThenStop(const QList<MediaItem> &items)
+{
+    const QString playbackInfo = QStringLiteral("/Items/%1/PlaybackInfo").arg(items.first().id);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"), playbackInfo,
+                                     fixturePath(QStringLiteral("playback_info.json"))));
+    m_player->playQueueItems(items, 0, false);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), playbackInfo), 1);
+    QTRY_VERIFY(m_player->active());
+    m_player->stop();
+    QTRY_VERIFY(!m_player->active());
+    QCOMPARE(m_player->queue()->rowCount(), int(items.size()));
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
 }
 
 void ItemActionsTest::init()
@@ -783,6 +810,283 @@ void ItemActionsTest::registeredModelStateBeatsTheMap()
     m_actions->performItemVerb(QStringLiteral("favorite"), stale);
     QVERIFY(m_actions->isFavorite(kItemId));
     QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(kItemId)), 1);
+}
+
+// AUDIT §3.3. The details and series pages read Actions.isPlayed/isFavorite
+// and listen to playedChanged/favoriteChanged; a record from another client has
+// to arrive there like a toggle made here — and cost no request.
+void ItemActionsTest::liveRecordMovesTheAnswerAndAnnouncesItOnce()
+{
+    const QString id = QStringLiteral("in-no-model");
+    QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+    QSignalSpy committed(m_actions, &ItemActions::playedCommitted);
+    QVERIFY(!m_actions->isPlayed(id));
+    QVERIFY(!m_actions->isFavorite(id));
+
+    m_actions->applyExternalUserData(id, true, true);
+    QVERIFY(m_actions->isPlayed(id));
+    QVERIFY(m_actions->isFavorite(id));
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(played.first().at(0).toString(), id);
+    QCOMPARE(played.first().at(1).toBool(), true);
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(favorite.first().at(0).toString(), id);
+    QCOMPARE(favorite.first().at(1).toBool(), true);
+
+    // The same record again: nothing changed, nothing is said.
+    m_actions->applyExternalUserData(id, true, true);
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(favorite.count(), 1);
+
+    // One field moves, one signal.
+    m_actions->applyExternalUserData(id, false, true);
+    QVERIFY(!m_actions->isPlayed(id));
+    QCOMPARE(played.count(), 2);
+    QCOMPARE(played.last().at(1).toBool(), false);
+    QCOMPARE(favorite.count(), 1);
+
+    // An empty id is nobody's record.
+    m_actions->applyExternalUserData(QString(), true, true);
+    QCOMPARE(played.count(), 2);
+
+    // Nothing was written back, and nothing claims to have been committed.
+    QTest::qWait(50);
+    QCOMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QCOMPARE(m_mock->requests().size(), 0);
+    QCOMPARE(committed.count(), 0);
+}
+
+// The signal's contract for a toggle is that the registered rows already hold
+// the new state when it fires; a page that re-reads a row from its handler
+// depends on it. A live record keeps that contract, position included.
+void ItemActionsTest::liveRecordForAModelRowPatchesItBeforeAnnouncing()
+{
+    int announced = 0;
+    connect(m_actions, &ItemActions::playedChanged, this, [&](const QString &, bool played) {
+        ++announced;
+        QCOMPARE(played, true);
+        QCOMPARE(m_model->items().first().played, true);
+        QCOMPARE(m_model->items().first().playbackPositionTicks, 0);
+    });
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+
+    m_actions->applyUserDataPatches({QVariantMap{{QStringLiteral("itemId"), kItemId},
+                                                 {QStringLiteral("played"), true},
+                                                 {QStringLiteral("favorite"), false},
+                                                 {QStringLiteral("positionTicks"), 0},
+                                                 {QStringLiteral("playCount"), 2}}});
+    QCOMPARE(announced, 1);
+    QCOMPARE(favorite.count(), 0);
+    QCOMPARE(m_model->items().first().playCount, 2);
+    QVERIFY(m_actions->isPlayed(kItemId));
+    // The row is the memory for an item a registered model holds.
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
+
+    // A controller's own binding then patches the same row from the same
+    // record (Application.cpp connects ItemActions first). That is a no-op.
+    m_model->updateUserData(kItemId, true, false, 0, 2);
+    QCOMPARE(announced, 1);
+    QCOMPARE(favorite.count(), 0);
+}
+
+void ItemActionsTest::liveRecordDuringAToggleKeepsTheIntentAndMovesTheRollback()
+{
+    playThenStop({m_model->items().first()});
+    if (QTest::currentTestFailed())
+        return;
+    PlayQueue *queue = m_player->queue();
+    // No user-data routes: every toggle below fails with the mock's 404, later.
+    QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+
+    m_actions->setFavorite(kItemId, true);
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(m_actions->pendingUserStateRequestCountForTests(), 1);
+
+    // The server's record crosses the request, still saying "not a favourite"
+    // — and "watched", which nothing here is in the middle of changing.
+    m_actions->applyExternalUserData(kItemId, true, false);
+    QCOMPARE(favorite.count(), 1); // no flicker back to false
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QCOMPARE(m_model->items().first().favorite, true);
+    QCOMPARE(queue->current().favorite, true);
+    QCOMPARE(played.count(), 1); // the settled field does follow
+    QVERIFY(m_actions->isPlayed(kItemId));
+    QCOMPARE(queue->current().played, true);
+
+    // Another client favourites it too. Still nothing to announce: the user
+    // already sees a favourite. But that is now what the server holds.
+    m_actions->applyExternalUserData(kItemId, true, true);
+    QCOMPARE(favorite.count(), 1);
+
+    // The request fails. Rolling back to the value from before the toggle
+    // (false) would now contradict the server.
+    QTRY_COMPARE(failed.count(), 1);
+    QVERIFY(m_actions->isFavorite(kItemId));
+    QCOMPARE(favorite.last().at(1).toBool(), true);
+    QCOMPARE(m_model->items().first().favorite, true);
+    QCOMPARE(queue->current().favorite, true);
+
+    // The same for the watched state, the other way round.
+    m_actions->setPlayed(kItemId, false);
+    QCOMPARE(played.count(), 2);
+    m_actions->applyExternalUserData(kItemId, true, true); // stale: still watched
+    QCOMPARE(played.count(), 2);
+    QVERIFY(!m_actions->isPlayed(kItemId));
+    QCOMPARE(queue->current().played, false);
+    m_actions->applyExternalUserData(kItemId, false, true); // someone else unwatched it
+    QCOMPARE(played.count(), 2);
+    QTRY_COMPARE(failed.count(), 2);
+    QVERIFY(!m_actions->isPlayed(kItemId));
+    QCOMPARE(played.last().at(1).toBool(), false);
+}
+
+// A music item is in no registered model, so once it has been toggled here its
+// state lives in the cache and beats the item map from then on. Without a live
+// record reaching that cache, a change made on another client left its context
+// menu one click stale.
+void ItemActionsTest::liveRecordReplacesAStateThisSessionToggled()
+{
+    const QString id = QStringLiteral("music-only");
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
+    QVariantMap item = itemMap(QStringLiteral("Audio"), id);
+    item.insert(QStringLiteral("favourite"), false);
+
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 1);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QVERIFY(m_actions->isFavorite(id));
+
+    // Unfavourited from a phone. The row's own map follows through the music
+    // relay; the menu has to follow as well.
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+    m_actions->applyExternalUserData(id, false, false);
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(favorite.first().at(1).toBool(), false);
+    QCOMPARE(descriptorFor(m_actions->itemMenuPolicy(item, true, false, false, false, {}),
+                           QStringLiteral("favorite"))
+                 .value(QStringLiteral("presentation"))
+                 .toString(),
+             QStringLiteral("addFavorite"));
+
+    // And the next click asks for the right thing: favourite it, not remove it.
+    m_actions->performItemVerb(QStringLiteral("favorite"), item);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 2);
+    QCOMPARE(requestCount(QStringLiteral("DELETE"), favoritePath(id)), 0);
+}
+
+void ItemActionsTest::liveRecordLeavesAbsentFieldsAlone()
+{
+    const QString id = QStringLiteral("in-no-model");
+    m_actions->applyExternalUserData(id, true, true);
+    QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    QSignalSpy favorite(m_actions, &ItemActions::favoriteChanged);
+
+    // A patch that states only the favourite says nothing about "watched".
+    m_actions->applyUserDataPatches(
+        {QVariantMap{{QStringLiteral("itemId"), id}, {QStringLiteral("favorite"), false}}});
+    QCOMPARE(played.count(), 0);
+    QVERIFY(m_actions->isPlayed(id));
+    QCOMPARE(favorite.count(), 1);
+    QVERIFY(!m_actions->isFavorite(id));
+
+    // Nor does one that states nothing at all, or carries no id.
+    m_actions->applyUserDataPatches({QVariantMap{{QStringLiteral("itemId"), id}},
+                                     QVariantMap{{QStringLiteral("played"), false}},
+                                     QVariant(QStringLiteral("not a map"))});
+    QCOMPARE(played.count(), 0);
+    QCOMPARE(favorite.count(), 1);
+    QVERIFY(m_actions->isPlayed(id));
+
+    // The model row keeps its resume point when the record carries none.
+    const qint64 position = m_model->items().first().playbackPositionTicks;
+    QVERIFY(position > 0);
+    m_actions->applyUserDataPatches(
+        {QVariantMap{{QStringLiteral("itemId"), kItemId}, {QStringLiteral("favorite"), true}}});
+    QCOMPARE(m_model->items().first().favorite, true);
+    QCOMPARE(m_model->items().first().played, false);
+    QCOMPARE(m_model->items().first().playbackPositionTicks, position);
+}
+
+// The server mentions far more items in a session than this one will ever
+// show. A record takes a slot only when it changes the answer for an item
+// nothing else can answer for, and those slots are the same bounded,
+// oldest-settled-first table the toggles use.
+void ItemActionsTest::liveRecordsStayInsideTheBoundedCache()
+{
+    m_actions->setUserStateCacheLimitForTests(4);
+
+    // Changes nothing we would have answered: no slot.
+    for (int i = 0; i < 50; ++i)
+        m_actions->applyExternalUserData(QStringLiteral("quiet-%1").arg(i), false, false);
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 0);
+
+    QSignalSpy played(m_actions, &ItemActions::playedChanged);
+    for (int i = 0; i < 50; ++i)
+        m_actions->applyExternalUserData(QStringLiteral("loud-%1").arg(i), true, false);
+    QCOMPARE(played.count(), 50);
+    QCOMPARE(m_actions->cachedUserStateCountForTests(), 4);
+    QVERIFY(m_actions->isPlayed(QStringLiteral("loud-49")));
+    QVERIFY(!m_actions->isPlayed(QStringLiteral("loud-0"))); // evicted, oldest first
+}
+
+// The record that most reliably arrives for the queue's current entry is the
+// server's own, right after playback stops. The queue is intact and nothing is
+// playing; enrichEntry() there would announce the cursor and start it again.
+void ItemActionsTest::liveRecordPatchesTheQueueWithoutRestartingIt()
+{
+    const QString playbackInfo = QStringLiteral("/Items/%1/PlaybackInfo").arg(kItemId);
+    playThenStop({m_model->items().first(), m_model->items().first()});
+    if (QTest::currentTestFailed())
+        return;
+    PlayQueue *queue = m_player->queue();
+
+    QSignalSpy cursor(queue, &PlayQueue::currentItemChanged);
+    QSignalSpy queueChanged(queue, &PlayQueue::queueChanged);
+    m_actions->applyUserDataPatches({QVariantMap{{QStringLiteral("itemId"), kItemId},
+                                                 {QStringLiteral("played"), true},
+                                                 {QStringLiteral("favorite"), true},
+                                                 {QStringLiteral("positionTicks"), 0},
+                                                 {QStringLiteral("playCount"), 1}}});
+
+    // Both entries holding the item, the one under the cursor included.
+    for (int row = 0; row < 2; ++row) {
+        const QVariantMap entry = queue->itemAt(row);
+        QCOMPARE(entry.value(QStringLiteral("played")).toBool(), true);
+        QCOMPARE(entry.value(QStringLiteral("favorite")).toBool(), true);
+        QCOMPARE(entry.value(QStringLiteral("positionMs")).toLongLong(), 0);
+        QCOMPARE(entry.value(QStringLiteral("playCount")).toInt(), 1);
+    }
+    QCOMPARE(queueChanged.count(), 1);
+    QCOMPARE(cursor.count(), 0);
+
+    // And playback stays stopped: no new session, no new ticket.
+    QTest::qWait(100);
+    QVERIFY(!m_player->active());
+    QCOMPARE(requestCount(QStringLiteral("POST"), playbackInfo), 1);
+}
+
+// The queue panel and the now-playing surfaces read the queue entry, which no
+// registered model stands in for. Only the field that was toggled is written.
+void ItemActionsTest::localToggleReachesTheQueueEntry()
+{
+    const QString id = QStringLiteral("queued-track");
+    m_mock->addRoute(QStringLiteral("POST"), favoritePath(id), 204, {});
+    MediaItem track = makeItem(id, QStringLiteral("Queued"));
+    track.played = true;
+    playThenStop({track});
+    if (QTest::currentTestFailed())
+        return;
+    PlayQueue *queue = m_player->queue();
+
+    QSignalSpy cursor(queue, &PlayQueue::currentItemChanged);
+    m_actions->setFavorite(id, true);
+    QCOMPARE(queue->current().favorite, true);
+    QCOMPARE(queue->current().played, true); // not overwritten with a default
+    QCOMPARE(cursor.count(), 0);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), favoritePath(id)), 1);
 }
 
 void ItemActionsTest::navigationVerbsEmitRequests()

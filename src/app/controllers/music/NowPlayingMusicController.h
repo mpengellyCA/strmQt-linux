@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -88,10 +87,10 @@ public:
     Q_INVOKABLE void playAlbumFrom(int row);
     Q_INVOKABLE void toggleFavourite();
 
-    // Authentication boundary. The favourite overrides are keyed by item id
-    // and belong to the account that set them; the album rows and lyrics are
-    // that account's fetches. Application calls this after the player's own
-    // boundary shutdown has emptied the queue.
+    // Authentication boundary. The album rows and lyrics are the outgoing
+    // account's fetches; the favourite is the queue entry's and goes with the
+    // queue. Application calls this after the player's own boundary shutdown
+    // has emptied the queue.
     void resetSessionState();
 
     // caps::kLyricsAvailable is constexpr; tests drive both branches.
@@ -141,8 +140,9 @@ private:
     QString m_album;
     QString m_albumId;
     QString m_coverUrl;
+    // The current queue entry's own flag. There is no overlay on top of it:
+    // a toggle and a server record both reach the entry itself.
     bool m_itemFavourite = false;
-    QHash<QString, bool> m_favouriteOverrides;
     QString m_readout;
     QString m_sourceLabel;
     QString m_sourceKicker;

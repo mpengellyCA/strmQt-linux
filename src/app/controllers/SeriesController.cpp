@@ -12,6 +12,14 @@ SeriesController::SeriesController(emby::EmbyClient *client, QObject *parent)
     : QObject(parent), m_client(client), m_seasons(new MediaItemModel(this)),
       m_episodes(new MediaItemModel(this))
 {
+    m_playedRefresh.setSingleShot(true);
+    m_playedRefresh.setInterval(0);
+    connect(&m_playedRefresh, &QTimer::timeout, this, [this] {
+        if (m_seriesId.isEmpty())
+            return;
+        refreshNextUnwatched();
+        refreshSeasonCounts();
+    });
 }
 
 void SeriesController::bindLiveUpdates(LiveUpdateService *service)
@@ -275,9 +283,9 @@ void SeriesController::notePlayed(const QString &itemId, bool)
     // row is both cheaper and more reliable than trying to infer membership
     // from the selected-season model. A change from another open surface costs
     // one bounded request and cannot contaminate this series' answer because
-    // ParentId remains the current series.
-    refreshNextUnwatched();
-    refreshSeasonCounts();
+    // ParentId remains the current series. Changes that arrive together are
+    // answered together, on the next turn of the event loop.
+    m_playedRefresh.start();
 }
 
 void SeriesController::refreshSeasonCounts()

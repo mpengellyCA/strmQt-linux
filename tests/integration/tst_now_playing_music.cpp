@@ -109,6 +109,7 @@ private slots:
     void readoutFromTicketAndMethod();
     void timeTextFormatsBothClocks();
     void favouriteToggles();
+    void favouriteFollowsTheQueueEntry();
     void lyricsBehindCaps();
     void lyricsTimedFollowsTheParser();
 
@@ -392,6 +393,60 @@ void NowPlayingMusicTest::favouriteToggles()
     QVERIFY(m_controller->favourite()); // optimistic
     QVERIFY(spy.count() >= 1);
     QTRY_COMPARE(requestsTo(QStringLiteral("POST"), QStringLiteral("/Users/%1/FavoriteItems/a1").arg(kUserId)), 1);
+}
+
+// The heart is the queue entry's own flag: a toggle here, a failed toggle's
+// rollback and the server's record from another client all land on the entry,
+// and none of them is shadowed by a value remembered from an earlier toggle.
+void NowPlayingMusicTest::favouriteFollowsTheQueueEntry()
+{
+    m_player->playQueue(MusicPlayback::toMaps({track("a1", "alA", 1), track("a2", "alA", 2)}), 0);
+    QTRY_COMPARE(m_controller->trackId(), QStringLiteral("a1"));
+    QTRY_VERIFY(m_player->active());
+    // The session's own ticket, so a second one below is a restart.
+    QTRY_COMPARE(requestsTo(QStringLiteral("POST"), QStringLiteral("/Items/a1/PlaybackInfo")), 1);
+    QSignalSpy spy(m_controller, &NowPlayingMusicController::favouriteChanged);
+    QSignalSpy cursor(queue(), &PlayQueue::currentItemChanged);
+    const int tickets = 1;
+
+    // Toggled here, then confirmed.
+    m_controller->toggleFavourite();
+    QVERIFY(m_controller->favourite());
+    QCOMPARE(queue()->current().favorite, true);
+    QVERIFY(m_controller->trackItem().value(QStringLiteral("favorite")).toBool());
+    QTRY_COMPARE(requestsTo(QStringLiteral("POST"), QStringLiteral("/Users/%1/FavoriteItems/a1").arg(kUserId)), 1);
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+
+    // Unfavourited on another client: the server's record wins over what this
+    // session last toggled.
+    int before = spy.count();
+    m_actions->applyExternalUserData(QStringLiteral("a1"), std::nullopt, false);
+    QVERIFY(!m_controller->favourite());
+    QVERIFY(spy.count() > before);
+    QVERIFY(!m_controller->trackItem().value(QStringLiteral("favorite")).toBool());
+
+    // A record for a track that is queued but not playing changes nothing here
+    // now, and is there when the queue reaches it.
+    before = spy.count();
+    m_actions->applyExternalUserData(QStringLiteral("a2"), std::nullopt, true);
+    QVERIFY(!m_controller->favourite());
+    QCOMPARE(spy.count(), before);
+
+    // A toggle that the server refuses rolls the heart back.
+    m_controller->toggleFavourite(); // POST …/a1 succeeds in this fixture
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QVERIFY(m_controller->favourite());
+    m_controller->toggleFavourite(); // DELETE …/a1 has no route: 404
+    QVERIFY(!m_controller->favourite());
+    QTRY_VERIFY(m_controller->favourite());
+
+    // None of it moved the cursor or asked for the track again.
+    QCOMPARE(cursor.count(), 0);
+    QCOMPARE(requestsTo(QStringLiteral("POST"), QStringLiteral("/Items/a1/PlaybackInfo")), tickets);
+
+    queue()->jumpTo(1);
+    QTRY_COMPARE(m_controller->trackId(), QStringLiteral("a2"));
+    QVERIFY(m_controller->favourite());
 }
 
 void NowPlayingMusicTest::lyricsBehindCaps()

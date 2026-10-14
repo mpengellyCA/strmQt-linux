@@ -785,6 +785,15 @@ void ContentControllersTest::seriesNextUnwatchedRefetchesAfterPlayedChanges()
     QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 4, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!series.hasNextUnwatched(), 5000);
 
+    // Several episodes changing together (a season marked watched, another
+    // client's burst) are answered by one refetch, not one per episode.
+    series.notePlayed(QStringLiteral("first"), true);
+    series.notePlayed(QStringLiteral("second"), true);
+    series.notePlayed(QStringLiteral("third"), true);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 5, 5000);
+    QTest::qWait(100);
+    QCOMPARE(requestsFor(itemsPath), 5);
+
     // A phone/player update reaches SeriesController through the same
     // debounced invalidation channel as every other live consumer and causes
     // one bounded reconciliation, not a retained whole-series snapshot.

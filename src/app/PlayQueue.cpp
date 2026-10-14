@@ -379,6 +379,48 @@ void PlayQueue::enrichEntry(const MediaItem &item)
     emit queueChanged();
 }
 
+int PlayQueue::updateUserData(const QString &itemId, std::optional<bool> played,
+                              std::optional<bool> favorite,
+                              std::optional<qint64> playbackPositionTicks,
+                              std::optional<int> playCount)
+{
+    if (itemId.isEmpty())
+        return 0;
+    int changed = 0;
+    // Every occurrence: the same item may be queued twice (enrichEntry()).
+    for (int row = 0; row < m_entries.size(); ++row) {
+        MediaItem &item = m_entries[row].item;
+        if (item.id != itemId)
+            continue;
+        const bool same = (!played || item.played == *played) &&
+                          (!favorite || item.favorite == *favorite) &&
+                          (!playbackPositionTicks ||
+                           item.playbackPositionTicks == *playbackPositionTicks) &&
+                          (!playCount || item.playCount == *playCount);
+        if (same)
+            continue;
+        if (played)
+            item.played = *played;
+        if (favorite)
+            item.favorite = *favorite;
+        if (playbackPositionTicks)
+            item.playbackPositionTicks = *playbackPositionTicks;
+        if (playCount)
+            item.playCount = *playCount;
+        const QModelIndex idx = index(row);
+        emit dataChanged(idx, idx,
+                         {MediaItemModel::PlayedRole, MediaItemModel::PlayCountRole,
+                          MediaItemModel::FavoriteRole, MediaItemModel::ResumableRole,
+                          MediaItemModel::ProgressRole, MediaItemModel::PositionMsRole});
+        ++changed;
+    }
+    // The cursor did not move and the entry under it is the same entry, so
+    // neither cursor signal is due. See the header for why that matters.
+    if (changed > 0)
+        emit queueChanged();
+    return changed;
+}
+
 int PlayQueue::originalPositionOf(quint64 key) const
 {
     return static_cast<int>(m_originalKeys.indexOf(key));

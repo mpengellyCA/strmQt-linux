@@ -3,6 +3,7 @@
 #include "app/models/MediaItemModel.h"
 
 #include <QObject>
+#include <QTimer>
 #include <QString>
 #include <QVariantList>
 #include <QVariantMap>
@@ -127,6 +128,9 @@ private:
     int m_seriesGeneration = 0;
     int m_nextUnwatchedGeneration = 0;
     int m_seasonCountsGeneration = 0;
+    // notePlayed() arrives once per episode when several change together (a
+    // season marked watched, another client's burst); one refetch answers all.
+    QTimer m_playedRefresh;
 };
 
 } // namespace strmqt

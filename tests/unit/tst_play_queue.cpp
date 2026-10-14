@@ -77,6 +77,8 @@ private slots:
     void contextLabelNamesTheRecordTheQueueCameFrom();
     void sourceLabelFollowsTheQueueItDescribes();
     void enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds();
+    void updateUserDataPatchesEveryOccurrenceAndNeverTheCursor();
+    void updateUserDataLeavesAbsentFieldsAndRepeatsAlone();
 };
 
 void PlayQueueTest::initTestCase()
@@ -804,6 +806,103 @@ void PlayQueueTest::enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds()
     record.id = QStringLiteral("absent");
     queue.enrichEntry(record);
     QCOMPARE(queueSpy.count(), 2);
+}
+
+// The server's record for the item under the cursor arrives straight after the
+// stop report, with the queue intact and nothing playing. currentItemChanged is
+// what PlayerController turns into "play this", so a user-data patch must never
+// raise it — nor either of the other cursor signals.
+void PlayQueueTest::updateUserDataPatchesEveryOccurrenceAndNeverTheCursor()
+{
+    const auto entry = [](const QString &id, const QString &entryId) {
+        MediaItem item;
+        item.id = id;
+        item.name = id;
+        item.type = QStringLiteral("Audio");
+        item.playlistItemId = entryId;
+        item.runtimeTicks = 200 * kTicksPerSecond;
+        return item;
+    };
+    PlayQueue queue;
+    queue.setItems({entry(QStringLiteral("same"), QStringLiteral("entry-a")),
+                    entry(QStringLiteral("other"), QStringLiteral("entry-b")),
+                    entry(QStringLiteral("same"), QStringLiteral("entry-c"))},
+                   2);
+
+    QSignalSpy itemSpy(&queue, &PlayQueue::currentItemChanged);
+    QSignalSpy displacedSpy(&queue, &PlayQueue::currentItemDisplaced);
+    QSignalSpy cursorSpy(&queue, &PlayQueue::currentChanged);
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+    QSignalSpy resetSpy(&queue, &PlayQueue::modelReset);
+
+    // The current row (2) holds the item, and so does row 0.
+    QCOMPARE(queue.updateUserData(QStringLiteral("same"), true, true, 50 * kTicksPerSecond, 3), 2);
+
+    QCOMPARE(itemSpy.count(), 0);
+    QCOMPARE(displacedSpy.count(), 0);
+    QCOMPARE(cursorSpy.count(), 0);
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(queue.currentIndex(), 2);
+    for (const int row : {0, 2}) {
+        const QVariantMap map = queue.itemAt(row);
+        QCOMPARE(map.value(QStringLiteral("played")).toBool(), true);
+        QCOMPARE(map.value(QStringLiteral("favorite")).toBool(), true);
+        QCOMPARE(map.value(QStringLiteral("positionMs")).toLongLong(), 50'000);
+        QCOMPARE(map.value(QStringLiteral("playCount")).toInt(), 3);
+    }
+    // Still the entries they were.
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(queue.itemAt(2).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-c"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("played")).toBool(), false);
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("favorite")).toBool(), false);
+
+    // One row announcement per entry, naming the user-data roles; one queue
+    // announcement for the surfaces that read itemAt().
+    QCOMPARE(dataSpy.count(), 2);
+    QCOMPARE(dataSpy.at(0).at(0).toModelIndex().row(), 0);
+    QCOMPARE(dataSpy.at(1).at(0).toModelIndex().row(), 2);
+    const QList<int> roles = dataSpy.at(0).at(2).value<QList<int>>();
+    QVERIFY(roles.contains(MediaItemModel::PlayedRole));
+    QVERIFY(roles.contains(MediaItemModel::FavoriteRole));
+    QVERIFY(roles.contains(MediaItemModel::PositionMsRole));
+    QCOMPARE(queueSpy.count(), 1);
+}
+
+void PlayQueueTest::updateUserDataLeavesAbsentFieldsAndRepeatsAlone()
+{
+    MediaItem item;
+    item.id = QStringLiteral("a");
+    item.type = QStringLiteral("Audio");
+    item.played = true;
+    item.favorite = false;
+    item.playbackPositionTicks = 7 * kTicksPerSecond;
+    item.playCount = 4;
+    PlayQueue queue;
+    queue.setItems({item});
+
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+    QSignalSpy itemSpy(&queue, &PlayQueue::currentItemChanged);
+
+    // Only the favourite is stated; nothing else may be invented.
+    QCOMPARE(queue.updateUserData(QStringLiteral("a"), std::nullopt, true), 1);
+    QCOMPARE(queue.current().played, true);
+    QCOMPARE(queue.current().favorite, true);
+    QCOMPARE(queue.current().playbackPositionTicks, 7 * kTicksPerSecond);
+    QCOMPARE(queue.current().playCount, 4);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(dataSpy.count(), 1);
+
+    // The same values again, an unknown id and an empty one: all silent.
+    QCOMPARE(queue.updateUserData(QStringLiteral("a"), true, true, 7 * kTicksPerSecond, 4), 0);
+    QCOMPARE(queue.updateUserData(QStringLiteral("nobody"), false, false), 0);
+    QCOMPARE(queue.updateUserData(QString(), false, false), 0);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(dataSpy.count(), 1);
+    QCOMPARE(itemSpy.count(), 0);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

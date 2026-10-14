@@ -2,6 +2,7 @@
 #include <QtTest>
 
 #include "MockEmbyServer.h"
+#include "app/ItemActions.h"
 #include "app/controllers/DetailsController.h"
 #include "app/controllers/HomeController.h"
 #include "app/controllers/LibraryController.h"
@@ -92,6 +93,7 @@ private slots:
     void seriesSeasonCountsAreRefetchedNotInvented();
     void detailsRailsAndItemStateFollowALivePatch();
     void detailsReplyDoesNotOverwriteANewerLiveRecord();
+    void itemActionsFollowsALiveRecordAheadOfTheModelBindings();
 
 private:
     void routeHomeFixtures();
@@ -1046,6 +1048,77 @@ void LiveUpdatesTest::detailsReplyDoesNotOverwriteANewerLiveRecord()
     QVERIFY(details.played());
     QVERIFY(details.favorite());
     QCOMPARE(details.positionMs(), 0);
+}
+
+// The details and series pages' own watched / favourite buttons read
+// ItemActions and listen to its signals, so a record from another client has
+// to come out of ItemActions like a toggle made here. Wired exactly as
+// Application.cpp wires it: ItemActions is the FIRST connection on
+// userDataPatched, ahead of every controller that patches a registered model
+// from the same record.
+void LiveUpdatesTest::itemActionsFollowsALiveRecordAheadOfTheModelBindings()
+{
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(10, 10, 100);
+    ItemActions actions(m_client, nullptr);
+    MediaItemModel rail;
+    MediaItem row;
+    row.id = QStringLiteral("ep-1");
+    row.type = QStringLiteral("Episode");
+    row.runtimeTicks = 100 * kTicksPerSecond;
+    rail.setItems({row});
+    actions.registerModel(&rail);
+
+    connect(&live, &LiveUpdateService::userDataPatched, &actions,
+            &ItemActions::applyUserDataPatches);
+    // Stands in for a controller's own binding (Home, Library, Series, …),
+    // which patches the same registered row from the same record afterwards.
+    int railPatches = 0;
+    connect(&live, &LiveUpdateService::userDataPatched, &rail, [&](const QVariantList &entries) {
+        for (const QVariant &value : entries) {
+            const QVariantMap entry = value.toMap();
+            rail.updateUserData(entry.value(QStringLiteral("itemId")).toString(),
+                                entry.value(QStringLiteral("played")).toBool(),
+                                entry.value(QStringLiteral("favorite")).toBool(),
+                                entry.value(QStringLiteral("positionTicks")).toLongLong(),
+                                entry.value(QStringLiteral("playCount")).toInt());
+            ++railPatches;
+        }
+    });
+
+    QSignalSpy played(&actions, &ItemActions::playedChanged);
+    QSignalSpy favorite(&actions, &ItemActions::favoriteChanged);
+    const qsizetype requestsBefore = m_mock->requests().size();
+
+    // An item a registered model holds, and one nothing here has ever seen —
+    // the details page's own item is often the latter.
+    live.socket()->handleTextMessage(
+        userDataFrame(QStringLiteral("ep-1"), true, false, 30 * kTicksPerSecond, 1));
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("open-movie"), true, true, 0, 1));
+    QCOMPARE(railPatches, 2);
+
+    QCOMPARE(played.count(), 2);
+    QCOMPARE(played.at(0).at(0).toString(), QStringLiteral("ep-1"));
+    QCOMPARE(played.at(0).at(1).toBool(), true);
+    QCOMPARE(played.at(1).at(0).toString(), QStringLiteral("open-movie"));
+    QCOMPARE(favorite.count(), 1);
+    QCOMPARE(favorite.at(0).at(0).toString(), QStringLiteral("open-movie"));
+    QVERIFY(actions.isPlayed(QStringLiteral("ep-1")));
+    QVERIFY(actions.isPlayed(QStringLiteral("open-movie")));
+    QVERIFY(actions.isFavorite(QStringLiteral("open-movie")));
+    QCOMPARE(rail.items().first().played, true);
+    QCOMPARE(rail.items().first().playbackPositionTicks, 30 * kTicksPerSecond);
+
+    // The server repeats itself (it does, per client that reported): silence.
+    live.socket()->handleTextMessage(
+        userDataFrame(QStringLiteral("ep-1"), true, false, 30 * kTicksPerSecond, 1));
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("open-movie"), true, true, 0, 1));
+    QCOMPARE(played.count(), 2);
+    QCOMPARE(favorite.count(), 1);
+
+    // Following a record is not a write.
+    QCOMPARE(actions.pendingUserStateRequestCountForTests(), 0);
+    QCOMPARE(m_mock->requests().size(), requestsBefore);
 }
 
 QTEST_GUILESS_MAIN(LiveUpdatesTest)

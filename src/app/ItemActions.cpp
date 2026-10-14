@@ -1097,31 +1097,121 @@ void ItemActions::syncCachedUserState(MediaItemModel *model, int firstRow, int l
         const MediaItem &item = items.at(row);
         if (item.id.isEmpty())
             continue;
-        auto playedRequest = m_playedRequests.find(item.id);
-        auto favoriteRequest = m_favoriteRequests.find(item.id);
-        if (!m_state.contains(item.id) && playedRequest == m_playedRequests.end() &&
-            favoriteRequest == m_favoriteRequests.end())
-            continue;
-
-        UserState state = knownState(item.id);
-        if (playedRequest == m_playedRequests.end())
-            state.played = item.played;
-        else
-            playedRequest->baseline = item.played;
-        if (favoriteRequest == m_favoriteRequests.end())
-            state.favorite = item.favorite;
-        else
-            favoriteRequest->baseline = item.favorite;
-        rememberState(item.id, state);
+        mergeServerState(item.id, item.played, item.favorite, false);
     }
 }
 
-void ItemActions::patchModels(const QString &itemId, const UserState &state)
+ItemActions::ServerMerge ItemActions::mergeServerState(const QString &itemId,
+                                                       std::optional<bool> played,
+                                                       std::optional<bool> favorite,
+                                                       bool admitUnanswered)
+{
+    ServerMerge merge;
+    auto playedRequest = m_playedRequests.find(itemId);
+    auto favoriteRequest = m_favoriteRequests.find(itemId);
+    const bool tracked = m_state.contains(itemId) || playedRequest != m_playedRequests.end() ||
+                         favoriteRequest != m_favoriteRequests.end();
+    if (!tracked && !admitUnanswered)
+        return merge;
+
+    merge.before = knownState(itemId);
+    merge.after = merge.before;
+    // A field on the wire keeps the user's intent; the server's value is what
+    // a failed request must roll back to.
+    if (played) {
+        if (playedRequest == m_playedRequests.end())
+            merge.after.played = *played;
+        else
+            playedRequest->baseline = *played;
+    }
+    if (favorite) {
+        if (favoriteRequest == m_favoriteRequests.end())
+            merge.after.favorite = *favorite;
+        else
+            favoriteRequest->baseline = *favorite;
+    }
+    if (tracked) {
+        rememberState(itemId, merge.after);
+        return merge;
+    }
+
+    // Nothing tracked this item. A record that changes no answer needs no
+    // mirror, and neither does one for an item a registered model holds: the
+    // caller patches that row and the row is the memory. Only what is left —
+    // an item nothing else here can answer for — takes a slot, so a burst
+    // from another client costs the bounded cache as little as it can.
+    if (merge.after.played == merge.before.played &&
+        merge.after.favorite == merge.before.favorite)
+        return merge;
+    if (hasSettledState(itemId))
+        return merge;
+    if (!admitUserState(itemId)) {
+        // Every slot is pinned by a request. Unremembered, the change must not
+        // be announced either: isPlayed() would go on giving the old answer.
+        merge.after = merge.before;
+        return merge;
+    }
+    rememberState(itemId, merge.after);
+    return merge;
+}
+
+void ItemActions::applyExternalUserData(const QString &itemId, std::optional<bool> played,
+                                        std::optional<bool> favorite,
+                                        std::optional<qint64> playbackPositionTicks,
+                                        std::optional<int> playCount)
+{
+    if (itemId.isEmpty())
+        return;
+    // The queue takes the server's value for a settled field only: a field on
+    // the wire already shows what the user asked for (applyPlayed() /
+    // applyFavorite() patched it) and has to go on showing it.
+    const bool playedSettled = !m_playedRequests.contains(itemId);
+    const bool favoriteSettled = !m_favoriteRequests.contains(itemId);
+
+    const ServerMerge merge = mergeServerState(itemId, played, favorite, true);
+    patchModels(itemId, merge.after, playbackPositionTicks.value_or(-1), playCount.value_or(-1));
+    if (m_player) {
+        m_player->queue()->updateUserData(itemId, playedSettled ? played : std::nullopt,
+                                          favoriteSettled ? favorite : std::nullopt,
+                                          playbackPositionTicks, playCount);
+    }
+    if (merge.after.played != merge.before.played)
+        emit playedChanged(itemId, merge.after.played);
+    if (merge.after.favorite != merge.before.favorite)
+        emit favoriteChanged(itemId, merge.after.favorite);
+}
+
+void ItemActions::applyUserDataPatches(const QVariantList &entries)
+{
+    const auto flag = [](const QVariantMap &entry, const QString &key) -> std::optional<bool> {
+        const auto it = entry.constFind(key);
+        return it != entry.cend() ? std::optional<bool>(it->toBool()) : std::nullopt;
+    };
+    for (const QVariant &value : entries) {
+        const QVariantMap entry = value.toMap();
+        // A key the patch does not carry is not a `false` or a zero.
+        std::optional<qint64> positionTicks;
+        const auto position = entry.constFind(QStringLiteral("positionTicks"));
+        if (position != entry.cend() && position->toLongLong() >= 0)
+            positionTicks = position->toLongLong();
+        std::optional<int> playCount;
+        const auto count = entry.constFind(QStringLiteral("playCount"));
+        if (count != entry.cend() && count->toInt() >= 0)
+            playCount = count->toInt();
+        applyExternalUserData(entry.value(kItemIdKey).toString(),
+                              flag(entry, QStringLiteral("played")),
+                              flag(entry, QStringLiteral("favorite")), positionTicks, playCount);
+    }
+}
+
+void ItemActions::patchModels(const QString &itemId, const UserState &state,
+                              qint64 playbackPositionTicks, int playCount)
 {
     m_models.removeIf([](const QPointer<MediaItemModel> &model) { return model.isNull(); });
     m_patchingModels = true;
     for (const QPointer<MediaItemModel> &model : std::as_const(m_models))
-        model->updateUserData(itemId, state.played, state.favorite);
+        model->updateUserData(itemId, state.played, state.favorite, playbackPositionTicks,
+                              playCount);
     m_patchingModels = false;
 }
 
@@ -1131,6 +1221,10 @@ void ItemActions::applyPlayed(const QString &itemId, bool played)
     state.played = played;
     rememberState(itemId, state);
     patchModels(itemId, state);
+    // The queue is a model of items too, and nothing else tells it. Only the
+    // field that moved: `state` may hold a default for the other one.
+    if (m_player)
+        m_player->queue()->updateUserData(itemId, played, std::nullopt);
     emit playedChanged(itemId, played);
 }
 
@@ -1140,6 +1234,8 @@ void ItemActions::applyFavorite(const QString &itemId, bool favorite)
     state.favorite = favorite;
     rememberState(itemId, state);
     patchModels(itemId, state);
+    if (m_player)
+        m_player->queue()->updateUserData(itemId, std::nullopt, favorite);
     emit favoriteChanged(itemId, favorite);
 }
 

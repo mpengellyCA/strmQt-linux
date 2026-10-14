@@ -9,6 +9,8 @@
 #include <QVariant>
 #include <QVariantMap>
 
+#include <optional>
+
 namespace strmqt {
 
 // The keystone abstraction (ARCHITECTURE.md): an ordered list of MediaItems
@@ -99,6 +101,22 @@ public:
     // so every entry holding that item is enriched, and each keeps the
     // playlistItemId it was queued with when the record carries none.
     void enrichEntry(const MediaItem &item);
+
+    // The user data of an item changed (a toggle here, or the server's record
+    // from anywhere): every entry holding that item takes the new values. An
+    // absent field is left as it is. Returns how many entries really changed.
+    //
+    // NOT enrichEntry() with fewer fields. That one announces the current row
+    // as currentItemChanged(), which PlayerController reads as "play this" —
+    // and the record that most reliably arrives for the current row is the
+    // server's own, straight after the stop report, with the queue intact and
+    // nothing playing. So this announces rows (dataChanged) and payload
+    // (queueChanged, which is what the surfaces reading itemAt() listen to),
+    // never the cursor, and stays silent when nothing changed.
+    int updateUserData(const QString &itemId, std::optional<bool> played,
+                       std::optional<bool> favorite,
+                       std::optional<qint64> playbackPositionTicks = std::nullopt,
+                       std::optional<int> playCount = std::nullopt);
 
     // Derived from what the queue HOLDS, not remembered from the verb that
     // filled it. A label carried in from a click can outlive the queue it

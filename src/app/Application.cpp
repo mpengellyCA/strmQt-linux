@@ -144,6 +144,18 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // startup: watch something on a phone and Continue Watching stays wrong until
     // the app is restarted.
     m_live = new LiveUpdateService(m_client, m_settings, this);
+    // The first connection on userDataPatched, on purpose. ItemActions decides
+    // "did this record change the answer" against what the registered models
+    // held BEFORE anyone patched them, patches those models and the play queue
+    // itself, and only then emits playedChanged / favoriteChanged — which is
+    // what the details and series pages' own buttons listen to. Bound after
+    // the controllers below, it would find the rows already matching the
+    // record and say nothing. Everything those signals reach (DetailsController
+    // ::notePlayed / noteFavorite above, the music relay and the album and
+    // artist hearts below) sets a value rather than toggling one, so the
+    // record arriving at them a second time by their own binding is a no-op.
+    connect(m_live, &LiveUpdateService::userDataPatched, m_actions,
+            &ItemActions::applyUserDataPatches);
     m_home->bindLiveUpdates(m_live);
     m_library->bindLiveUpdates(m_live);
     m_series->bindLiveUpdates(m_live);
