@@ -3,6 +3,8 @@
 #include <QSignalSpy>
 #include <QtTest>
 
+#include <algorithm>
+
 #include "core/Settings.h"
 
 using strmqt::Settings;
@@ -21,6 +23,11 @@ private slots:
     void oversizedLegacyChoicesArePrunedWhenSessionRestores();
     void accountProfileRemovalClearsSession();
     void webRemoteIsOffAndPinnedByDefault();
+    void webRemotePinExistsFromConstruction();
+    void webRemotePinIsKeptAcrossRuns();
+    void unusableWebRemotePinIsReplaced_data();
+    void unusableWebRemotePinIsReplaced();
+    void settingAnUnusableWebRemotePinStoresAFreshOne();
     void youtubeAndYoutubeMusicAreSwitchedSeparately();
 };
 
@@ -263,6 +270,128 @@ void SettingsTest::webRemoteIsOffAndPinnedByDefault()
     }
     Settings settings(ini);
     QVERIFY(settings.webRemoteSetupOffered());
+}
+
+namespace {
+bool isFourDigits(const QString &pin)
+{
+    return pin.size() == 4 && std::all_of(pin.cbegin(), pin.cend(), [](QChar c) {
+        return c >= QLatin1Char('0') && c <= QLatin1Char('9');
+    });
+}
+} // namespace
+
+// The PIN is made when Settings is, not on first read: webRemotePin() is a
+// const getter and must not be the thing that writes the store.
+void SettingsTest::webRemotePinExistsFromConstruction()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+
+    Settings settings(ini);
+    QSignalSpy spy(&settings, &Settings::webRemotePinChanged);
+    settings.flush();
+    // Nothing has asked for the PIN yet, and it is already on disk.
+    const QString stored =
+        QSettings(ini, QSettings::IniFormat).value(QStringLiteral("remote/pin")).toString();
+    QVERIFY2(isFourDigits(stored), qPrintable(stored));
+
+    const Settings &readOnly = settings;
+    QCOMPARE(readOnly.webRemotePin(), stored);
+    QCOMPARE(readOnly.webRemotePin(), stored);
+    // Reading is not changing: no phone is signed out by a look at the PIN.
+    QCOMPARE(spy.count(), 0);
+}
+
+void SettingsTest::webRemotePinIsKeptAcrossRuns()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+
+    QString generated;
+    {
+        Settings settings(ini);
+        generated = settings.webRemotePin();
+    }
+    {
+        // The PIN a phone was given survives a restart…
+        Settings settings(ini);
+        QCOMPARE(settings.webRemotePin(), generated);
+    }
+    {
+        // …including one that happens to start with zeros, and one the user chose.
+        QSettings raw(ini, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("remote/pin"), QStringLiteral("0007"));
+    }
+    {
+        Settings settings(ini);
+        QCOMPARE(settings.webRemotePin(), QStringLiteral("0007"));
+        QSignalSpy spy(&settings, &Settings::webRemotePinChanged);
+        settings.setWebRemotePin(QStringLiteral("0007"));
+        QCOMPARE(spy.count(), 0);
+        settings.setWebRemotePin(QStringLiteral("4321"));
+        QCOMPARE(spy.count(), 1);
+    }
+    Settings settings(ini);
+    QCOMPARE(settings.webRemotePin(), QStringLiteral("4321"));
+}
+
+void SettingsTest::unusableWebRemotePinIsReplaced_data()
+{
+    QTest::addColumn<QString>("stored");
+    QTest::newRow("empty") << QString();
+    QTest::newRow("too-short") << QStringLiteral("12");
+    QTest::newRow("too-long") << QStringLiteral("123456");
+    QTest::newRow("letters") << QStringLiteral("abcd");
+    QTest::newRow("signed") << QStringLiteral("-123");
+    QTest::newRow("padded") << QStringLiteral(" 123");
+}
+
+// A hand-edited or damaged PIN is never served: a short or guessable one would
+// be the only thing between the LAN and the remote.
+void SettingsTest::unusableWebRemotePinIsReplaced()
+{
+    QFETCH(QString, stored);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    {
+        QSettings raw(ini, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("remote/pin"), stored);
+    }
+    QString replaced;
+    {
+        Settings settings(ini);
+        replaced = settings.webRemotePin();
+        QVERIFY2(isFourDigits(replaced), qPrintable(replaced));
+        QVERIFY(replaced != stored);
+    }
+    Settings settings(ini);
+    QCOMPARE(settings.webRemotePin(), replaced);
+}
+
+void SettingsTest::settingAnUnusableWebRemotePinStoresAFreshOne()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    QString fresh;
+    {
+        Settings settings(ini);
+        settings.setWebRemotePin(QStringLiteral("2468"));
+        QSignalSpy spy(&settings, &Settings::webRemotePinChanged);
+        settings.setWebRemotePin(QStringLiteral("12"));
+        fresh = settings.webRemotePin();
+        QVERIFY2(isFourDigits(fresh), qPrintable(fresh));
+        // Whatever replaced it, the old PIN is gone and its phones with it —
+        // unless the dice landed on the same four digits.
+        QCOMPARE(spy.count(), fresh == QStringLiteral("2468") ? 0 : 1);
+        QCOMPARE(settings.webRemotePin(), fresh);
+    }
+    Settings settings(ini);
+    QCOMPARE(settings.webRemotePin(), fresh);
 }
 
 void SettingsTest::youtubeAndYoutubeMusicAreSwitchedSeparately()
