@@ -206,10 +206,9 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browseGen
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browsePerson(person.id ? person.id : "", person.name)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browsePerson(person.id ? person.id : "", person.name)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browseStudio(studio.id ? studio.id : "", studio.name)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("play", page.item)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("playFromStart", page.item)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	PlaylistCtl.addItems(row.id, [picker.itemId])
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	PlaylistCtl.create(row.name, [picker.itemId])
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("play", page.playItem)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("playFromStart", page.playItem)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	DetailsCtl.ensureLoaded(page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.collections
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.crew
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.externalLinks
@@ -217,7 +216,8 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: Detail
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.studios
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	color: DetailsCtl.criticRating >= 60 ? Theme.positive
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (DetailsCtl.itemId === page.itemId)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	if (typed.length > 0 && !exact && PlaylistCtl.playlistsComplete)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	itemMenu.popupForItem(DetailsCtl.similar.get(index), mx, my)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index), mx, my)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: DetailsCtl.itemId === page.itemId
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	navigationFocusRefillActive: DetailsCtl.itemId === page.itemId
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onClicked: Actions.performItemVerb("browseCollection", page.item)
@@ -244,16 +244,15 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggl
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.similar.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.similar.get(index),
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index),
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	onMoreRequested: Actions.performItemVerb("series", page.item)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId && DetailsCtl.itemLoading
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	page.detailsLoading = DetailsCtl.itemId === page.itemId && DetailsCtl.itemLoading
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	people: DetailsCtl.cast
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	railModel: DetailsCtl.similar
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	railModel: DetailsCtl.upcomingEpisodes
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	target: Actions
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	target: DetailsCtl
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	text: DetailsCtl.tagline
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	text: Math.round(DetailsCtl.criticRating) + "%"
@@ -273,6 +272,7 @@ src/ui/pages/HomePage.qml: Unqualified access [unqualified]	body: HomeCtl.errorM
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	onActionTriggered: HomeCtl.refresh()
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	onActionTriggered: HomeCtl.refresh()
 src/ui/pages/HomePage.qml: Unqualified access [unqualified]	refillActive: HomeCtl.busy
+src/ui/pages/HomePage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	.arg(LibraryCtl.title)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	.arg(LibraryCtl.title)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	Actions.openDetails(item)
@@ -307,6 +307,7 @@ src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	onClicked: page.s
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	onNearEnd: if (LibraryCtl.canLoadMore) LibraryCtl.loadMore()
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	onNearEnd: if (LibraryCtl.canLoadMore) LibraryCtl.loadMore()
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	onToggled: LibraryCtl.setWatchedFilter(unwatchedChip.checked ? "all" : "unplayed")
+src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	text: qsTr("Couldn't load more: %1").arg(LibraryCtl.errorMessage)
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	title: LibraryCtl.title
 src/ui/pages/LibraryPage.qml: Unqualified access [unqualified]	visible: LibraryCtl.loading && grid.count === 0
@@ -831,6 +832,7 @@ src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	model: SeriesCtl.e
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	onActionTriggered: page.selectSeason(SeriesCtl.currentSeason)
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	opacity: SeriesCtl.loading ? 0.0 : 1.0
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	refillActive: SeriesCtl.loading
+src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	target: PlaylistCtl
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	target: SeriesCtl.episodes
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: !SeriesCtl.loading && episodeGrid.count === 0
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: SeriesCtl.loading
@@ -861,6 +863,7 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Sessi
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Session.switchUser()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: youtubeMusicPanel.signIn.request(index)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onCommitted: v => PlayerCtl.setVolume(Math.round(v))
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onKeyPressed: Input.noteInput("keyboard")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onMoved: v => PlayerCtl.setVolume(Math.round(v))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onResetRequested: Input.resetBinding(bindingRow.modelData.actionId)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: LiveCtl.enabled = !LiveCtl.enabled
@@ -873,6 +876,7 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeEnabled = !Prefs.youtubeEnabled
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs.youtubeMusicEnabled = !Prefs.youtubeMusicEnabled
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	padDriving: Input.gamepadActive
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")

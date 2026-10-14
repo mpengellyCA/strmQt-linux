@@ -1,5 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+// For ApplicationWindow.window: playlist results are announced by the window.
+import QtQuick.Controls.Basic
 import StrmQt
 
 // Home: vertical stack of rails (Continue Watching → Next Up → Libraries →
@@ -683,7 +685,61 @@ FocusScope {
         }
     }
 
-    ItemMenu { id: itemMenu }
+    ItemMenu {
+        id: itemMenu
+
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => page.addToPlaylist(item)
+    }
+
+    // ── Add to playlist ────────────────────────────────────────────────────
+    // The shared type-and-pick panel, as on the details page, so a film or an
+    // episode can be filed from where it was found. The keyboard
+    // goes back to the shelves, on the card it was last on.
+    function addToPlaylist(item): void {
+        if (item && item.itemId)
+            playlistPicker.show(item.name ? String(item.name) : "", [String(item.itemId)])
+    }
+
+    PlaylistPicker {
+        id: playlistPicker
+
+        z: 800
+        onDismissed: railList.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
+    // PlaylistCtl's results are global signals, so they are claimed only while
+    // this page has a write of its own outstanding: several pages with a
+    // picker are alive at once, and each of them hears every result. They go
+    // to the window's toast host because a page that has since been covered is
+    // not drawn, and neither is anything it shows.
+    Connections {
+        target: PlaylistCtl
+
+        function onActionSucceeded(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            page.notify(message, "success")
+        }
+        function onActionFailed(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            page.notify(message, "error")
+        }
+    }
+
+    // By name: the window is Main.qml's, and a page staged without it has
+    // nowhere to say it and says nothing.
+    function notify(message, severity): void {
+        const win = page.toastWindow
+        if (win && typeof win["notify"] === "function")
+            win["notify"](message, severity)
+    }
+
+    // Untyped on purpose: `notify` is Main.qml's, not ApplicationWindow's.
+    readonly property var toastWindow: page.ApplicationWindow.window
 
     // ── Page states ────────────────────────────────────────────────────────
     LoadingState {

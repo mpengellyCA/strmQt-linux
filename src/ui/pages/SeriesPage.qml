@@ -48,6 +48,33 @@ import StrmQt
 FocusScope {
     id: page
 
+    // ── Whose controller it is ─────────────────────────────────────────────
+    // SeriesCtl is process-wide, and this page stays alive under whatever is
+    // pushed over it (BoundedNavigationStack keeps a window of live pages). Open
+    // a second series from there and every signal below fired on this page too:
+    // its hero took the other show's artwork, its tabs became the other show's
+    // seasons, and a pending focus restore was spent on the other show's
+    // episodes — all behind a page the user was going to come back to.
+    //
+    // So the page remembers which series it was opened for, and its handlers
+    // answer only while that series owns the controller. Main.qml always
+    // prepares SeriesCtl before it constructs or returns to this page, so the
+    // id is known at completion; coming back re-opens the series, the id
+    // matches again, and the ordinary signals rebuild the page from there.
+    // Empty means the page was built against no series at all (the page
+    // self-test), where there is nothing to protect.
+    property string pageSeriesId: ""
+    readonly property bool mine: page.pageSeriesId.length === 0
+                                 || page.pageSeriesId === SeriesCtl.seriesId
+
+    // The same question, asked of the controller directly. Handlers use this
+    // rather than `mine`: the binding and a Connections handler hang off the
+    // same notify signal, and which of the two runs first is not something to
+    // lean on in the one handler whose whole job is noticing the change.
+    function ownsController(): bool {
+        return page.pageSeriesId.length === 0 || page.pageSeriesId === SeriesCtl.seriesId
+    }
+
     // ── Season tabs ────────────────────────────────────────────────────────
     // Rebuilt rather than bound: MediaItemModel is a list model and StrmTabBar
     // takes a plain array of { text, badge }.
@@ -261,6 +288,15 @@ FocusScope {
             page.syncUserState()
             return
         }
+        // Re-opened for the series this page already shows (coming back to it
+        // after another series borrowed the controller): the record in hand is
+        // still this series', and dropping to the placeholder below until the
+        // refetch lands would blank the hero for no reason.
+        if (page.seriesItem && page.seriesItem.itemId
+                && String(page.seriesItem.itemId) === SeriesCtl.seriesId) {
+            page.syncUserState()
+            return
+        }
         // Arrives a moment later than the page; until then, whatever model the
         // user came through still has the record.
         const known = Actions.itemFor(SeriesCtl.seriesId)
@@ -371,7 +407,7 @@ FocusScope {
             if (page.navSections[i].visible)
                 return page.navSections[i]
         }
-        return page.heroButton
+        return page.heroFoot
     }
 
     // ── Horizontal navigation across the verbs ─────────────────────────────
@@ -394,8 +430,51 @@ FocusScope {
         return null
     }
 
-    // The first verb this series actually shows: where Up out of the season bar
-    // lands, and what takes focus when the page opens.
+    // ── Rows of verbs ──────────────────────────────────────────────────────
+    // The verbs wrap when they do not fit (see verbRow), so Up and Down are
+    // answered among them before they leave the hero: the nearest verb in the
+    // next row that way, by centre. Null when there is no such row. Left and
+    // Right keep walking heroVerbs in reading order, so the end of one row
+    // continues at the start of the next. DetailsPage has the same pair.
+    function verbOnAdjacentRow(button, step) {
+        let best = null
+        let bestRow = 0
+        let bestOffset = 0
+        const centre = button.x + button.width / 2
+        for (let i = 0; i < page.heroVerbs.length; ++i) {
+            const verb = page.heroVerbs[i]
+            if (!verb.visible || (verb.y - button.y) * step <= 0)
+                continue
+            const row = Math.abs(verb.y - button.y)
+            const offset = Math.abs(verb.x + verb.width / 2 - centre)
+            if (best === null || row < bestRow || (row === bestRow && offset < bestOffset)) {
+                best = verb
+                bestRow = row
+                bestOffset = offset
+            }
+        }
+        return best
+    }
+
+    function verbBelow(button) {
+        const below = page.verbOnAdjacentRow(button, 1)
+        return below ? below : page.sectionBelow(0)
+    }
+
+    // The first verb of the LAST row: what is directly above the season bar.
+    // The same button as heroButton while the verbs fit on one line.
+    readonly property Item heroFoot: {
+        let foot = null
+        for (let i = 0; i < page.heroVerbs.length; ++i) {
+            const verb = page.heroVerbs[i]
+            if (verb.visible && (foot === null || verb.y > foot.y))
+                foot = verb
+        }
+        return foot ? foot : moreButton
+    }
+
+    // The first verb this series actually shows: what takes focus when the
+    // page opens, and where a focus restore with nothing to restore lands.
     readonly property Item heroButton: {
         for (let i = 0; i < page.heroVerbs.length; ++i) {
             if (page.heroVerbs[i].visible)
@@ -405,6 +484,7 @@ FocusScope {
     }
 
     Component.onCompleted: {
+        page.pageSeriesId = SeriesCtl.seriesId
         page.rebuildSeasonTabs()
         page.syncSeriesItem()
     }
@@ -412,22 +492,41 @@ FocusScope {
     // The season LIST changing — emptied by open(), filled when the seasons
     // land. Rebuilding the tabs here is right; moving the selection is not,
     // which is why rebuildSeasonTabs() decides that for itself off the series
-    // id rather than off the fact that a count moved. Badges do not come
-    // through here at all: they move without the count moving, and
-    // refreshSeasonBadges() carries them.
+    // id rather than off the fact that a count moved.
+    //
+    // A reset as well as a count: the controller re-reads the seasons' unplayed
+    // counts after a watched state moves anywhere in the series and applies
+    // them as a same-size reset, which no count change announces. Those are
+    // the server's numbers for EVERY season; refreshSeasonBadges() below still
+    // answers at once for the one on screen.
     Connections {
         target: SeriesCtl.seasons
-        function onCountChanged() { page.rebuildSeasonTabs() }
+        function onCountChanged() {
+            if (page.ownsController())
+                page.rebuildSeasonTabs()
+        }
+        function onModelReset() {
+            if (page.ownsController())
+                page.rebuildSeasonTabs()
+        }
     }
 
     Connections {
         target: SeriesCtl
 
-        function onSeriesChanged() { page.syncSeriesItem() }
+        function onSeriesChanged() {
+            if (page.ownsController())
+                page.syncSeriesItem()
+        }
         // The series record lands after the page does; re-read when it arrives.
-        function onSeriesMetadataChanged() { page.syncSeriesItem() }
+        function onSeriesMetadataChanged() {
+            if (page.ownsController())
+                page.syncSeriesItem()
+        }
 
         function onCurrentSeasonChanged() {
+            if (!page.ownsController())
+                return
             seasonBar.currentIndex = SeriesCtl.currentSeason
             seasonScroll.ensureCurrentVisible()
         }
@@ -436,7 +535,7 @@ FocusScope {
         // not laid it out yet, so positionViewAtIndex() would map the target
         // through the previous season's geometry.
         function onLoadingChanged() {
-            if (!SeriesCtl.loading)
+            if (page.ownsController() && !SeriesCtl.loading)
                 Qt.callLater(page.focusInitialEpisode)
         }
     }
@@ -445,6 +544,11 @@ FocusScope {
         target: Actions
 
         function onPlayedChanged(itemId, played) {
+            // Another series' page is on top and has the controller: its
+            // episodes are not this page's to count, and it tells the
+            // controller itself.
+            if (!page.ownsController())
+                return
             if (itemId === SeriesCtl.seriesId)
                 page.seriesPlayed = played
             // The season tabs carry an unplayed count and nothing refetches the
@@ -462,7 +566,7 @@ FocusScope {
         }
 
         function onFavoriteChanged(itemId, favorite) {
-            if (itemId === SeriesCtl.seriesId)
+            if (page.ownsController() && itemId === SeriesCtl.seriesId)
                 page.seriesFavorite = favorite
         }
     }
@@ -630,8 +734,14 @@ FocusScope {
                 // not KeyNavigation links: a link accepts the key whether or
                 // not its target is there, and a name that is not is somewhere
                 // the layout answers for instead.
-                Row {
+                //
+                // A Flow, not a Row: six verbs at TV density are wider than
+                // the column beside the poster in a small window, and a Row
+                // ran off its right-hand edge. They wrap rather than fold into
+                // ⋯, so no verb is somewhere else at one window size.
+                Flow {
                     id: verbRow
+                    width: parent.width
                     spacing: Theme.spacingTight
 
                     // Whole-series, not this season's: SeriesController fetches
@@ -649,7 +759,8 @@ FocusScope {
                         variant: "primary"
                         onClicked: Actions.play(SeriesCtl.nextUnwatched)
                         property Item navRight: page.verbAfter(0)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(nextButton, -1)
+                        property Item navDown: page.verbBelow(nextButton)
                     }
 
                     StrmButton {
@@ -660,7 +771,8 @@ FocusScope {
                         onClicked: Actions.playAll(SeriesCtl.seriesId, "tvshows")
                         property Item navLeft: page.verbBefore(1)
                         property Item navRight: page.verbAfter(1)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(playAllButton, -1)
+                        property Item navDown: page.verbBelow(playAllButton)
                     }
 
                     // shuffleSeries() spans every season rather than just the
@@ -673,19 +785,24 @@ FocusScope {
                         onClicked: Actions.shuffleSeries(SeriesCtl.seriesId)
                         property Item navLeft: page.verbBefore(2)
                         property Item navRight: page.verbAfter(2)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(shuffleButton, -1)
+                        property Item navDown: page.verbBelow(shuffleButton)
                     }
 
                     StrmButton {
                         id: watchedButton
-                        text: page.seriesPlayed ? qsTr("Watched") : qsTr("Mark watched")
-                        iconName: page.seriesPlayed ? "check" : "eye"
+                        // Named for what pressing it does, in both states, as
+                        // on the details page: "Watched" is a state, and left
+                        // undoing it to a guess.
+                        text: page.seriesPlayed ? qsTr("Mark unwatched") : qsTr("Mark watched")
+                        iconName: page.seriesPlayed ? "eye-off" : "eye"
                         // The verb, not a local flip: Actions owns the value and
                         // tells every view about the change.
                         onClicked: Actions.setPlayed(SeriesCtl.seriesId, !page.seriesPlayed)
                         property Item navLeft: page.verbBefore(3)
                         property Item navRight: page.verbAfter(3)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(watchedButton, -1)
+                        property Item navDown: page.verbBelow(watchedButton)
                     }
 
                     StrmButton {
@@ -695,7 +812,8 @@ FocusScope {
                         onClicked: Actions.setFavorite(SeriesCtl.seriesId, !page.seriesFavorite)
                         property Item navLeft: page.verbBefore(4)
                         property Item navRight: page.verbAfter(4)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(favoriteButton, -1)
+                        property Item navDown: page.verbBelow(favoriteButton)
                     }
 
                     StrmIconButton {
@@ -704,7 +822,8 @@ FocusScope {
                         tooltip: qsTr("More actions")
                         onClicked: page.openSeriesMenu(moreButton, 0, moreButton.height)
                         property Item navLeft: page.verbBefore(5)
-                        property Item navDown: page.sectionBelow(0)
+                        property Item navUp: page.verbOnAdjacentRow(moreButton, -1)
+                        property Item navDown: page.verbBelow(moreButton)
                     }
                 }
 
@@ -794,7 +913,7 @@ FocusScope {
             // previews (StrmTabBar draws that line, it is not redrawn here).
             onTabSelected: index => page.selectSeason(index)
 
-            property Item navUp: page.heroButton
+            property Item navUp: page.heroFoot
             property Item navDown: page.sectionBelow(1)
 
             // Kept as a harmless confirm so muscle memory from the old page
@@ -1204,5 +1323,60 @@ FocusScope {
     // ── Context menu ───────────────────────────────────────────────────────
     // The card's ⋯, its right-click and the page background all open the shared
     // list — the same one Home, Library, Search and Details use.
-    ItemMenu { id: itemMenu }
+    ItemMenu {
+        id: itemMenu
+
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => page.addToPlaylist(item)
+    }
+
+    // ── Add to playlist ────────────────────────────────────────────────────
+    // The shared type-and-pick panel, as on the details page, so a film or an
+    // episode can be filed from where it was found. Only an
+    // episode's menu grows the row — a series is not something a playlist
+    // holds — so the keyboard goes back to the episodes.
+    function addToPlaylist(item): void {
+        if (item && item.itemId)
+            playlistPicker.show(item.name ? String(item.name) : "", [String(item.itemId)])
+    }
+
+    PlaylistPicker {
+        id: playlistPicker
+
+        z: 800
+        onDismissed: episodeGrid.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
+    // PlaylistCtl's results are global signals, so they are claimed only while
+    // this page has a write of its own outstanding: several pages with a
+    // picker are alive at once, and each of them hears every result. They go
+    // to the window's toast host because a page that has since been covered is
+    // not drawn, and neither is anything it shows.
+    Connections {
+        target: PlaylistCtl
+
+        function onActionSucceeded(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            page.notify(message, "success")
+        }
+        function onActionFailed(message) {
+            if (!playlistPicker.pending)
+                return
+            playlistPicker.pending = false
+            page.notify(message, "error")
+        }
+    }
+
+    // By name: the window is Main.qml's, and a page staged without it has
+    // nowhere to say it and says nothing.
+    function notify(message, severity): void {
+        const win = page.toastWindow
+        if (win && typeof win["notify"] === "function")
+            win["notify"](message, severity)
+    }
+
+    // Untyped on purpose: `notify` is Main.qml's, not ApplicationWindow's.
+    readonly property var toastWindow: page.ApplicationWindow.window
 }
