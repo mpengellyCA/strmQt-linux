@@ -466,11 +466,27 @@ the only route to signing out, and every one of them was a pointer or a Tab away
 
 ### Pages
 
-`Main.qml` owns a `StackView`, the navigation history (including a forward stack,
-which `StackView` does not provide), and focus memory. It restores the exact
-loaded item by stable identity after Back/Forward; if that item is absent when
-the controller's bounded refill finishes, it uses the nearest eligible row (or
-the page's normal empty-state focus) without fetching extra pages.
+`Main.qml` owns a `StackView`; `BoundedNavigationStack` (`src/ui/shell`) owns
+the navigation history (including a forward stack, which `StackView` does not
+provide) and focus memory. It restores the exact loaded item by stable identity
+after Back/Forward; if that item is absent when the controller's bounded refill
+finishes, it uses the nearest eligible row (or the page's normal empty-state
+focus) without fetching extra pages.
+
+**A page arrives with a short fade and a few pixels of settle** — from the
+right going forward, from the left going back — while the page being left
+goes at once. It is the stack's own animation run after an immediate
+`StackView` operation, not a `StackView` transition: during one, `StackView`
+holds both pages short of `Active`, and the covered-page content gates key
+off `StackView.status === Active`, so the leaving page would empty itself
+while fading and the arriving one would fade in blank; the live-window trim
+that follows a push would also cut a running transition off at partial
+opacity. A navigation that interrupts one starts from the opacity already
+reached, so a held Back never dips to the background. The arriving page is
+never fully transparent, because `FocusNavigator` skips a subtree at opacity
+0. There is no motion under reduced motion or the self-test, on sign-in/out,
+or arriving on a YouTube route, whose web view must never sit inside
+something partly hidden.
 
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Search ·
 Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·

@@ -1,6 +1,7 @@
 #include <QDir>
 #include <QFile>
 #include <QQmlComponent>
+#include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
@@ -47,6 +48,8 @@ private slots:
     void playlistRouteFollowsTheSurfaceItWasOpenedFrom();
     void evictedAudioPlaylistIsRebuiltFromItsRoute();
     void artistEntryRetainsTheLibraryItWasOpenedUnder();
+    void pageMotionSettlesAfterNormalAndInterruptedNavigation();
+    void pageMotionStaysOffUnderReducedMotionAndSelfTest();
 };
 
 namespace {
@@ -290,6 +293,10 @@ Item {
                                "title": String(kind) });
     }
 
+    function pushYouTube(): void {
+        history.pushRoute({ "kind": "youtube", "key": "youtube", "title": "YouTube" });
+    }
+
     function pushTransient(): void {
         history.push(transientComponent, {}, StackView.Immediate);
     }
@@ -384,6 +391,9 @@ Item {
     function goBack(): void { history.goBack(); }
     function goForward(): void { history.goForward(); }
     function goHome(): void { history.goHome(); }
+    // The app's own switch (Theme.reducedMotion, fed from Prefs), set the
+    // way Settings sets it — not a test-only way round the motion.
+    function setReducedMotion(value): void { Theme.reducedMotion = value === true; }
     function focusSecond(): void {
         if (history.currentItem && history.currentItem.focusB)
             history.currentItem.focusB.forceActiveFocus(Qt.OtherFocusReason);
@@ -792,6 +802,7 @@ Item {
     Component { id: loginComponent; FocusScope { objectName: "login-base"; focus: true } }
     Component { id: homeComponent; FocusScope { objectName: "home-base"; focus: true } }
     Component { id: transientComponent; FocusScope { objectName: "playerPage"; focus: true } }
+    Component { id: youtubeComponent; FocusScope { objectName: "youtubePage"; focus: true } }
 
     ListModel { id: virtualRows }
     ListModel { id: searchTrackRows }
@@ -863,6 +874,7 @@ Item {
         seriesPageComponent: seriesComponent
         loginPageComponent: loginComponent
         homePageComponent: homeComponent
+        youtubePageComponent: youtubeComponent
         onPrepareRequested: route => root.prepareRoute(route)
     }
 
@@ -947,7 +959,11 @@ QString stagedModuleRoot()
     return staged ? root.path() : QString();
 }
 
-QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
+// Page motion is off in every test that does not ask for it, by the switch the
+// app itself uses for its page self-test (`SelfTest`, from STRMQT_SELFTEST):
+// those tests are about history, not about what a page looks like on its way
+// in, and they must not depend on an animation's timing.
+QObject *createProbe(QTemporaryDir &dir, QQuickView &view, bool pageMotion = false)
 {
     const QString helperSource =
         QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/shell/BoundedNavigationStack.qml");
@@ -965,6 +981,7 @@ QObject *createProbe(QTemporaryDir &dir, QQuickView &view)
     if (moduleRoot.isEmpty())
         return nullptr;
     view.engine()->addImportPath(moduleRoot);
+    view.rootContext()->setContextProperty(QStringLiteral("SelfTest"), !pageMotion);
     view.setResizeMode(QQuickView::SizeRootObjectToView);
     view.setSource(QUrl::fromLocalFile(probe.fileName()));
     if (view.status() != QQuickView::Ready)
@@ -999,9 +1016,10 @@ QObject *currentItem(QObject *history)
     return history->property("currentItem").value<QObject *>();
 }
 
-QPair<QObject *, QObject *> createHistoryProbe(QTemporaryDir &dir, QQuickView &view)
+QPair<QObject *, QObject *> createHistoryProbe(QTemporaryDir &dir, QQuickView &view,
+                                               bool pageMotion = false)
 {
-    QObject *root = createProbe(dir, view);
+    QObject *root = createProbe(dir, view, pageMotion);
     if (!root)
         return {};
     return {root, root->findChild<QObject *>(QStringLiteral("history"))};
@@ -2674,6 +2692,227 @@ void NavigationHistoryTest::artistEntryRetainsTheLibraryItWasOpenedUnder()
     QVERIFY(invoke(root, "goBack"));
     QTRY_COMPARE(currentItem(history)->objectName(), QStringLiteral("artist-ar-1"));
     QCOMPARE(currentItem(history)->property("libraryId").toString(), QStringLiteral("lib-x"));
+}
+
+namespace {
+
+QStringList routeIds(QObject *history, const char *name)
+{
+    QStringList ids;
+    for (const QVariant &route : listProperty(history, name))
+        ids << route.toMap().value(QStringLiteral("id")).toString();
+    return ids;
+}
+
+QQuickItem *currentPage(QObject *history)
+{
+    return qobject_cast<QQuickItem *>(currentItem(history));
+}
+
+// Whatever a navigation went through, it ends here: no motion running, every
+// live page fully opaque and in its place, only the top one shown, the stack
+// and the live window agreeing, and the keyboard on the page that is up.
+void verifySettled(QQuickView &view, QObject *history)
+{
+    QTRY_VERIFY(!history->property("pageMotionRunning").toBool());
+    QQuickItem *current = currentPage(history);
+    QVERIFY(current);
+    const QVariantList pages = listProperty(history, "instantiatedPages");
+    QCOMPARE(history->property("depth").toInt(), pages.size());
+    QCOMPARE(history->property("pageGraphCount").toInt(), pages.size());
+    QVERIFY(!pages.isEmpty());
+    for (qsizetype i = 0; i < pages.size(); ++i) {
+        auto *page = qobject_cast<QQuickItem *>(pages.at(i).value<QObject *>());
+        QVERIFY(page);
+        QCOMPARE(page->opacity(), 1.0);
+        QCOMPARE(page->x(), 0.0);
+        QCOMPARE(page->isVisible(), i == pages.size() - 1);
+    }
+    QCOMPARE(qobject_cast<QQuickItem *>(pages.constLast().value<QObject *>()), current);
+    const QVariantList tokens = listProperty(history, "instantiatedTokens");
+    QCOMPARE(tokens.constLast().toInt(),
+             listProperty(history, "navTrail").constLast().toMap().value(
+                     QStringLiteral("token")).toInt());
+    QTRY_VERIFY(view.activeFocusItem()
+                && (view.activeFocusItem() == current
+                    || current->isAncestorOf(view.activeFocusItem())));
+}
+
+} // namespace
+
+void NavigationHistoryTest::pageMotionSettlesAfterNormalAndInterruptedNavigation()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view, true);
+    QVERIFY(root);
+    QVERIFY(history);
+    QVERIFY(history->property("pageMotionEnabled").toBool());
+    const double floor = history->property("pageMotionFloor").toDouble();
+
+    // The first page is not a navigation: it is simply there.
+    const QPointer<QQuickItem> base(currentPage(history));
+    QVERIFY(base);
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(base->opacity(), 1.0);
+    QVERIFY(invoke(root, "focusSecond"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-0"));
+
+    // Forward: the page arrives faded and a little to the right, and the one
+    // it covers is gone in the same instant — never on screen, never focused.
+    QVERIFY(invoke(root, "pushRoute", 1));
+    const QPointer<QQuickItem> first(currentPage(history));
+    QVERIFY(first);
+    QCOMPARE(first->property("routeId").toString(), QStringLiteral("1"));
+    QVERIFY(history->property("pageMotionRunning").toBool());
+    QVERIFY(first->opacity() >= floor);
+    QVERIFY(first->opacity() < 1.0);
+    QVERIFY(first->x() > 0.0);
+    QVERIFY(!base->isVisible());
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-a-1"));
+    verifySettled(view, history);
+    if (QTest::currentTestFailed())
+        return;
+    QVERIFY(invoke(root, "focusSecond"));
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-1"));
+
+    // Back: from the left this time, onto the page that was already live,
+    // and focus memory still returns the keyboard to the exact control.
+    QVERIFY(invoke(root, "goBack"));
+    QCOMPARE(currentPage(history), base.data());
+    QVERIFY(history->property("pageMotionRunning").toBool());
+    QVERIFY(base->opacity() < 1.0);
+    QVERIFY(base->x() < 0.0);
+    QTRY_COMPARE(view.activeFocusItem()->objectName(), QStringLiteral("focus-b-0"));
+    verifySettled(view, history);
+    if (QTest::currentTestFailed())
+        return;
+    QCOMPARE(routeIds(history, "navForward"), QStringList({QStringLiteral("1")}));
+
+    // Interrupted, with no event processed between the steps: every
+    // navigation lands on top of the last one's motion. The window (two live
+    // pages here) is trimmed and rebuilt underneath all of it.
+    root->setProperty("preparedRoutes", QStringList());
+    QVERIFY(invoke(root, "pushRoute", 2));
+    QVERIFY(invoke(root, "pushRoute", 3));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "pushRoute", 4));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(invoke(root, "goForward"));
+    QCOMPARE(routeIds(history, "navTrail"), QStringList({QStringLiteral("0"), QStringLiteral("2")}));
+    QCOMPARE(routeIds(history, "navForward"), QStringList({QStringLiteral("4")}));
+    QCOMPARE(currentPage(history)->property("routeId").toString(), QStringLiteral("2"));
+    QCOMPARE(root->property("preparedRoutes").toStringList().constLast(),
+             QStringLiteral("details:2"));
+    verifySettled(view, history);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Interrupted mid-flight: each step arrives while the previous page is
+    // still on its way in, and carries on from as far as that page got
+    // rather than dipping back to the background.
+    const auto step = [&](const char *method, const QVariant &argument) {
+        QQuickItem *before = currentPage(history);
+        const bool wasMoving = history->property("pageMotionRunning").toBool();
+        const double reached = before ? before->opacity() : 0.0;
+        QVERIFY(invoke(root, method, argument));
+        QQuickItem *after = currentPage(history);
+        QVERIFY(after);
+        QVERIFY(after->opacity() >= floor);
+        if (wasMoving && after != before)
+            QVERIFY(qFuzzyCompare(after->opacity(), qMax(floor, reached)));
+        QTest::qWait(40);
+    };
+    step("pushRoute", 5);
+    step("pushRoute", 6);
+    step("goBack", {});
+    step("goBack", {});
+    step("goForward", {});
+    step("pushRoute", 7);
+    step("goHome", {});
+    step("goForward", {});
+    // Home put the trail it left on Forward newest first, so Forward is 7.
+    QCOMPARE(routeIds(history, "navTrail"), QStringList({QStringLiteral("0"), QStringLiteral("7")}));
+    QCOMPARE(routeIds(history, "navForward"),
+             QStringList({QStringLiteral("5"), QStringLiteral("2")}));
+    verifySettled(view, history);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Something else taking the top — the player — puts an arriving page at
+    // rest at once, and it is still at rest when the player goes.
+    QVERIFY(invoke(root, "pushRoute", 8));
+    const QPointer<QQuickItem> covered(currentPage(history));
+    QVERIFY(history->property("pageMotionRunning").toBool());
+    QVERIFY(invoke(root, "pushTransient"));
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(covered->opacity(), 1.0);
+    QCOMPARE(covered->x(), 0.0);
+    QVERIFY(invoke(root, "popTransient"));
+    QCOMPARE(currentPage(history), covered.data());
+    verifySettled(view, history);
+}
+
+void NavigationHistoryTest::pageMotionStaysOffUnderReducedMotionAndSelfTest()
+{
+    {
+        // The page self-test's switch: everything arrives at once.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QQuickView view;
+        const auto [root, history] = createHistoryProbe(dir, view);
+        QVERIFY(root);
+        QVERIFY(history);
+        QVERIFY(!history->property("pageMotionEnabled").toBool());
+        QVERIFY(invoke(root, "pushRoute", 1));
+        QVERIFY(!history->property("pageMotionRunning").toBool());
+        QCOMPARE(currentPage(history)->opacity(), 1.0);
+        QCOMPARE(currentPage(history)->x(), 0.0);
+        QVERIFY(invoke(root, "goBack"));
+        QVERIFY(!history->property("pageMotionRunning").toBool());
+        QCOMPARE(currentPage(history)->opacity(), 1.0);
+    }
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QQuickView view;
+    const auto [root, history] = createHistoryProbe(dir, view, true);
+    QVERIFY(root);
+    QVERIFY(history);
+    QVERIFY(history->property("pageMotionEnabled").toBool());
+
+    // The YouTube pages arrive as they always have, and leaving one is an
+    // ordinary Back.
+    QVERIFY(invoke(root, "pushYouTube"));
+    QCOMPARE(currentPage(history)->objectName(), QStringLiteral("youtubePage"));
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(currentPage(history)->opacity(), 1.0);
+    QCOMPARE(currentPage(history)->x(), 0.0);
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(history->property("pageMotionRunning").toBool());
+    verifySettled(view, history);
+    if (QTest::currentTestFailed())
+        return;
+
+    // Reduced motion switched on while a page is arriving puts it at rest
+    // there and then; with it on, nothing moves.
+    QVERIFY(invoke(root, "pushRoute", 1));
+    QVERIFY(history->property("pageMotionRunning").toBool());
+    QVERIFY(invoke(root, "setReducedMotion", true));
+    QVERIFY(!history->property("pageMotionEnabled").toBool());
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(currentPage(history)->opacity(), 1.0);
+    QCOMPARE(currentPage(history)->x(), 0.0);
+    QVERIFY(invoke(root, "pushRoute", 2));
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(currentPage(history)->opacity(), 1.0);
+    QVERIFY(invoke(root, "goBack"));
+    QVERIFY(!history->property("pageMotionRunning").toBool());
+    QCOMPARE(currentPage(history)->opacity(), 1.0);
+    QCOMPARE(currentPage(history)->x(), 0.0);
+    verifySettled(view, history);
 }
 
 QTEST_MAIN(NavigationHistoryTest)
