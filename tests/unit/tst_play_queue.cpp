@@ -1,3 +1,4 @@
+#include <QSet>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -67,6 +68,7 @@ private slots:
     void playNextInsertsAfterCurrentAndAddToQueueAppends();
     void insertingIntoAnEmptyQueueStartsIt();
     void moveItemKeepsTheCursorOnTheSameItem();
+    void entryKeysFollowEntriesNotRowsOrIds();
     void jumpToAndClear();
     void snapshotRestoresOrderCursorAndModes();
     void batchAppendIsOneModelOperation();
@@ -368,6 +370,41 @@ void PlayQueueTest::moveItemKeepsTheCursorOnTheSameItem()
     queue.moveItem(-1, 2);
     queue.moveItem(0, 99);
     QCOMPARE(queue.rowCount(), 4);
+}
+
+// PlayerController's gapless prefetch is for one queue ENTRY: it has to tell
+// "the same next track" from "another copy of it" and survive a re-index.
+void PlayQueueTest::entryKeysFollowEntriesNotRowsOrIds()
+{
+    PlayQueue queue;
+    QCOMPARE(queue.entryKeyAt(0), quint64(0));
+    QList<MediaItem> items = episodes(3);
+    items.append(episode(2)); // the same item queued twice
+    queue.setItems(items, 0);
+
+    const quint64 second = queue.entryKeyAt(1);
+    const quint64 again = queue.entryKeyAt(3);
+    QVERIFY(second != 0 && again != 0);
+    QVERIFY(second != again);
+    QVERIFY(second != queue.entryKeyAt(0) && second != queue.entryKeyAt(2));
+    QCOMPARE(queue.entryKeyAt(-1), quint64(0));
+    QCOMPARE(queue.entryKeyAt(4), quint64(0));
+
+    // A move re-indexes; the key goes with the entry.
+    queue.moveItem(1, 3);
+    QCOMPARE(queue.entryKeyAt(3), second);
+    QCOMPARE(queue.entryKeyAt(2), again);
+    QCOMPARE(queue.itemAt(3).value(QStringLiteral("itemId")).toString(), QStringLiteral("ep2"));
+
+    // So does a shuffle, and turning it off again.
+    QSet<quint64> keys;
+    for (int row = 0; row < queue.rowCount(); ++row)
+        keys.insert(queue.entryKeyAt(row));
+    queue.setShuffled(true);
+    QSet<quint64> shuffled;
+    for (int row = 0; row < queue.rowCount(); ++row)
+        shuffled.insert(queue.entryKeyAt(row));
+    QCOMPARE(shuffled, keys);
 }
 
 void PlayQueueTest::jumpToAndClear()

@@ -162,9 +162,14 @@ void PlayQueue::emitRowMetaChanged()
 
 quint64 PlayQueue::currentKey() const
 {
-    if (m_currentIndex < 0 || m_currentIndex >= m_entries.size())
+    return entryKeyAt(m_currentIndex);
+}
+
+quint64 PlayQueue::entryKeyAt(int row) const
+{
+    if (row < 0 || row >= m_entries.size())
         return 0;
-    return m_entries.at(m_currentIndex).key;
+    return m_entries.at(row).key;
 }
 
 // currentChanged() is the property signal: hasNext/hasPrevious hang off it and

@@ -231,6 +231,20 @@ and crash resume. Engines report clean EOF separately from fatal errors; the
 controller never guesses that an error is EOF from the playhead position. Position
 is reported to the server on a timer and at start/stop so watch state survives.
 
+**Gapless music.** In the last 15 s of a track in a music queue, with an audio
+track next (not RepeatOne, not during a fast-forward hold or a recovery), the
+controller resolves the next track's ticket and hands its URL to the engine with
+`PlayerBackend::prefetchNext` (mpv: `loadfile … append` with a per-file `start`,
+`gapless-audio=weak`, `prefetch-playlist`). When the engine moves on by itself it
+emits `prefetchStarted` *instead of* `endReached`, and the controller replays an
+ordinary advance minus the request and the load: stop report at full runtime,
+queue advance, the new ticket and load id adopted. mpv holds the finished file's
+EOF until it sees the next entry start or goes idle, so exactly one of the two
+signals is ever emitted. The prefetch is keyed on the next entry's queue key and
+is dropped whenever that key, the eligibility or the load changes; dropping it is
+always safe, because an end the engine reports the ordinary way is advanced the
+ordinary way. Engines without support (VLC, QtMultimedia) keep the old path.
+
 ### Queue
 
 `PlayQueue` is the session object that shuffle, auto-advance, Up Next, prev/next
@@ -1000,8 +1014,12 @@ assertion catches the rot.
 - **The upscaling governor's thresholds are reasoned, not measured, on weak
   GPUs.** The debug setting `upscale/budgetScale` exercises the mechanism; a
   real laptop or iGPU measurement is still owed.
-- **No gapless audio advance.** mpv gapless wants a playlist handed to the engine,
-  not per-item loads.
+- **Gapless advance is mpv-only and unverified by ear.** The handover is tested
+  against real mpv with `ao=null` (§3), not listened to on a live album. A
+  transcoded (HLS) next track is not opened early by `prefetch-playlist`, and a
+  dropped prefetch does not tell the server to stop a transcode job it started.
+  At a sample-rate change the audio device is reopened (`gapless-audio=weak`),
+  which is a short gap by choice rather than resampling.
 - **Forgotten favourites is not least-recently-played.** The Music Home shelf asks
   for favourite albums sorted by `DatePlayed`, but Emby keeps no play date on an
   album, so the order is not yet the one the shelf's name promises.
@@ -1028,7 +1046,9 @@ assertion catches the rot.
   transcode's sidecar stays in sync. libmpv 0.41 can deadlock when a file is
   replaced while a `sub-add` is in flight with a subtitle selected; `MpvPlayer`
   adds with `auto` only, selects through `sid`, and aborts and waits for any
-  add before every `loadfile`, `stop` and core destruction.
+  add before every `loadfile`, `stop` and core destruction. A gapless prefetch
+  lets mpv change file on its own, so none is queued while an add is pending,
+  and an add drops a queued one.
 - **Horizontal repeat in player context is floored everywhere.** Held seeks are
   floored at 250 ms, and so is the OSD button row, because `GamepadManager` can
   see the action and the context but not which control has focus. Held volume

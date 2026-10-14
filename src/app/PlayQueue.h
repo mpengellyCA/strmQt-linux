@@ -130,6 +130,10 @@ public:
     void setSourceLabel(const QString &label);
 
     int currentIndex() const { return m_currentIndex; }
+    // The identity of the entry at `row`, 0 when there is none: unique within
+    // this queue and kept through shuffling and moves, unlike the row, and
+    // unlike the item id, which repeats when an item is queued twice.
+    quint64 entryKeyAt(int row) const;
     // {} when the queue is empty.
     MediaItem current() const;
     Q_INVOKABLE QVariantMap currentItem() const;

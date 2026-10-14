@@ -17,6 +17,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 
 #include <algorithm>
 #include <atomic>
@@ -166,6 +167,125 @@ void letMpvRunUndrained()
     QThread::msleep(150);
 }
 
+// A sine tone of `seconds`, FLAC like a ripped album, at `sampleRate`. Empty
+// when there is no ffmpeg to make it with.
+QString generateTone(QTemporaryDir &dir, const QString &name, int sampleRate, double seconds = 2.0)
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        return {};
+    const QString path = dir.filePath(name);
+    QProcess process;
+    process.start(ffmpeg, {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                           QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                           QStringLiteral("sine=frequency=440:sample_rate=%1:duration=%2")
+                               .arg(sampleRate)
+                               .arg(seconds),
+                           QStringLiteral("-c:a"), QStringLiteral("flac"), path});
+    if (!process.waitForFinished(30000) || process.exitCode() != 0)
+        return {};
+    return path;
+}
+
+// A second client on the player's core: what mpv itself did, read without
+// going through MpvPlayer's own reading of the event stream — each audio
+// output it opened (its "AO: [...]" line), each file it started, the playhead
+// with the wall-clock time it was seen at. Destroy it before the player: a core
+// is not torn down while another client holds it.
+class CoreObserver
+{
+public:
+    struct Sample
+    {
+        int file = 0; // 1 for the first file started after construction
+        qint64 wallMs = 0;
+        double position = 0.0;
+    };
+
+    explicit CoreObserver(mpv_handle *core) : m_handle(mpv_create_client(core, "test-observer"))
+    {
+        mpv_request_log_messages(m_handle, "v");
+        mpv_observe_property(m_handle, 0, "time-pos", MPV_FORMAT_DOUBLE);
+        m_clock.start();
+        m_timer.setInterval(1);
+        QObject::connect(&m_timer, &QTimer::timeout, &m_timer, [this] { drain(); });
+        m_timer.start();
+    }
+    ~CoreObserver()
+    {
+        m_timer.stop();
+        mpv_destroy(m_handle);
+    }
+
+    int audioOutputsOpened() const { return m_aoLines.size(); }
+    const QStringList &audioOutputs() const { return m_aoLines; }
+    int filesStarted() const { return m_files; }
+    int prefetchedOpens() const { return m_prefetchedOpens; }
+    // Times the audio output ran dry: an audible gap, whatever the playheads say.
+    int underruns() const { return m_underruns; }
+    const QList<Sample> &samples() const { return m_samples; }
+
+    void drain()
+    {
+        while (true) {
+            mpv_event *event = mpv_wait_event(m_handle, 0);
+            if (event->event_id == MPV_EVENT_NONE)
+                return;
+            if (event->event_id == MPV_EVENT_START_FILE) {
+                ++m_files;
+            } else if (event->event_id == MPV_EVENT_LOG_MESSAGE) {
+                const auto *msg = static_cast<mpv_event_log_message *>(event->data);
+                const QString text = QString::fromUtf8(msg->text).trimmed();
+                if (qstrcmp(msg->prefix, "cplayer") == 0 && text.startsWith(QLatin1String("AO: [")))
+                    m_aoLines.append(text);
+                if (text.contains(QLatin1String("Using prefetched")))
+                    ++m_prefetchedOpens;
+                if (text.contains(QLatin1String("underrun"), Qt::CaseInsensitive))
+                    ++m_underruns;
+            } else if (event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+                const auto *change = static_cast<mpv_event_property *>(event->data);
+                if (change->format == MPV_FORMAT_DOUBLE)
+                    m_samples.append({m_files, m_clock.elapsed(), *static_cast<double *>(change->data)});
+            }
+        }
+    }
+
+    // How much longer the change from `file` to the next took than the audio
+    // in it: wall time between a playhead sample half a second before the end
+    // of `file` and one half a second into the next, minus the second of
+    // media between them. mpv's null device keeps a real clock, so a stall at
+    // the change — a reopened output, a stream opened late — adds to it.
+    // Across a gapless change it reads negative by about the depth of the
+    // output's buffer: the next file's playhead starts while the last of the
+    // previous file is still queued in front of it. Polled, so good to a few
+    // milliseconds. NaN when either sample is missing.
+    double gapMs(int file, double fileSeconds) const
+    {
+        const Sample *before = nullptr;
+        const Sample *after = nullptr;
+        for (const Sample &sample : m_samples) {
+            if (sample.file == file && !before && sample.position >= fileSeconds - 0.5)
+                before = &sample;
+            else if (sample.file == file + 1 && !after && sample.position >= 0.5)
+                after = &sample;
+        }
+        if (!before || !after)
+            return qQNaN();
+        const double media = (fileSeconds - before->position) + after->position;
+        return double(after->wallMs - before->wallMs) - media * 1000.0;
+    }
+
+private:
+    mpv_handle *m_handle = nullptr;
+    QTimer m_timer;
+    QElapsedTimer m_clock;
+    QStringList m_aoLines;
+    int m_files = 0;
+    int m_prefetchedOpens = 0;
+    int m_underruns = 0;
+    QList<Sample> m_samples;
+};
+
 } // namespace
 
 class MpvVideoItemTest : public QObject
@@ -202,6 +322,9 @@ private slots:
     void externalSubtitlesBelongToTheirLoad();
     void anUnreadableExternalSubtitleCostsOnlyItself();
     void externalSubtitleIsFetchedFromItsUrl();
+    void aPrefetchedTrackFollowsWithoutALoad();
+    void aWithdrawnPrefetchIsNotPlayed();
+    void aPrefetchTooLateForTheEndIsAnOrdinaryEnd();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -1377,6 +1500,188 @@ void MpvVideoItemTest::externalSubtitleIsFetchedFromItsUrl()
         QVERIFY2(!published.contains("not-a-real-token"), published.constData());
         QVERIFY2(!published.contains("Stream.srt"), published.constData());
     }
+    player.stop();
+}
+
+// ── Gapless advance (PlayerBackend::prefetchNext) ─────────────────────────────
+
+// mpv goes on to the appended entry by itself: under the prefetch's load id,
+// with no load() and no end reported for the first file, from the start of
+// the file whatever the first one was resumed at, on the audio output that was
+// already open. A record in another sample rate gets an output of its own.
+void MpvVideoItemTest::aPrefetchedTrackFollowsWithoutALoad()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString one = generateTone(dir, QStringLiteral("one.flac"), 44100);
+    const QString two = generateTone(dir, QStringLiteral("two.flac"), 44100);
+    const QString other = generateTone(dir, QStringLiteral("other.flac"), 48000);
+    if (one.isEmpty() || two.isEmpty() || other.isEmpty())
+        QSKIP("ffmpeg is required to generate the test tones");
+
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(60'000);
+    QVERIFY(startCoreWithoutSound(player, 1));
+    CoreObserver observer(player.handle());
+    LoadEvents events(player);
+    QSignalSpy ends(&player, &PlayerBackend::endReached);
+    QSignalSpy handovers(&player, &PlayerBackend::prefetchStarted);
+    QSignalSpy positions(&player, &PlayerBackend::positionChanged);
+
+    // Resumed half a second in: a `start` that must not carry over.
+    player.load(QUrl::fromLocalFile(one), 500, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 2), 15000);
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(two), 0, 3));
+
+    QTRY_COMPARE_WITH_TIMEOUT(handovers.count(), 1, 15000);
+    QCOMPARE(handovers.at(0).at(0).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(2));
+    QCOMPARE(handovers.at(0).at(1).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(3));
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 3), 15000);
+    QTRY_VERIFY(player.positionMs() > 0);
+    QVERIFY2(ends.isEmpty(), "the first file's end was reported as well as the handover");
+    QVERIFY(!events.sawState(PlayerBackend::State::Ended, 2));
+    QVERIFY(events.errorIds().isEmpty());
+    QCOMPARE(player.state(), PlayerBackend::State::Playing);
+
+    observer.drain();
+    QCOMPARE(observer.filesStarted(), 2);
+    QCOMPARE(observer.prefetchedOpens(), 1); // opened while the first played out
+    QCOMPARE(observer.audioOutputsOpened(), 1); // the same output throughout
+    // From its own start, not from the first file's resume point.
+    const auto firstOfSecond = std::find_if(observer.samples().cbegin(), observer.samples().cend(),
+                                            [](const CoreObserver::Sample &s) { return s.file == 2; });
+    QVERIFY(firstOfSecond != observer.samples().cend());
+    QVERIFY2(firstOfSecond->position < 0.4, qPrintable(QString::number(firstOfSecond->position)));
+    // No position of the second file was published under the first's id.
+    for (const QList<QVariant> &event : positions) {
+        if (event.at(1).value<PlayerBackend::LoadId>() == 2)
+            QVERIFY(event.at(0).toLongLong() <= 2100);
+    }
+
+    // Another sample rate: weak gapless reopens the output at the new rate
+    // rather than resampling the record to the first one's.
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(other), 0, 4));
+    QTRY_COMPARE_WITH_TIMEOUT(handovers.count(), 2, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 4), 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(observer.audioOutputsOpened(), 2, 5000);
+    QVERIFY2(observer.audioOutputs().constLast().contains(QLatin1String("48000Hz")),
+             qPrintable(observer.audioOutputs().constLast()));
+
+    // The last file ends the ordinary way.
+    QTRY_COMPARE_WITH_TIMEOUT(ends.count(), 1, 15000);
+    QCOMPARE(ends.at(0).at(0).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(4));
+    QCOMPARE(player.state(), PlayerBackend::State::Ended);
+    QVERIFY(events.errorIds().isEmpty());
+
+    // For comparison, the ordinary advance: a load() when the end is heard.
+    connect(&player, &PlayerBackend::endReached, &player, [&](PlayerBackend::LoadId id) {
+        if (id == 5)
+            player.load(QUrl::fromLocalFile(two), 0, 6);
+    });
+    const int filesBefore = observer.filesStarted();
+    player.load(QUrl::fromLocalFile(one), 0, 5);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 6), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(player.positionMs() > 700, 5000);
+    observer.drain();
+    // Measured, not asserted: the null device's clock is real, but a test
+    // machine's scheduling is not.
+    qInfo("change of file, measured over the playheads: gapless same format %.1f ms, "
+          "gapless 44.1 -> 48 kHz %.1f ms, ordinary advance (endReached -> load) %.1f ms; "
+          "%d audio outputs opened in all, %d underruns",
+          observer.gapMs(1, 2.0), observer.gapMs(2, 2.0), observer.gapMs(filesBefore + 1, 2.0),
+          observer.audioOutputsOpened(), observer.underruns());
+    player.stop();
+}
+
+// Taken back before the end, it is not played, and the end is an ordinary one.
+void MpvVideoItemTest::aWithdrawnPrefetchIsNotPlayed()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString one = generateTone(dir, QStringLiteral("one.flac"), 44100, 1.0);
+    const QString two = generateTone(dir, QStringLiteral("two.flac"), 44100, 1.0);
+    if (one.isEmpty() || two.isEmpty())
+        QSKIP("ffmpeg is required to generate the test tones");
+
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(60'000);
+    QVERIFY(startCoreWithoutSound(player, 1));
+    CoreObserver observer(player.handle());
+    LoadEvents events(player);
+    QSignalSpy ends(&player, &PlayerBackend::endReached);
+    QSignalSpy handovers(&player, &PlayerBackend::prefetchStarted);
+
+    player.load(QUrl::fromLocalFile(one), 0, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 2), 15000);
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(two), 0, 3));
+    // Replaced by another before it is withdrawn: only one is ever queued.
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(two), 0, 4));
+    player.cancelPrefetch();
+
+    QTRY_COMPARE_WITH_TIMEOUT(ends.count(), 1, 15000);
+    QCOMPARE(ends.at(0).at(0).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(2));
+    QCOMPARE(player.state(), PlayerBackend::State::Ended);
+    QTest::qWait(300);
+    QVERIFY(handovers.isEmpty());
+    for (const QList<QVariant> &event : events.states)
+        QVERIFY(event.at(1).value<PlayerBackend::LoadId>() <= 2);
+    observer.drain();
+    QCOMPARE(observer.filesStarted(), 1);
+    QVERIFY(events.errorIds().isEmpty());
+
+    // A load() drops a prefetch the same way: the new file plays, the
+    // prefetched one never does.
+    player.load(QUrl::fromLocalFile(one), 0, 5);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 5), 15000);
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(two), 0, 6));
+    player.load(QUrl::fromLocalFile(one), 0, 7);
+    QTRY_COMPARE_WITH_TIMEOUT(ends.count(), 2, 15000);
+    QCOMPARE(ends.at(1).at(0).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(7));
+    QTest::qWait(300);
+    QVERIFY(handovers.isEmpty());
+    QVERIFY(!events.sawState(PlayerBackend::State::Loading, 6));
+    player.stop();
+}
+
+// The file ended while nobody was draining, and the entry was appended to a
+// core that had already gone idle: mpv does not start it, and the end the
+// player held back for it is reported after all.
+void MpvVideoItemTest::aPrefetchTooLateForTheEndIsAnOrdinaryEnd()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString one = generateTone(dir, QStringLiteral("one.flac"), 44100, 0.5);
+    const QString two = generateTone(dir, QStringLiteral("two.flac"), 44100, 0.5);
+    if (one.isEmpty() || two.isEmpty())
+        QSKIP("ffmpeg is required to generate the test tones");
+
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(60'000);
+    QVERIFY(startCoreWithoutSound(player, 1));
+    CoreObserver observer(player.handle());
+    LoadEvents events(player);
+    QSignalSpy ends(&player, &PlayerBackend::endReached);
+    QSignalSpy handovers(&player, &PlayerBackend::prefetchStarted);
+
+    player.load(QUrl::fromLocalFile(one), 0, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 2), 15000);
+    QThread::msleep(1500); // the tone plays out and mpv goes idle, undrained
+    QCOMPARE(player.state(), PlayerBackend::State::Playing); // as far as anyone has heard
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(two), 0, 3));
+
+    QTRY_COMPARE_WITH_TIMEOUT(ends.count(), 1, 5000);
+    QCOMPARE(ends.at(0).at(0).value<PlayerBackend::LoadId>(), PlayerBackend::LoadId(2));
+    QCOMPARE(player.state(), PlayerBackend::State::Ended);
+    QTest::qWait(300);
+    QVERIFY(handovers.isEmpty());
+    QVERIFY(!events.sawState(PlayerBackend::State::Loading, 3));
+    observer.drain();
+    QCOMPARE(observer.filesStarted(), 1);
+
+    // ...and the core is free for the ordinary advance.
+    player.load(QUrl::fromLocalFile(two), 0, 4);
+    QTRY_VERIFY_WITH_TIMEOUT(events.sawState(PlayerBackend::State::Playing, 4), 15000);
+    QVERIFY(events.errorIds().isEmpty());
     player.stop();
 }
 

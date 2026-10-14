@@ -189,6 +189,11 @@ public:
     void setSubtitleTrack(int id) override;
     void addExternalSubtitle(const QUrl &url, const QString &title, const QString &language,
                              bool select) override;
+    // `loadfile append`: the next file is an mpv playlist entry after the
+    // current one, so mpv's own gapless audio carries the change of file.
+    bool supportsPrefetch() const override { return true; }
+    bool prefetchNext(const QUrl &url, qint64 startMs, LoadId loadId) override;
+    void cancelPrefetch() override;
 
     // Cached, not read live: the value is a *delta* against positionMs, and
     // recomputing it from the stored cache end keeps it correct between mpv's
@@ -302,6 +307,26 @@ private:
     // Only for a libmpv whose loadfile reply names no entry (before 0.33): the
     // most recent load, attributed the old way.
     LoadId m_untrackedLoadId = 0;
+    // The entry prefetchNext() appended after the current file; loadId 0 for
+    // none. Its START_FILE is the handover: m_loadId becomes its loadId there.
+    struct Prefetch
+    {
+        qint64 entryId = 0;
+        LoadId loadId = 0;
+        qint64 startMs = 0;
+    };
+    Prefetch m_prefetch;
+    // The current load reached EOF with a prefetch queued, and its end is held
+    // back until mpv shows what it did next: START_FILE of the prefetch (the
+    // handover, and the end is never reported) or going idle (the entry came
+    // too late, and the end is reported after all). 0 when nothing is held.
+    LoadId m_heldEndLoadId = 0;
+    // Forgets the prefetch; with `removeEntry`, also takes it out of mpv's
+    // playlist (load() and stop() need not: they clear the playlist).
+    void dropPrefetch(bool removeEntry);
+    void releaseHeldEnd();
+    // Index of the playlist entry with mpv's id `entryId`, or -1.
+    int playlistIndexOfEntry(qint64 entryId) const;
     // External subtitles waiting for `sub-add`, for the file that is loaded
     // now. One at a time: mpv fetches each on a thread of its own and numbers
     // the track when the fetch ends, so two issued together would get their ids

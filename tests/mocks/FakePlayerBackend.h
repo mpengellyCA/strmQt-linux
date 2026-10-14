@@ -5,6 +5,8 @@
 #include <QList>
 #include <QStringList>
 
+#include <utility>
+
 // Scriptable engine for PlayerController tests: records calls, lets the test
 // drive state transitions.
 class FakePlayerBackend : public strmqt::PlayerBackend
@@ -23,6 +25,7 @@ public:
         loadedStarts.append(startMs);
         loadedIds.append(loadId);
         loadedInitiallyPaused.append(initiallyPaused);
+        m_prefetch = {};
         m_loadId = loadId;
         resetPerLoadState(loadId, startMs);
         m_state = State::Loading;
@@ -39,6 +42,7 @@ public:
     void stop() override
     {
         stopCalls++;
+        m_prefetch = {};
         m_loadId = 0;
         resetPerLoadState(0, 0);
         simulateState(State::Idle, 0);
@@ -84,6 +88,33 @@ public:
     {
         externalSubtitles.append({m_loadId, url, title, language, select});
     }
+
+    // ── Gapless advance ───────────────────────────────────────────────────────
+    // Off by default, like VLC: a test that wants an engine-driven advance
+    // says so, and every other test sees no prefetch requests at all.
+    bool supportsPrefetch() const override { return prefetchSupported; }
+    bool prefetchNext(const QUrl &url, qint64 startMs, LoadId loadId) override
+    {
+        prefetchRequests.append({url, startMs, loadId});
+        if (!prefetchAccepted || (m_state != State::Playing && m_state != State::Paused))
+            return false;
+        m_prefetch = {url, startMs, loadId};
+        return true;
+    }
+    void cancelPrefetch() override
+    {
+        if (m_prefetch.loadId != 0)
+            ++prefetchCancels;
+        m_prefetch = {};
+    }
+    struct Prefetch
+    {
+        QUrl url;
+        qint64 startMs = 0;
+        LoadId loadId = 0;
+    };
+    // What the engine holds to play next; loadId 0 for nothing.
+    Prefetch queuedPrefetch() const { return m_prefetch; }
 
     qint64 bufferedMs() const override { return m_bufferedMs; }
     qreal playbackSpeed() const override { return m_speed; }
@@ -190,9 +221,24 @@ public:
         emit stateChanged(State::Error, loadId);
         emit errorOccurred(message, loadId);
     }
+    // The current file ends cleanly. With a prefetch queued the engine goes
+    // straight on to it, as mpv does with an appended playlist entry: no
+    // Ended, no endReached, but prefetchStarted and then the new load's own
+    // reset and Loading — PlayerBackend::prefetchNext's contract.
     void simulateEnd(LoadId loadId = 0)
     {
         loadId = resolvedLoadId(loadId);
+        if (loadId == m_loadId && m_prefetch.loadId != 0) {
+            const Prefetch next = std::exchange(m_prefetch, {});
+            m_loadId = next.loadId;
+            emit prefetchStarted(loadId, next.loadId);
+            if (m_loadId != next.loadId)
+                return; // the controller moved on inside the signal
+            resetPerLoadState(next.loadId, next.startMs);
+            m_state = State::Loading;
+            emit stateChanged(m_state, next.loadId);
+            return;
+        }
         if (loadId == m_loadId)
             m_state = State::Ended;
         emit stateChanged(State::Ended, loadId);
@@ -286,6 +332,10 @@ public:
     bool screenshotSucceeds = true;
     QStringList replayGainModes;
     int stopCalls = 0;
+    bool prefetchSupported = false;
+    bool prefetchAccepted = true;
+    QList<Prefetch> prefetchRequests;
+    int prefetchCancels = 0;
     bool deferTrackReadback = false;
     bool deferPlaybackSettingsReadback = false;
     bool videoShadersSupported = false; // like VLC until a test says otherwise
@@ -359,6 +409,7 @@ private:
 
     State m_state = State::Idle;
     LoadId m_loadId = 0;
+    Prefetch m_prefetch;
     bool m_buffering = false;
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;

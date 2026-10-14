@@ -134,6 +134,18 @@ bool MpvPlayer::ensureInitialized()
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "256MiB");
     mpv_set_option_string(m_mpv, "user-agent", "StrmQt");
+    // Gapless album playback (prefetchNext). "weak", mpv's own default, said
+    // out loud: the audio device stays open from one track to the next while
+    // the decoded format stays the same, and is reopened when it changes.
+    // "yes" would keep it open regardless, resampling a 96 kHz record to the
+    // 44.1 kHz of whatever played first; a library that mixes rates should
+    // lose a few milliseconds between two records, not resolution. An album
+    // is normally one format throughout, which is where gaps are heard.
+    mpv_set_option_string(m_mpv, "gapless-audio", "weak");
+    // Open the queued next entry's stream as soon as the current one has been
+    // read to the end, instead of after it has played out: that request is
+    // the gap otherwise. Only ever acts on an entry prefetchNext() appended.
+    mpv_set_option_string(m_mpv, "prefetch-playlist", "yes");
     // HDR: the embedded GL path always tone-maps to the SDR scene (PLAN M6 matrix).
     // High-quality libplacebo settings; dynamic peak detection tracks scene brightness.
     mpv_set_option_string(m_mpv, "tone-mapping",
@@ -181,6 +193,8 @@ bool MpvPlayer::ensureInitialized()
     // Frames vo_gpu presented late. With frame-drop-count, the governor's
     // signal that the upscaler is costing frames (spec 2026-10-03 §4.2).
     mpv_observe_property(m_mpv, 0, "vo-delayed-frame-count", MPV_FORMAT_INT64);
+    // Settles a clean end held back for a prefetch that mpv did not go on to.
+    mpv_observe_property(m_mpv, 0, "idle-active", MPV_FORMAT_FLAG);
     mpv_set_wakeup_callback(m_mpv, &MpvPlayer::wakeup, this);
     m_defaultScale = readStringProperty(m_mpv, "scale");
     m_defaultCscale = readStringProperty(m_mpv, "cscale");
@@ -312,6 +326,8 @@ void MpvPlayer::destroyCore()
     // counts from one again.
     m_pendingLoads.clear();
     m_untrackedLoadId = 0;
+    m_prefetch = {};
+    m_heldEndLoadId = 0;
 }
 
 bool MpvPlayer::command(const char *args[])
@@ -334,6 +350,10 @@ void MpvPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
         emit renderHandleChanged();
     }
     m_loadId = loadId;
+    // `replace` empties mpv's playlist, a queued next file included, and an
+    // end held back for it belongs to a load the caller has moved on from.
+    dropPrefetch(false);
+    m_heldEndLoadId = 0;
     // The outgoing file's external subtitles are not this one's.
     cancelSubtitleAdds();
     // Publish the requested position directly. A synthetic zero stamped with
@@ -390,6 +410,136 @@ MpvPlayer::LoadId MpvPlayer::takeLoadIdForEntry(qint64 entryId)
     return loadId;
 }
 
+bool MpvPlayer::prefetchNext(const QUrl &url, qint64 startMs, LoadId loadId)
+{
+    // A file to follow needs one playing, whose end has not been seen yet. And
+    // no sub-add may be running when mpv changes file by itself: that is the
+    // libmpv 0.41 hang cancelSubtitleAdds() guards every loadfile against, and
+    // here mpv picks the moment, so nothing could abort the add in time.
+    if (!m_mpv || loadId == 0 || !url.isValid() ||
+        (m_state != State::Playing && m_state != State::Paused) || m_heldEndLoadId != 0 ||
+        m_subtitleAddInFlight != 0 || !m_pendingSubtitles.isEmpty())
+        return false;
+
+    dropPrefetch(false);
+    // Everything but the playing file: an earlier prefetch, and the entries
+    // the earlier tracks of a gapless run leave behind as they finish.
+    const char *clear[] = {"playlist-clear", nullptr};
+    command(clear);
+
+    // `start` per file, and it has to be: load() sets it as a global option,
+    // and an appended entry inherits globals — a resumed first track would
+    // start the second one at the same offset.
+    const QByteArray start =
+        startMs > 0 ? QByteArray::number(startMs / 1000.0, 'f', 3) : QByteArrayLiteral("0");
+    char *optionKeys[] = {const_cast<char *>("start")};
+    mpv_node optionValues[1]{};
+    optionValues[0].format = MPV_FORMAT_STRING;
+    optionValues[0].u.string = const_cast<char *>(start.constData());
+    mpv_node_list optionList{1, optionValues, optionKeys};
+
+    // Named arguments: mpv 0.38 put an insertion index between the flags and
+    // the options, and a name means the same on both sides of that change.
+    // `append`, not `append-play`: if mpv is already idle, the current file has
+    // ended and this entry is too late; starting it then would be a second,
+    // unasked-for start beside the controller's own advance.
+    const QByteArray urlUtf8 = url.toString(QUrl::FullyEncoded).toUtf8();
+    char *argKeys[] = {const_cast<char *>("name"), const_cast<char *>("url"),
+                       const_cast<char *>("flags"), const_cast<char *>("options")};
+    mpv_node argValues[4]{};
+    argValues[0].format = MPV_FORMAT_STRING;
+    argValues[0].u.string = const_cast<char *>("loadfile");
+    argValues[1].format = MPV_FORMAT_STRING;
+    argValues[1].u.string = const_cast<char *>(urlUtf8.constData());
+    argValues[2].format = MPV_FORMAT_STRING;
+    argValues[2].u.string = const_cast<char *>("append");
+    argValues[3].format = MPV_FORMAT_NODE_MAP;
+    argValues[3].u.list = &optionList;
+    mpv_node_list argList{4, argValues, argKeys};
+    mpv_node commandNode{};
+    commandNode.format = MPV_FORMAT_NODE_MAP;
+    commandNode.u.list = &argList;
+
+    mpv_node reply{};
+    const int rc = mpv_command_node(m_mpv, &commandNode, &reply);
+    if (rc < 0) {
+        // The URL carries the access token: say which command, never what.
+        qCWarning(logPlayback) << "mpv command loadfile append failed:" << mpv_error_string(rc);
+        return false;
+    }
+    const QVariant entry = variantFromNode(reply).toMap().value(QStringLiteral("playlist_entry_id"));
+    mpv_free_node_contents(&reply);
+    if (!entry.isValid()) {
+        // A libmpv too old to name the entry: nothing would tell its events
+        // from the current file's. Take it back out; it is the last one.
+        int64_t count = 0;
+        if (mpv_get_property(m_mpv, "playlist-count", MPV_FORMAT_INT64, &count) >= 0 && count > 1) {
+            const QByteArray last = QByteArray::number(count - 1);
+            const char *remove[] = {"playlist-remove", last.constData(), nullptr};
+            command(remove);
+        }
+        return false;
+    }
+    m_prefetch = {entry.toLongLong(), loadId, qMax<qint64>(0, startMs)};
+    m_pendingLoads.append({m_prefetch.entryId, loadId});
+    return true;
+}
+
+void MpvPlayer::cancelPrefetch()
+{
+    // An end already held for it stays held: mpv goes idle once the entry is
+    // gone, and idle-active reports that end then.
+    dropPrefetch(true);
+}
+
+void MpvPlayer::dropPrefetch(bool removeEntry)
+{
+    if (m_prefetch.loadId == 0)
+        return;
+    const Prefetch dropped = std::exchange(m_prefetch, {});
+    // Its START_FILE, should one already be queued, is nobody's now.
+    m_pendingLoads.removeIf(
+        [&dropped](const PendingLoad &pending) { return pending.entryId == dropped.entryId; });
+    if (!removeEntry || !m_mpv)
+        return;
+    const int index = playlistIndexOfEntry(dropped.entryId);
+    if (index < 0)
+        return;
+    // If mpv has already started it (the events saying so not drained yet),
+    // removing it also stops it, and mpv goes idle: a track nobody wants next
+    // any more does not get to play even for a moment.
+    const QByteArray position = QByteArray::number(index);
+    const char *args[] = {"playlist-remove", position.constData(), nullptr};
+    command(args);
+}
+
+void MpvPlayer::releaseHeldEnd()
+{
+    const LoadId ended = std::exchange(m_heldEndLoadId, 0);
+    dropPrefetch(true);
+    if (ended == m_loadId) {
+        setState(State::Ended, ended);
+        emit endReached(ended);
+    }
+    scheduleCoreRelease();
+}
+
+int MpvPlayer::playlistIndexOfEntry(qint64 entryId) const
+{
+    if (!m_mpv)
+        return -1;
+    mpv_node node;
+    if (mpv_get_property(m_mpv, "playlist", MPV_FORMAT_NODE, &node) < 0)
+        return -1;
+    const QVariantList entries = variantFromNode(node).toList();
+    mpv_free_node_contents(&node);
+    for (int i = 0; i < entries.size(); ++i) {
+        if (entries.at(i).toMap().value(QStringLiteral("id")).toLongLong() == entryId)
+            return i;
+    }
+    return -1;
+}
+
 void MpvPlayer::setPaused(bool paused)
 {
     if (!m_mpv)
@@ -400,6 +550,9 @@ void MpvPlayer::setPaused(bool paused)
 
 void MpvPlayer::stop()
 {
+    // mpv's stop clears the playlist, so the entry itself goes with it.
+    dropPrefetch(false);
+    m_heldEndLoadId = 0;
     cancelSubtitleAdds();
     if (m_mpv) {
         const char *args[] = {"stop", nullptr};
@@ -536,6 +689,10 @@ void MpvPlayer::addExternalSubtitle(const QUrl &url, const QString &title,
     // none, and after stop() or a failure there is none either.
     if (!m_mpv || !url.isValid() || (m_state != State::Playing && m_state != State::Paused))
         return;
+    // A file mpv would change to on its own while this add runs is the hang
+    // prefetchNext() refuses to risk; the subtitle wins, and the end of this
+    // file is then an ordinary one.
+    dropPrefetch(true);
     m_pendingSubtitles.append(
         {url.toString(QUrl::FullyEncoded).toUtf8(), title.toUtf8(), language.toUtf8(), select});
     startNextSubtitleAdd();
@@ -1055,6 +1212,12 @@ bool MpvPlayer::handleCoreProperty(const mpv_event_property &change)
             m_subtitleDelayMs = ms;
             emit subtitleDelayChanged();
         }
+    } else if (qstrcmp(change.name, "idle-active") == 0) {
+        // Idle with an end held: the prefetched entry came too late (or was
+        // taken back), and mpv stopped at the end of the file after all.
+        if (change.format == MPV_FORMAT_FLAG && *static_cast<int *>(change.data) != 0 &&
+            m_heldEndLoadId != 0)
+            releaseHeldEnd();
     } else {
         return false;
     }
@@ -1073,10 +1236,29 @@ void MpvPlayer::drainEvents()
             break;
 
         switch (event->event_id) {
-        case MPV_EVENT_START_FILE:
+        case MPV_EVENT_START_FILE: {
             m_eventLoadId = takeLoadIdForEntry(
                 static_cast<mpv_event_start_file *>(event->data)->playlist_entry_id);
+            if (m_prefetch.loadId == 0 || m_eventLoadId != m_prefetch.loadId)
+                break;
+            // mpv went on to the prefetched entry by itself: the gapless
+            // handover. The file that ended is never reported Ended; this load
+            // takes over as if load() had been called for it, and the caller
+            // hears so first, so it is expecting the events that follow.
+            const LoadId finished = m_loadId;
+            const LoadId started = m_prefetch.loadId;
+            const qint64 startMs = m_prefetch.startMs;
+            m_prefetch = {};
+            m_heldEndLoadId = 0;
+            m_loadId = started;
+            emit prefetchStarted(finished, started);
+            if (m_loadId != started)
+                break; // the caller moved on again inside the signal
+            resetPerLoadState(started, startMs);
+            m_loadInFlight = true;
+            setState(State::Loading, started);
             break;
+        }
         case MPV_EVENT_FILE_LOADED: {
             if (m_eventLoadId != m_loadId)
                 break;
@@ -1090,11 +1272,24 @@ void MpvPlayer::drainEvents()
         }
         case MPV_EVENT_END_FILE: {
             const auto *end = static_cast<mpv_event_end_file *>(event->data);
+            const bool current = m_eventLoadId != 0 && m_eventLoadId == m_loadId;
+            bool held = false;
             if (end->reason == MPV_END_FILE_REASON_ERROR) {
+                // mpv moves on to the next entry after a failure as it does
+                // after an end. A queued prefetch must not play over the
+                // controller's recovery of this load.
+                if (current)
+                    dropPrefetch(true);
                 const QString message = QString::fromUtf8(mpv_error_string(end->error));
                 qCWarning(logPlayback) << "playback failed:" << message;
                 setState(State::Error, m_eventLoadId);
                 emit errorOccurred(message, m_eventLoadId);
+            } else if (end->reason == MPV_END_FILE_REASON_EOF && current &&
+                       m_prefetch.loadId != 0) {
+                // Held until mpv shows whether it went on (START_FILE of the
+                // prefetch) or had gone idle before the entry arrived.
+                m_heldEndLoadId = m_eventLoadId;
+                held = true;
             } else if (end->reason == MPV_END_FILE_REASON_EOF) {
                 setState(State::Ended, m_eventLoadId);
                 emit endReached(m_eventLoadId);
@@ -1105,8 +1300,10 @@ void MpvPlayer::drainEvents()
                 for (int i = 0; i < end->playlist_insert_num_entries; ++i)
                     m_pendingLoads.append({end->playlist_insert_id + i, m_eventLoadId});
             }
-            // STOP/REDIRECT/QUIT: state handled by the caller (stop()).
-            if (end->reason == MPV_END_FILE_REASON_ERROR || end->reason == MPV_END_FILE_REASON_EOF)
+            // STOP/REDIRECT/QUIT: state handled by the caller (stop()). A held
+            // end is not idle yet: the core is about to play the next file.
+            if (!held &&
+                (end->reason == MPV_END_FILE_REASON_ERROR || end->reason == MPV_END_FILE_REASON_EOF))
                 scheduleCoreRelease();
             break;
         }
