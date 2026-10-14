@@ -2,7 +2,6 @@
 
 #include "GpuTimer.h"
 #include "MpvPlayer.h"
-#include "MpvTargetTime.h"
 #include "core/Log.h"
 #include "playback/upscale/GpuTimingSummary.h"
 
@@ -10,6 +9,7 @@
 #include <mpv/render_gl.h>
 
 #include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
@@ -35,6 +35,38 @@ void *glProcAddress(void *, const char *name)
     return reinterpret_cast<void *>(context->getProcAddress(name));
 }
 
+// The windowing system's own display connection, which mpv's hardware-decoding
+// interops open their device through (VA-API: vaGetDisplayWl / vaGetDisplay).
+// Without one mpv cannot map a decoded surface into GL and falls back to the
+// "-copy" decoders, which read every frame back to system memory. Null where
+// the platform plugin is neither, or Qt cannot say (QWaylandApplication is
+// Qt 6.5), which is what mpv was given before: it degrades the same way.
+struct NativeDisplays
+{
+    void *wayland = nullptr; // struct wl_display *
+    void *x11 = nullptr; // Display *
+};
+
+// GUI thread.
+NativeDisplays nativeDisplays()
+{
+    NativeDisplays displays;
+    [[maybe_unused]] auto *app = qGuiApp;
+    if (!app)
+        return displays;
+#if QT_CONFIG(xcb)
+    if (auto *x11 = app->nativeInterface<QNativeInterface::QX11Application>())
+        displays.x11 = x11->display();
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#if QT_CONFIG(wayland)
+    if (auto *wayland = app->nativeInterface<QNativeInterface::QWaylandApplication>())
+        displays.wayland = wayland->display();
+#endif
+#endif
+    return displays;
+}
+
 } // namespace
 
 // Lives on the GUI thread and owned jointly by the item and its renderer.
@@ -53,7 +85,11 @@ class MpvRenderer;
 class MpvUpdateBridge : public QObject
 {
 public:
-    explicit MpvUpdateBridge(MpvVideoItem *item) : m_item(item) {}
+    explicit MpvUpdateBridge(MpvVideoItem *item) : displays(nativeDisplays()), m_item(item) {}
+
+    // Read on the GUI thread, once; the render thread only passes them on.
+    // They belong to the application, which outlives every render context.
+    const NativeDisplays displays;
 
     // Any thread. Coalesces: one queued redraw request is as good as ten.
     void requestUpdate()
@@ -167,9 +203,11 @@ public:
         QOpenGLFramebufferObject *fbo = framebufferObject();
         mpv_opengl_fbo mpvFbo{static_cast<int>(fbo->handle()), fbo->width(), fbo->height(), 0};
         int flipY = 0;
-        // StrmQt waits for the frame's display time itself, below. mpv's own
-        // wait would sit between the two timestamps and swamp the GPU time
-        // with ~40 ms of sleeping at 24 fps (spec §2.5).
+        // Nothing waits for the frame's display time here. This is the scene
+        // graph's render thread: a wait holds every animation in the window
+        // to the video's frame rate, and mpv's own wait would also sit between
+        // the two timestamps and count as GPU time. mpv hands a frame over
+        // when it is due instead (MpvVideoItem::applyFramePacing).
         int blockForTargetTime = 0;
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_OPENGL_FBO, &mpvFbo},
@@ -177,7 +215,6 @@ public:
             {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &blockForTargetTime},
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
-        const int64_t targetTime = nextFrameTargetTime();
 
         window->beginExternalCommands();
         m_gpuTimer.collect(m_gpuSamples);
@@ -186,13 +223,12 @@ public:
         mpv_render_context_render(m_context, params);
         if (timed) {
             m_gpuTimer.end();
-            // Submit the end timestamp now: left queued, it runs only after
-            // the wait below and the GPU time absorbs the sleep.
+            // Submit the end timestamp now: left queued, it runs only when
+            // the scene graph next flushes, behind whatever it issued first.
             QOpenGLContext::currentContext()->functions()->glFlush();
         }
         window->endExternalCommands();
 
-        waitUntil(targetTime);
         postTimingSummary();
     }
 
@@ -209,7 +245,6 @@ private:
         m_gpuTimer.release();
         m_gpuSamples.clear();
         m_summaryClock.invalidate();
-        m_clockBase = MpvClockBase::Unknown;
         if (win)
             win->endExternalCommands();
         m_context = nullptr;
@@ -242,11 +277,17 @@ private:
         // Simple-control mode: mpv drives frame timing itself and the update
         // callback just requests redraws. Advanced control requires a
         // mpv_render_context_update() protocol we don't need for v1.
-        mpv_render_param params[] = {
+        mpv_render_param params[5] = {
             {MPV_RENDER_PARAM_API_TYPE, const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
             {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glParams},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
         };
+        int count = 2;
+        const NativeDisplays &displays = m_bridge->displays;
+        if (displays.wayland)
+            params[count++] = {MPV_RENDER_PARAM_WL_DISPLAY, displays.wayland};
+        if (displays.x11)
+            params[count++] = {MPV_RENDER_PARAM_X11_DISPLAY, displays.x11};
+        params[count] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
         const int rc = mpv_render_context_create(&m_context, m_handle, params);
         if (rc < 0) {
@@ -266,52 +307,6 @@ private:
         qCInfo(logPlayback).noquote() << "video renderer:" << renderer
                                       << (timed ? "(GPU timing on)" : "(no GPU timer queries)");
         m_bridge->postRenderer(renderer);
-    }
-
-    // When the frame the next render call draws is due on screen, in mpv's
-    // clock (see MpvTargetTime.h for which one); 0 when mpv gives none (a redraw, or display-sync
-    // timing), which is also when mpv's own wait would not have waited.
-    int64_t nextFrameTargetTime()
-    {
-        mpv_render_frame_info info{};
-        if (mpv_render_context_get_info(m_context,
-                                        mpv_render_param{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &info})
-            < 0)
-            return 0;
-        if (!(info.flags & MPV_RENDER_FRAME_INFO_PRESENT)
-            || (info.flags & MPV_RENDER_FRAME_INFO_REDRAW))
-            return 0;
-        return info.target_time;
-    }
-
-    // The wait mpv does inside a blocking render call, done after the second
-    // timestamp instead (spec §4.4 step 5): the frame reaches Qt when it did
-    // before, so pacing and A/V sync are unchanged.
-    void waitUntil(int64_t targetTime)
-    {
-        if (targetTime <= 0 || !m_handle)
-            return;
-        const int64_t nowUs = mpv_get_time_us(m_handle);
-#if MPV_CLIENT_API_VERSION >= MPV_MAKE_VERSION(2, 2)
-        // mpv_get_time_ns() arrived with client API 2.2 (DOCS/client-api-changes.rst:
-        // "2.2 - add mpv_time_ns()", mpv 0.36/0.37); older libmpv has only the
-        // microsecond clock.
-        const int64_t nowNs = mpv_get_time_ns(m_handle);
-        // render.h documents target_time in mpv_get_time_us() time, but
-        // libmpv 2.5 gives mpv_get_time_ns() time: read it off the value. A
-        // frame that does not decide it is not waited on (MpvTargetTime.h).
-        const MpvClockBase before = m_clockBase;
-        const int64_t waitUs = frameWaitUs(targetTime, m_clockBase, nowNs, nowUs);
-        if (before == MpvClockBase::Unknown && m_clockBase != MpvClockBase::Unknown)
-            qCDebug(logPlayback) << "mpv frame target times are in"
-                                 << (m_clockBase == MpvClockBase::Nanoseconds ? "ns" : "us");
-#else
-        // Client API below 2.2: no nanosecond clock, so target_time is in the
-        // documented microseconds.
-        const int64_t waitUs = targetWaitUs(targetTime, MpvClockBase::Microseconds, 0, nowUs);
-#endif
-        if (waitUs > 0)
-            QThread::usleep(static_cast<unsigned long>(waitUs));
     }
 
     void postTimingSummary()
@@ -340,7 +335,6 @@ private:
     GpuTimer m_gpuTimer;
     std::vector<double> m_gpuSamples;
     QElapsedTimer m_summaryClock;
-    MpvClockBase m_clockBase = MpvClockBase::Unknown; // per render context
 };
 
 MpvVideoItem::MpvVideoItem(QQuickItem *parent)
@@ -416,12 +410,34 @@ void MpvVideoItem::setPlayerObject(QObject *player)
     if (m_player)
         connect(m_player, &MpvPlayer::renderHandleChanged, this,
                 &MpvVideoItem::onRenderHandleChanged);
+    applyFramePacing();
     emit playerChanged();
     update();
 }
 
+// mpv hands a frame to the render API "video-timing-offset" (50 ms by default,
+// less at frame rates above 20) before it is due, and expects the render call
+// to sit out the difference. The renderer never waits (see render()), so the
+// offset goes instead, which render.h names as the alternative: the redraw
+// request then arrives when the frame is due, and drawing it at once shows it on
+// time. Left at the default, every frame would be shown that much early.
+//
+// Set here, on the GUI thread, because the render thread may not call into
+// the core, and for every core: the player replaces its core when idle.
+void MpvVideoItem::applyFramePacing()
+{
+    mpv_handle *handle = m_player ? m_player->handle() : nullptr;
+    if (!handle)
+        return;
+    const int rc = mpv_set_property_string(handle, "video-timing-offset", "0");
+    if (rc < 0)
+        qCWarning(logPlayback) << "could not set video-timing-offset; video runs early:"
+                               << mpv_error_string(rc);
+}
+
 void MpvVideoItem::onRenderHandleChanged()
 {
+    applyFramePacing();
     update();
     // A release is waiting for this item's renderer, which lets go at its next
     // synchronize(). An unexposed window (hidden, minimised) never gets one,

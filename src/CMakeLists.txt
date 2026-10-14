@@ -148,7 +148,6 @@ qt_add_executable(strmqt
     playback/mpv/MpvPlayer.h playback/mpv/MpvPlayer.cpp
     playback/mpv/MpvVideoItem.h playback/mpv/MpvVideoItem.cpp
     playback/mpv/GpuTimer.h playback/mpv/GpuTimer.cpp
-    playback/mpv/MpvTargetTime.h
 )
 if(LIBVLC_FOUND)
     target_sources(strmqt PRIVATE

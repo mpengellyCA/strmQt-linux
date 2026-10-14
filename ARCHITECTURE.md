@@ -336,15 +336,16 @@ own passes; a second one around the render call is a nested begin, which GL
 forbids, and the shaders then silently stop running while every frame logs
 `INVALID_OPERATION`.
 
-**The target-time wait moved.** The render call no longer blocks
-(`BLOCK_FOR_TARGET_TIME = 0`), because mpv's wait would land between the two
-timestamps. The item waits until the frame's target time itself, after the
-second timestamp, so pacing and A/V sync are what they were. libmpv's render
-API delivers `target_time` in the `mpv_get_time_ns()` base on current libmpv
-(2.5), not microseconds as `render.h` documents, so the item picks the clock at
-runtime (`src/playback/mpv/MpvTargetTime.h`) when the libmpv client API is 2.2 or newer; older libmpv (Debian 12's 0.35) is
-microseconds-only and uses `mpv_get_time_us()`. It also calls `glFlush()` after
-the end timestamp, so the wait is not counted as GPU time.
+**Nothing waits for a frame's display time.** The render call does not block
+(`BLOCK_FOR_TARGET_TIME = 0`): mpv's wait would land between the two timestamps
+and count as GPU time, and any wait at all is on the scene graph's render
+thread, where it held every animation in the window to the video's frame rate
+(a 45 ms median render pass on a 10 fps clip, measured). `MpvVideoItem` sets
+mpv's `video-timing-offset` to 0 on every core instead, the alternative
+`render.h` names: mpv then raises its update callback when the frame is due
+rather than 50 ms ahead, and drawing it at once shows it on time (0.4-10 ms
+after its target, measured on libmpv 2.5). The item still calls `glFlush()`
+after the end timestamp, so the query is submitted with the render it brackets.
 
 `tst_mpv_shader_compile` renders every chain through a real libmpv render
 context on Mesa's software renderer in every CI container, which is what proves
@@ -951,9 +952,12 @@ assertion catches the rot.
   YouTube still signed in.
 - **The upscaling shaders do not apply to YouTube.** They are mpv's; YouTube plays in
   Chromium.
-- **Zero-copy VAAPI is unreachable**: `MpvVideoItem::ensureContext()` does not pass
-  `MPV_RENDER_PARAM_WL_DISPLAY`, so mpv finds no native display. Hardware decode
-  still works via `vulkan-copy`; this costs a copy, not the feature.
+- **Zero-copy VAAPI is verified on Wayland only.** `MpvVideoItem::ensureContext()`
+  passes the native display (`MPV_RENDER_PARAM_WL_DISPLAY` / `X11_DISPLAY`), and
+  on Wayland mpv reports `hwdec-current=vaapi`. On X11 the handle is passed but
+  Qt's default GLX context is not expected to satisfy mpv's EGL interop, so the
+  `-copy` decoders are the likely result there; Qt 6.4 has no
+  `QWaylandApplication` and gets the copy path too.
 - **VLC video output** is broken (`STRMQT_WITH_VLC` builds only). Suspected forced
   `RV32` chroma with no fallback.
 - **Upscaling is mpv-only, and `gpu-next`-only shaders are out.** libmpv's render

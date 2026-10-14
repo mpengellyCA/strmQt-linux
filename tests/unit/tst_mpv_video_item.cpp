@@ -1,17 +1,22 @@
 #include <QtTest>
 
 #include "playback/mpv/MpvPlayer.h"
-#include "playback/mpv/MpvTargetTime.h"
 #include "playback/mpv/MpvVideoItem.h"
 #include "playback/upscale/VideoProcessing.h"
 
 #include <QOpenGLContext>
+#include <QElapsedTimer>
+#include <QMutex>
 #include <QProcess>
 #include <QQuickWindow>
 #include <QSGNode>
+#include <QSGRendererInterface>
+#include <QStandardPaths>
 #include <QTcpServer>
+#include <QTemporaryDir>
 #include <QThread>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #ifdef Q_OS_LINUX
@@ -91,7 +96,8 @@ private slots:
     void videoProcessingAppliesOnFirstLoad();
     void videoProcessingSurvivesACoreRelease();
     void outputPixelSizeFollowsTheItem();
-    void targetWaitUsesTheNearerClock();
+    void framesAreHandedOverWhenDue();
+    void renderingAFrameDoesNotWaitForItsDisplayTime();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -659,49 +665,139 @@ void MpvVideoItemTest::outputPixelSizeFollowsTheItem()
     QCOMPARE(item->outputPixelSize(), QSize(qRound(1280 * dpr), qRound(720 * dpr)));
 }
 
-void MpvVideoItemTest::targetWaitUsesTheNearerClock()
+// The renderer never waits for a frame's display time, so mpv must not hand
+// frames over ahead of it: with mpv's default offset every frame would be shown
+// up to 50 ms early. The offset is per core, and the player replaces its core.
+void MpvVideoItemTest::framesAreHandedOverWhenDue()
 {
-    // Readings taken from libmpv 2.5: target_time tracks mpv_get_time_ns(),
-    // although render.h documents the mpv_get_time_us() base.
-    const int64_t nowNs = 2'055'796'687;
-    const int64_t nowUs = 2'055'796;
-    bool decisive = false;
-    QCOMPARE(nearerMpvClock(2'090'000'000, nowNs, nowUs, &decisive), MpvClockBase::Nanoseconds);
-    QVERIFY(decisive);
-    QCOMPARE(targetWaitUs(2'090'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(34'203));
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(20);
+    MpvVideoItem item;
+    item.setPlayerObject(&player);
 
-    // The documented base, as an older libmpv would deliver it.
-    QCOMPARE(nearerMpvClock(2'090'000, nowNs, nowUs, &decisive), MpvClockBase::Microseconds);
-    QVERIFY(decisive);
-    QCOMPARE(targetWaitUs(2'090'000, MpvClockBase::Microseconds, nowNs, nowUs), int64_t(34'204));
+    player.load(kMissingMedia, 0, 1);
+    QVERIFY(player.handle() != nullptr);
+    QCOMPARE(stringProperty(player.handle(), "video-timing-offset"), QStringLiteral("0.000000"));
 
-    // Within a frame of the clocks' origin both readings are close to zero and
-    // the choice is a guess: still the nearer clock, but not one to keep.
-    QCOMPARE(nearerMpvClock(40'000'000, 1'000'000, 1'000, &decisive), MpvClockBase::Nanoseconds);
-    QVERIFY(!decisive);
+    player.stop();
+    QTRY_VERIFY(!player.hasCore());
+    player.load(kMissingMedia, 0, 2);
+    QVERIFY(player.handle() != nullptr);
+    QCOMPARE(stringProperty(player.handle(), "video-timing-offset"), QStringLiteral("0.000000"));
+    player.stop();
+    item.setPlayerObject(nullptr);
 
-    // ...and not one to wait on either. A frame 60 ms late in the ns base,
-    // 0.1 s into mpv's uptime, lies nearer the us clock; read as us it would
-    // be a far-future target, and the render thread would sleep the full 1 s.
-    MpvClockBase learned = MpvClockBase::Unknown;
-    QCOMPARE(nearerMpvClock(40'000'000, 100'000'000, 100'000, &decisive),
-             MpvClockBase::Microseconds);
-    QVERIFY(!decisive);
-    QCOMPARE(targetWaitUs(40'000'000, MpvClockBase::Microseconds, 100'000'000, 100'000),
-             kMaxTargetWaitUs); // what waiting on the guess would do
-    QCOMPARE(frameWaitUs(40'000'000, learned, 100'000'000, 100'000), int64_t(0));
-    QCOMPARE(learned, MpvClockBase::Unknown);
-    // A decisive reading is learned and waited on.
-    QCOMPARE(frameWaitUs(2'090'000'000, learned, nowNs, nowUs), int64_t(34'203));
-    QCOMPARE(learned, MpvClockBase::Nanoseconds);
-    // Once learned, the base is kept even for a frame that would not decide it.
-    QCOMPARE(frameWaitUs(140'000'000, learned, 100'000'000, 100'000), int64_t(40'000));
+    // A player whose core is already up when the plane takes it.
+    MpvPlayer running;
+    running.load(kMissingMedia, 0, 1);
+    QVERIFY(running.handle() != nullptr);
+    QVERIFY(stringProperty(running.handle(), "video-timing-offset") != QStringLiteral("0.000000"));
+    MpvVideoItem late;
+    late.setPlayerObject(&running);
+    QCOMPARE(stringProperty(running.handle(), "video-timing-offset"), QStringLiteral("0.000000"));
+    running.stop();
+    late.setPlayerObject(nullptr);
+}
 
-    // No target, a target already past, and a runaway target.
-    QCOMPARE(targetWaitUs(0, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));
-    QCOMPARE(targetWaitUs(2'000'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), int64_t(0));
-    QCOMPARE(targetWaitUs(9'000'000'000, MpvClockBase::Nanoseconds, nowNs, nowUs), kMaxTargetWaitUs);
-    QCOMPARE(targetWaitUs(9'000'000'000, MpvClockBase::Microseconds, nowNs, nowUs), kMaxTargetWaitUs);
+// The renderer runs on the scene graph's render thread, where a wait stalls
+// the whole window: every animation, scroll and focus transition drops to the
+// video's frame rate. Real frames through the real renderer, with the time
+// the scene graph spends rendering each pass measured from outside.
+//
+// At 10 fps mpv's default hand-over is 50 ms before each frame is due, so a
+// renderer that sat that out (its own sleep, or mpv's blocking wait) spends
+// about 50 ms in every pass that draws a frame. One that does not spends as
+// long as a 320x180 frame takes to draw.
+void MpvVideoItemTest::renderingAFrameDoesNotWaitForItsDisplayTime()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = dir.filePath(QStringLiteral("clip10fps.avi"));
+    QProcess process;
+    process.start(ffmpeg, {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                           QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+                           QStringLiteral("testsrc2=duration=6:size=320x180:rate=10"),
+                           QStringLiteral("-c:v"), QStringLiteral("mpeg4"), clip});
+    QVERIFY(process.waitForFinished(30000));
+    QCOMPARE(process.exitCode(), 0);
+
+    // Before the window, as in releaseWaitsForTheRenderer().
+    MpvPlayer player;
+    QQuickWindow window;
+    window.resize(320, 180);
+    CountingVideoItem item(window.contentItem());
+    item.setSize(window.size());
+    item.setPlayerObject(&player);
+
+    // Connected before the window is shown, so before the framebuffer node
+    // connects its own render to beforeRendering: the clock starts first.
+    QMutex mutex;
+    QElapsedTimer passClock;
+    QList<qint64> passMs;
+    bool measuring = false;
+    connect(
+        &window, &QQuickWindow::beforeRendering, &window, [&] { passClock.start(); },
+        Qt::DirectConnection);
+    connect(
+        &window, &QQuickWindow::afterRendering, &window,
+        [&] {
+            const QMutexLocker locker(&mutex);
+            if (measuring && passClock.isValid())
+                passMs.append(passClock.elapsed());
+        },
+        Qt::DirectConnection);
+
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
+        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+
+    // mpv opens its video output when the first frame is decoded and gives up
+    // on video if no render context exists by then. A local clip gets there
+    // before the renderer's first pass, so a load that never answers brings
+    // the core and the context up first.
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress::LocalHost));
+    player.load(QUrl(QStringLiteral("http://127.0.0.1:%1/stalled.mkv").arg(silent.serverPort())),
+                0, 1);
+    QTRY_VERIFY(!item.gpuRenderer().isEmpty());
+
+    player.load(QUrl::fromLocalFile(clip), 0, 2);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Playing, 15000);
+    QTRY_VERIFY(item.paintNodeUpdates > 0);
+    {
+        const QMutexLocker locker(&mutex);
+        measuring = true;
+    }
+    // Nothing else in this window changes, so each pass from here on is one
+    // video frame asking to be drawn.
+    const int framesWanted = 20;
+    const int baseline = item.paintNodeUpdates;
+    QTRY_VERIFY_WITH_TIMEOUT(item.paintNodeUpdates >= baseline + framesWanted, 15000);
+
+    QList<qint64> passes;
+    {
+        const QMutexLocker locker(&mutex);
+        measuring = false;
+        passes = passMs;
+    }
+    player.stop();
+    item.setPlayerObject(nullptr);
+
+    QVERIFY2(passes.size() >= framesWanted / 2,
+             qPrintable(QStringLiteral("only %1 passes measured").arg(passes.size())));
+    std::sort(passes.begin(), passes.end());
+    const qint64 median = passes.at(passes.size() / 2);
+    // The median, so that one pass held up by a busy machine does not decide it.
+    QVERIFY2(median < 25,
+             qPrintable(QStringLiteral("the render thread spent a median of %1 ms per video frame "
+                                       "(slowest %2 ms, %3 passes): it is waiting for frame times")
+                            .arg(median)
+                            .arg(passes.last())
+                            .arg(passes.size())));
 }
 
 QTEST_MAIN(MpvVideoItemTest)
