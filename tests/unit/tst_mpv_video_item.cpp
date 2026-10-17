@@ -313,6 +313,7 @@ private slots:
     void deferredSettingsApplyOnFirstLoad();
     void deferredSettingsNormalizeBeforeFirstLoad();
     void bundledScriptsAreNotLoaded();
+    void gaplessOptionsAreSetOnTheCore();
     void playerDetachSynchronizesBeforeOwnerDestruction();
     void offThreadFrameNotificationRedrawsTheItem();
     void idleCoreIsReleased();
@@ -472,6 +473,20 @@ void MpvVideoItemTest::deferredSettingsNormalizeBeforeFirstLoad()
 // mpv's bundled Lua scripts (ytdl_hook, stats, select, positioning, ...) each
 // start a VM on a thread of their own at mpv_initialize. Nothing in an embedded
 // Emby player drives them, so the core must come up without any.
+// What the gapless advance rests on, as the core reports it. prefetch-playlist
+// is off in mpv by default, and without it the next file is only opened after
+// the current one has played out — the gap itself. gapless-audio "yes" would
+// resample a 96 kHz record to whatever rate played first.
+void MpvVideoItemTest::gaplessOptionsAreSetOnTheCore()
+{
+    MpvPlayer player;
+    player.load(kMissingMedia, 0, 1);
+    mpv_handle *handle = player.handle();
+    QVERIFY(handle != nullptr);
+    QCOMPARE(stringProperty(handle, "prefetch-playlist"), QStringLiteral("yes"));
+    QCOMPARE(stringProperty(handle, "gapless-audio"), QStringLiteral("weak"));
+}
+
 void MpvVideoItemTest::bundledScriptsAreNotLoaded()
 {
     MpvPlayer player;
