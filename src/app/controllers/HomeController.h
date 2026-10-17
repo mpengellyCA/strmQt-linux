@@ -180,6 +180,9 @@ private:
     QHash<QString, MediaItemModel *> m_genreModels;
     QVariantList m_genreRails;
     bool m_genreRailsFetched = false;
+    // Home has asked for the genre rails this session, so a refresh may fetch
+    // them again after a failure without a user who never reached them paying.
+    bool m_genreRailsWanted = false;
     QString m_errorMessage;
     QVariantMap m_featured;
     // Set while a snapshot replaces several rails at once, so the stage is

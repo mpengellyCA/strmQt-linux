@@ -77,6 +77,7 @@ private slots:
     void legacyFlatTokenIsAdoptedIntoTheAccountScope();
     void homeRefreshBuildsRails();
     void homeSessionResetRetiresOldCountersAndGenreCallbacks();
+    void homeGenreRailsRetryAfterAFailedGenresCall();
     void libraryPaging();
     void librarySessionResetRetiresOldPage();
 
@@ -764,6 +765,58 @@ void ControllersTest::homeSessionResetRetiresOldCountersAndGenreCallbacks()
              QStringLiteral("B Resume"));
     QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
              QStringLiteral("B Genre"));
+}
+
+// HomePage asks for the genre rails once, when it is built. A failed /Genres
+// call used to latch "fetched" anyway, so the rails stayed empty until the app
+// restarted; the next refresh must ask again, and only while Home wants them.
+void ControllersTest::homeGenreRailsRetryAfterAFailedGenresCall()
+{
+    const QString items = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_client->setBaseUrl(m_mock->baseUrl());
+    m_client->setSession(kToken, kUserId);
+    const QByteArray empty = QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}");
+    for (const QString &path : {QStringLiteral("/Users/%1/Items/Resume").arg(kUserId),
+                                QStringLiteral("/Shows/NextUp"), items,
+                                QStringLiteral("/Users/%1/Views").arg(kUserId)})
+        m_mock->addRoute(QStringLiteral("GET"), path, 200, empty);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 500, QByteArray());
+
+    const auto genreCalls = [this] {
+        int count = 0;
+        for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests())
+            count += request.path == QLatin1String("/Genres") ? 1 : 0;
+        return count;
+    };
+
+    HomeController home(m_client);
+    // Never asked for: a refresh does not fetch them.
+    home.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
+    QCOMPARE(genreCalls(), 0);
+
+    home.loadGenreRails();
+    QTRY_COMPARE_WITH_TIMEOUT(genreCalls(), 1, 5000);
+    QTest::qWait(50);
+    QVERIFY(home.genreRails().isEmpty());
+
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"g1\",\"Name\":\"Drama\","
+                                       "\"Type\":\"Genre\"}],\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), items, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"m1\",\"Name\":\"A Film\","
+                                       "\"Type\":\"Movie\"}],\"TotalRecordCount\":1}"));
+    home.refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(home.genreRails().size(), 1, 5000);
+    QCOMPARE(genreCalls(), 2);
+    QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("Drama"));
+
+    // Fetched: neither a refresh nor Home asking again costs another call.
+    home.refresh();
+    home.loadGenreRails();
+    QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
+    QCOMPARE(genreCalls(), 2);
 }
 
 void ControllersTest::librarySessionResetRetiresOldPage()

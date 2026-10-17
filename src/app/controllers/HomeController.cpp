@@ -104,6 +104,7 @@ void HomeController::resetSessionState()
     }
     m_genreModels.clear();
     m_genreRailsFetched = false;
+    m_genreRailsWanted = false;
     if (hadGenreRails)
         emit genreRailsChanged();
     syncRailDescriptors();
@@ -208,6 +209,11 @@ void HomeController::startRefresh()
         if (generation == m_generation)
             m_refreshOnWire = true;
     });
+
+    // HomePage asks for the genre rails once, when it is built. A refresh is
+    // the retry for a /Genres call that failed (fetchGenreRails() unlatches).
+    if (m_genreRailsWanted && !m_genreRailsFetched)
+        loadGenreRails();
 
     beginRequest();
     m_client->resumeItems(20).then(this, [this, generation](const Result<ItemsPage> &result) {
@@ -500,6 +506,7 @@ void HomeController::applySnapshotRails(const Snapshot &snapshot)
 
 void HomeController::loadGenreRails()
 {
+    m_genreRailsWanted = true;
     if (m_genreRailsFetched)
         return;
     m_genreRailsFetched = true;
@@ -516,7 +523,16 @@ void HomeController::fetchGenreRails()
     const int generation = ++m_genreGeneration;
     m_client->genres(QString(), kGenreCount)
         .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
-            if (generation != m_genreGeneration || !result.ok() || result.value.isEmpty())
+            if (generation != m_genreGeneration)
+                return;
+            if (!result.ok()) {
+                // Unlatched, so the next time Home asks it asks the server
+                // again: one failed /Genres call must not leave the genre
+                // rails empty until the app restarts.
+                m_genreRailsFetched = false;
+                return;
+            }
+            if (result.value.isEmpty())
                 return;
 
             // Rebuilt in place: each rail's items land independently, and the
