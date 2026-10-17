@@ -144,6 +144,16 @@ pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
 target_link_libraries(tst_mpv_video_item PRIVATE
     Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
 set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+# The renderer cases again, on the session's display: offscreen gives a
+# QQuickWindow no OpenGL scene graph, so above they skip, and with them the
+# check that the render thread never waits for a frame's display time. A dev
+# box's headless compositor or CI's xvfb-run (llvmpipe) runs them; a package
+# build with no display stays offscreen and reports them skipped.
+add_test(NAME tst_mpv_video_item_gl COMMAND tst_mpv_video_item
+    releaseWaitsForTheRenderer hiddenPlaneStillLetsGo renderingAFrameDoesNotWaitForItsDisplayTime)
+set_tests_properties(tst_mpv_video_item_gl PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;STRMQT_TEST_NATIVE_GL=1"
+    SKIP_REGULAR_EXPRESSION "SKIP   : .*renders only with the OpenGL scene graph")
 
 # Every bundled upscaling shader, compiled and run by a real libmpv render
 # context (spec 2026-10-03 §6). llvmpipe in CI; the host GPU on a dev box.

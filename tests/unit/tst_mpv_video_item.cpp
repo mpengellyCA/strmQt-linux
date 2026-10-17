@@ -6,8 +6,10 @@
 
 #include <QOpenGLContext>
 #include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QMutex>
+#include <QPointer>
 #include <QProcess>
 #include <QQuickWindow>
 #include <QSGNode>
@@ -52,6 +54,20 @@ protected:
 };
 
 const QUrl kMissingMedia = QUrl::fromLocalFile(QStringLiteral("/strmqt-test-missing-media"));
+
+// The renderer cases need an OpenGL scene graph, which the offscreen platform
+// the ordinary ctest entry uses does not give a QQuickWindow. A second entry
+// (tst_mpv_video_item_gl, tests/CMakeLists.txt) runs them on the session's own
+// display: there, where CI exports STRMQT_REQUIRE_GL=1, no GL is a failure.
+#define SKIP_UNLESS_OPENGL_SCENE_GRAPH(window)                                                     \
+    do {                                                                                           \
+        if ((window).rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) {         \
+            if (qEnvironmentVariableIsSet("STRMQT_TEST_NATIVE_GL") &&                              \
+                qEnvironmentVariableIsSet("STRMQT_REQUIRE_GL"))                                    \
+                QFAIL("no OpenGL scene graph on the session's display");                           \
+            QSKIP("MpvVideoItem renders only with the OpenGL scene graph");                       \
+        }                                                                                          \
+    } while (false)
 
 QString stringProperty(mpv_handle *handle, const char *name)
 {
@@ -325,6 +341,7 @@ private slots:
     void aPrefetchedTrackFollowsWithoutALoad();
     void aWithdrawnPrefetchIsNotPlayed();
     void aPrefetchTooLateForTheEndIsAnOrdinaryEnd();
+    void aSubtitleAddAndAPrefetchNeverOverlap();
 };
 
 void MpvVideoItemTest::coreInitializesOnFirstLoad()
@@ -683,8 +700,7 @@ void MpvVideoItemTest::releaseWaitsForTheRenderer()
     item.setPlayerObject(&player);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
-        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+    SKIP_UNLESS_OPENGL_SCENE_GRAPH(window);
 
     // Long enough to be seen held: this load stays open until stop().
     QTcpServer silent;
@@ -761,8 +777,7 @@ void MpvVideoItemTest::hiddenPlaneStillLetsGo()
     item.setPlayerObject(&player);
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
-        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+    SKIP_UNLESS_OPENGL_SCENE_GRAPH(window);
 
     QTcpServer silent;
     QVERIFY(silent.listen(QHostAddress::LocalHost));
@@ -979,8 +994,7 @@ void MpvVideoItemTest::renderingAFrameDoesNotWaitForItsDisplayTime()
 
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL)
-        QSKIP("MpvVideoItem renders only with the OpenGL scene graph");
+    SKIP_UNLESS_OPENGL_SCENE_GRAPH(window);
 
     // mpv opens its video output when the first frame is decoded and gives up
     // on video if no render context exists by then. A local clip gets there
@@ -1505,6 +1519,83 @@ void MpvVideoItemTest::externalSubtitleIsFetchedFromItsUrl()
 
 // ── Gapless advance (PlayerBackend::prefetchNext) ─────────────────────────────
 
+// libmpv 0.41 hangs for good when the file is changed under a running sub-add,
+// and with a prefetch queued mpv changes file by itself, at a moment nothing
+// here chooses. So the two never overlap: a prefetch is refused while a
+// sub-add runs or waits, and a sub-add withdraws a prefetch already queued.
+void MpvVideoItemTest::aSubtitleAddAndAPrefetchNeverOverlap()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(dir);
+    const QString next = generateClip(dir, QStringLiteral("next.avi"));
+    if (clip.isEmpty() || next.isEmpty())
+        QSKIP("ffmpeg is required to generate the test clip");
+
+    // Answers each subtitle request only when told to.
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QList<QPointer<QTcpSocket>> held;
+    connect(&server, &QTcpServer::newConnection, &server, [&] {
+        while (QTcpSocket *socket = server.nextPendingConnection()) {
+            held.append(socket);
+            connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+        }
+    });
+    const auto answerAll = [&held] {
+        const QByteArray body = "1\n00:00:00,000 --> 00:00:19,000\nHeld\n";
+        for (const QPointer<QTcpSocket> &socket : std::as_const(held)) {
+            if (!socket)
+                continue;
+            socket->readAll();
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/x-subrip\r\n"
+                          "Connection: close\r\nContent-Length: "
+                          + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        }
+        held.clear();
+    };
+    const auto subtitleUrl = [&server](int index) {
+        return QUrl(QStringLiteral("http://127.0.0.1:%1/Subtitles/%2/Stream.srt")
+                        .arg(server.serverPort())
+                        .arg(index));
+    };
+
+    MpvPlayer player;
+    player.setCoreIdleReleaseDelayForTests(60'000);
+    QVERIFY(startCoreWithoutSound(player, 1));
+    player.load(QUrl::fromLocalFile(clip), 0, 2, true);
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), PlayerBackend::State::Paused, 15000);
+    const auto playlistCount = [&player] {
+        int64_t count = -1;
+        mpv_get_property(player.handle(), "playlist-count", MPV_FORMAT_INT64, &count);
+        return count;
+    };
+
+    // A sub-add on the wire: no prefetch.
+    player.addExternalSubtitle(subtitleUrl(1), QStringLiteral("One"), QStringLiteral("eng"),
+                               false);
+    QTRY_COMPARE_WITH_TIMEOUT(held.size(), 1, 15000);
+    QVERIFY(!player.prefetchNext(QUrl::fromLocalFile(next), 0, 3));
+    QCOMPARE(playlistCount(), 1);
+
+    // Landed: a prefetch is welcome again.
+    answerAll();
+    QTRY_COMPARE_WITH_TIMEOUT(player.subtitleTracks().size(), 1, 15000);
+    QVERIFY(player.prefetchNext(QUrl::fromLocalFile(next), 0, 3));
+    QCOMPARE(playlistCount(), 2);
+
+    // A subtitle asked for now withdraws the queued file before it runs.
+    player.addExternalSubtitle(subtitleUrl(2), QStringLiteral("Two"), QStringLiteral("eng"),
+                               false);
+    QCOMPARE(playlistCount(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(held.size(), 1, 15000);
+    QVERIFY(!player.prefetchNext(QUrl::fromLocalFile(next), 0, 4));
+    answerAll();
+    QTRY_COMPARE_WITH_TIMEOUT(player.subtitleTracks().size(), 2, 15000);
+    player.stop();
+}
+
 // mpv goes on to the appended entry by itself: under the prefetch's load id,
 // with no load() and no end reported for the first file, from the start of
 // the file whatever the first one was resumed at, on the audio output that was
@@ -1685,5 +1776,17 @@ void MpvVideoItemTest::aPrefetchTooLateForTheEndIsAnOrdinaryEnd()
     player.stop();
 }
 
-QTEST_MAIN(MpvVideoItemTest)
+int main(int argc, char *argv[])
+{
+    // The GL entry: the session's display when it has one. Without one (a
+    // package build's ctest) it stays offscreen and the renderer cases skip.
+    if (qEnvironmentVariableIsSet("STRMQT_TEST_NATIVE_GL") &&
+        (qEnvironmentVariableIsSet("WAYLAND_DISPLAY") || qEnvironmentVariableIsSet("DISPLAY")))
+        qunsetenv("QT_QPA_PLATFORM");
+    QGuiApplication app(argc, argv);
+    QTEST_SET_MAIN_SOURCE_PATH
+    MpvVideoItemTest test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "tst_mpv_video_item.moc"
