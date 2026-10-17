@@ -63,6 +63,19 @@
   </requires>
 
   <releases>
+    <release version="0.9.0" date="2026-10-17" type="development">
+      <description>
+        <p>StrmQt on a TV.</p>
+        <ul>
+          <li>A streaming host: a computer with no screen runs StrmQt full screen on a hidden desktop, with a Sunshine of its own, for a Fire TV or Android TV to watch.</li>
+          <li>StrmLight on the TV finds it on the network and pairs with one four-digit code; the TV's own remote then drives StrmQt.</li>
+          <li>Only StrmQt's sound goes to the TV: the host has a sound system of its own.</li>
+          <li>The phone remote pairs with a code shown on screen, stays paired until removed, and works signed out.</li>
+          <li>Paired phones, StrmLights and Moonlight devices are listed in Settings, each with Remove.</li>
+          <li>An on-screen keyboard for gamepads and remotes, a featured title on Home, logos, and gapless music with mpv.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.5" date="2026-10-13" type="development">
       <description>
         <p>YouTube and YouTube Music join the menu.</p>

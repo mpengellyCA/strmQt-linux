@@ -1,3 +1,14 @@
+strmqt (0.9.0-1) unstable; urgency=medium
+
+  * The streaming host: StrmQt on a hidden desktop with a Sunshine and a
+    PipeWire of its own, for StrmLight on a Fire TV or Android TV, found on
+    the network and paired with one code.
+  * The phone remote pairs with a code shown on screen and works signed out.
+  * An on-screen keyboard, a featured title on Home, logos, gapless music
+    with mpv.
+
+ -- Mike Pengelly <mike@leadrix.io>  Sat, 17 Oct 2026 16:00:00 +0000
+
 strmqt (0.8.5-1) unstable; urgency=medium
 
   * YouTube's TV interface and YouTube Music as destinations in the menu,

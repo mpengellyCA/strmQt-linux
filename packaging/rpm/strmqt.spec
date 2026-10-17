@@ -1,7 +1,7 @@
 # StrmQt RPM packaging (spec 2026-09-27 §7.3). Built in, and for, one Fedora
 # release's container by scripts/ci/package-rpm.sh; not a Fedora-review spec.
 Name:           strmqt
-Version:        0.8.5
+Version:        0.9.0
 Release:        1%{?dist}
 Summary:        Couch-first Emby client for the Linux desktop
 License:        GPL-3.0-or-later AND OFL-1.1 AND MIT AND LGPL-3.0-or-later
@@ -68,6 +68,11 @@ export QT_QPA_PLATFORM=offscreen
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*
 
 %changelog
+* Sat Oct 17 2026 Mike Pengelly <mike@leadrix.io> - 0.9.0-1
+- The streaming host: StrmQt on a hidden desktop with a Sunshine and a
+  PipeWire of its own, for StrmLight on a Fire TV or Android TV; one-code
+  pairing and discovery; the remote works signed out; an on-screen keyboard.
+
 * Tue Oct 13 2026 Mike Pengelly <mike@leadrix.io> - 0.8.5-1
 - YouTube and YouTube Music as destinations (Qt WebEngine), each of which
   can be switched off; trailers play in the app; a full-screen toggle.
