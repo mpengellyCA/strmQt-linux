@@ -338,6 +338,17 @@ strmqt_add_test(tst_live_updates
 )
 target_include_directories(tst_live_updates PRIVATE mocks)
 
+# strmqt-cli has its own main(), so this runs the built binary (in a private
+# HOME, with no session bus) rather than linking it. Its pty test is POSIX.
+if(UNIX)
+    strmqt_add_test(tst_cli
+        integration/tst_cli.cpp
+        mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    )
+    target_compile_definitions(tst_cli PRIVATE STRMQT_CLI_PATH="$<TARGET_FILE:strmqt-cli>")
+    add_dependencies(tst_cli strmqt-cli)
+endif()
+
 strmqt_add_test(tst_network_address_helper unit/tst_network_address_helper.cpp)
 target_link_libraries(tst_network_address_helper PRIVATE strmqt_remote)
 
