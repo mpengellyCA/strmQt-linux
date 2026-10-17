@@ -173,6 +173,19 @@ back to polling when the socket is unavailable, suspends while the video decoder
 running, suspends while the window is unfocused, and refreshes immediately on
 playback stop and on regaining focus.
 
+**User data has one gatekeeper.** A socket record (watched, favourite, resume
+point) passes through `ItemActions` before any page sees it: `ItemActions` is the
+service's *user-data stage* (`LiveUpdateService::setUserDataStage`), not one
+connection among many, so the order cannot be got wrong. It patches the models
+registered with it and the play queue, announces only answers that changed, and
+hands every other binding the merged record — a field with a toggle still on the
+wire carries the user's intent, so a stale record crossing a toggle cannot put the
+old value back on a search row or an episode. The details page's own item is often
+in no registered model, so the details reply is fed to `ItemActions` as a server
+record too; the hero button's label and the verb it fires then read the same
+answer. `wireUserData()` (`src/app/UserDataWiring.h`) is that wiring, shared by
+`Application` and the tests.
+
 ### Emby behaviour worth knowing
 
 Every item here was measured against a live Emby 4.9.5.0 server, and most of them
@@ -442,6 +455,12 @@ Two conventions worth knowing:
   a `FocusClip`, which keeps their geometry and clips `Theme.focusRingOutset` further
   out (or `Theme.focusHeadroom()` for a raised card). Padding the content instead does
   not work: `positionViewAtIndex()` ignores a view's margins.
+- **"Add to playlist" is one control.** `PlaylistPicker` is the type-to-narrow panel
+  every surface raises, and it claims the result of its own write: `PlaylistCtl`'s
+  results are global, and several pages with a picker are alive at once. A page
+  either takes `resultReady` into a toast host of its own (the music surfaces) or
+  sets `notifiesWindow` so the window says it (the video pages, which may be covered
+  by the time the server answers).
 
 ### Moving about with a D-pad
 
@@ -799,6 +818,22 @@ offer "minimise" or "expand" as the one that applies.
 Capabilities are re-sent on every reconnect: a resumed socket is a new session to
 the server, so a single announcement at startup is forgotten the first time the
 network blinks.
+
+**The web remote asks for a PIN, and guessing it is rationed.** Failed PINs are
+counted per peer — an IPv4 address, an IPv6 address on this computer's own link
+(link-local, or in the /64 the connection arrived on), or the /64 of an IPv6 peer
+from elsewhere, since one host commonly holds a whole routed /64. Keying the LAN by
+its /64 would let one guesser lock every phone on it out. The fifth miss in a row
+locks that peer out for 2 s, doubling to 5 min. Peers that have not given the
+current PIN also share one allowance (twenty misses, then one per 5 min), so
+rotating addresses buys nothing; a phone that has given it is held to its own
+lockout only, and a new PIN from Settings clears every count.
+
+The certificate is self-signed and names every address the remote is served on.
+When the computer gains an address the certificate does not name, it is replaced —
+keeping the names it had, IPv6 aside — and **every device has to trust the new
+one**, which is the price of a browser that would otherwise refuse the page on the
+new address.
 
 ---
 
