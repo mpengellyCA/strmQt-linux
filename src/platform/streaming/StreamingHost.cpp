@@ -348,7 +348,13 @@ void StreamingHost::restart()
 {
     if (m_busy || !m_installed)
         return;
-    run({{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}}},
+    // The files are written again first: a newer StrmQt may write them
+    // differently (its unit gained STRMQT_STREAMING_HOST), and a restart is
+    // when that should take effect.
+    if (!writeFiles())
+        return;
+    run({{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, {}},
+         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}}},
         tr("The streaming host restarted."));
 }
 
