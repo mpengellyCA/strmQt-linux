@@ -206,7 +206,11 @@ void VlcPlayerTest::selectedExternalSubtitleIsDrawn()
 
     player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), QStringLiteral("English"),
                                QStringLiteral("eng"), true);
-    QTRY_VERIFY2_WITH_TIMEOUT(litPictures > 0, "the attached subtitle never reached the picture",
+    // Drawn by libVLC's freetype text renderer, a plugin package of its own on
+    // Arch (vlc-plugin-freetype) and Fedora (vlc-plugins-extra).
+    QTRY_VERIFY2_WITH_TIMEOUT(litPictures > 0,
+                              "the attached subtitle never reached the picture "
+                              "(is libVLC's freetype text renderer installed?)",
                               20000);
     QVERIFY(errorSpy.isEmpty());
     QCOMPARE(player.state(), PlayerBackend::State::Playing);

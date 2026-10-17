@@ -135,7 +135,7 @@ jobs:
             git cmake ninja pkgconf gcc namcap ffmpeg \
             qt6-base qt6-declarative qt6-websockets qt6-tools qt6-svg \
             qt6-webengine sqlite mpv sdl3 \
-            libvlc vlc-plugins-base vlc-plugin-ffmpeg
+            libvlc vlc-plugins-base vlc-plugin-ffmpeg vlc-plugin-freetype
 
       - uses: actions/checkout@v4
         with:

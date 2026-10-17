@@ -46,11 +46,13 @@ license=('GPL-3.0-or-later')
 # the soname alone installs cleanly, links fine, and then decodes nothing at
 # all on the VLC engine. vlc-plugins-base carries the vmem video output the
 # player renders through; vlc-plugin-ffmpeg carries libavcodec, which is what
-# actually decodes H.264/HEVC. The soname dep stays alongside them so an ABI
-# bump still forces a rebuild.
+# actually decodes H.264/HEVC; vlc-plugin-freetype carries the text renderer
+# that draws subtitles into the picture, without which an attached subtitle
+# loads and is never seen. The soname dep stays alongside them so an ABI bump
+# still forces a rebuild.
 depends=('qt6-base' 'qt6-declarative' 'qt6-websockets' 'qt6-svg' 'qt6-webengine' 'sqlite'
          'hicolor-icon-theme' 'libmpv.so' 'sdl3'
-         'libvlc.so' 'vlc-plugins-base' 'vlc-plugin-ffmpeg')
+         'libvlc.so' 'vlc-plugins-base' 'vlc-plugin-ffmpeg' 'vlc-plugin-freetype')
 # Explicit, because this machine's makepkg.conf sets OPTIONS=(... !autodeps).
 makedepends=('cmake' 'ninja' 'pkgconf' 'git')
 optdepends=(

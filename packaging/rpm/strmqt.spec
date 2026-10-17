@@ -15,6 +15,7 @@ BuildRequires:  qt6-qtwebsockets-devel qt6-qtsvg-devel qt6-qtwebengine-devel sql
 BuildRequires:  mpv-devel vlc-devel SDL3-devel openssl-devel
 # Runtime pieces for %%check's ctest and for the C(fedora-*) self-test (deps.sh installs these via dnf builddep):
 BuildRequires:  qt6-qtsvg qt6-qtwayland vlc-plugins-base vlc-plugin-ffmpeg ffmpeg-free mesa-dri-drivers
+BuildRequires:  vlc-plugins-extra
 
 # The binary imports a Qt_6_PRIVATE_API symbol and carries qmlcachegen code
 # for exactly this Qt: pin it. Fedora rebases Qt inside a release, so this
@@ -25,6 +26,9 @@ Requires:       qt6-qtsvg%{?_isa} qt6-qtwayland%{?_isa}
 # links against it for rpm to find.
 Requires:       qt6-qtwebengine%{?_isa}
 Requires:       vlc-plugins-base vlc-plugin-ffmpeg
+# The VLC engine draws subtitles with libVLC's freetype text renderer, which
+# Fedora ships in vlc-plugins-extra; without it a subtitle loads unseen.
+Requires:       vlc-plugins-extra
 # kf6-kwallet ships ksecretd/kwalletd6; Fedora's "kwallet" is the KDE 4 one.
 Recommends:     (kf6-kwallet or gnome-keyring or keepassxc)
 # HDR detection shells out to kscreen-doctor, which Fedora ships in libkscreen
