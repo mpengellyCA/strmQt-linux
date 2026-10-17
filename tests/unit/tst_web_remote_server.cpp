@@ -1,4 +1,5 @@
 #include <QCoreApplication>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -46,7 +47,18 @@ private slots:
     void pinPeerKeyGroupsWhatOneHostCanHold();
     void pinMissesAreLimitedAcrossAddresses();
     void pinLengthMismatchIsRefused();
-    void newPinSignsEveryPhoneOut();
+    void removedDeviceIsSignedOut();
+
+    // Pairing
+    void codeIsShownOnRequestAndWorksOnce();
+    void requestKeepsTheCodeThatIsShowing();
+    void dismissedCodeHoldsOffRequests();
+    void requestWithPairingOffShowsNothing();
+    void codeDiesAfterFiveWrongGuesses();
+    void strmLightWaitsUntilItsCodeIsTypedIn();
+    void strmLightCodeIsForAStrmLightOnly();
+    void strmLightCodeNeedsAPairedPhone();
+    void pairedDeviceOutlivesARestart();
     void keyNavigationSignal();
     void postWithoutJsonIsRefused();
     void navigationAllowlist();
@@ -77,7 +89,7 @@ private slots:
 
     // Event streams
     void eventStreamIsExemptFromTimeouts();
-    void newPinClosesEventStreams();
+    void removedDeviceLosesItsEventStream();
     void oneEventStreamPerToken();
     void inputOnAnEventStreamIsIgnored();
     void streamThatStopsReadingIsDropped();
@@ -103,6 +115,57 @@ private:
     std::unique_ptr<RemoteTestClient> m_http;
     int m_port = 18337;
     QSslCertificate m_cert;
+
+    // Pairing codes are random; here the next one shown is m_nextCode.
+    QString m_nextCode;
+    // Puts `code` on the TV unless it is already the code showing. A code is
+    // used up by a pairing and by five wrong guesses, so every guess goes
+    // through this: what is being tested is then the lockout, not the code.
+    void ensureCode(const QString &code)
+    {
+        if (m_server->pairingCode() == code)
+            return;
+        m_server->cancelPairing();
+        m_nextCode = code;
+        QVERIFY(m_server->showPairingCode());
+        QCOMPARE(m_server->pairingCode(), code);
+    }
+    RemoteResponse attempt(const QByteArray &pin, const QString &code)
+    {
+        ensureCode(code);
+        return m_http->post(QStringLiteral("/api/auth/pin"), "{\"pin\":\"" + pin + "\"}");
+    }
+    int attemptFrom(const QHostAddress &from, const QByteArray &pin, const QString &code)
+    {
+        ensureCode(code);
+        const QByteArray body = "{\"pin\":\"" + pin + "\"}";
+        return RemoteTestClient::statusOf(m_http->raw(
+            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body,
+            3000, from));
+    }
+    // A StrmLight's try: the header, its name, and the code on its screen.
+    QByteArray strmLightAttempt(const QByteArray &code, const QByteArray &name = "Living room")
+    {
+        const QByteArray body = "{\"pin\":\"" + code + "\"}";
+        return m_http->raw(
+            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            "X-StrmLight: " + name + "\r\n"
+            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+    }
+    // Pairs a phone and returns its token.
+    QString pairPhone(const QByteArray &name = "Test phone")
+    {
+        m_server->cancelPairing();
+        m_nextCode = QStringLiteral("2580");
+        if (!m_server->showPairingCode())
+            return {};
+        return m_http->post(QStringLiteral("/api/auth/pin"),
+                            "{\"pin\":\"2580\",\"name\":\"" + name + "\"}")
+            .json()
+            .value(QStringLiteral("token"))
+            .toString();
+    }
 };
 
 void WebRemoteServerTest::initTestCase()
@@ -142,6 +205,9 @@ void WebRemoteServerTest::init()
 {
     m_settings->setWebRemoteRequirePin(false);
     m_http->setToken({});
+    m_server->setCodeGeneratorForTests([this] { return m_nextCode; });
+    m_server->cancelPairing();
+    m_server->removeAllPairedDevices();
 }
 
 void WebRemoteServerTest::serverStartsAndListens()
@@ -220,24 +286,22 @@ void WebRemoteServerTest::pinRateLimiting()
     qint64 now = 1000000;
     m_server->setClockForTests([&now] { return now; });
     const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
-    m_settings->setWebRemotePin(QStringLiteral("0000"));
-    QCOMPARE(m_settings->webRemotePin(), QStringLiteral("0000"));
-    const QString path = QStringLiteral("/api/auth/pin");
+    const QString code = QStringLiteral("0000");
 
     // 5 failed attempts return 403 Forbidden
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
+        QCOMPARE(attempt("1234", code).status, 403);
 
-    // The next attempt is refused outright, even with the right PIN.
-    const RemoteResponse locked = m_http->post(path, R"({"pin":"1234"})");
+    // The next attempt is refused outright, even with the right code.
+    const RemoteResponse locked = attempt("1234", code);
     QCOMPARE(locked.status, 429);
     QCOMPARE(locked.json().value(QStringLiteral("error")).toString(),
              QStringLiteral("Too many failed attempts. Please wait."));
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    QCOMPARE(attempt("0000", code).status, 429);
     now += 1999;
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    QCOMPARE(attempt("0000", code).status, 429);
     now += 1;
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
+    QCOMPARE(attempt("0000", code).status, 200);
 }
 
 void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
@@ -246,20 +310,15 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
     m_server->setClockForTests([&now] { return now; });
     const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("0000"));
-    const QString path = QStringLiteral("/api/auth/pin");
+    const QString code = QStringLiteral("0000");
     const QHostAddress other(QStringLiteral("127.0.0.2"));
-    const auto fromOther = [this, &other](const QByteArray &pin) {
-        const QByteArray body = "{\"pin\":\"" + pin + "\"}";
-        return RemoteTestClient::statusOf(m_http->raw(
-            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
-            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body,
-            3000, other));
+    const auto fromOther = [this, &other, &code](const QByteArray &pin) {
+        return attemptFrom(other, pin, code);
     };
 
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
-    QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 429);
+        QCOMPARE(attempt("1234", code).status, 403);
+    QCOMPARE(attempt("1234", code).status, 429);
     // Another address is not locked out by this one's misses...
     QCOMPARE(fromOther("0000"), 200);
     // ...and its own misses count from zero.
@@ -272,22 +331,22 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
     qint64 lock = 2000;
     for (int round = 0; round < 10; ++round) {
         now += lock - 1;
-        QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+        QCOMPARE(attempt("0000", code).status, 429);
         now += 1;
-        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
+        QCOMPARE(attempt("1234", code).status, 403);
         lock = std::min<qint64>(lock * 2, 5 * 60 * 1000);
     }
     QCOMPARE(lock, 5 * 60 * 1000); // capped at 5 min
     now += lock - 1;
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 429);
+    QCOMPARE(attempt("0000", code).status, 429);
     now += 1;
-    // The right PIN resets the address: five fresh misses before the next lockout.
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
+    // The right code resets the address: five fresh misses before the next lockout.
+    QCOMPARE(attempt("0000", code).status, 200);
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 403);
-    QCOMPARE(m_http->post(path, R"({"pin":"1234"})").status, 429);
+        QCOMPARE(attempt("1234", code).status, 403);
+    QCOMPARE(attempt("1234", code).status, 429);
     now += 2000;
-    QCOMPARE(m_http->post(path, R"({"pin":"0000"})").status, 200);
+    QCOMPARE(attempt("0000", code).status, 200);
 
     // An address idle for over 10 min is forgotten: 127.0.0.2 had five misses
     // and a lockout; after pruning it has five fresh ones.
@@ -346,18 +405,13 @@ void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
     m_server->setClockForTests([&now] { return now; });
     const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("2468")); // a new PIN: every count starts over
-    const QString path = QStringLiteral("/api/auth/pin");
-    const auto from = [this](int host, const QByteArray &pin) {
-        const QByteArray body = "{\"pin\":\"" + pin + "\"}";
-        return RemoteTestClient::statusOf(m_http->raw(
-            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
-            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body,
-            3000, QHostAddress(QStringLiteral("127.0.1.%1").arg(host))));
+    QString code = QStringLiteral("2468");
+    const auto from = [this, &code](int host, const QByteArray &pin) {
+        return attemptFrom(QHostAddress(QStringLiteral("127.0.1.%1").arg(host)), pin, code);
     };
 
     // The phone that is already paired (127.0.0.1).
-    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
+    QCOMPARE(attempt("2468", code).status, 200);
 
     // Five addresses, four misses each: none reaches its own lockout.
     for (int host = 1; host <= 5; ++host) {
@@ -369,11 +423,11 @@ void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
     QCOMPARE(from(6, "1111"), 429);
     // ...nor is one of the five, which still had a try of its own left.
     QCOMPARE(from(1, "2468"), 429);
-    // The phone that gave this PIN before is not locked out with them, and
-    // answers for its own misses only.
-    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
-    QCOMPARE(m_http->post(path, R"({"pin":"1111"})").status, 403);
-    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
+    // The phone that paired before is not locked out with them, and answers
+    // for its own misses only.
+    QCOMPARE(attempt("2468", code).status, 200);
+    QCOMPARE(attempt("1111", code).status, 403);
+    QCOMPARE(attempt("2468", code).status, 200);
     QCOMPARE(from(6, "2468"), 429); // and its success forgives the others nothing
 
     // One try comes back every 5 min, whoever takes it.
@@ -384,42 +438,239 @@ void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
     QCOMPARE(from(7, "2468"), 429);
     now += 5 * 60 * 1000;
     QCOMPARE(from(7, "2468"), 200);
-    // 127.0.1.7 has shown the PIN; the others are still one miss from the limit.
+    // 127.0.1.7 has paired; the others are still one miss from the limit.
     QCOMPARE(from(8, "1111"), 403);
     QCOMPARE(from(9, "2468"), 429);
     QCOMPARE(from(7, "2468"), 200);
 
-    // A new PIN, set at the desktop, clears it for everyone.
-    m_settings->setWebRemotePin(QStringLiteral("9753"));
+    // Removing every paired device at the TV clears it for everyone.
+    m_server->removeAllPairedDevices();
+    code = QStringLiteral("9753");
     QCOMPARE(from(9, "9753"), 200);
 }
 
 void WebRemoteServerTest::pinLengthMismatchIsRefused()
 {
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("1357"));
-    const QString path = QStringLiteral("/api/auth/pin");
-    QCOMPARE(m_http->post(path, R"({"pin":"135"})").status, 403);
-    QCOMPARE(m_http->post(path, R"({"pin":"13570"})").status, 403);
-    QCOMPARE(m_http->post(path, R"({"pin":"1357"})").status, 200);
+    const QString code = QStringLiteral("1357");
+    QCOMPARE(attempt("135", code).status, 403);
+    QCOMPARE(attempt("13570", code).status, 403);
+    QCOMPARE(attempt("1357", code).status, 200);
 }
 
-void WebRemoteServerTest::newPinSignsEveryPhoneOut()
+void WebRemoteServerTest::removedDeviceIsSignedOut()
 {
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("4321"));
     QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 401);
 
-    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})");
-    QCOMPARE(auth.status, 200);
-    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    const QString token = pairPhone("Kitchen phone");
     QVERIFY(!token.isEmpty());
     m_http->setToken(token);
     QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
 
-    m_settings->setWebRemotePin(QStringLiteral("8765"));
+    const QVariantList devices = m_server->pairedDevices();
+    QCOMPARE(devices.size(), 1);
+    const QVariantMap device = devices.first().toMap();
+    QCOMPARE(device.value(QStringLiteral("name")).toString(), QStringLiteral("Kitchen phone"));
+    QCOMPARE(device.value(QStringLiteral("kind")).toString(), QStringLiteral("phone"));
+    QVERIFY(!device.contains(QStringLiteral("hash"))); // QML never sees it
+
+    m_server->removePairedDevice(device.value(QStringLiteral("id")).toString());
     QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 401);
 }
+
+void WebRemoteServerTest::codeIsShownOnRequestAndWorksOnce()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_nextCode = QStringLiteral("4821");
+    QSignalSpy pairing(m_server, &WebRemoteServer::pairingChanged);
+    QSignalSpy paired(m_server, &WebRemoteServer::devicePaired);
+
+    const RemoteResponse asked = m_http->post(QStringLiteral("/api/auth/request"), "{}");
+    QCOMPARE(asked.status, 202);
+    QVERIFY(asked.json().value(QStringLiteral("expiresIn")).toInt() > 0);
+    QCOMPARE(m_server->pairingCode(), QStringLiteral("4821"));
+    QCOMPARE(pairing.size(), 1);
+    QCOMPARE(m_http->get(QStringLiteral("/api/auth/pin")).json().value(QStringLiteral("pairing")).toString(),
+             QStringLiteral("shown"));
+
+    const RemoteResponse auth =
+        m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4821","name":"Test phone"})");
+    QCOMPARE(auth.status, 200);
+    QVERIFY(!auth.json().value(QStringLiteral("token")).toString().isEmpty());
+    // Off the TV once used.
+    QVERIFY(m_server->pairingCode().isEmpty());
+    QCOMPARE(pairing.size(), 2);
+    QCOMPARE(paired.size(), 1);
+    QCOMPARE(paired.first().at(0).toString(), QStringLiteral("Test phone"));
+    QCOMPARE(paired.first().at(1).toString(), QStringLiteral("phone"));
+
+    // One code, one device.
+    const RemoteResponse again =
+        m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4821"})");
+    QCOMPARE(again.status, 403);
+    QCOMPARE(again.json().value(QStringLiteral("error")).toString(),
+             QStringLiteral("No code is showing on the TV."));
+}
+
+void WebRemoteServerTest::requestKeepsTheCodeThatIsShowing()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_nextCode = QStringLiteral("1111");
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 202);
+    m_nextCode = QStringLiteral("2222");
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 202);
+    // Asking again cannot cycle codes until one is easy to guess.
+    QCOMPARE(m_server->pairingCode(), QStringLiteral("1111"));
+}
+
+void WebRemoteServerTest::dismissedCodeHoldsOffRequests()
+{
+    qint64 now = 70000000;
+    m_server->setClockForTests([&now] { return now; });
+    const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
+    m_settings->setWebRemoteRequirePin(true);
+    m_nextCode = QStringLiteral("3141");
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 202);
+    m_server->cancelPairing(); // Back, at the TV
+    QVERIFY(m_server->pairingCode().isEmpty());
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 429);
+    QVERIFY(m_server->pairingCode().isEmpty());
+    now += 30 * 1000;
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 202);
+    QCOMPARE(m_server->pairingCode(), QStringLiteral("3141"));
+}
+
+void WebRemoteServerTest::requestWithPairingOffShowsNothing()
+{
+    m_settings->setWebRemoteRequirePin(false);
+    const RemoteResponse asked = m_http->post(QStringLiteral("/api/auth/request"), "{}");
+    QCOMPARE(asked.status, 200);
+    QCOMPARE(asked.json().value(QStringLiteral("required")).toBool(true), false);
+    QVERIFY(m_server->pairingCode().isEmpty());
+}
+
+void WebRemoteServerTest::codeDiesAfterFiveWrongGuesses()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_nextCode = QStringLiteral("8080");
+    QVERIFY(m_server->showPairingCode());
+    // From five addresses, so no one of them is locked out by its own misses.
+    for (int host = 1; host <= 4; ++host) {
+        QCOMPARE(RemoteTestClient::statusOf(m_http->raw(
+                     "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                     "Content-Length: 12\r\n\r\n{\"pin\":\"1111\"}",
+                     3000, QHostAddress(QStringLiteral("127.0.2.%1").arg(host)))),
+                 403);
+    }
+    QCOMPARE(m_server->pairingCode(), QStringLiteral("8080"));
+    QSignalSpy pairing(m_server, &WebRemoteServer::pairingChanged);
+    QCOMPARE(RemoteTestClient::statusOf(m_http->raw(
+                 "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                 "Content-Length: 12\r\n\r\n{\"pin\":\"1111\"}",
+                 3000, QHostAddress(QStringLiteral("127.0.2.5")))),
+             403);
+    QVERIFY(m_server->pairingCode().isEmpty());
+    QCOMPARE(pairing.size(), 1);
+    // The right code is no good now: there is no code.
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"8080"})").status, 403);
+}
+
+void WebRemoteServerTest::strmLightWaitsUntilItsCodeIsTypedIn()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_http->setToken(pairPhone());
+
+    // Every 2 s from the moment its code is on its screen: told to wait, and
+    // never locked out for it.
+    for (int i = 0; i < 12; ++i) {
+        const QByteArray reply = strmLightAttempt("5555");
+        QCOMPARE(RemoteTestClient::statusOf(reply), 202);
+        QVERIFY(reply.contains("\"pending\":true"));
+    }
+
+    // Typed in on the paired phone (Settings does the same through the
+    // controller). Nothing goes on the TV: the StrmLight shows the code.
+    QSignalSpy pairing(m_server, &WebRemoteServer::pairingChanged);
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"5555"})").status, 200);
+    QCOMPARE(pairing.size(), 1);
+    QVERIFY(m_server->awaitingStrmLight());
+    QVERIFY(m_server->pairingCode().isEmpty());
+
+    QSignalSpy paired(m_server, &WebRemoteServer::devicePaired);
+    const QByteArray reply = strmLightAttempt("5555", "Living room");
+    QCOMPARE(RemoteTestClient::statusOf(reply), 200);
+    const QJsonObject body = QJsonDocument::fromJson(reply.mid(reply.indexOf("\r\n\r\n") + 4)).object();
+    const QString token = body.value(QStringLiteral("token")).toString();
+    QVERIFY(!token.isEmpty());
+    QVERIFY(!m_server->awaitingStrmLight());
+    QCOMPARE(paired.size(), 1);
+    QCOMPARE(paired.first().at(0).toString(), QStringLiteral("Living room"));
+    QCOMPARE(paired.first().at(1).toString(), QStringLiteral("strmlight"));
+
+    bool listed = false;
+    for (const QVariant &device : m_server->pairedDevices()) {
+        const QVariantMap map = device.toMap();
+        listed = listed || (map.value(QStringLiteral("kind")).toString() == QStringLiteral("strmlight")
+                            && map.value(QStringLiteral("name")).toString() == QStringLiteral("Living room"));
+    }
+    QVERIFY(listed);
+    m_http->setToken(token);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
+}
+
+void WebRemoteServerTest::strmLightCodeIsForAStrmLightOnly()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    // A code put on the TV for a phone is not a StrmLight's: it keeps waiting.
+    ensureCode(QStringLiteral("7777"));
+    QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("7777")), 202);
+    QCOMPARE(m_server->pairingCode(), QStringLiteral("7777"));
+
+    // And a StrmLight's code is no use without the header.
+    QVERIFY(m_server->expectStrmLightCode(QStringLiteral("6060")));
+    QVERIFY(m_server->pairingCode().isEmpty()); // it replaced the shown one
+    const RemoteResponse phone = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"6060"})");
+    QCOMPARE(phone.status, 403);
+    QVERIFY(m_server->awaitingStrmLight());
+    // A phone cannot ask for a code over it either.
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/request"), "{}").status, 409);
+    // A StrmLight with the wrong code is a guess like any other.
+    QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("6061")), 403);
+    QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("6060")), 200);
+}
+
+void WebRemoteServerTest::strmLightCodeNeedsAPairedPhone()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"1234"})").status, 401);
+    QVERIFY(!m_server->awaitingStrmLight());
+    m_http->setToken(pairPhone());
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"12a4"})").status, 400);
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"12345"})").status, 400);
+    QVERIFY(!m_server->awaitingStrmLight());
+    QVERIFY(!m_server->expectStrmLightCode(QStringLiteral("")));
+}
+
+void WebRemoteServerTest::pairedDeviceOutlivesARestart()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    const QString token = pairPhone();
+    QVERIFY(!token.isEmpty());
+    m_server->stop();
+    QVERIFY(m_server->start());
+    m_http->setToken(token);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
+
+    // Only a hash of the token is written down.
+    m_settings->flush();
+    QFile ini(m_dir.filePath(QStringLiteral("test.ini")));
+    QVERIFY(ini.open(QIODevice::ReadOnly));
+    const QByteArray stored = ini.readAll();
+    QVERIFY(stored.contains("Test phone"));
+    QVERIFY(!stored.contains(token.toUtf8()));
+}
+
 void WebRemoteServerTest::keyNavigationSignal()
 {
     QSignalSpy navSpy(m_server, &WebRemoteServer::actionRequested);
@@ -898,11 +1149,8 @@ void WebRemoteServerTest::controlCharactersInPathAreRefused()
 void WebRemoteServerTest::queryTokenIsGetOnly()
 {
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("1122"));
-    const RemoteResponse auth =
-        m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"1122"})");
-    QCOMPARE(auth.status, 200);
-    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    const QString token = pairPhone();
+    QVERIFY(!token.isEmpty());
     QSignalSpy nav(m_server, &WebRemoteServer::actionRequested);
     QCOMPARE(m_http->post(QStringLiteral("/api/navigate?token=") + token, R"({"key":"up"})").status,
              401);
@@ -1029,18 +1277,18 @@ void WebRemoteServerTest::eventStreamIsExemptFromTimeouts()
     QTRY_COMPARE_WITH_TIMEOUT(m_server->connectedClientsCount(), 0, 5000);
 }
 
-void WebRemoteServerTest::newPinClosesEventStreams()
+void WebRemoteServerTest::removedDeviceLosesItsEventStream()
 {
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("4321"));
-    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})");
-    QCOMPARE(auth.status, 200);
-    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    const QString token = pairPhone();
+    QVERIFY(!token.isEmpty());
     auto events = m_http->openEvents(token);
     QVERIFY(events);
     QCOMPARE(m_server->connectedClientsCount(), 1);
     QSignalSpy changed(m_server, &WebRemoteServer::connectedClientsChanged);
-    m_settings->setWebRemotePin(QStringLiteral("8765"));
+    const QString id =
+        m_server->pairedDevices().first().toMap().value(QStringLiteral("id")).toString();
+    m_server->removePairedDevice(id);
     QCOMPARE(m_server->connectedClientsCount(), 0);
     QVERIFY(!changed.isEmpty());
     QCOMPARE(changed.last().first().toInt(), 0);
@@ -1051,13 +1299,7 @@ void WebRemoteServerTest::newPinClosesEventStreams()
 void WebRemoteServerTest::oneEventStreamPerToken()
 {
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("4321"));
-    const auto signIn = [this] {
-        return m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"4321"})")
-            .json()
-            .value(QStringLiteral("token"))
-            .toString();
-    };
+    const auto signIn = [this] { return pairPhone(); };
     const QString token = signIn();
     const QString otherToken = signIn();
     QVERIFY(!token.isEmpty() && !otherToken.isEmpty());
@@ -1138,18 +1380,17 @@ void WebRemoteServerTest::stopClosesOpenConnections()
     QCOMPARE(m_server->boundAddress(), QHostAddress(QHostAddress::LocalHost));
     QCOMPARE(m_http->get(QStringLiteral("/api/auth/pin")).status, 200);
 
-    // A stop (a restart, logout, server switch) signs every phone out: tokens
-    // do not survive it.
+    // A stop (a restart, logout, server switch) keeps paired devices paired,
+    // but a code that was on the TV does not stay up.
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("2468"));
-    const RemoteResponse auth = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"2468"})");
-    QCOMPARE(auth.status, 200);
-    const QString token = auth.json().value(QStringLiteral("token")).toString();
+    const QString token = pairPhone();
     QVERIFY(!token.isEmpty());
     QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 404);
+    ensureCode(QStringLiteral("2468"));
     m_server->stop();
+    QVERIFY(m_server->pairingCode().isEmpty());
     QVERIFY(m_server->start());
-    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 401);
+    QCOMPARE(m_http->get(QStringLiteral("/api/nope?token=") + token).status, 404);
 }
 
 QTEST_MAIN(WebRemoteServerTest)

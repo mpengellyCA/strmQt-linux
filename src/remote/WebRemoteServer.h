@@ -17,6 +17,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <optional>
 
 class QSslServer;
 class QSslSocket;
@@ -60,8 +61,8 @@ public:
 
     bool start();
     // Closes the listener AND every open connection (keep-alive requests and
-    // event streams), and forgets every token: nothing authorised before a
-    // stop survives it.
+    // event streams), and drops a pairing code that was showing. Paired
+    // devices stay paired: they connect again once it starts.
     void stop();
     bool isRunning() const;
     quint16 port() const;
@@ -73,6 +74,43 @@ public:
 
     // Forces regenerating self-signed certs and restarts server
     bool regenerateCertificate();
+
+    // ── Pairing ─────────────────────────────────────────────────────────────
+    // A phone or a StrmLight pairs once, with a one-time four-digit code, and
+    // stays paired until it is removed (ARCHITECTURE.md §6). There is one code
+    // at a time, of one of two kinds:
+    //
+    //   shown      made here and shown on the TV, because a phone asked for one
+    //              (POST /api/auth/request); the phone sends it back.
+    //   StrmLight  made by a StrmLight and shown on its own screen; someone
+    //              types it into Settings or a paired phone, and the StrmLight,
+    //              which asks with it every 2 s, is let in on its next try. Only
+    //              a request carrying the X-StrmLight header can use it.
+    //
+    // A code is good for kPairingCodeSeconds, for one device, and for
+    // kMaxCodeMisses wrong guesses; on top of that the per-peer lockout and the
+    // shared allowance (handleApiAuthPin) apply to every guess.
+    static constexpr int kPairingCodeSeconds = 120;
+    static constexpr int kMaxCodeMisses = 5;
+
+    // Shows a fresh code on the TV, or keeps the one showing. False while a
+    // StrmLight code is expected: that one keeps the slot until it is used,
+    // cancelled or runs out.
+    bool showPairingCode();
+    // Expects the code a StrmLight is showing, in place of whatever code was
+    // current. False for anything but four digits.
+    bool expectStrmLightCode(const QString &code);
+    // Drops the current code. A shown code cancelled at the TV also keeps
+    // phones from asking for another for a while.
+    void cancelPairing();
+    // The code to put on the TV; empty unless a shown code is current.
+    QString pairingCode() const;
+    bool awaitingStrmLight() const;
+
+    // What Settings keeps about each paired device, without its hash.
+    QVariantList pairedDevices() const;
+    void removePairedDevice(const QString &id);
+    void removeAllPairedDevices();
 
     // What the desktop is showing ("browse", "player", "music", ...), so the
     // phone's controller can offer the buttons that mean something right now.
@@ -101,6 +139,8 @@ public:
     void setBindAddressResolverForTests(std::function<QHostAddress(const QString &mode)> resolver);
     // Replaces the monotonic clock the PIN lockout runs on (milliseconds).
     void setClockForTests(std::function<qint64()> nowMs);
+    // Replaces the random source of shown codes.
+    void setCodeGeneratorForTests(std::function<QString()> generate);
 
     // What failed PINs are counted against: the address for IPv4 (an
     // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6 from
@@ -122,6 +162,10 @@ signals:
     // navigation key resolved through actionForNavigationKey(). Application
     // invokes it by id (InputMap::trigger) — nothing is turned into a key here.
     void actionRequested(const QString &actionId);
+    // A code appeared, was used, cancelled or ran out.
+    void pairingChanged();
+    // `kind` is "phone" or "strmlight".
+    void devicePaired(const QString &name, const QString &kind);
 
 private slots:
     void onStartedEncryptionHandshake(QSslSocket *socket);
@@ -175,9 +219,18 @@ private:
     void handleApiNavigate(QSslSocket *socket, const QJsonObject &body);
     void handleApiAction(QSslSocket *socket, const QJsonObject &body);
     void handleApiEvents(QSslSocket *socket, const HttpRequest &req);
-    void handleApiAuthPin(QSslSocket *socket, const QJsonObject &body);
+    void handleApiAuthPin(QSslSocket *socket, const HttpRequest &req);
+    void handleApiAuthRequest(QSslSocket *socket);
+    void handleApiPairStrmLight(QSslSocket *socket, const QJsonObject &body);
 
     bool isAuthorized(const HttpRequest &req) const;
+    bool isPairedToken(const QString &token) const;
+    // Rebuilds the token-hash index from Settings, and closes the event stream
+    // of any device that is no longer there.
+    void reloadDevices();
+    // Records a new device and returns its token, which is never stored.
+    QString pairDevice(const QString &name, bool strmLight);
+    void setPendingCode(std::optional<QString> code, bool strmLight);
     void sendResponse(QSslSocket *socket, int statusCode, const QByteArray &contentType,
                       const QByteArray &body, const QHash<QByteArray, QByteArray> &extraHeaders = {});
     void sendJson(QSslSocket *socket, int statusCode, const QJsonObject &json);
@@ -209,7 +262,18 @@ private:
     QSslServer *m_server = nullptr;
     QList<QPointer<QSslSocket>> m_clients;    // every open connection
     QList<QPointer<QSslSocket>> m_sseClients; // open /api/events streams
-    QSet<QString> m_authorizedTokens;         // in memory only; cleared by stop() and a new PIN
+    QHash<QString, QString> m_deviceByHash;   // SHA-256 of a token → device id, from Settings
+    struct PendingCode {
+        QString code;
+        bool strmLight = false;
+        int misses = 0;
+    };
+    std::optional<PendingCode> m_code;
+    QTimer m_codeExpiry;
+    // After a shown code is cancelled at the TV, phones may not ask for
+    // another until then (on m_clock).
+    qint64 m_requestsRefusedUntil = 0;
+    std::function<QString()> m_codeGenerator;
     QNetworkAccessManager *m_imageNam = nullptr;
     struct PinFailures {
         int misses = 0;    // in a row, since the last right PIN
@@ -222,7 +286,7 @@ private:
     // forgiven per kPinGlobalForgiveMs, counted from m_pinGlobalSince.
     int m_pinGlobalMisses = 0;
     qint64 m_pinGlobalSince = 0;
-    // Peers (by pinPeerKey()) that gave the current PIN: the limit shared by
+    // Peers (by pinPeerKey()) that have paired a device: the limit shared by
     // strangers does not lock them out.
     QSet<QString> m_pinKnownPeers;
     QElapsedTimer m_pinClock;

@@ -6,6 +6,7 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/shell/ShortcutSheet.qml
     ui/shell/CommandPalette.qml
     ui/shell/OnScreenKeyboard.qml
+    ui/shell/PairingCodeOverlay.qml
     ui/shell/EmptyState.qml
     ui/shell/LoadingState.qml
     ui/shell/FilterBar.qml

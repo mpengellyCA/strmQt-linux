@@ -1387,6 +1387,11 @@ FocusScope {
 
                 // ── Web Remote ─────────────────────────────────────────────
                 StrmPanel {
+                    id: webRemotePanel
+
+                    // The code a StrmLight shows, typed with the buttons below.
+                    property string strmLightCode: ""
+
                     width: parent.width
                     visible: page.currentKey === "remote"
                     title: qsTr("Web Remote")
@@ -1443,8 +1448,8 @@ FocusScope {
 
                     SettingsSections.SettingRow {
                         width: parent.width
-                        label: qsTr("Require PIN")
-                        hint: qsTr("Ask for a 4-digit code in the web browser before allowing control.")
+                        label: qsTr("Require pairing")
+                        hint: qsTr("A phone pairs once with a code this screen shows when it asks. Off, anyone on the network can control StrmQt.")
 
                         StrmSwitch {
                             enabled: page.webRemoteAvailable && page.webRemote.enabled
@@ -1453,31 +1458,103 @@ FocusScope {
                         }
                     }
 
+                    // A StrmLight shows a code of its own; typed here, it is
+                    // let in the next time it asks (every 2 s). By buttons,
+                    // for a remote or a controller.
                     SettingsSections.SettingRow {
                         width: parent.width
-                        visible: page.webRemoteAvailable && page.webRemote.requirePin
-                        label: qsTr("Current PIN")
-                        hint: qsTr("Enter this code in your phone's browser when pairing.")
+                        visible: page.webRemoteAvailable && page.webRemote.running
+                        label: qsTr("Pair a StrmLight")
+                        hint: page.webRemoteAvailable && page.webRemote.awaitingStrmLight
+                              ? qsTr("Waiting for the StrmLight to ask with %1…").arg(webRemotePanel.strmLightCode)
+                              : webRemotePanel.strmLightCode.length > 0 ? webRemotePanel.strmLightCode
+                              : qsTr("Type the four digits on the StrmLight screen.")
 
                         Row {
-                            spacing: Theme.spacingValue
+                            spacing: Theme.spacingTight / 2
 
-                            Text {
-                                text: page.webRemoteAvailable ? page.webRemote.pin : "----"
-                                color: Theme.accentColor
-                                font.family: Theme.fontMono
-                                font.pixelSize: Theme.fontHeading
-                                font.weight: Font.Bold
-                                anchors.verticalCenter: parent.verticalCenter
+                            Repeater {
+                                model: 10
+
+                                StrmButton {
+                                    required property int index
+
+                                    objectName: "strmLightDigit" + index
+                                    text: String(index)
+                                    enabled: webRemotePanel.strmLightCode.length < 4
+                                    onClicked: webRemotePanel.strmLightCode += String(index)
+                                }
                             }
 
                             StrmButton {
-                                text: qsTr("Generate New PIN")
-                                iconName: "refresh"
-                                anchors.verticalCenter: parent.verticalCenter
-                                onClicked: if (page.webRemoteAvailable) page.webRemote.generateNewPin()
+                                text: qsTr("Clear")
+                                enabled: webRemotePanel.strmLightCode.length > 0
+                                onClicked: {
+                                    webRemotePanel.strmLightCode = "";
+                                    if (page.webRemoteAvailable && page.webRemote.awaitingStrmLight)
+                                        page.webRemote.cancelPairing();
+                                }
+                            }
+
+                            StrmButton {
+                                objectName: "strmLightPair"
+                                text: qsTr("Pair")
+                                variant: "primary"
+                                enabled: webRemotePanel.strmLightCode.length === 4
+                                onClicked: if (page.webRemoteAvailable)
+                                               page.webRemote.pairStrmLight(webRemotePanel.strmLightCode)
                             }
                         }
+                    }
+
+                    Connections {
+                        target: page.webRemoteAvailable ? page.webRemote : null
+                        function onDevicePaired(name, kind) {
+                            if (kind === "strmlight")
+                                webRemotePanel.strmLightCode = "";
+                        }
+                    }
+
+                    Repeater {
+                        model: page.webRemoteAvailable ? page.webRemote.devices : []
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.name
+                            hint: (modelData.kind === "strmlight" ? qsTr("StrmLight, paired %1")
+                                                                  : qsTr("Phone, paired %1"))
+                                  .arg(Qt.formatDate(new Date(modelData.added), Qt.DefaultLocaleShortDate))
+
+                            StrmButton {
+                                objectName: "webRemoteRemoveDevice" + index
+                                text: qsTr("Remove")
+                                destructive: true
+                                onClicked: page.webRemote.removeDevice(modelData.id)
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        visible: page.webRemoteAvailable && page.webRemote.devices.length > 1
+                        label: qsTr("Remove every paired device")
+                        hint: qsTr("Each one has to pair again.")
+
+                        StrmButton {
+                            text: qsTr("Remove all")
+                            destructive: true
+                            onClicked: page.webRemote.removeAllDevices()
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        visible: page.webRemoteAvailable && page.webRemote.requirePin
+                                 && page.webRemote.devices.length === 0
+                        text: qsTr("Nothing is paired. Open the address below on a phone and tap Pair; a code appears on this screen.")
                     }
 
                     SettingsSections.InfoRow {

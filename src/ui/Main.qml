@@ -2535,7 +2535,7 @@ ApplicationWindow {
                     }
                     Text {
                         width: parent.width
-                        text: qsTr("Browse and control playback from your phone's browser. Phones on your network sign in with a PIN. You can change this later in Settings.")
+                        text: qsTr("Browse and control playback from your phone's browser. A phone pairs once, with a code shown on this screen. You can change this later in Settings.")
                         color: Theme.textSecondaryColor
                         font.family: Theme.fontBody
                         font.pixelSize: Theme.fontBodySize
@@ -2569,7 +2569,7 @@ ApplicationWindow {
             }
         }
 
-        // Turns the remote on with a PIN and shows its QR code and PIN.
+        // Turns the remote on with pairing required and shows its QR code.
         // The keyboard goes back first here too, so the push to Settings
         // remembers the place the user was in rather than a hidden button.
         function accept() {
@@ -2595,4 +2595,15 @@ ApplicationWindow {
     // Typing for a pad, a TV remote and the phone. It puts itself in the
     // window's overlay, over popups and sheets (shell/OnScreenKeyboard.qml).
     OnScreenKeyboard {}
+
+    // The code a phone types to pair with the web remote, over everything.
+    PairingCodeOverlay {}
+
+    Connections {
+        target: WebRemoteCtl
+        function onDevicePaired(name, kind) {
+            root.notify(kind === "strmlight" ? qsTr("%1 is paired. It can control StrmQt now.").arg(name)
+                                             : qsTr("%1 is paired as a remote.").arg(name));
+        }
+    }
 }

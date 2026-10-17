@@ -1696,6 +1696,22 @@ body[data-route="item"] .topbar:not(.scrolled) {
   transform: rotate(180deg);
 }
 
+/* Pairing a StrmLight: the code its screen shows, typed on the phone. */
+.strmlight-pair {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 12px;
+}
+
+.strmlight-pair p {
+  color: var(--text-2);
+  font-size: 14.5px;
+}
+
+.strmlight-pair .pin-input {
+  margin-top: 0;
+}
+
 /* ── Segmented, choices, fields ──────────────────────────────────────────── */
 
 .segmented {
@@ -2704,6 +2720,10 @@ body.player-open .toasts {
 
 .pin-card .btn {
   width: 100%;
+}
+
+.pin-card .pin-again {
+  margin-top: 10px;
 }
 
 /* ── Wider screens ───────────────────────────────────────────────────────── */

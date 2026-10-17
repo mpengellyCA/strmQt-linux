@@ -17,6 +17,8 @@
 #include "server/emby/EmbyClient.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -24,6 +26,7 @@
 #include <QMimeDatabase>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSslServer>
 #include <QSslSocket>
@@ -78,7 +81,8 @@ qint64 writeBacklog(const QSslSocket *socket)
 // Per peer (WebRemoteServer::pinPeerKey: an address, or an off-link IPv6 /64): the
 // fifth miss in a row locks that peer out for 2 s; each further miss once the
 // lockout has passed doubles it, up to 5 min. Every try while locked out is
-// 429, even the right PIN. A peer idle for 10 min is forgotten.
+// 429, even the right code. A peer idle for 10 min is forgotten. (The names
+// still say PIN: the code a phone types was a fixed PIN once.)
 constexpr int kMaxFailedPins = 5;
 constexpr qint64 kPinLockoutMs = 2000;
 constexpr qint64 kPinMaxLockoutMs = 5 * 60 * 1000;
@@ -88,14 +92,15 @@ constexpr qint64 kPinFailureIdleMs = 10 * 60 * 1000;
 // claimed IPv4 addresses) gets four free tries from each under the rule
 // above, so misses are also counted together. Twenty are allowed in a burst
 // and one more every 5 min — the rate one address is held to once its lockout
-// has reached the cap. With none left a PIN is not looked at (429): 288 tries
-// a day against 10 000 PINs, however many addresses they come from.
+// has reached the cap. With none left a code is not looked at (429). Each code
+// also dies after kMaxCodeMisses wrong guesses, wherever they come from, so a
+// code shown on the TV is worth five guesses in 10 000 at most.
 //
 // The price: anyone on the network can spend that allowance and keep a new
-// phone from signing in. So the shared count binds only peers that have not
-// given the current PIN yet. A phone that has (kept across stop(), forgotten
-// with the PIN) is held to its own lockout alone, and a new PIN from Settings
-// clears every count, which is the way out for the person at the desktop.
+// phone from pairing. So the shared count binds only peers that have not
+// paired a device. One that has (kept across stop()) is held to its own
+// lockout alone, and removing every device in Settings clears every count,
+// which is the way out for the person at the TV.
 constexpr int kPinGlobalMisses = 20;
 constexpr qint64 kPinGlobalForgiveMs = 5 * 60 * 1000;
 constexpr qsizetype kMaxKnownPinPeers = 64;
@@ -116,6 +121,39 @@ bool constantTimeEquals(const QByteArray &given, const QByteArray &expected)
     for (qsizetype i = 0; i < expected.size(); ++i)
         diff |= quint8(padded.at(i)) ^ quint8(expected.at(i));
     return diff == 0;
+}
+
+// A phone that cancelled code after code on the TV would otherwise be a
+// way to keep putting one over the film.
+constexpr qint64 kRequestCooldownMs = 30 * 1000;
+// Past this the oldest paired device is forgotten to make room.
+constexpr qsizetype kMaxPairedDevices = 32;
+constexpr qsizetype kMaxDeviceNameLength = 40;
+
+QString tokenHash(const QString &token)
+{
+    return QString::fromLatin1(
+        QCryptographicHash::hash(token.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+
+bool isFourDigits(const QString &code)
+{
+    return code.size() == 4 && std::all_of(code.cbegin(), code.cend(), [](QChar c) {
+        return c >= QLatin1Char('0') && c <= QLatin1Char('9');
+    });
+}
+
+// A name a device gave itself, fit to show in Settings: printable, trimmed,
+// short, and something when it gave nothing.
+QString deviceName(const QString &given, const QString &fallback)
+{
+    QString name;
+    for (const QChar c : given) {
+        if (c.isPrint())
+            name += c;
+    }
+    name = name.simplified().left(kMaxDeviceNameLength);
+    return name.isEmpty() ? fallback : name;
 }
 
 bool hasControlCharacter(const QString &text)
@@ -331,6 +369,9 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
       m_imageNam(new QNetworkAccessManager(this))
 {
     m_pinClock.start();
+    m_codeExpiry.setSingleShot(true);
+    m_codeExpiry.setInterval(kPairingCodeSeconds * 1000);
+    connect(&m_codeExpiry, &QTimer::timeout, this, [this] { setPendingCode(std::nullopt, false); });
     connect(m_server, &QSslServer::startedEncryptionHandshake, this, &WebRemoteServer::onStartedEncryptionHandshake);
     connect(m_server, &QSslServer::sslErrors, this, [](QSslSocket *, const QList<QSslError> &errors) {
         qCWarning(logApp) << "webremote server sslErrors:" << errors;
@@ -396,26 +437,9 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
         }
     }
     if (m_settings) {
-        // A new PIN signs out every phone that signed in with the old one.
-        connect(m_settings, &Settings::webRemotePinChanged, this, [this] {
-            m_authorizedTokens.clear();
-            // Misses were guesses at the old PIN, and knowing it proves
-            // nothing now. Only the desktop can change the PIN, so this is
-            // not a reset a remote peer can ask for.
-            m_pinFailures.clear();
-            m_pinKnownPeers.clear();
-            m_pinGlobalMisses = 0;
-            // An open event stream was authorised with the old PIN: close it
-            // too. Swapped out first: abort() emits disconnected synchronously,
-            // and that handler edits m_sseClients.
-            const QList<QPointer<QSslSocket>> streams = std::exchange(m_sseClients, {});
-            for (const QPointer<QSslSocket> &socket : streams) {
-                if (socket)
-                    socket->abort();
-            }
-            if (!streams.isEmpty())
-                emit connectedClientsChanged(0);
-        });
+        // A device removed in Settings is out at once, its event stream too.
+        connect(m_settings, &Settings::webRemoteDevicesChanged, this, &WebRemoteServer::reloadDevices);
+        reloadDevices();
         const auto schedule = [this] { scheduleStatus(); };
         connect(m_settings, &Settings::maxBitrateKbpsChanged, this, schedule);
         connect(m_settings, &Settings::playbackModeChanged, this, schedule);
@@ -487,9 +511,8 @@ void WebRemoteServer::stop()
     m_statusTick.stop();
     m_keepAlive.stop();
     m_statusCoalesce.stop();
-    // Every phone signs in again after a stop: a restart, a logout or a
-    // server switch.
-    m_authorizedTokens.clear();
+    // Paired devices stay paired; a code that was showing does not stay up.
+    setPendingCode(std::nullopt, false);
     m_sseClients.clear();
     // Every open connection goes too: a keep-alive socket or event stream
     // must not outlive the server it was opened on. A copy, because abort()
@@ -537,6 +560,11 @@ void WebRemoteServer::setBindAddressResolverForTests(
 void WebRemoteServer::setClockForTests(std::function<qint64()> nowMs)
 {
     m_clock = std::move(nowMs);
+}
+
+void WebRemoteServer::setCodeGeneratorForTests(std::function<QString()> generate)
+{
+    m_codeGenerator = std::move(generate);
 }
 
 int WebRemoteServer::connectedClientsCount() const
@@ -853,20 +881,27 @@ void WebRemoteServer::dispatchRequest(QSslSocket *socket, const HttpRequest &req
         return;
     }
 
-    // PIN Authentication Check
+    // Pairing: the only endpoints a device that is not paired may use.
     if (req.path == QLatin1String("/api/auth/pin")) {
         if (req.method == QLatin1String("GET")) {
             QJsonObject res;
             res[QStringLiteral("required")] = m_settings ? m_settings->webRemoteRequirePin() : false;
             res[QStringLiteral("authorized")] =
                 !(m_settings && m_settings->webRemoteRequirePin()) || isAuthorized(req);
+            res[QStringLiteral("pairing")] = !m_code              ? QStringLiteral("none")
+                                             : m_code->strmLight ? QStringLiteral("strmlight")
+                                                                 : QStringLiteral("shown");
             sendJson(socket, 200, res);
             return;
         }
         if (req.method == QLatin1String("POST")) {
-            handleApiAuthPin(socket, QJsonDocument::fromJson(req.body).object());
+            handleApiAuthPin(socket, req);
             return;
         }
+    }
+    if (req.path == QLatin1String("/api/auth/request") && req.method == QLatin1String("POST")) {
+        handleApiAuthRequest(socket);
+        return;
     }
 
     if (m_settings && m_settings->webRemoteRequirePin() && !isAuthorized(req)) {
@@ -996,6 +1031,10 @@ bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
         handleApiNavigate(socket, body);
         return true;
     }
+    if (path == QLatin1String("/api/auth/strmlight")) {
+        handleApiPairStrmLight(socket, body);
+        return true;
+    }
     if (path == QLatin1String("/api/action")) {
         handleApiAction(socket, body);
         return true;
@@ -1054,8 +1093,7 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
 {
     const QByteArray auth = req.headers.value("authorization");
     if (auth.startsWith("Bearer ")) {
-        const QString token = QString::fromUtf8(auth.mid(7)).trimmed();
-        if (m_authorizedTokens.contains(token))
+        if (isPairedToken(QString::fromUtf8(auth.mid(7)).trimmed()))
             return true;
     }
     // EventSource and <img> cannot set headers, and both only GET. Anything
@@ -1064,7 +1102,12 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
     if (req.method != QLatin1String("GET"))
         return false;
     const QString queryToken = QUrlQuery(req.url).queryItemValue(QStringLiteral("token"));
-    return !queryToken.isEmpty() && m_authorizedTokens.contains(queryToken);
+    return isPairedToken(queryToken);
+}
+
+bool WebRemoteServer::isPairedToken(const QString &token) const
+{
+    return !token.isEmpty() && m_deviceByHash.contains(tokenHash(token));
 }
 
 QString WebRemoteServer::pinPeerKey(const QHostAddress &peer, const QHostAddress &local)
@@ -1091,8 +1134,24 @@ QString WebRemoteServer::pinPeerKey(const QHostAddress &peer, const QHostAddress
            + QLatin1String("/64");
 }
 
-void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &body)
+void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &req)
 {
+    const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+    const QString strmLightName =
+        QString::fromUtf8(req.headers.value("x-strmlight")).trimmed();
+    const bool strmLight = !strmLightName.isEmpty();
+    const bool codeFits = m_code && m_code->strmLight == strmLight;
+
+    // A StrmLight asks every 2 s from the moment it shows its code, long
+    // before anyone has typed it in here. Until then there is nothing it
+    // could be guessing at, so it is told to wait and nothing is counted.
+    if (strmLight && !codeFits) {
+        QJsonObject wait;
+        wait[QStringLiteral("pending")] = true;
+        sendJson(socket, 202, wait);
+        return;
+    }
+
     const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
     m_pinFailures.removeIf([now](const QHash<QString, PinFailures>::iterator it) {
         return now >= it->lockedUntil && now - it->lastMiss > kPinFailureIdleMs;
@@ -1131,20 +1190,30 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
         return;
     }
 
+    // No code of this kind is current: nothing to guess, so nothing counted.
+    if (!codeFits) {
+        QJsonObject err;
+        err[QStringLiteral("error")] = QStringLiteral("No code is showing on the TV.");
+        sendJson(socket, 403, err);
+        return;
+    }
+
     const QString pin = body.value(QLatin1String("pin")).toString();
-    const QString expected = m_settings ? m_settings->webRemotePin() : QString();
-    if (!pin.isEmpty() && !expected.isEmpty()
-        && constantTimeEquals(pin.toUtf8(), expected.toUtf8())) {
+    if (!pin.isEmpty() && constantTimeEquals(pin.toUtf8(), m_code->code.toUtf8())) {
         // This peer's own count starts over. The shared one does not: that
-        // someone knows the PIN says nothing about the others' guesses.
+        // someone had the code says nothing about the others' guesses.
         m_pinFailures.remove(peerKey);
         if (!known) {
             if (m_pinKnownPeers.size() >= kMaxKnownPinPeers)
                 m_pinKnownPeers.erase(m_pinKnownPeers.cbegin()); // costs a peer its exemption only
             m_pinKnownPeers.insert(peerKey);
         }
-        const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        m_authorizedTokens.insert(token);
+        const QString name = strmLight
+            ? deviceName(strmLightName, QStringLiteral("StrmLight"))
+            : deviceName(body.value(QLatin1String("name")).toString(), QStringLiteral("Phone"));
+        const QString token = pairDevice(name, strmLight);
+        setPendingCode(std::nullopt, false); // one code, one device
+        emit devicePaired(name, strmLight ? QStringLiteral("strmlight") : QStringLiteral("phone"));
         QJsonObject resp;
         resp[QStringLiteral("token")] = token;
         sendJson(socket, 200, resp);
@@ -1163,9 +1232,188 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
             m_pinGlobalSince = now;
         ++m_pinGlobalMisses;
     }
+    if (++m_code->misses >= kMaxCodeMisses)
+        setPendingCode(std::nullopt, false);
     QJsonObject err;
     err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
     sendJson(socket, 403, err);
+}
+
+void WebRemoteServer::handleApiAuthRequest(QSslSocket *socket)
+{
+    if (!(m_settings && m_settings->webRemoteRequirePin())) {
+        QJsonObject open;
+        open[QStringLiteral("required")] = false;
+        sendJson(socket, 200, open);
+        return;
+    }
+    if (m_code && m_code->strmLight) {
+        sendError(socket, 409, QStringLiteral("The TV is pairing a StrmLight. Try again in a minute."));
+        return;
+    }
+    const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
+    if (!m_code && now < m_requestsRefusedUntil) {
+        sendError(socket, 429, QStringLiteral("The code was dismissed on the TV. Try again shortly."));
+        return;
+    }
+    showPairingCode();
+    QJsonObject shown;
+    shown[QStringLiteral("expiresIn")] = qMax(1, m_codeExpiry.remainingTime() / 1000);
+    sendJson(socket, 202, shown);
+}
+
+void WebRemoteServer::handleApiPairStrmLight(QSslSocket *socket, const QJsonObject &body)
+{
+    if (!expectStrmLightCode(body.value(QLatin1String("code")).toString())) {
+        sendError(socket, 400, QStringLiteral("The code is the four digits on the StrmLight screen."));
+        return;
+    }
+    sendOk(socket);
+}
+
+bool WebRemoteServer::showPairingCode()
+{
+    if (m_code && m_code->strmLight)
+        return false;
+    if (!m_code) {
+        QString code = m_codeGenerator ? m_codeGenerator() : QString();
+        if (!isFourDigits(code))
+            code = QString::asprintf("%04u", QRandomGenerator::system()->bounded(10000u));
+        setPendingCode(code, false);
+    }
+    return true;
+}
+
+bool WebRemoteServer::expectStrmLightCode(const QString &code)
+{
+    const QString trimmed = code.trimmed();
+    if (!isFourDigits(trimmed))
+        return false;
+    setPendingCode(trimmed, true);
+    return true;
+}
+
+void WebRemoteServer::cancelPairing()
+{
+    if (!m_code)
+        return;
+    if (!m_code->strmLight)
+        m_requestsRefusedUntil = (m_clock ? m_clock() : m_pinClock.elapsed()) + kRequestCooldownMs;
+    setPendingCode(std::nullopt, false);
+}
+
+QString WebRemoteServer::pairingCode() const
+{
+    return m_code && !m_code->strmLight ? m_code->code : QString();
+}
+
+bool WebRemoteServer::awaitingStrmLight() const
+{
+    return m_code && m_code->strmLight;
+}
+
+void WebRemoteServer::setPendingCode(std::optional<QString> code, bool strmLight)
+{
+    if (!code && !m_code)
+        return;
+    if (code)
+        m_code = PendingCode{*code, strmLight, 0};
+    else
+        m_code.reset();
+    if (m_code)
+        m_codeExpiry.start();
+    else
+        m_codeExpiry.stop();
+    emit pairingChanged();
+}
+
+QVariantList WebRemoteServer::pairedDevices() const
+{
+    QVariantList devices = m_settings ? m_settings->webRemoteDevices() : QVariantList();
+    for (QVariant &device : devices) {
+        QVariantMap map = device.toMap();
+        map.remove(QStringLiteral("hash"));
+        device = map;
+    }
+    return devices;
+}
+
+void WebRemoteServer::removePairedDevice(const QString &id)
+{
+    if (!m_settings)
+        return;
+    QVariantList devices = m_settings->webRemoteDevices();
+    devices.removeIf([&id](const QVariant &device) {
+        return device.toMap().value(QStringLiteral("id")).toString() == id;
+    });
+    m_settings->setWebRemoteDevices(devices);
+}
+
+void WebRemoteServer::removeAllPairedDevices()
+{
+    if (m_settings)
+        m_settings->setWebRemoteDevices({});
+    // Nobody has paired now, so nobody is exempt from the shared allowance,
+    // and nobody's misses are held against the next pairing either.
+    m_pinFailures.clear();
+    m_pinKnownPeers.clear();
+    m_pinGlobalMisses = 0;
+}
+
+QString WebRemoteServer::pairDevice(const QString &name, bool strmLight)
+{
+    QByteArray secret(32, Qt::Uninitialized);
+    QRandomGenerator::system()->fillRange(reinterpret_cast<quint32 *>(secret.data()),
+                                          secret.size() / int(sizeof(quint32)));
+    const QString token = QString::fromLatin1(
+        secret.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+    QVariantMap device;
+    device[QStringLiteral("id")] = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    device[QStringLiteral("name")] = name;
+    device[QStringLiteral("kind")] = strmLight ? QStringLiteral("strmlight") : QStringLiteral("phone");
+    device[QStringLiteral("hash")] = tokenHash(token);
+    device[QStringLiteral("added")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    if (m_settings) {
+        QVariantList devices = m_settings->webRemoteDevices();
+        devices.append(device);
+        while (devices.size() > kMaxPairedDevices)
+            devices.removeFirst();
+        m_settings->setWebRemoteDevices(devices); // reloadDevices() indexes it
+    } else {
+        m_deviceByHash.insert(device.value(QStringLiteral("hash")).toString(),
+                              device.value(QStringLiteral("id")).toString());
+    }
+    return token;
+}
+
+void WebRemoteServer::reloadDevices()
+{
+    m_deviceByHash.clear();
+    const QVariantList devices = m_settings ? m_settings->webRemoteDevices() : QVariantList();
+    for (const QVariant &device : devices) {
+        const QVariantMap map = device.toMap();
+        const QString hash = map.value(QStringLiteral("hash")).toString();
+        if (!hash.isEmpty())
+            m_deviceByHash.insert(hash, map.value(QStringLiteral("id")).toString());
+    }
+    // An event stream outlives the request that opened it, so a removed
+    // device's would keep reporting. Swapped out first: abort() emits
+    // disconnected synchronously, and that handler edits m_sseClients.
+    QList<QPointer<QSslSocket>> removed;
+    m_sseClients.removeIf([this, &removed](const QPointer<QSslSocket> &socket) {
+        if (!socket)
+            return true;
+        const QString token = socket->property(kEventTokenProperty).toString();
+        const bool open = !(m_settings && m_settings->webRemoteRequirePin());
+        if (open || isPairedToken(token))
+            return false;
+        removed.append(socket);
+        return true;
+    });
+    for (const QPointer<QSslSocket> &socket : std::as_const(removed))
+        socket->abort();
+    if (!removed.isEmpty())
+        emit connectedClientsChanged(connectedClientsCount());
 }
 
 // ── Serialisation ────────────────────────────────────────────────────────────
@@ -2175,9 +2423,9 @@ void WebRemoteServer::handleApiEvents(QSslSocket *socket, const HttpRequest &req
     const QByteArray auth = req.headers.value("authorization");
     if (auth.startsWith("Bearer "))
         token = QString::fromUtf8(auth.mid(7)).trimmed();
-    if (!m_authorizedTokens.contains(token))
+    if (!isPairedToken(token))
         token = QUrlQuery(req.url).queryItemValue(QStringLiteral("token"));
-    if (!m_authorizedTokens.contains(token))
+    if (!isPairedToken(token))
         token.clear();
     const qsizetype streamsBefore = m_sseClients.size();
     QList<QPointer<QSslSocket>> replaced;

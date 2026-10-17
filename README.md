@@ -77,8 +77,9 @@ playback target.
 
 There is also a built-in Web Remote: switch it on in Settings (or accept the one-time
 offer after signing in) and open the address it shows in your phone's browser. It is
-served over HTTPS on your local network only, and a PIN keeps other devices on the
-network from taking over playback. Anything a key or a controller button can do, the phone
+served over HTTPS on your local network only, and a phone has to pair first — tap Pair
+and type the code that appears on the TV — so other devices on the network cannot take
+over playback. Anything a key or a controller button can do, the phone
 can ask for too, and its Remote screen switches between the full player and the mini
 player.
 

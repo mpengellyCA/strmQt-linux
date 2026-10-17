@@ -39,7 +39,7 @@ features, publishing to an app store, phones and tablets.
   **its ports are not the defaults**. The client must let the user set the
   host address and port, not assume 47989.
 - StrmQt runs its **Web Remote** server on the same host: HTTPS on port 8337
-  by default, self-signed certificate, PIN sign-in. This is the control
+  by default, self-signed certificate, one-time code pairing. This is the control
   channel described in section 4.
 
 ### Why not just send keyboard keys through Moonlight
@@ -84,14 +84,34 @@ Sunshine's input path at all.
   IPv4 address or host name the old one did not name (a new DHCP lease, a
   second network). A pinned client then sees a different certificate. Treat
   that as "pair again": stop, tell the user the host's certificate changed,
-  and offer the PIN pairing flow, which pins the new one. Never accept it
+  and offer the pairing flow, which pins the new one. Never accept it
   silently, and never fall back to unchecked TLS. A fixed address for the
   host (a DHCP reservation) avoids this in practice.
-- Sign in: `POST /api/auth/pin` with JSON `{"pin": "1234"}`. A correct PIN
-  returns `{"token": "<uuid>"}`. Repeated wrong PINs return `429`; back off.
-  The PIN is shown in StrmQt under Settings, Web Remote. Tokens are held in
-  memory by StrmQt, so **a `401` after a StrmQt restart means sign in again**
-  with the stored PIN.
+- First, `GET /api/auth/pin`. `{"required": false}` means pairing is off on
+  this host: use the API with no token. Otherwise pair.
+- Pairing: there is no standing PIN. **The client makes up a random 4-digit
+  code and shows it on its own screen**, with a line asking the user to type
+  it into StrmQt (Settings, Web Remote, "Pair a StrmLight") or into the phone
+  remote (Remote, "Pair a StrmLight"). Meanwhile, every 2 seconds, it sends
+  `POST /api/auth/pin` with the header `X-StrmLight: <device name>` (up to 40
+  characters, shown in StrmQt's list of paired devices) and JSON
+  `{"pin": "<the code>"}`:
+  - `202 {"pending": true}`: nobody has typed a code in yet. Keep asking.
+    These are not counted as wrong guesses.
+  - `200 {"token": "<token>"}`: paired. Store the token in app-private
+    storage and stop showing the code.
+  - `403`: a code was typed in but it is not this one (a typo). Keep the
+    same code on screen and keep asking; StrmQt drops a typed code after five
+    wrong tries, and the client is back to `202`.
+  - `429`: too many wrong tries from this address. Wait 30 s, then resume.
+  The header is required: without it, the request is a phone's and is checked
+  against the code StrmQt shows on its own screen instead. A code typed in for
+  a StrmLight works once and expires after 2 minutes; make a fresh code when
+  the user restarts pairing, not on every poll.
+- **Tokens are kept until removed.** StrmQt stores a hash of each token and
+  keeps it across restarts, sign-outs and profile switches, so a paired
+  client stays paired. A `401` later means the user removed this device in
+  StrmQt: delete the stored token and go back to pairing.
 - Every other request carries `Authorization: Bearer <token>`.
 - Send a button: `POST /api/action` with JSON `{"action": "<id>"}`. Unknown
   ids return `400`.
@@ -179,10 +199,11 @@ the host. This decides how much of B already exists.
 
 ### Phase 2: remote mode with transport A
 
-- A "StrmQt remote" setting group: on/off, StrmQt address and port, PIN
-  entry (D-pad friendly numeric entry), transport A or B.
-- Pairing flow: fetch and pin the certificate, sign in with the PIN, store
-  the PIN and pin hash in app-private storage.
+- A "StrmQt remote" setting group: on/off, StrmQt address and port, transport
+  A or B, and "Pair again" (forgets the token).
+- Pairing flow: fetch and pin the certificate, show a random 4-digit code and
+  poll as in section 4A until a token comes back, then store the token and
+  the certificate hash in app-private storage. No text entry on the Fire TV.
 - In the streaming activity, when remote mode is on and the event comes from
   a remote (not a game controller or a real keyboard), consume it and send
   the mapped action instead of passing it to the normal input path. Real
@@ -226,8 +247,10 @@ restricts starting an activity from the background.
 
 On a Fire TV Stick 4K class device, with the headless host running:
 
-1. Fresh install, pair with Sunshine, pair with StrmQt by PIN, without a
-   keyboard.
+1. Fresh install, pair with Sunshine, pair with StrmQt by typing the code the
+   app shows into StrmQt or the phone remote, without a keyboard on the Fire
+   TV. Restarting StrmQt or the app does not ask for pairing again; removing
+   the device in StrmQt does.
 2. Every button in the section 4 table does what the table says, on the
    StrmQt home screen and during video playback.
 3. Holding a D-pad direction scrolls steadily and stops on release, with no
@@ -254,9 +277,10 @@ for Fire OS boot behaviour.
   measured decode time.
 - Input latency of transport A depends on the LAN, not on the video stream.
   Measure button-to-screen time and report it.
-- Wrong-PIN lockouts on the StrmQt side during development: back off instead
-  of retrying in a loop. Besides each address's own lockout, StrmQt has one
-  allowance shared by every address that has not yet given the current PIN
-  (20 misses, then one per 5 minutes), so a misbehaving test client can also
-  hold off a first pairing from the real device. A device that has signed in
-  with the current PIN is held only to its own lockout.
+- Wrong-code lockouts on the StrmQt side during development: honour `429`
+  instead of retrying in a loop. Waiting polls (`202`) are never counted, but
+  wrong codes are. Besides each address's own lockout, StrmQt has one
+  allowance shared by every address that has never paired (20 misses, then
+  one per 5 minutes), so a misbehaving test client can also hold off a first
+  pairing from the real device. A device that has paired is held only to its
+  own lockout.

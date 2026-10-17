@@ -1,4 +1,4 @@
-// The shell: tabs, a history-backed page stack, the PIN prompt and the live
+// The shell: tabs, a history-backed page stack, the pairing prompt and the live
 // connection to the TV.
 
 import { post, setToken, onUnauthorized, connectEvents } from './api.js';
@@ -174,19 +174,59 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', () => events.reconnect());
 
-// ── PIN ────────────────────────────────────────────────────────────────────
+// ── Pairing ────────────────────────────────────────────────────────────────
+// A phone that is not paired asks the TV for a code (Pair), which StrmQt puts
+// on the screen, and sends it back. The token it gets lasts until the phone is
+// removed in StrmQt's Settings.
 
 const pin = document.getElementById('pin');
 const pinForm = document.getElementById('pin-form');
+const pinTitle = document.getElementById('pin-title');
+const pinHint = document.getElementById('pin-hint');
 const pinInput = document.getElementById('pin-input');
 const pinError = document.getElementById('pin-error');
+const pinAsk = document.getElementById('pin-ask');
+const pinSend = document.getElementById('pin-send');
+const pinAgain = document.getElementById('pin-again');
+
+// What StrmQt's Settings lists this phone as.
+function deviceName() {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return /Mobile/.test(ua) ? 'Android phone' : 'Android tablet';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows computer';
+  if (/Linux/.test(ua)) return 'Linux computer';
+  return 'Browser';
+}
+
+function askStep() {
+  pinTitle.textContent = 'Pair with the TV';
+  pinHint.textContent = 'Tap Pair and a code appears on the TV. This phone stays paired until it is removed in StrmQt’s Settings.';
+  pinInput.hidden = true;
+  pinSend.hidden = true;
+  pinAgain.hidden = true;
+  pinAsk.hidden = false;
+}
+
+function codeStep() {
+  pinTitle.textContent = 'Enter the code';
+  pinHint.textContent = 'Type the four digits shown on the TV.';
+  pinAsk.hidden = true;
+  pinInput.hidden = false;
+  pinSend.hidden = false;
+  pinAgain.hidden = false;
+  pinInput.value = '';
+  requestAnimationFrame(() => pinInput.focus());
+}
 
 function showPin() {
   if (!pin.hidden) return;
   pin.hidden = false;
   pinError.textContent = '';
+  askStep();
   paintLink();
-  requestAnimationFrame(() => pinInput.focus());
 }
 
 function hidePin() {
@@ -195,30 +235,58 @@ function hidePin() {
   paintLink();
 }
 
+function unlocked() {
+  hidePin();
+  events.reconnect();
+  // Pages that failed while locked load again with the token.
+  for (const page of pages.values()) page.view?.dispose?.();
+  pages.clear();
+  if (current) show(current);
+}
+
 onUnauthorized(showPin);
+
+async function askForCode() {
+  pinError.textContent = '';
+  try {
+    const result = await post('/api/auth/request', {});
+    // Pairing was switched off on the TV in the meantime.
+    if (result && result.required === false) {
+      unlocked();
+      return;
+    }
+    codeStep();
+  } catch (error) {
+    pinError.textContent = error.message;
+  }
+}
+
+pinAsk.addEventListener('click', askForCode);
+pinAgain.addEventListener('click', askForCode);
 
 pinForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (pinInput.hidden) return;
   const value = pinInput.value.trim();
-  if (!value) {
-    pinError.textContent = 'Type the PIN first.';
+  if (!/^[0-9]{4}$/.test(value)) {
+    pinError.textContent = 'The code is four digits.';
     return;
   }
   pinError.textContent = '';
   try {
-    const result = await post('/api/auth/pin', { pin: value });
+    const result = await post('/api/auth/pin', { pin: value, name: deviceName() });
     setToken(result.token);
     pinInput.value = '';
-    hidePin();
-    events.reconnect();
-    // Pages that failed while locked load again with the token.
-    for (const page of pages.values()) page.view?.dispose?.();
-    pages.clear();
-    if (current) show(current);
+    unlocked();
   } catch (error) {
-    pinError.textContent = error.status === 429 ? 'Too many tries. Wait a moment, then try again.'
-      : error.status === 403 ? 'That PIN isn’t right. Check the TV.'
-      : error.message;
+    if (error.status === 403 && /No code/.test(error.message)) {
+      // It ran out, was used or was dismissed on the TV.
+      pinError.textContent = 'That code is gone from the TV. Show a new one.';
+    } else {
+      pinError.textContent = error.status === 429 ? 'Too many tries. Wait a moment, then try again.'
+        : error.status === 403 ? 'That code isn’t right. Check the TV.'
+        : error.message;
+    }
     pinInput.select();
   }
 });

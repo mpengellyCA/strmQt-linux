@@ -116,11 +116,13 @@
     <div class="pin" id="pin" hidden>
       <form class="pin-card" id="pin-form" autocomplete="off">
         <svg class="icon pin-icon"><use href="#i-lock"/></svg>
-        <h2>Enter the PIN</h2>
-        <p>The PIN is shown on the TV under Settings, Web remote.</p>
-        <input id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" aria-label="PIN" autocomplete="one-time-code">
+        <h2 id="pin-title">Pair with the TV</h2>
+        <p id="pin-hint">Tap Pair and a code appears on the TV. This phone stays paired until it is removed in StrmQt’s Settings.</p>
+        <input id="pin-input" class="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="4" aria-label="Code from the TV" autocomplete="one-time-code" hidden>
         <p class="pin-error" id="pin-error" role="alert"></p>
-        <button class="btn btn-primary" type="submit">Connect</button>
+        <button class="btn btn-primary" id="pin-ask" type="button">Pair</button>
+        <button class="btn btn-primary" id="pin-send" type="submit" hidden>Connect</button>
+        <button class="btn btn-secondary pin-again" id="pin-again" type="button" hidden>Show a new code</button>
       </form>
     </div>
   </div>

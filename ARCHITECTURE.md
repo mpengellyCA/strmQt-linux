@@ -841,15 +841,32 @@ Capabilities are re-sent on every reconnect: a resumed socket is a new session t
 the server, so a single announcement at startup is forgotten the first time the
 network blinks.
 
-**The web remote asks for a PIN, and guessing it is rationed.** Failed PINs are
-counted per peer — an IPv4 address, an IPv6 address on this computer's own link
-(link-local, or in the /64 the connection arrived on), or the /64 of an IPv6 peer
-from elsewhere, since one host commonly holds a whole routed /64. Keying the LAN by
-its /64 would let one guesser lock every phone on it out. The fifth miss in a row
-locks that peer out for 2 s, doubling to 5 min. Peers that have not given the
-current PIN also share one allowance (twenty misses, then one per 5 min), so
-rotating addresses buys nothing; a phone that has given it is held to its own
-lockout only, and a new PIN from Settings clears every count.
+**A device pairs once, with a code shown on the other screen, and guessing it is
+rationed.** There is no standing PIN. A phone that is not paired asks for a code
+(`POST /api/auth/request`); the server makes up four digits, StrmQt shows them over
+everything for two minutes, and the phone sends them back (`POST /api/auth/pin`).
+A StrmLight works the other way round: it shows its own code, someone types that
+code into Settings or a paired phone (`/api/auth/strmlight`), and the StrmLight,
+which has been asking every two seconds with an `X-StrmLight` header, gets in on
+its next try. Until then it is answered 202 and nothing is counted. There is one
+code slot, so a shown code and a StrmLight's code never stand at once, and each is
+for its own kind only: a phone cannot answer a StrmLight's code. A code works once,
+and five wrong guesses at it end it. Dismissing a shown code with Back holds off
+new requests for 30 s, so a phone cannot keep putting one back on the film.
+
+A paired device keeps its token until it is removed in Settings — across restarts,
+sign-outs and profile switches, because pairing a phone is a fact about the room,
+not about the Emby account. Settings keeps only SHA-256 hashes of the tokens, with
+a name, a kind and a date; removing a device closes its event stream at once.
+
+Failed codes are counted per peer — an IPv4 address, an IPv6 address on this
+computer's own link (link-local, or in the /64 the connection arrived on), or the
+/64 of an IPv6 peer from elsewhere, since one host commonly holds a whole routed
+/64. Keying the LAN by its /64 would let one guesser lock every phone on it out.
+The fifth miss in a row locks that peer out for 2 s, doubling to 5 min. Peers that
+have never paired also share one allowance (twenty misses, then one per 5 min), so
+rotating addresses buys nothing; a peer that has paired is held to its own lockout
+only, and "Remove all" in Settings clears every count.
 
 The certificate is self-signed and names every address the remote is served on.
 When the computer gains an address the certificate does not name, it is replaced —

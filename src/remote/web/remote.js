@@ -276,6 +276,34 @@ export function remoteView(node, params, ctx) {
     muteKey.querySelector('span').textContent = p.muted ? 'Unmute' : 'Mute';
   };
 
+  // A StrmLight shows a code of its own on the TV; typed here, StrmQt lets it
+  // in the next time it asks.
+  const strmLightInput = h('input', {
+    class: 'pin-input', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '4',
+    'aria-label': 'Code on the StrmLight screen', autocomplete: 'off',
+  });
+  const strmLightForm = h('form', {
+    class: 'strmlight-pair',
+    onSubmit: async (event) => {
+      event.preventDefault();
+      const code = strmLightInput.value.trim();
+      if (!/^[0-9]{4}$/.test(code)) {
+        toast('The code is the four digits on the StrmLight screen.', 'error');
+        return;
+      }
+      try {
+        await post('/api/auth/strmlight', { code });
+        strmLightInput.value = '';
+        toast('StrmQt is waiting for the StrmLight. It connects within a few seconds.');
+      } catch (error) {
+        if (error.status !== 401) toast(error.message, 'error');
+      }
+    },
+  },
+  h('p', { text: 'Type the four digits the StrmLight shows on the TV.' }),
+  strmLightInput,
+  h('button', { class: 'btn btn-primary', type: 'submit', text: 'Pair' }));
+
   node.append(
     h('div', { class: 'remote' },
       h('div', { class: 'remote-top' }, contextLine, modeSwitch.node),
@@ -285,7 +313,10 @@ export function remoteView(node, params, ctx) {
       viewKey,
       h('details', { class: 'more-keys' },
         h('summary', null, h('span', { text: 'More buttons' }), icon('down')),
-        moreKeys)));
+        moreKeys),
+      h('details', { class: 'more-keys' },
+        h('summary', null, h('span', { text: 'Pair a StrmLight' }), icon('down')),
+        strmLightForm)));
   renderSurface();
   render();
   const unsubscribe = subscribe((kind) => {

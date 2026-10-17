@@ -101,8 +101,6 @@ class Settings : public QObject
                    webRemoteBindModeChanged)
     Q_PROPERTY(bool webRemoteRequirePin READ webRemoteRequirePin WRITE setWebRemoteRequirePin NOTIFY
                    webRemoteRequirePinChanged)
-    Q_PROPERTY(QString webRemotePin READ webRemotePin WRITE setWebRemotePin NOTIFY
-                   webRemotePinChanged)
     // Whether the one-time "use your phone as a remote?" offer has been answered.
     Q_PROPERTY(bool webRemoteSetupOffered READ webRemoteSetupOffered WRITE
                    setWebRemoteSetupOffered NOTIFY webRemoteSetupOfferedChanged)
@@ -208,8 +206,11 @@ public:
     void setWebRemoteBindMode(const QString &mode);
     bool webRemoteRequirePin() const;
     void setWebRemoteRequirePin(bool required);
-    QString webRemotePin() const;
-    void setWebRemotePin(const QString &pin);
+    // Phones and StrmLights that have paired with the web remote, each
+    // {id, name, kind ("phone" | "strmlight"), hash, added}: `hash` is the
+    // SHA-256 of the device's token, never the token. Kept until removed.
+    QVariantList webRemoteDevices() const;
+    void setWebRemoteDevices(const QVariantList &devices);
     bool webRemoteSetupOffered() const;
     void setWebRemoteSetupOffered(bool offered);
     static QStringList webRemoteBindModes();
@@ -337,7 +338,7 @@ signals:
     void webRemotePortChanged();
     void webRemoteBindModeChanged();
     void webRemoteRequirePinChanged();
-    void webRemotePinChanged();
+    void webRemoteDevicesChanged();
     void webRemoteSetupOfferedChanged();
 
 private:

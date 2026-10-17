@@ -1,5 +1,5 @@
-// Talking to StrmQt: JSON over the same origin, a PIN token when the TV asks
-// for one, and a Server-Sent Events stream for live state.
+// Talking to StrmQt: JSON over the same origin, the token this phone got when
+// it paired, and a Server-Sent Events stream for live state.
 
 const TOKEN_KEY = 'strmqt_token';
 
@@ -79,11 +79,11 @@ async function request(method, path, body, signal) {
   }
 
   if (response.status === 401) {
-    // Revoked (a new PIN, or the TV restarted the remote): don't send it again.
-    // A late answer to a request made before the latest PIN leaves that one alone.
+    // Removed in StrmQt's Settings: don't send it again. A late answer to a
+    // request made before the phone paired again leaves the new token alone.
     if (token === sent) setToken('');
     announceUnauthorized();
-    throw new ApiError(401, 'Enter the PIN shown on the TV.');
+    throw new ApiError(401, 'Pair this phone with the TV.');
   }
   if (!response.ok) {
     throw new ApiError(response.status, (data && data.error) || `StrmQt answered ${response.status}.`);
@@ -108,7 +108,7 @@ export function imageUrl(ref, cssWidth) {
 }
 
 // One event stream for the life of the page. EventSource hides HTTP status, so
-// on an error the PIN endpoint is asked whether the problem is authorisation.
+// on an error the pairing endpoint is asked whether the problem is authorisation.
 export function connectEvents(handlers) {
   let source = null;
   let retries = 0;
@@ -136,7 +136,7 @@ export function connectEvents(handlers) {
       handlers.connection?.(false);
       try {
         const pin = await get('/api/auth/pin');
-        // Reconnected (a PIN entered, the page shown again) while this waited.
+        // Reconnected (paired again, the page shown again) while this waited.
         if (source !== mine) return;
         if (pin.required && !pin.authorized) {
           if (token === sent) setToken('');

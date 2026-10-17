@@ -472,11 +472,12 @@ Item {
             Text {
                 width: parent.width
                 visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
-                text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
+                text: qsTr("Tap Pair on the phone; a code appears on this screen.")
                 color: Theme.textSecondaryColor
-                font.family: Theme.fontMono
+                font.family: Theme.fontBody
                 font.pixelSize: Theme.fontSmall
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
             }
 
             Row {

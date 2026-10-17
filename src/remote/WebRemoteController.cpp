@@ -8,7 +8,6 @@
 #include "core/Log.h"
 #include "core/Settings.h"
 
-#include <QRandomGenerator>
 #include <QUrl>
 
 #include <utility>
@@ -50,6 +49,8 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
             announceUrls();
         });
         connect(m_server, &WebRemoteServer::connectedClientsChanged, this, &WebRemoteController::connectedClientsChanged);
+        connect(m_server, &WebRemoteServer::pairingChanged, this, &WebRemoteController::pairingChanged);
+        connect(m_server, &WebRemoteServer::devicePaired, this, &WebRemoteController::devicePaired);
     }
     if (m_settings) {
         connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
@@ -67,7 +68,7 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
             restart();
             announceUrls(); // also when it stays stopped
         });
-        connect(m_settings, &Settings::webRemotePinChanged, this, &WebRemoteController::pinChanged);
+        connect(m_settings, &Settings::webRemoteDevicesChanged, this, &WebRemoteController::devicesChanged);
         connect(m_settings, &Settings::webRemoteRequirePinChanged, this, &WebRemoteController::requirePinChanged);
         connect(m_settings, &Settings::webRemoteBindModeChanged, this, [this] {
             emit bindModeChanged();
@@ -200,17 +201,6 @@ void WebRemoteController::updateFingerprint()
         m_certFingerprint.clear();
     }
     emit certFingerprintChanged();
-}
-
-QString WebRemoteController::pin() const
-{
-    return m_settings ? m_settings->webRemotePin() : QString();
-}
-
-void WebRemoteController::setPin(const QString &pin)
-{
-    if (m_settings)
-        m_settings->setWebRemotePin(pin);
 }
 
 bool WebRemoteController::requirePin() const
@@ -348,12 +338,47 @@ void WebRemoteController::setAddressResolverForTests(
     m_rebindTimer.setInterval(rebindIntervalMs);
 }
 
-void WebRemoteController::generateNewPin()
+QString WebRemoteController::pairingCode() const
 {
-    if (m_settings) {
-        const QString newPin = QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
-        m_settings->setWebRemotePin(newPin);
-    }
+    return m_server ? m_server->pairingCode() : QString();
+}
+
+bool WebRemoteController::awaitingStrmLight() const
+{
+    return m_server && m_server->awaitingStrmLight();
+}
+
+int WebRemoteController::pairingSeconds() const
+{
+    return WebRemoteServer::kPairingCodeSeconds;
+}
+
+QVariantList WebRemoteController::devices() const
+{
+    return m_server ? m_server->pairedDevices() : QVariantList();
+}
+
+bool WebRemoteController::pairStrmLight(const QString &code)
+{
+    return m_server && m_server->isRunning() && m_server->expectStrmLightCode(code);
+}
+
+void WebRemoteController::cancelPairing()
+{
+    if (m_server)
+        m_server->cancelPairing();
+}
+
+void WebRemoteController::removeDevice(const QString &id)
+{
+    if (m_server)
+        m_server->removePairedDevice(id);
+}
+
+void WebRemoteController::removeAllDevices()
+{
+    if (m_server)
+        m_server->removeAllPairedDevices();
 }
 
 void WebRemoteController::copyUrlToClipboard(const QString &url)
@@ -372,7 +397,7 @@ void WebRemoteController::acceptSetup()
     if (!m_settings)
         return;
     m_settings->setWebRemoteSetupOffered(true);
-    // Offered to someone who has not seen the Settings page yet: the PIN is
+    // Offered to someone who has not seen the Settings page yet: pairing is
     // what keeps other devices on the network from taking over playback.
     m_settings->setWebRemoteRequirePin(true);
     m_settings->setWebRemoteEnabled(true);

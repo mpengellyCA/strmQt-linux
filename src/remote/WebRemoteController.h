@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QString>
 #include <QTimer>
+#include <QVariantList>
 
 #include <functional>
 
@@ -27,8 +28,13 @@ class WebRemoteServer;
 //
 // `offerSetup` drives the one-time "use your phone as a remote?" prompt: true
 // once signed in, while the remote is off and the offer was never answered.
-// Accepting turns it on with a PIN; either answer, or turning the remote on
-// in Settings, retires the offer for good.
+// Accepting turns it on with pairing required; either answer, or turning the
+// remote on in Settings, retires the offer for good.
+//
+// Pairing (WebRemoteServer, "Pairing"): `pairingCode` is the code to put on
+// the TV while a phone is pairing, `awaitingStrmLight` says a StrmLight's code
+// was typed in and it has not asked with it yet, and `devices` lists what is
+// paired. Paired devices stay paired across restarts and sign-ins.
 //
 // m_server is a QPointer: the server's destructor calls stop(), which emits
 // runningChanged while this object may still be connected, and everything
@@ -49,8 +55,12 @@ class WebRemoteController : public QObject
     Q_PROPERTY(QString activeQrDataUri READ activeQrDataUri NOTIFY activeUrlChanged)
     Q_PROPERTY(int connectedClientsCount READ connectedClientsCount NOTIFY connectedClientsChanged)
     Q_PROPERTY(QString certFingerprint READ certFingerprint NOTIFY certFingerprintChanged)
-    Q_PROPERTY(QString pin READ pin WRITE setPin NOTIFY pinChanged)
+    // Whether a phone has to pair. Named for the PIN that came before pairing.
     Q_PROPERTY(bool requirePin READ requirePin WRITE setRequirePin NOTIFY requirePinChanged)
+    Q_PROPERTY(QString pairingCode READ pairingCode NOTIFY pairingChanged)
+    Q_PROPERTY(bool awaitingStrmLight READ awaitingStrmLight NOTIFY pairingChanged)
+    Q_PROPERTY(int pairingSeconds READ pairingSeconds CONSTANT)
+    Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
     Q_PROPERTY(QString bindMode READ bindMode WRITE setBindMode NOTIFY bindModeChanged)
     Q_PROPERTY(bool offerSetup READ offerSetup NOTIFY offerSetupChanged)
 
@@ -74,13 +84,15 @@ public:
     int connectedClientsCount() const;
     QString certFingerprint() const;
 
-    QString pin() const;
-    void setPin(const QString &pin);
     bool requirePin() const;
     void setRequirePin(bool require);
     QString bindMode() const;
     void setBindMode(const QString &mode);
     bool offerSetup() const;
+    QString pairingCode() const;
+    bool awaitingStrmLight() const;
+    int pairingSeconds() const;
+    QVariantList devices() const;
 
     // start() and restart() still follow the run policy: neither starts a
     // disabled or signed-out remote.
@@ -88,7 +100,13 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void restart();
     Q_INVOKABLE void regenerateCertificate();
-    Q_INVOKABLE void generateNewPin();
+    // The code a StrmLight is showing; false unless it is four digits and the
+    // remote is running.
+    Q_INVOKABLE bool pairStrmLight(const QString &code);
+    // Takes the code off the TV (Back, while it is showing).
+    Q_INVOKABLE void cancelPairing();
+    Q_INVOKABLE void removeDevice(const QString &id);
+    Q_INVOKABLE void removeAllDevices();
     Q_INVOKABLE void copyUrlToClipboard(const QString &url);
     Q_INVOKABLE void acceptSetup();
     Q_INVOKABLE void declineSetup();
@@ -107,7 +125,10 @@ signals:
     void activeUrlChanged();
     void connectedClientsChanged();
     void certFingerprintChanged();
-    void pinChanged();
+    void pairingChanged();
+    void devicesChanged();
+    // For a toast: a phone ("phone") or a StrmLight ("strmlight") just paired.
+    void devicePaired(const QString &name, const QString &kind);
     void requirePinChanged();
     void bindModeChanged();
     void offerSetupChanged();

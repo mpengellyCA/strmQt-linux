@@ -52,6 +52,7 @@ private slots:
     void failedRestartAfterRegenerateSetsError();
     void setupIsOfferedOnceAfterSignIn();
     void acceptingTheOfferEnablesWithAPin();
+    void pairingIsReportedToQml();
     void enablingInSettingsWithdrawsTheOffer();
     void enablingInSettingsOnAFreshInstallRequiresThePin();
     void enablingInSettingsKeepsAPinRequirementTurnedOff();
@@ -166,11 +167,14 @@ void WebRemoteControllerTest::stopsAtEverySessionBoundary()
     QTest::qWait(50); // the deferred re-evaluation leaves it off while signed out
     QVERIFY(!m_remote->isRunning());
 
-    // Signing in again starts it; a phone signed in before does not carry over.
+    // Signing in again starts it. A phone paired now stays paired across the
+    // boundaries below: pairing is the device's, not the Emby session's.
     m_settings->setWebRemoteRequirePin(true);
-    m_settings->setWebRemotePin(QStringLiteral("2468"));
     signIn();
     QVERIFY(m_remote->isRunning());
+    m_server->setCodeGeneratorForTests([] { return QStringLiteral("2468"); });
+    QVERIFY(m_server->showPairingCode());
+    QCOMPARE(m_remote->pairingCode(), QStringLiteral("2468"));
     const RemoteResponse auth =
         http.post(QStringLiteral("/api/auth/pin"), QByteArray("{\"pin\":\"2468\"}"));
     QCOMPARE(auth.status, 200);
@@ -183,10 +187,10 @@ void WebRemoteControllerTest::stopsAtEverySessionBoundary()
     QTest::qWait(50);
     QVERIFY(!m_remote->isRunning());
 
-    // Back in: the old token was forgotten with the old session.
+    // Signed in again: the phone paired before is still paired.
     signIn();
     QVERIFY(m_remote->isRunning());
-    QCOMPARE(http.get(QStringLiteral("/api/status?token=") + token).status, 401);
+    QCOMPARE(http.get(QStringLiteral("/api/status?token=") + token).status, 200);
 }
 
 void WebRemoteControllerTest::connectedClientsAreCounted()
@@ -348,6 +352,40 @@ void WebRemoteControllerTest::setupIsOfferedOnceAfterSignIn()
     QVERIFY(!again.offerSetup());
 }
 
+void WebRemoteControllerTest::pairingIsReportedToQml()
+{
+    QVERIFY(!m_remote->pairStrmLight(QStringLiteral("1234"))); // not running yet
+    signIn();
+    QVERIFY(m_remote->isRunning());
+    QSignalSpy pairing(m_remote.get(), &WebRemoteController::pairingChanged);
+    QVERIFY(!m_remote->pairStrmLight(QStringLiteral("12")));
+    QVERIFY(m_remote->pairStrmLight(QStringLiteral("1234")));
+    QVERIFY(m_remote->awaitingStrmLight());
+    QVERIFY(m_remote->pairingCode().isEmpty());
+    QCOMPARE(pairing.size(), 1);
+    m_remote->cancelPairing();
+    QVERIFY(!m_remote->awaitingStrmLight());
+    QCOMPARE(pairing.size(), 2);
+    QCOMPARE(m_remote->pairingSeconds(), WebRemoteServer::kPairingCodeSeconds);
+
+    // A phone pairs; the list and the toast both hear of it.
+    m_settings->setWebRemoteRequirePin(true);
+    QSignalSpy devices(m_remote.get(), &WebRemoteController::devicesChanged);
+    QSignalSpy paired(m_remote.get(), &WebRemoteController::devicePaired);
+    m_server->setCodeGeneratorForTests([] { return QStringLiteral("9090"); });
+    QVERIFY(m_server->showPairingCode());
+    RemoteTestClient http(kPort);
+    QCOMPARE(http.post(QStringLiteral("/api/auth/pin"), R"({"pin":"9090","name":"Sofa phone"})").status,
+             200);
+    QCOMPARE(paired.size(), 1);
+    QVERIFY(!devices.isEmpty());
+    QCOMPARE(m_remote->devices().size(), 1);
+    const QVariantMap device = m_remote->devices().first().toMap();
+    QCOMPARE(device.value(QStringLiteral("name")).toString(), QStringLiteral("Sofa phone"));
+    m_remote->removeDevice(device.value(QStringLiteral("id")).toString());
+    QVERIFY(m_remote->devices().isEmpty());
+}
+
 void WebRemoteControllerTest::acceptingTheOfferEnablesWithAPin()
 {
     m_settings->setWebRemoteEnabled(false);
@@ -389,15 +427,18 @@ void WebRemoteControllerTest::enablingInSettingsOnAFreshInstallRequiresThePin()
     m_remote->setEnabled(true); // the Settings switch, not acceptSetup()
     QVERIFY(m_remote->isRunning());
     QVERIFY(m_remote->requirePin());
-    QCOMPARE(m_remote->pin().size(), 4);
 
     RemoteTestClient http(kPort);
     QCOMPARE(http.get(QStringLiteral("/api/auth/pin")).json().value(QStringLiteral("required")).toBool(),
              true);
     QCOMPARE(http.get(QStringLiteral("/api/status")).status, 401);
     QCOMPARE(http.post(QStringLiteral("/api/navigate"), R"({"key":"back"})").status, 401);
+    // The phone asks; the TV shows a code; the phone sends it back.
+    QCOMPARE(http.post(QStringLiteral("/api/auth/request"), "{}").status, 202);
+    const QString code = m_remote->pairingCode();
+    QCOMPARE(code.size(), 4);
     const RemoteResponse auth = http.post(QStringLiteral("/api/auth/pin"),
-                                          "{\"pin\":\"" + m_remote->pin().toUtf8() + "\"}");
+                                          "{\"pin\":\"" + code.toUtf8() + "\"}");
     QCOMPARE(auth.status, 200);
     http.setToken(auth.json().value(QStringLiteral("token")).toString());
     QCOMPARE(http.get(QStringLiteral("/api/status")).status, 200);
