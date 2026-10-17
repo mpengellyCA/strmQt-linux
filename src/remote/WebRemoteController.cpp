@@ -106,21 +106,11 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
             announceUrls();
         });
     }
-    if (m_session) {
-        connect(m_session, &SessionController::authenticatedChanged, this,
-                &WebRemoteController::evaluate);
+    // The Emby sign-in has no say in whether the remote runs: its pairing is the
+    // device's, a separate thing. Only the setup offer waits for a sign-in.
+    if (m_session)
         connect(m_session, &SessionController::authenticatedChanged, this,
                 &WebRemoteController::offerSetupChanged);
-        // Emitted before the credentials change: nothing opened or signed in
-        // under the old session may carry over. The policy is looked at again
-        // once the boundary has run its course (a profile switch may leave
-        // `authenticated` set throughout and never emit authenticatedChanged).
-        connect(m_session, &SessionController::sessionBoundaryChanged, this, [this] {
-            if (m_server)
-                m_server->stop();
-            QTimer::singleShot(0, this, &WebRemoteController::evaluate);
-        });
-    }
 
     for (const QVariant &device : devices())
         m_knownDeviceIds << device.toMap().value(QStringLiteral("id")).toString();
@@ -299,7 +289,9 @@ void WebRemoteController::evaluate()
 {
     if (!m_server) // the owner has torn the server down; nothing left to do
         return;
-    const bool wanted = isEnabled() && m_session && m_session->authenticated();
+    // Not tied to the Emby sign-in: the remote is how a TV gets past the sign-in
+    // and the profile picker at all, and how a StrmLight pairs.
+    const bool wanted = isEnabled();
     if (!wanted) {
         m_server->stop(); // also drops every connection, stream and token
         setError({});

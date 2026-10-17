@@ -45,8 +45,8 @@ private slots:
     void init();
     void cleanup();
 
-    void runsOnlyWhenEnabledAndSignedIn();
-    void stopsAtEverySessionBoundary();
+    void runsWhenEnabledSignedInOrNot();
+    void theEmbySessionLeavesTheRemoteAlone();
     void connectedClientsAreCounted();
     void portInUseSetsError();
     void regenerateCertificateChangesFingerprint();
@@ -136,15 +136,13 @@ void WebRemoteControllerTest::signIn()
     QTRY_VERIFY_WITH_TIMEOUT(m_session->authenticated(), 10000);
 }
 
-void WebRemoteControllerTest::runsOnlyWhenEnabledAndSignedIn()
+void WebRemoteControllerTest::runsWhenEnabledSignedInOrNot()
 {
     QVERIFY(m_remote->isEnabled());
-    QVERIFY(!m_remote->isRunning()); // signed out: off
+    QVERIFY(m_remote->isRunning()); // signed out: on, it drives the sign-in too
     QVERIFY(m_remote->error().isEmpty());
-    QSignalSpy running(m_remote.get(), &WebRemoteController::runningChanged);
     signIn();
     QVERIFY(m_remote->isRunning());
-    QCOMPARE(running.size(), 1);
     m_remote->setEnabled(false);
     QVERIFY(!m_remote->isRunning());
     QVERIFY(!m_settings->webRemoteEnabled());
@@ -155,9 +153,9 @@ void WebRemoteControllerTest::runsOnlyWhenEnabledAndSignedIn()
     QVERIFY(m_remote->isRunning());
 }
 
-void WebRemoteControllerTest::stopsAtEverySessionBoundary()
+void WebRemoteControllerTest::theEmbySessionLeavesTheRemoteAlone()
 {
-    signIn();
+    m_settings->setWebRemoteRequirePin(true);
     QVERIFY(m_remote->isRunning());
     RemoteTestClient http(kPort);
     auto socket = http.connectTls();
@@ -165,18 +163,8 @@ void WebRemoteControllerTest::stopsAtEverySessionBoundary()
     socket->write("GET /api/auth/pin HTTP/1.1\r\nHost: x\r\n\r\n");
     QTRY_VERIFY_WITH_TIMEOUT(socket->bytesAvailable() > 0, 5000); // a live keep-alive connection
 
-    // Switching user: the boundary stops the server, and its connections, at once.
-    m_session->switchUser();
-    QVERIFY(!m_remote->isRunning());
-    QTRY_COMPARE_WITH_TIMEOUT(socket->state(), QAbstractSocket::UnconnectedState, 5000);
-    QTest::qWait(50); // the deferred re-evaluation leaves it off while signed out
-    QVERIFY(!m_remote->isRunning());
-
-    // Signing in again starts it. A phone paired now stays paired across the
-    // boundaries below: pairing is the device's, not the Emby session's.
-    m_settings->setWebRemoteRequirePin(true);
-    signIn();
-    QVERIFY(m_remote->isRunning());
+    // A phone paired signed out stays paired, and connected, through every
+    // sign-in, profile switch and sign-out: the two are unrelated.
     m_server->setCodeGeneratorForTests([] { return QStringLiteral("2468"); });
     QVERIFY(m_server->showPairingCode());
     QCOMPARE(m_remote->pairingCode(), QStringLiteral("2468"));
@@ -186,15 +174,15 @@ void WebRemoteControllerTest::stopsAtEverySessionBoundary()
     const QString token = auth.json().value(QStringLiteral("token")).toString();
     QCOMPARE(http.get(QStringLiteral("/api/status?token=") + token).status, 200);
 
-    // Logout: off, and it stays off.
-    m_session->logout();
-    QVERIFY(!m_remote->isRunning());
-    QTest::qWait(50);
-    QVERIFY(!m_remote->isRunning());
-
-    // Signed in again: the phone paired before is still paired.
+    QSignalSpy running(m_remote.get(), &WebRemoteController::runningChanged);
     signIn();
+    m_session->switchUser();
+    signIn();
+    m_session->logout();
+    QTest::qWait(50); // anything deferred has run
     QVERIFY(m_remote->isRunning());
+    QCOMPARE(running.size(), 0);
+    QCOMPARE(socket->state(), QAbstractSocket::ConnectedState);
     QCOMPARE(http.get(QStringLiteral("/api/status?token=") + token).status, 200);
 }
 
@@ -205,7 +193,7 @@ void WebRemoteControllerTest::connectedClientsAreCounted()
     auto events = http.openEvents();
     QVERIFY(events);
     QCOMPARE(m_remote->connectedClientsCount(), 1);
-    m_session->logout();
+    m_remote->setEnabled(false);
     QCOMPARE(m_remote->connectedClientsCount(), 0);
     QTRY_COMPARE_WITH_TIMEOUT(events->state(), QAbstractSocket::UnconnectedState, 5000);
 }
@@ -359,8 +347,9 @@ void WebRemoteControllerTest::setupIsOfferedOnceAfterSignIn()
 
 void WebRemoteControllerTest::pairingIsReportedToQml()
 {
-    QVERIFY(!m_remote->pairStrmLight(QStringLiteral("1234"))); // not running yet
-    signIn();
+    m_remote->setEnabled(false);
+    QVERIFY(!m_remote->pairStrmLight(QStringLiteral("1234"))); // not running
+    m_remote->setEnabled(true);
     QVERIFY(m_remote->isRunning());
     QSignalSpy pairing(m_remote.get(), &WebRemoteController::pairingChanged);
     QVERIFY(!m_remote->pairStrmLight(QStringLiteral("12")));

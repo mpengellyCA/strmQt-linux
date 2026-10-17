@@ -18,12 +18,11 @@ class SessionController;
 class WebRemoteServer;
 class HostLink;
 
-// The phone remote as QML sees it, and its run policy: the server listens only
-// while the remote is enabled AND the session is signed in. A session boundary
-// (logout, switching user, profile or server) stops it first, so every
-// connection and token from the old session is gone before the new one starts
-// it again. A failed start is reported in `error`; nothing retries until a
-// setting or the session changes.
+// The phone remote as QML sees it, and its run policy: the server listens
+// while the remote is enabled. The Emby sign-in plays no part: a remote is
+// paired per device, which has nothing to do with Emby accounts, and the
+// sign-in screen and profile picker are driven with it too. A failed start is
+// reported in `error`; nothing retries until a setting changes.
 //
 // In lan and tailscale modes the bind address is re-resolved every 30 s while
 // running: a StrmQt started before Wi-Fi came up, or one whose DHCP lease
@@ -37,7 +36,7 @@ class HostLink;
 // Pairing (WebRemoteServer, "Pairing"): `pairingCode` is the code to put on
 // the TV while a phone is pairing, `awaitingStrmLight` says a StrmLight's code
 // was typed in and it has not asked with it yet, and `devices` lists what is
-// paired. Paired devices stay paired across restarts and sign-ins.
+// paired. Paired devices stay paired across restarts, sign-ins and profiles.
 //
 // m_server is a QPointer: the server's destructor calls stop(), which emits
 // runningChanged while this object may still be connected, and everything
