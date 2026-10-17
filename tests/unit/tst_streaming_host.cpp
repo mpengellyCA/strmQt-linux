@@ -4,6 +4,8 @@
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -21,6 +23,8 @@ HostConfig sample()
     config.strmqt = QStringLiteral("/usr/bin/strmqt");
     config.kwin = QStringLiteral("/usr/bin/kwin_wayland");
     config.sunshine = QStringLiteral("/usr/bin/sunshine");
+    config.pipewire = QStringLiteral("/usr/bin/pipewire");
+    config.wireplumber = QStringLiteral("/usr/bin/wireplumber");
     return config;
 }
 
@@ -83,7 +87,8 @@ private slots:
         const QString unit = hostUnit(config);
         QVERIFY(unit.contains(QStringLiteral(
             "ExecStart=/usr/bin/kwin_wayland --virtual --width 3840 --height 2160 --socket strmqt-host "
-            "--no-lockscreen --no-global-shortcuts --exit-with-session /usr/bin/strmqt\n")));
+            "--no-lockscreen --no-global-shortcuts "
+            "--exit-with-session \"/usr/bin/env PIPEWIRE_REMOTE=strmqt-host-pipewire /usr/bin/strmqt\"\n")));
         QVERIFY(unit.contains(QStringLiteral("Environment=XDG_CONFIG_HOME=/tmp/x\n")));
         QVERIFY(unit.contains(QStringLiteral("Environment=STRMQT_STREAMING_HOST=1\n")));
         QVERIFY(unit.contains(QStringLiteral("WantedBy=default.target\n")));
@@ -100,6 +105,44 @@ private slots:
         QVERIFY(unit.contains(QStringLiteral("ExecStart=/usr/bin/sunshine %1/sunshine.conf\n").arg(config.stateDir)));
     }
 
+    // Sunshine makes what it captures the default output while it streams, so
+    // the host's sound lives on a PipeWire of its own, never the desktop's.
+    void theHostsSoundIsKeptApartFromTheDesktops()
+    {
+        const HostConfig config = sample();
+        const QString conf = audioConf(config);
+        QVERIFY(conf.contains(QStringLiteral("core.name = strmqt-host-pipewire\n")));
+        QVERIFY(conf.contains(QStringLiteral("node.name = strmqt-host-speakers\n")));
+        QVERIFY(conf.contains(QStringLiteral("factory.name = support.null-audio-sink\n")));
+        // No sound card, and no claim on the desktop pulse server's D-Bus name.
+        QVERIFY(!conf.contains(QStringLiteral("alsa")));
+        QVERIFY(conf.contains(QStringLiteral("server.dbus-name = \"\"")));
+        QVERIFY(conf.contains(QStringLiteral("libpipewire-module-access")));
+        QVERIFY(conf.contains(QStringLiteral("path = \"/usr/bin/wireplumber\" args = \"--profile policy\"")));
+
+        const QString audio = audioUnit(config);
+        QVERIFY(audio.contains(QStringLiteral("ExecStart=/usr/bin/pipewire -c %1/audio/pipewire.conf\n").arg(config.stateDir)));
+        QVERIFY(audio.contains(QStringLiteral("PartOf=strmqt-host.service\n")));
+        QVERIFY(audio.contains(QStringLiteral("RuntimeDirectory=strmqt-host-audio\n")));
+        QVERIFY(audio.contains(QStringLiteral("Environment=PULSE_RUNTIME_PATH=%t/strmqt-host-audio\n")));
+        QVERIFY(audio.contains(QStringLiteral("Environment=PIPEWIRE_REMOTE=strmqt-host-pipewire\n")));
+        QVERIFY(audio.contains(QStringLiteral("Environment=XDG_STATE_HOME=%1/audio\n").arg(config.stateDir)));
+        QVERIFY(audio.contains(QStringLiteral("[ -S %t/strmqt-host-audio/native ]")));
+
+        // The screen needs its sound. Pulse clients there all play on the
+        // host's PipeWire; only StrmQt is moved for PipeWire's own protocol,
+        // since KWin's screencast stays on the desktop's.
+        const QString screen = hostUnit(config);
+        QVERIFY(screen.contains(QStringLiteral("Requires=strmqt-host-audio.service\n")));
+        QVERIFY(screen.contains(QStringLiteral("After=pipewire.service strmqt-host-audio.service\n")));
+        QVERIFY(screen.contains(QStringLiteral("Environment=PULSE_SERVER=unix:%t/strmqt-host-audio/native\n")));
+        QVERIFY(!screen.contains(QStringLiteral("Environment=PIPEWIRE_REMOTE")));
+
+        const QString sunshine = sunshineUnit(config);
+        QVERIFY(sunshine.contains(QStringLiteral("Environment=PULSE_SERVER=unix:%t/strmqt-host-audio/native\n")));
+        QVERIFY(!sunshine.contains(QStringLiteral("PIPEWIRE_REMOTE")));
+    }
+
     void pathsAServiceFileCannotNameAreRefused()
     {
         QVERIFY(configProblems(sample()).isEmpty());
@@ -109,6 +152,9 @@ private slots:
         HostConfig relative = sample();
         relative.sunshine = QStringLiteral("sunshine");
         QCOMPARE(configProblems(relative).size(), 1);
+        HostConfig noSound = sample();
+        noSound.wireplumber.clear();
+        QCOMPARE(configProblems(noSound).size(), 1);
         HostConfig injected = sample();
         injected.environment = {QStringLiteral("A=1\nExecStartPre=/bin/true")};
         QCOMPARE(configProblems(injected).size(), 1);
@@ -137,7 +183,13 @@ private slots:
         env.systemctl = QStringLiteral("/usr/bin/systemctl");
         env.kwin = QStringLiteral("/usr/bin/kwin_wayland");
         env.sunshine = recent;
+        env.pipewire = QStringLiteral("/usr/bin/pipewire");
+        env.wireplumber = QStringLiteral("/usr/bin/wireplumber");
         QVERIFY(StreamingHost::probeProblems(env).isEmpty());
+
+        env.wireplumber.clear();
+        QCOMPARE(StreamingHost::probeProblems(env).size(), 1);
+        env.wireplumber = QStringLiteral("/usr/bin/wireplumber");
 
         env.sunshine = old;
         QCOMPARE(StreamingHost::probeProblems(env).size(), 1);
@@ -168,6 +220,9 @@ private slots:
 
         QVERIFY(read(env.unitDir + QStringLiteral("/t-host.service")).contains(QStringLiteral("--exit-with-session")));
         QVERIFY(read(env.unitDir + QStringLiteral("/t-sunshine.service")).contains(QStringLiteral("Requires=t-host.service")));
+        QVERIFY(read(env.unitDir + QStringLiteral("/t-audio.service")).contains(QStringLiteral("PartOf=t-host.service")));
+        QVERIFY(read(env.unitDir + QStringLiteral("/t-host.service")).contains(QStringLiteral("Requires=t-audio.service")));
+        QVERIFY(read(env.stateDir + QStringLiteral("/audio/pipewire.conf")).contains(QStringLiteral("support.null-audio-sink")));
         QVERIFY(read(env.stateDir + QStringLiteral("/sunshine.conf")).contains(QStringLiteral("origin_web_ui_allowed = pc")));
         QVERIFY(QFile::exists(env.stateDir + QStringLiteral("/apps.json")));
 
@@ -184,6 +239,7 @@ private slots:
         QVERIFY(!host.failed());
         QVERIFY(!host.installed());
         QVERIFY(!QFile::exists(env.unitDir + QStringLiteral("/t-host.service")));
+        QVERIFY(!QFile::exists(env.unitDir + QStringLiteral("/t-audio.service")));
         // Pairings outlive a removal.
         QVERIFY(QFile::exists(env.stateDir + QStringLiteral("/sunshine.conf")));
     }
@@ -310,6 +366,7 @@ private slots:
         env.stateDir = dir.filePath(QStringLiteral("state"));
         env.hostUnit = QStringLiteral("strmqt-test-host.service");
         env.sunshineUnit = QStringLiteral("strmqt-test-host-sunshine.service");
+        env.audioUnit = QStringLiteral("strmqt-test-host-audio.service");
         env.socket = QStringLiteral("strmqt-test-host");
         env.strmqt = QCoreApplication::applicationDirPath() + QStringLiteral("/strmqt");
         env.linger = false;
@@ -336,6 +393,27 @@ private slots:
         QVERIFY2(log.contains(QStringLiteral("Screencasting with KWin ScreenCast")), qPrintable(log.right(2000)));
         QVERIFY2(log.contains(QStringLiteral("resolution: 3840x2160")), qPrintable(log.right(2000)));
         QVERIFY2(!log.contains(QStringLiteral("Fatal:")), qPrintable(log.right(2000)));
+        for (const QString &line : log.split(QLatin1Char('\n'))) {
+            if (line.contains(QStringLiteral("sink"), Qt::CaseInsensitive)
+                || line.contains(QStringLiteral("audio"), Qt::CaseInsensitive))
+                qInfo().noquote() << "sunshine:" << line;
+        }
+
+        // The host's sound is on its own PipeWire: the virtual speaker is
+        // there, and it is that server's default.
+        const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
+        if (!pactl.isEmpty()) {
+            QProcess query;
+            QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+            environment.insert(QStringLiteral("PULSE_SERVER"),
+                               QStringLiteral("unix:%1/strmqt-test-host-audio/native")
+                                   .arg(qEnvironmentVariable("XDG_RUNTIME_DIR")));
+            query.setProcessEnvironment(environment);
+            query.start(pactl, {QStringLiteral("info")});
+            QVERIFY(query.waitForFinished(5000));
+            const QString info = QString::fromUtf8(query.readAllStandardOutput());
+            QVERIFY2(info.contains(QStringLiteral("Default Sink: strmqt-host-speakers")), qPrintable(info));
+        }
 
         // Sunshine's API, with the sign-in set-up chose and the certificate
         // Sunshine wrote: nobody is paired and nobody is asking.
@@ -358,8 +436,11 @@ private:
         env.stateDir = dir.filePath(QStringLiteral("state"));
         env.hostUnit = QStringLiteral("t-host.service");
         env.sunshineUnit = QStringLiteral("t-sunshine.service");
+        env.audioUnit = QStringLiteral("t-audio.service");
         env.strmqt = QStringLiteral("/usr/bin/true");
         env.kwin = QStringLiteral("/usr/bin/true");
+        env.pipewire = QStringLiteral("/usr/bin/true");
+        env.wireplumber = QStringLiteral("/usr/bin/true");
         env.sunshine = dir.filePath(QStringLiteral("sunshine"));
         env.systemctl = dir.filePath(QStringLiteral("systemctl"));
         env.linger = false;

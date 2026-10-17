@@ -881,6 +881,18 @@ user's runtime directory, open to this user alone; with no host running, the
 desktop arms its own remote. The paired remotes are shared through the settings
 file, re-read every 3 s, so a device removed in either StrmQt is out of both.
 
+**The streaming host's sound is on a PipeWire of its own.** While it streams,
+Sunshine makes the output it captures the default one (its virtual sink, or
+`audio_sink`), so on the desktop's PipeWire every program's sound would go to the
+TV and leave the desk silent; naming a sink does not stop it. The host runs a
+third unit, `strmqt-host-audio.service`: a PipeWire with no sound card, one
+virtual speaker (`strmqt-host-speakers`), a pulse server that does not claim the
+desktop's D-Bus name, and WirePlumber's hardware-free `policy` profile with its
+state and drop-ins kept in the host's folder. The host's StrmQt and Sunshine reach
+it through `PULSE_SERVER`, and StrmQt alone also through `PIPEWIRE_REMOTE` (mpv
+talks to PipeWire directly). KWin stays on the desktop's PipeWire, which is where
+its screencast, and so the picture, is.
+
 A paired device keeps its token until it is removed in Settings — across restarts,
 sign-outs and profile switches, because pairing a phone is a fact about the room,
 not about the Emby account. Settings keeps only SHA-256 hashes of the tokens, with

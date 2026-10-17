@@ -19,6 +19,12 @@ bool plainPath(const QString &path)
     return path.startsWith(QLatin1Char('/')) && !path.contains(unsafe);
 }
 
+// The host's sound: everything that plays or records it is pointed here.
+QString pulseServer(const HostConfig &config)
+{
+    return QStringLiteral("unix:%t/%1/native").arg(audioRuntimeDir(config));
+}
+
 // A value in sunshine.conf runs to the end of its line.
 QString oneLine(QString value)
 {
@@ -39,11 +45,15 @@ QStringList configProblems(const HostConfig &config)
     path(QStringLiteral("StrmQt"), config.strmqt);
     path(QStringLiteral("KWin"), config.kwin);
     path(QStringLiteral("Sunshine"), config.sunshine);
+    path(QStringLiteral("PipeWire"), config.pipewire);
+    path(QStringLiteral("WirePlumber"), config.wireplumber);
     path(QStringLiteral("The streaming host's folder"), config.stateDir);
     static const QRegularExpression socketName(QStringLiteral("^[A-Za-z0-9_-]+$"));
     static const QRegularExpression unitName(QStringLiteral("^[A-Za-z0-9_.-]+\\.service$"));
-    if (!unitName.match(config.hostUnit).hasMatch())
-        problems << QStringLiteral("Not a usable service name: %1").arg(config.hostUnit);
+    for (const QString &unit : {config.hostUnit, config.audioUnit}) {
+        if (!unitName.match(unit).hasMatch())
+            problems << QStringLiteral("Not a usable service name: %1").arg(unit);
+    }
     if (!socketName.match(config.socket).hasMatch())
         problems << QStringLiteral("The screen's name is not usable: %1").arg(config.socket);
     if (config.width < 640 || config.height < 360 || config.width > 7680 || config.height > 4320)
@@ -103,7 +113,10 @@ QString hostUnit(const HostConfig &config)
         QStringLiteral("# Written by StrmQt (Settings, Streaming host). Changes are overwritten."),
         QStringLiteral("[Unit]"),
         QStringLiteral("Description=StrmQt on a headless screen, for streaming"),
-        QStringLiteral("After=pipewire.service"),
+        // The desktop's PipeWire carries KWin's screencast; the host's own
+        // carries the sound.
+        QStringLiteral("After=pipewire.service %1").arg(config.audioUnit),
+        QStringLiteral("Requires=%1").arg(config.audioUnit),
         QString(),
         QStringLiteral("[Service]"),
         // Sunshine binds KWin's screencast protocol, which KWin only offers to
@@ -115,15 +128,22 @@ QString hostUnit(const HostConfig &config)
         // service's.
         QStringLiteral("UnsetEnvironment=DISPLAY WAYLAND_DISPLAY"),
         QStringLiteral("Environment=%1=1").arg(QLatin1String(kHostMarker)),
+        // Programs that play through PulseAudio's protocol (Qt WebEngine, VLC,
+        // KWin's own sounds) play on the host's PipeWire.
+        QStringLiteral("Environment=PULSE_SERVER=%1").arg(pulseServer(config)),
     };
     for (const QString &pair : config.environment)
         lines << QStringLiteral("Environment=%1").arg(pair);
+    // StrmQt alone is moved to the host's PipeWire for programs that talk to
+    // PipeWire directly (mpv): KWin itself must stay on the desktop's, where
+    // Sunshine finds its screencast. KWin splits the session command itself.
     lines << QStringLiteral("ExecStart=%1 --virtual --width %2 --height %3 --socket %4 "
-                            "--no-lockscreen --no-global-shortcuts --exit-with-session %5")
+                            "--no-lockscreen --no-global-shortcuts "
+                            "--exit-with-session \"/usr/bin/env PIPEWIRE_REMOTE=%5 %6\"")
                  .arg(config.kwin)
                  .arg(config.width)
                  .arg(config.height)
-                 .arg(config.socket, config.strmqt)
+                 .arg(config.socket, audioRemote(config), config.strmqt)
           << QStringLiteral("Restart=on-failure") << QStringLiteral("RestartSec=3") << QString()
           << QStringLiteral("[Install]") << QStringLiteral("WantedBy=default.target");
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
@@ -141,6 +161,8 @@ QString sunshineUnit(const HostConfig &config)
         QString(),
         QStringLiteral("[Service]"),
         QStringLiteral("Environment=WAYLAND_DISPLAY=%1").arg(config.socket),
+        // It records the host's sound, never the desktop's (HostFiles.h).
+        QStringLiteral("Environment=PULSE_SERVER=%1").arg(pulseServer(config)),
         QStringLiteral("UnsetEnvironment=DISPLAY"),
         // "Started" for KWin is not "listening": a Sunshine that finds no
         // screen stays up with nothing to stream. $$ is a literal $ to systemd.
@@ -153,6 +175,109 @@ QString sunshineUnit(const HostConfig &config)
         QString(),
         QStringLiteral("[Install]"),
         QStringLiteral("WantedBy=default.target"),
+    };
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+QString audioRemote(const HostConfig &config)
+{
+    return config.socket + QStringLiteral("-pipewire");
+}
+
+QString audioRuntimeDir(const HostConfig &config)
+{
+    return config.socket + QStringLiteral("-audio");
+}
+
+QString audioConfPath(const HostConfig &config)
+{
+    return config.stateDir + QStringLiteral("/audio/pipewire.conf");
+}
+
+QString audioConf(const HostConfig &config)
+{
+    // The least PipeWire that links streams to one virtual speaker: no sound
+    // card, Bluetooth or camera, and no claim on the desktop PulseAudio
+    // server's D-Bus name. WirePlumber's "policy" profile links the streams
+    // and manages no hardware. module-access grants clients their
+    // permissions; without it they wait for an answer that never comes.
+    const QStringList lines{
+        QStringLiteral("# Written by StrmQt (Settings, Streaming host). Changes are overwritten."),
+        QStringLiteral("context.properties = {"),
+        QStringLiteral("    core.daemon = true"),
+        QStringLiteral("    core.name = %1").arg(audioRemote(config)),
+        QStringLiteral("    link.max-buffers = 16"),
+        QStringLiteral("    default.clock.rate = 48000"),
+        QStringLiteral("}"),
+        QStringLiteral("context.spa-libs = {"),
+        QStringLiteral("    audio.convert.* = audioconvert/libspa-audioconvert"),
+        QStringLiteral("    support.* = support/libspa-support"),
+        QStringLiteral("}"),
+        QStringLiteral("context.modules = ["),
+        QStringLiteral("    { name = libpipewire-module-rt args = { nice.level = -11 rt.prio = 88 "
+                       "rtportal.enabled = false } flags = [ ifexists nofail ] }"),
+        QStringLiteral("    { name = libpipewire-module-protocol-native }"),
+        QStringLiteral("    { name = libpipewire-module-access }"),
+        QStringLiteral("    { name = libpipewire-module-metadata }"),
+        QStringLiteral("    { name = libpipewire-module-spa-node-factory }"),
+        QStringLiteral("    { name = libpipewire-module-client-node }"),
+        QStringLiteral("    { name = libpipewire-module-client-device }"),
+        QStringLiteral("    { name = libpipewire-module-adapter }"),
+        QStringLiteral("    { name = libpipewire-module-link-factory }"),
+        QStringLiteral("    { name = libpipewire-module-session-manager }"),
+        // "unix:native" is under PULSE_RUNTIME_PATH, which the unit sets.
+        QStringLiteral("    { name = libpipewire-module-protocol-pulse args = { "
+                       "server.address = [ \"unix:native\" ] server.dbus-name = \"\" } }"),
+        QStringLiteral("]"),
+        QStringLiteral("context.objects = ["),
+        QStringLiteral("    { factory = spa-node-factory args = { factory.name = support.node.driver "
+                       "node.name = Dummy-Driver node.group = pipewire.dummy priority.driver = 200000 } }"),
+        QStringLiteral("    { factory = adapter args = {"),
+        QStringLiteral("        factory.name = support.null-audio-sink"),
+        QStringLiteral("        node.name = %1").arg(QLatin1String(kAudioSink)),
+        QStringLiteral("        node.description = \"StrmQt streaming host\""),
+        QStringLiteral("        media.class = Audio/Sink"),
+        QStringLiteral("        audio.position = [ FL FR ]"),
+        QStringLiteral("        monitor.channel-volumes = true"),
+        QStringLiteral("        object.linger = true"),
+        QStringLiteral("        priority.session = 1000"),
+        QStringLiteral("        priority.driver = 1000"),
+        QStringLiteral("    } }"),
+        QStringLiteral("]"),
+        QStringLiteral("context.exec = ["),
+        QStringLiteral("    { path = \"%1\" args = \"--profile policy\" }").arg(config.wireplumber),
+        QStringLiteral("]"),
+    };
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+QString audioUnit(const HostConfig &config)
+{
+    const QString runtime = audioRuntimeDir(config);
+    const QString home = config.stateDir + QStringLiteral("/audio");
+    const QStringList lines{
+        QStringLiteral("# Written by StrmQt (Settings, Streaming host). Changes are overwritten."),
+        QStringLiteral("[Unit]"),
+        QStringLiteral("Description=Sound for the headless StrmQt, apart from the desktop's"),
+        QStringLiteral("PartOf=%1").arg(config.hostUnit),
+        QString(),
+        QStringLiteral("[Service]"),
+        // WirePlumber, started by this PipeWire, connects to it by this name.
+        QStringLiteral("Environment=PIPEWIRE_REMOTE=%1").arg(audioRemote(config)),
+        QStringLiteral("Environment=PULSE_RUNTIME_PATH=%t/%1").arg(runtime),
+        // WirePlumber's remembered volumes and defaults, and any drop-ins the
+        // user keeps for the desktop's, are not this one's.
+        QStringLiteral("Environment=XDG_STATE_HOME=%1").arg(home),
+        QStringLiteral("Environment=XDG_CONFIG_HOME=%1").arg(home),
+        QStringLiteral("UnsetEnvironment=PIPEWIRE_CORE"),
+        QStringLiteral("RuntimeDirectory=%1").arg(runtime),
+        QStringLiteral("ExecStart=%1 -c %2").arg(config.pipewire, audioConfPath(config)),
+        // Started is not listening: the screen's StrmQt would find no sound.
+        QStringLiteral("ExecStartPost=/bin/sh -c 'n=0; until [ -S %t/%1/native ] || [ $$n -ge 100 ]; "
+                       "do sleep 0.1; n=$$((n+1)); done'")
+            .arg(runtime),
+        QStringLiteral("Restart=on-failure"),
+        QStringLiteral("RestartSec=3"),
     };
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }

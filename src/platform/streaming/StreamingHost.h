@@ -63,10 +63,13 @@ public:
         QString stateDir;
         QString hostUnit = QLatin1String(streaming::kHostUnit);
         QString sunshineUnit = QLatin1String(streaming::kSunshineUnit);
+        QString audioUnit = QLatin1String(streaming::kAudioUnit);
         QString socket = QStringLiteral("strmqt-host");
         QString strmqt;
         QString kwin;
         QString sunshine;
+        QString pipewire;
+        QString wireplumber;
         QString systemctl;
         // `loginctl enable-linger`: start at boot, before anyone logs in.
         bool linger = true;

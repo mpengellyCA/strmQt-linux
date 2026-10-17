@@ -67,6 +67,8 @@ StreamingHost::Environment StreamingHost::Environment::detect()
     env.strmqt = appImage.isEmpty() ? QCoreApplication::applicationFilePath() : appImage;
     env.kwin = QStandardPaths::findExecutable(QStringLiteral("kwin_wayland"));
     env.sunshine = QStandardPaths::findExecutable(QStringLiteral("sunshine"));
+    env.pipewire = QStandardPaths::findExecutable(QStringLiteral("pipewire"));
+    env.wireplumber = QStandardPaths::findExecutable(QStringLiteral("wireplumber"));
     env.systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
     return env;
 }
@@ -79,6 +81,7 @@ StreamingHost::StreamingHost(Environment environment, QObject *parent)
     m_config.stateDir = m_env.stateDir;
     m_config.socket = m_env.socket;
     m_config.hostUnit = m_env.hostUnit;
+    m_config.audioUnit = m_env.audioUnit;
     m_config.environment = m_env.strmqtEnvironment;
     loadConfig();
     m_vault = new SecretsStore(m_env.stateDir + QStringLiteral("/secrets.ini"), this);
@@ -146,6 +149,11 @@ QStringList StreamingHost::probeProblems(const Environment &env)
         problems << tr("systemd was not found. The streaming host runs as systemd user services.");
     if (env.kwin.isEmpty())
         problems << tr("KWin (kwin_wayland) was not found. It provides the headless screen.");
+    // The host's sound is a PipeWire of its own, kept apart from the desktop's
+    // (streaming/HostFiles.h).
+    if (env.pipewire.isEmpty() || env.wireplumber.isEmpty())
+        problems << tr("PipeWire and WirePlumber were not found. The streaming host keeps its sound "
+                       "apart from this computer's with a PipeWire of its own.");
     if (env.sunshine.isEmpty()) {
         problems << tr("Sunshine is not installed. Install your distribution's sunshine package, "
                        "not the Flatpak, then look again.");
@@ -266,12 +274,14 @@ bool StreamingHost::writeFiles()
     m_config.strmqt = m_env.strmqt;
     m_config.kwin = m_env.kwin;
     m_config.sunshine = m_env.sunshine;
+    m_config.pipewire = m_env.pipewire;
+    m_config.wireplumber = m_env.wireplumber;
     const QStringList problems = streaming::configProblems(m_config);
     if (!problems.isEmpty()) {
         setMessage(problems.join(QLatin1Char(' ')), true);
         return false;
     }
-    if (!QDir().mkpath(m_env.unitDir) || !QDir().mkpath(m_env.stateDir)) {
+    if (!QDir().mkpath(m_env.unitDir) || !QDir().mkpath(m_env.stateDir + QStringLiteral("/audio"))) {
         setMessage(tr("Could not create the streaming host's folders."), true);
         return false;
     }
@@ -280,6 +290,8 @@ bool StreamingHost::writeFiles()
     const bool written =
         writeText(m_env.stateDir + QStringLiteral("/sunshine.conf"), streaming::sunshineConf(m_config).toUtf8())
         && writeText(m_env.stateDir + QStringLiteral("/apps.json"), streaming::appsJson())
+        && writeText(streaming::audioConfPath(m_config), streaming::audioConf(m_config).toUtf8())
+        && writeText(unitPath(m_env.audioUnit), streaming::audioUnit(m_config).toUtf8())
         && writeText(unitPath(m_env.hostUnit), streaming::hostUnit(m_config).toUtf8())
         && writeText(unitPath(m_env.sunshineUnit), streaming::sunshineUnit(m_config).toUtf8());
     if (!written) {
@@ -366,11 +378,13 @@ void StreamingHost::remove()
     // are both fine: remove means "make sure it is gone".
     const QString gone = QStringLiteral("-");
     run({{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("disable"), QStringLiteral("--now"), m_env.sunshineUnit, m_env.hostUnit}, gone},
-         {QStringLiteral("rm"), {QStringLiteral("-f"), QStringLiteral("--"), unitPath(m_env.sunshineUnit), unitPath(m_env.hostUnit)}, {}},
+         // Not enabled itself, only required by the screen's unit.
+         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("stop"), m_env.audioUnit}, gone},
+         {QStringLiteral("rm"), {QStringLiteral("-f"), QStringLiteral("--"), unitPath(m_env.sunshineUnit), unitPath(m_env.hostUnit), unitPath(m_env.audioUnit)}, {}},
          {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, gone},
          // A KWin that is told to stop exits non-zero; without this the unit
          // lingers as "failed" with no file behind it.
-         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("reset-failed"), m_env.sunshineUnit, m_env.hostUnit}, gone}},
+         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("reset-failed"), m_env.sunshineUnit, m_env.hostUnit, m_env.audioUnit}, gone}},
         tr("The streaming host is removed. Its pairings are kept in case you set it up again."));
 }
 
