@@ -793,6 +793,28 @@ it until released. The decision is a pure function in `input/StickDecision.h` wi
 its own tests — the interesting cases are all diagonals and cannot be checked by
 reading.
 
+**A text field reached without a keyboard gets one on screen.** Select in a field
+from the pad, the phone or a remote's OK opens `input/OnScreenKeyboard`; a
+keyboard's own Return still submits. The test is `QEvent::spontaneous()`: every
+key that is not from a keyboard reaches the window from inside the app
+(`DeliveredKey`, or the Return `RemoteOkKeyFilter` makes of OK), and every
+keyboard key comes from the window system. **The field keeps the focus** while
+the keyboard is up. A filter on the window takes the arrows, Select and Back for
+the keys drawn on screen, and a pressed key is sent to the field as a key event
+with text, so the field cannot tell it from typing: `textEdited`, `accepted` and
+search-as-you-type behave as they do for a keyboard, and a field in a popup is
+never pulled out of it. Moving the focus into the keyboard was the obvious
+design and the wrong one here: pickers close when their field loses focus, and
+the navigator returns focus that leaves a modal surface. Edits go to the field
+alone, because Right at the end of the text or Backspace in an empty field must
+not reach the page (an arrow moves focus away; Backspace is a Back binding).
+Done is a Return sent to the window, so it reaches whatever a keyboard's Return
+would. The drawn keyboard (`shell/OnScreenKeyboard.qml`) sits in the window's
+overlay above sheets and popups, and only draws. The first character typed on a
+real keyboard closes it. A field opts out with `property bool onScreenKeyboard:
+false` on itself or an ancestor, read by name: YouTube's TV page does, since it
+draws its own.
+
 ---
 
 ## 6. Remote control
@@ -1025,7 +1047,11 @@ assertion catches the rot.
 - **YouTube Music can only be signed in to from Firefox**, and a copied sign-in expires
   when Google says so, at which point it is copied again. Chromium-family browsers keep
   their cookies encrypted and are not read.
-- **YouTube Music's search box has no on-screen keyboard**: typing needs a keyboard.
+- **The on-screen keyboard in YouTube Music's search box is untested.** It relies on
+  Chromium reporting the focused search box as a text field, as it does for any
+  web input; nobody has tried it on the live site.
+- **The on-screen keyboard types ASCII only**: no accented letters or other scripts,
+  so such a title is found by its plain-letter part, or typed on a keyboard.
 - **The YouTube sign-ins belong to the computer's user, not to the Emby profile.**
   Both web profiles are kept per desktop account; signing out of the server unloads
   the views but a second Emby user on the same desktop account finds the first one's

@@ -64,6 +64,7 @@ ApplicationWindow {
     readonly property bool overlayOpen: root.shortcutSheetOpened || root.commandPaletteOpened
                                         || resumePrompt.visible || remoteOffer.visible
                                         || App.navigationModal === true
+                                        || OnScreenKeyboardCtl.open === true
     // A YouTube video on its own page is a player too: it gets the window,
     // as a film does, and the rail and header come back when YouTube leaves
     // the video (Back) or the page is left. Only the video: YouTube's menus
@@ -2590,4 +2591,8 @@ ApplicationWindow {
         anchors.fill: parent
         z: 1000
     }
+
+    // Typing for a pad, a TV remote and the phone. It puts itself in the
+    // window's overlay, over popups and sheets (shell/OnScreenKeyboard.qml).
+    OnScreenKeyboard {}
 }

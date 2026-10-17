@@ -19,6 +19,10 @@ import QtWebEngine
 WebEngineView {
     id: view
 
+    // YouTube draws its own keyboard for search, operated by the arrows and
+    // Enter delivered here; ours must not open over it (OnScreenKeyboard.h).
+    property bool onScreenKeyboard: false
+
     // The route's address; set once by the page before the view loads.
     property url address: "https://www.youtube.com/tv"
 

@@ -27,6 +27,7 @@
 #include "input/InputMap.h"
 #include "input/KeyEventLogger.h"
 #include "input/KeyDelivery.h"
+#include "input/OnScreenKeyboard.h"
 #include "input/PointerIdle.h"
 #include "input/RemoteBackKeyFilter.h"
 #include "input/RemoteOkKeyFilter.h"
@@ -68,6 +69,12 @@ int main(int argc, char *argv[])
         app.installEventFilter(new strmqt::KeyEventLogger(&app));
     app.session()->restore();
 
+    // Controllers QML reads are declared before the engine so that they are
+    // destroyed after it: QML still evaluating during teardown found one
+    // already gone.
+    strmqt::StreamingHost streamingHost;
+    strmqt::OnScreenKeyboard onScreenKeyboard;
+
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("emby"),
                             new strmqt::EmbyImageProvider(app.imageFetcher()));
@@ -101,6 +108,12 @@ int main(int argc, char *argv[])
     // The cover wash (MUSIC.md §4): Theme re-exports its opacity ceiling, and
     // CoverWash.qml reads the tints themselves.
     engine.rootContext()->setContextProperty(QStringLiteral("CoverTint"), app.coverTint());
+    // Settings' "Streaming host" panel. It looks at nothing until asked.
+    engine.rootContext()->setContextProperty(QStringLiteral("StreamingHostCtl"), &streamingHost);
+    // Typing for a pad, a TV remote and the phone (input/OnScreenKeyboard.h);
+    // it watches the window once there is one, below.
+    engine.rootContext()->setContextProperty(QStringLiteral("OnScreenKeyboardCtl"),
+                                             &onScreenKeyboard);
     // Self-test mode (STRMQT_SELFTEST=1): Main.qml constructs every page
     // component and exits non-zero if any fails.
     //
@@ -109,10 +122,6 @@ int main(int argc, char *argv[])
     // page reachable by a push is never instantiated and a QML type error in it
     // survives a clean-looking startup — which is exactly how M7 shipped a
     // broken PlayerPage.
-    // Settings' "Streaming host" panel. It looks at nothing until asked.
-    strmqt::StreamingHost streamingHost;
-    engine.rootContext()->setContextProperty(QStringLiteral("StreamingHostCtl"), &streamingHost);
-
     // Whether this build carries the YouTube tab (STRMQT_WITH_YOUTUBE). The
     // rail entry and YouTubePage ask.
 #ifdef STRMQT_HAVE_YOUTUBE
@@ -167,6 +176,9 @@ int main(int argc, char *argv[])
             QObject::connect(navigator, &strmqt::FocusNavigator::modalActiveChanged, &app,
                              [&app, navigator] { app.setNavigationModal(navigator->modalActive()); });
         }
+        // Installed before the remote's filters so that it runs after them:
+        // it sees a remote's OK and Back as the Return and Esc they become.
+        onScreenKeyboard.attach(window);
         window->installEventFilter(new strmqt::RemoteOkKeyFilter(window));
         window->installEventFilter(new strmqt::RemoteBackKeyFilter(app.input(), window));
         window->installEventFilter(

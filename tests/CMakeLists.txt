@@ -63,6 +63,12 @@ strmqt_add_test(tst_focus_navigator unit/tst_focus_navigator.cpp
 target_include_directories(tst_focus_navigator PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_focus_navigator PRIVATE Qt6::Quick Qt6::QuickControls2)
 set_tests_properties(tst_focus_navigator PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+strmqt_add_test(tst_on_screen_keyboard unit/tst_on_screen_keyboard.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/OnScreenKeyboard.cpp)
+target_include_directories(tst_on_screen_keyboard PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tst_on_screen_keyboard PRIVATE Qt6::Quick)
+target_compile_definitions(tst_on_screen_keyboard PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+set_tests_properties(tst_on_screen_keyboard PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 strmqt_add_test(tst_pointer_idle unit/tst_pointer_idle.cpp
                 ${CMAKE_SOURCE_DIR}/src/input/PointerIdle.h)
 target_include_directories(tst_pointer_idle PRIVATE ${CMAKE_SOURCE_DIR}/src)

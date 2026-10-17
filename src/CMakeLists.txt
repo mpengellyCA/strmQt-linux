@@ -140,6 +140,7 @@ qt_add_executable(strmqt
     input/RemoteBackKeyFilter.h
     input/KeyEventLogger.h
     input/NavigationKeyHandler.h input/NavigationKeyHandler.cpp
+    input/OnScreenKeyboard.h input/OnScreenKeyboard.cpp
     input/SpatialDecision.h
     input/FocusNavigator.h input/FocusNavigator.cpp
     input/SkipKeyFilter.h input/SkipKeyFilter.cpp
