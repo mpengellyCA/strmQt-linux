@@ -817,6 +817,19 @@ void ControllersTest::homeGenreRailsRetryAfterAFailedGenresCall()
     home.loadGenreRails();
     QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
     QCOMPARE(genreCalls(), 2);
+
+    // A live record reaches a genre rail's row like any other rail's.
+    auto *genreModel =
+        home.genreRails().first().toMap().value(QStringLiteral("model")).value<MediaItemModel *>();
+    QVERIFY(genreModel);
+    QVERIFY(!genreModel->get(0).value(QStringLiteral("played")).toBool());
+    home.onUserDataPatched({QVariantMap{{QStringLiteral("itemId"), QStringLiteral("m1")},
+                                        {QStringLiteral("played"), true},
+                                        {QStringLiteral("favorite"), true},
+                                        {QStringLiteral("positionTicks"), 0},
+                                        {QStringLiteral("playCount"), 1}}});
+    QVERIFY(genreModel->get(0).value(QStringLiteral("played")).toBool());
+    QVERIFY(genreModel->get(0).value(QStringLiteral("favorite")).toBool());
 }
 
 void ControllersTest::librarySessionResetRetiresOldPage()

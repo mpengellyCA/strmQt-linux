@@ -590,47 +590,6 @@ void HomeController::fetchGenreRails()
         });
 }
 
-void HomeController::togglePlayed(const QString &itemId, bool played, bool favorite)
-{
-    const int sessionGeneration = m_sessionGeneration;
-    m_client->setPlayed(itemId, played)
-        .then(this, [this, sessionGeneration, itemId, played,
-                     favorite](const Result<bool> &result) {
-            if (sessionGeneration != m_sessionGeneration)
-                return;
-            if (result.ok())
-                updateAllModels(itemId, played, favorite);
-            else
-                setError(result.error);
-        });
-}
-
-void HomeController::toggleFavorite(const QString &itemId, bool played, bool favorite)
-{
-    const int sessionGeneration = m_sessionGeneration;
-    m_client->setFavorite(itemId, favorite)
-        .then(this, [this, sessionGeneration, itemId, played,
-                     favorite](const Result<bool> &result) {
-            if (sessionGeneration != m_sessionGeneration)
-                return;
-            if (result.ok())
-                updateAllModels(itemId, played, favorite);
-            else
-                setError(result.error);
-        });
-}
-
-void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite)
-{
-    m_resume->updateUserData(itemId, played, favorite);
-    m_nextUp->updateUserData(itemId, played, favorite);
-    m_favorites->updateUserData(itemId, played, favorite);
-    for (MediaItemModel *model : std::as_const(m_railModels))
-        model->updateUserData(itemId, played, favorite);
-    for (MediaItemModel *model : std::as_const(m_genreModels))
-        model->updateUserData(itemId, played, favorite);
-}
-
 void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite,
                                      qint64 positionTicks, int playCount)
 {

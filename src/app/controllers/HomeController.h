@@ -83,10 +83,6 @@ public:
 
     Q_INVOKABLE void refresh();
 
-    // Fire-and-forget toggles; models update optimistically on success.
-    Q_INVOKABLE void togglePlayed(const QString &itemId, bool played, bool favorite);
-    Q_INVOKABLE void toggleFavorite(const QString &itemId, bool played, bool favorite);
-
     // Wires every live-update signal this controller cares about. Application
     // may call this instead of connecting the slots below by hand.
     void bindLiveUpdates(LiveUpdateService *service);
@@ -152,7 +148,6 @@ private:
     void beginRequest();
     void endRequest(int generation);
     void setError(const QString &message);
-    void updateAllModels(const QString &itemId, bool played, bool favorite);
     void updateAllModels(const QString &itemId, bool played, bool favorite,
                          qint64 positionTicks, int playCount);
     MediaItemModel *railModelFor(const QString &libraryId);
