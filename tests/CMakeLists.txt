@@ -36,8 +36,13 @@ strmqt_add_test(tst_models unit/tst_models.cpp)
 strmqt_add_test(tst_music_models unit/tst_music_models.cpp)
 strmqt_add_test(tst_music_lane unit/tst_music_lane.cpp)
 strmqt_add_test(tst_search_sections unit/tst_search_sections.cpp)
-strmqt_add_test(tst_home_rails unit/tst_home_rails.cpp)
+# Also stages the real HomePage and drives it through FocusNavigator, which is
+# QtQuick and lives in the executable, so it is compiled straight in.
+strmqt_add_test(tst_home_rails unit/tst_home_rails.cpp
+                ${CMAKE_SOURCE_DIR}/src/input/FocusNavigator.cpp)
+target_include_directories(tst_home_rails PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(tst_home_rails PRIVATE Qt6::Gui Qt6::Quick)
+target_compile_definitions(tst_home_rails PRIVATE STRMQT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 set_tests_properties(tst_home_rails PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 strmqt_add_test(tst_playback_ticket unit/tst_playback_ticket.cpp)
 strmqt_add_test(tst_media_source unit/tst_media_source.cpp)
@@ -139,6 +144,16 @@ pkg_check_modules(MPV_RENDER_TEST REQUIRED IMPORTED_TARGET mpv)
 target_link_libraries(tst_mpv_video_item PRIVATE
     Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::Network PkgConfig::MPV_RENDER_TEST)
 set_tests_properties(tst_mpv_video_item PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+# The renderer cases again, on the session's display: offscreen gives a
+# QQuickWindow no OpenGL scene graph, so above they skip, and with them the
+# check that the render thread never waits for a frame's display time. A dev
+# box's headless compositor or CI's xvfb-run (llvmpipe) runs them; a package
+# build with no display stays offscreen and reports them skipped.
+add_test(NAME tst_mpv_video_item_gl COMMAND tst_mpv_video_item
+    releaseWaitsForTheRenderer hiddenPlaneStillLetsGo renderingAFrameDoesNotWaitForItsDisplayTime)
+set_tests_properties(tst_mpv_video_item_gl PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;STRMQT_TEST_NATIVE_GL=1"
+    SKIP_REGULAR_EXPRESSION "SKIP   : .*renders only with the OpenGL scene graph")
 
 # Every bundled upscaling shader, compiled and run by a real libmpv render
 # context (spec 2026-10-03 §6). llvmpipe in CI; the host GPU on a dev box.
@@ -332,6 +347,17 @@ strmqt_add_test(tst_live_updates
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
 )
 target_include_directories(tst_live_updates PRIVATE mocks)
+
+# strmqt-cli has its own main(), so this runs the built binary (in a private
+# HOME, with no session bus) rather than linking it. Its pty test is POSIX.
+if(UNIX)
+    strmqt_add_test(tst_cli
+        integration/tst_cli.cpp
+        mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp
+    )
+    target_compile_definitions(tst_cli PRIVATE STRMQT_CLI_PATH="$<TARGET_FILE:strmqt-cli>")
+    add_dependencies(tst_cli strmqt-cli)
+endif()
 
 strmqt_add_test(tst_network_address_helper unit/tst_network_address_helper.cpp)
 target_link_libraries(tst_network_address_helper PRIVATE strmqt_remote)

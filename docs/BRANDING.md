@@ -239,6 +239,6 @@ sets the wordmark glyphs from those files directly rather than a system font.
 ### Don't:
 * **Don't** use cold pure blue or generic OLED black `#000000` as the ground canvas.
 * **Don't** stretch, skew, or rotate the Aperture-Q symbol independently of the logotype.
-* **Don't** add drop shadows or bevels to the flat vector logotype.
+* **Don't** add drop shadows or bevels to the flat vector logotype. (This is StrmQt's own mark; a title's ClearLogo from the server is content, and `TitleLogo` gives it a soft shadow so a light logo reads on bright fanart.)
 * **Don't** spell the name as "STRMQT" or "StreamQt".
 * **Don't** wire pointer hover events to trigger amber focus rings.

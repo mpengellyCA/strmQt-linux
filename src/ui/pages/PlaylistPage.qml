@@ -81,6 +81,18 @@ FocusScope {
     // the list and the correction refilled it.
     property bool focusSeated: false
 
+    // Where the keyboard goes when a sheet raised from a header verb closes:
+    // back to that verb. `page.forceActiveFocus()` alone hands it to whatever
+    // the page's scope last held, which after a click on the verb is still the
+    // other pane. A verb that is hidden or disabled by then (the playlist was
+    // closed under the sheet) cannot take it, so the page does, as before.
+    function returnFocusTo(origin: Item): void {
+        if (origin.visible && origin.enabled)
+            origin.forceActiveFocus(Qt.OtherFocusReason);
+        else
+            page.forceActiveFocus();
+    }
+
     function showMemberMenu(row, sceneX, sceneY): void {
         const item = PlaylistCtl.itemAt(row);
         if (!item)
@@ -158,6 +170,10 @@ FocusScope {
             // service, or duplicate history entries would play the queue twice.
             if (page.StackView.status === StackView.Active)
                 Actions.playAllFrom(items, startIndex);
+        }
+        function onShuffleItemsRequested(items) {
+            if (page.StackView.status === StackView.Active)
+                Actions.shuffleAllFrom(items);
         }
         function onQueueItemsRequested(items) {
             if (page.StackView.status === StackView.Active)
@@ -1184,7 +1200,7 @@ FocusScope {
         }
         function close() {
             visible = false;
-            page.forceActiveFocus();
+            page.returnFocusTo(renameButton);
         }
 
         Column {
@@ -1196,7 +1212,9 @@ FocusScope {
                 width: parent.width
                 placeholderText: qsTr("Playlist name")
                 onAccepted: renameSheet.commit()
-                Keys.onEscapePressed: renameSheet.close()
+                // The field's own signal, as every other StrmSearchField
+                // owner uses, rather than a second handler on its Keys.
+                onEscapePressed: renameSheet.close()
             }
 
             Row {
@@ -1249,7 +1267,7 @@ FocusScope {
         }
         function close() {
             visible = false;
-            page.forceActiveFocus();
+            page.returnFocusTo(deleteButton);
         }
 
         Column {
@@ -1285,7 +1303,14 @@ FocusScope {
                     destructive: true
                     onClicked: {
                         PlaylistCtl.remove(PlaylistCtl.currentId);
-                        confirmDelete.close();
+                        // Not close(): that returns to the Delete verb, which
+                        // is about to go with the playlist it belonged to. The
+                        // list of the ones that are left is where this leads.
+                        confirmDelete.visible = false;
+                        if (page.browseEntry !== null)
+                            browseList.forceActiveFocus(Qt.OtherFocusReason);
+                        else
+                            page.forceActiveFocus();
                     }
                 }
             }

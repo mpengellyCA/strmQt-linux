@@ -25,6 +25,13 @@ constexpr int kPersistIntervalMs = 5'000;
 constexpr int kMaxRecoverRetries = 3;
 // ARCHITECTURE.md: the Up Next card lives in the last 30 s of an item.
 constexpr qint64 kUpNextWindowMs = 30'000;
+// How long before the end of a music track the next one is resolved and queued
+// in the engine for a gapless change. The work is one PlaybackInfo request and
+// the engine opening a stream, normally well under a second; 15 s covers a slow
+// or remote server several times over, and is short enough that a skip or a
+// queue edit made while listening mostly comes before the request rather than
+// after it. A track shorter than this is prefetched as soon as it is playing.
+constexpr qint64 kGaplessLeadMs = 15'000;
 // Below this, "previous" means the previous item; above it, it means "restart".
 constexpr qint64 kRestartThresholdMs = 5'000;
 // The same rule for a chapter: within this of its start, "previous chapter"
@@ -102,6 +109,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
                 m_restoringTracks = false;
                 return;
             }
+            applyDeferredSubtitleTrack();
             // A pending id survives until the engine actually reports it.
             // Clearing it on the first tracksChanged regardless of content lost
             // the user's choice whenever the engine re-emitted the list for an
@@ -162,6 +170,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(m_queue, &PlayQueue::queueChanged, this, [this] {
         emit queueStateChanged();
         updateUpNext();
+        updateGaplessPrefetch();
     });
     connect(m_queue, &PlayQueue::repeatModeChanged, this, &PlayerController::queueStateChanged);
 
@@ -208,6 +217,8 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
     connect(m_backend, &PlayerBackend::stateChanged, this, &PlayerController::onBackendState);
     connect(m_backend, &PlayerBackend::errorOccurred, this, &PlayerController::onBackendError);
     connect(m_backend, &PlayerBackend::endReached, this, &PlayerController::onEndReached);
+    connect(m_backend, &PlayerBackend::prefetchStarted, this,
+            &PlayerController::onPrefetchStarted);
     connect(m_backend, &PlayerBackend::positionChanged, this,
             [this](qint64 ms, PlayerBackend::LoadId loadId) {
         if (loadId != m_expectedLoadId)
@@ -222,6 +233,7 @@ PlayerController::PlayerController(emby::EmbyClient *client, PlayerBackend *back
             return;
         emit durationChanged();
         updateUpNext();
+        updateGaplessPrefetch();
     });
 
     connect(m_backend, &PlayerBackend::bufferingChanged, this,
@@ -484,6 +496,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     // old engine-stop notification can be rejected by the new load identity.
     setEngineReady(false);
     m_expectedLoadId = 0;
+    cancelGaplessPrefetch();
     if (m_backend->state() != PlayerBackend::State::Idle)
         m_backend->stop();
     clearAbLoop();
@@ -512,6 +525,28 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
         emit queueStateChanged();
     }
 
+    const int generation =
+        beginItem(itemId, title, startPositionMs, preferredSourceIndex, itemType, initiallyPaused);
+
+    m_client->playbackInfo(itemId, msToTicks(startPositionMs))
+        .then(this, [this, generation, startPositionMs, itemId](const Result<PlaybackTicket> &result) {
+            if (generation != m_generation)
+                return;
+            if (!result.ok()) {
+                setBusy(false);
+                setError(result.error);
+                finishSession(TerminationReason::Failure);
+                return;
+            }
+            adoptTicket(result.value, itemId);
+            startAttempt(startPositionMs);
+        });
+}
+
+int PlayerController::beginItem(const QString &itemId, const QString &title,
+                                qint64 startPositionMs, int preferredSourceIndex,
+                                const QString &itemType, bool initiallyPaused)
+{
     ++m_generation;
     // A source index only means something within one item's ticket, so an
     // explicit argument wins and otherwise the preference resets to automatic.
@@ -535,6 +570,7 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     // Cleared before the fetch that refills them, so a failed lookup cannot
     // leave the previous episode's series attached to this one.
     m_currentSeriesId.clear();
@@ -575,30 +611,22 @@ void PlayerController::startItem(const QString &itemId, const QString &title,
         m_bufferedEndMs = startPositionMs;
         emit bufferedEndChanged();
     }
+    return generation;
+}
 
-    m_client->playbackInfo(itemId, msToTicks(startPositionMs))
-        .then(this, [this, generation, startPositionMs, itemId](const Result<PlaybackTicket> &result) {
-            if (generation != m_generation)
-                return;
-            if (!result.ok()) {
-                setBusy(false);
-                setError(result.error);
-                finishSession(TerminationReason::Failure);
-                return;
-            }
-            m_ticket = result.value;
-            m_ticketItemId = itemId;
-            m_rung = 0;
-            qsizetype index = m_ticket.defaultSourceIndex();
-            if (m_preferredSourceIndex >= 0 && m_ticket.source(m_preferredSourceIndex) &&
-                m_ticket.source(m_preferredSourceIndex)->isValid())
-                index = m_preferredSourceIndex;
-            m_sourceIndex = -1; // force the change signal for the new ticket
-            selectSource(index);
-            emit sourcesChanged();
-            emit streamMethodChanged();
-            startAttempt(startPositionMs);
-        });
+void PlayerController::adoptTicket(const PlaybackTicket &ticket, const QString &itemId)
+{
+    m_ticket = ticket;
+    m_ticketItemId = itemId;
+    m_rung = 0;
+    qsizetype index = m_ticket.defaultSourceIndex();
+    if (m_preferredSourceIndex >= 0 && m_ticket.source(m_preferredSourceIndex) &&
+        m_ticket.source(m_preferredSourceIndex)->isValid())
+        index = m_preferredSourceIndex;
+    m_sourceIndex = -1; // force the change signal for the new ticket
+    selectSource(index);
+    emit sourcesChanged();
+    emit streamMethodChanged();
 }
 
 void PlayerController::setPlaybackSpeed(qreal speed)
@@ -736,6 +764,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     // server session it replaces still has to be closed.
     closeCurrentSession();
     m_expectedLoadId = 0;
+    cancelGaplessPrefetch();
     if (m_backend->state() != PlayerBackend::State::Idle)
         m_backend->stop();
     clearAbLoop();
@@ -764,6 +793,7 @@ void PlayerController::playUrl(const QUrl &url, const QString &title)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     clearChapters();
     m_rung = 0;
     m_sourceIndex = -1;
@@ -801,12 +831,34 @@ void PlayerController::startAttempt(qint64 startMs)
     const StreamCandidate &candidate = *currentCandidate();
     qCInfo(logPlayback) << "starting rung" << playMethodName(candidate.method) << "of source"
                         << m_sourceIndex << "for item" << m_itemId << "at" << startMs << "ms";
+    // The engine's load replaces whatever it had queued after this item; and a
+    // retry, a demotion or a reload is no moment to have a next track queued.
+    cancelGaplessPrefetch();
+    beginAttempt();
+    m_expectedLoadId = ++m_nextLoadId;
+    // Every rung starts the engine at startMs, Transcode included. The only
+    // video transcode this client asks for is HLS (EmbyClient's
+    // TranscodingProfile), and the TranscodingUrl that comes back carries no
+    // start offset: the playlist is treated as being on the item's own
+    // timeline, which is what seeking and every position report on a
+    // transcode already assume. Dropping the start here without adding a
+    // stream offset to those would play a resume from 0:00 or report it wrong.
+    m_backend->load(candidate.url, startMs, m_expectedLoadId, m_initiallyPaused);
+    m_governor->noteTransient();
+    // Some engines reset their audio state per media; re-assert ours.
+    applyVolume();
+    applyReplayGain();
+}
+
+void PlayerController::beginAttempt()
+{
     m_started = false;
     setEngineReady(false);
     m_tracksRestored = false;
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     m_watchdogLastPos = -1;
     m_stallTicks = 0;
     // A hold cancelled by this item change must not lend its grace to the new
@@ -816,12 +868,6 @@ void PlayerController::startAttempt(qint64 startMs)
     // escalation ladder must keep climbing, not restart at "nudge".
     setBusy(true);
     emit streamMethodChanged();
-    m_expectedLoadId = ++m_nextLoadId;
-    m_backend->load(candidate.url, startMs, m_expectedLoadId, m_initiallyPaused);
-    m_governor->noteTransient();
-    // Some engines reset their audio state per media; re-assert ours.
-    applyVolume();
-    applyReplayGain();
 }
 
 void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend::LoadId loadId)
@@ -855,6 +901,10 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
         setBusy(false);
         updateUpNext();
         m_initiallyPaused = false;
+        // Now, and not at load(): an engine can only add a subtitle to a file
+        // it has open. m_started is cleared by every startAttempt(), so a
+        // retry, a demotion and a reload each get theirs again.
+        attachExternalSubtitles();
         if (state == PlayerBackend::State::Playing)
             m_watchdog.start();
         if (m_reporting) {
@@ -865,6 +915,8 @@ void PlayerController::onBackendState(PlayerBackend::State state, PlayerBackend:
             if (state == PlayerBackend::State::Paused && m_settings)
                 m_settings->flush();
         }
+        // A track shorter than the lead time is inside it from the start.
+        updateGaplessPrefetch();
     } else if (m_started && ready) {
         if (state == PlayerBackend::State::Playing)
             m_watchdog.start();
@@ -1093,6 +1145,7 @@ void PlayerController::updatePositionSnapshots(qint64 positionMs, bool forceInte
     m_lastInternalPositionMs = positionMs;
     updateCurrentChapter(positionMs);
     updateUpNext();
+    updateGaplessPrefetch();
     updateBufferedEnd(positionMs);
 }
 
@@ -1266,6 +1319,7 @@ bool PlayerController::beginFastForward(qint64 nowMs)
         return false;
     m_fastForwarding = true;
     updateUpscaleHold();
+    updateGaplessPrefetch();
     m_speedBeforeFastForward = userSpeed;
     m_fastForwardEngineSpeed = m_speedBeforeFastForward;
     m_lastFastForwardStepMs = nowMs;
@@ -1331,6 +1385,7 @@ void PlayerController::endFastForward(bool reportPosition)
     if (m_backend->maximumPlaybackSpeed() > 1.0)
         m_backend->setPlaybackSpeed(m_speedBeforeFastForward);
     updateUpscaleHold();
+    updateGaplessPrefetch();
     m_fastForwardMuted = false;
     applyVolume();
     m_fastForwardTargetMs = -1;
@@ -1358,6 +1413,9 @@ void PlayerController::onBackendError(const QString &message, PlayerBackend::Loa
     // authoritative failure boundary. Stop presenting this load as ready even
     // if a backend omits or delays that state notification.
     setEngineReady(false);
+    // Whatever happens next — a demotion, a ticket refresh, the end of the
+    // session — this load is not ending into the next track.
+    cancelGaplessPrefetch();
     if (m_recovering && m_started)
         return; // one delayed ticket refresh owns this recovery incident
     m_progressTimer.stop();
@@ -1394,6 +1452,10 @@ void PlayerController::onEndReached(PlayerBackend::LoadId loadId)
     if (!m_active || loadId != m_expectedLoadId)
         return;
     setEngineReady(false);
+    // An engine reports an end only when it did not go on to a prefetched
+    // track; anything still queued or resolving is for an advance that is
+    // now this function's to make.
+    cancelGaplessPrefetch();
     // Report the full runtime so the server marks the item played.
     if (m_reporting)
         m_lastPositionMs = qMax(m_lastPositionMs, durationMs());
@@ -1431,15 +1493,182 @@ bool PlayerController::startQueueCurrent(bool force)
     if (!force && m_active && itemId == m_itemId)
         return false;
 
+    startItem(itemId, queueEntryTitle(item), queueEntryStartMs(item), -1, true,
+              item.value(QStringLiteral("type")).toString());
+    return true;
+}
+
+QString PlayerController::queueEntryTitle(const QVariantMap &item)
+{
     QString title = item.value(QStringLiteral("label")).toString();
     if (title.isEmpty())
         title = item.value(QStringLiteral("name")).toString();
+    return title;
+}
+
+qint64 PlayerController::queueEntryStartMs(const QVariantMap &item)
+{
     const qint64 startMs = item.value(QStringLiteral("resumable")).toBool()
                                ? item.value(QStringLiteral("positionMs")).toLongLong()
                                : 0;
-    startItem(itemId, title, qMax<qint64>(0, startMs), -1, true,
-              item.value(QStringLiteral("type")).toString());
-    return true;
+    return qMax<qint64>(0, startMs);
+}
+
+// ── Gapless advance ───────────────────────────────────────────────────────────
+//
+// The next track of a music queue is resolved while this one plays out and is
+// handed to the engine to follow it, so the change of track has no PlaybackInfo
+// round trip and no reload in it (PlayerBackend::prefetchNext). Everything is
+// written so that dropping the prefetch is always safe: an end the engine
+// reports in the ordinary way is advanced in the ordinary way.
+
+bool PlayerController::gaplessPrefetchWanted() const
+{
+    // Cheapest first: this runs four times a second.
+    if (!m_backend->supportsPrefetch() || !m_active || !m_reporting || !m_started || !m_isAudio)
+        return false;
+    // A hold seeks and runs the engine fast; a recovery is about to reload
+    // this track; a dismissed Up Next card means this track ends the session.
+    if (m_fastForwarding || m_recovering || m_upNextCancelled)
+        return false;
+    if (m_ticketItemId != m_itemId)
+        return false;
+    // Only inside the lead time. A seek back out of it drops the prefetch:
+    // the ticket would be minutes old by the time it was used, and a
+    // transcode URL the engine had already opened would be holding a server
+    // job open for nothing.
+    const qint64 duration = durationMs();
+    if (duration <= 0 || duration - m_lastPositionMs > kGaplessLeadMs)
+        return false;
+    // A deliberate queue only (§3: a single item continues a series, which is
+    // video and resolved after the end); RepeatOne names the current row.
+    if (m_queue->rowCount() < 2)
+        return false;
+    const int next = m_queue->nextIndex();
+    if (next < 0 || next == m_queue->currentIndex())
+        return false;
+    // Music into music. A film after a record has a picture to bring up and
+    // a player page to open, which an engine-driven change would skip.
+    return typeIsAudio(m_queue->itemAt(next).value(QStringLiteral("type")).toString());
+}
+
+void PlayerController::updateGaplessPrefetch()
+{
+    const bool wanted = gaplessPrefetchWanted();
+    if (m_gapless.stage != GaplessStage::None) {
+        // Still the right track to follow this one: nothing to do, whether it
+        // is resolving, queued, or failed (a failure is not retried for the
+        // same entry; the ordinary advance at the end still runs).
+        if (wanted && m_queue->entryKeyAt(m_queue->nextIndex()) == m_gapless.entryKey)
+            return;
+        cancelGaplessPrefetch();
+    }
+    if (wanted)
+        requestGaplessPrefetch();
+}
+
+void PlayerController::requestGaplessPrefetch()
+{
+    const int next = m_queue->nextIndex();
+    const QVariantMap item = m_queue->itemAt(next);
+    const QString itemId = item.value(QStringLiteral("itemId")).toString();
+    if (itemId.isEmpty())
+        return;
+    m_gapless = {};
+    m_gapless.stage = GaplessStage::Resolving;
+    m_gapless.token = ++m_gaplessToken;
+    m_gapless.entryKey = m_queue->entryKeyAt(next);
+    m_gapless.itemId = itemId;
+    m_gapless.startMs = queueEntryStartMs(item);
+    qCInfo(logPlayback) << "gapless: resolving" << itemId << "to follow" << m_itemId;
+
+    const int generation = m_generation;
+    const int token = m_gapless.token;
+    m_client->playbackInfo(itemId, msToTicks(m_gapless.startMs))
+        .then(this, [this, generation, token](const Result<PlaybackTicket> &result) {
+            // A newer item, a cancel or a second request superseded this one.
+            if (generation != m_generation || token != m_gapless.token ||
+                m_gapless.stage != GaplessStage::Resolving)
+                return;
+            m_gapless.stage = GaplessStage::Failed;
+            if (!result.ok()) {
+                qCInfo(logPlayback) << "gapless: next track unresolved, advancing at the end:"
+                                    << result.error;
+                return;
+            }
+            // The choice an ordinary advance would make: a queued item starts
+            // with no preferred version, on the top rung of the default one.
+            const qsizetype index = result.value.defaultSourceIndex();
+            const StreamCandidate *candidate = result.value.candidate(index, 0);
+            if (!candidate)
+                return;
+            const PlayerBackend::LoadId loadId = ++m_nextLoadId;
+            if (!m_backend->prefetchNext(candidate->url, m_gapless.startMs, loadId)) {
+                qCInfo(logPlayback) << "gapless: the engine did not queue the next track";
+                return;
+            }
+            m_gapless.stage = GaplessStage::Queued;
+            m_gapless.ticket = result.value;
+            m_gapless.loadId = loadId;
+        });
+}
+
+void PlayerController::cancelGaplessPrefetch()
+{
+    if (m_gapless.stage == GaplessStage::None)
+        return;
+    if (m_gapless.stage == GaplessStage::Queued)
+        m_backend->cancelPrefetch();
+    // The token goes with it, so a reply still on its way finds no match.
+    m_gapless = {};
+}
+
+void PlayerController::onPrefetchStarted(PlayerBackend::LoadId finished,
+                                         PlayerBackend::LoadId started)
+{
+    if (!m_active || finished != m_expectedLoadId)
+        return;
+    if (m_gapless.stage != GaplessStage::Queued || m_gapless.loadId != started ||
+        !gaplessPrefetchWanted() ||
+        m_queue->entryKeyAt(m_queue->nextIndex()) != m_gapless.entryKey) {
+        // The engine went on into a track this controller no longer wants
+        // there. Treat it as the end it was: the ordinary advance reloads
+        // whatever is next now (or ends the session), replacing that file.
+        onEndReached(finished);
+        return;
+    }
+
+    // From here on, what an end followed by advanceToNext() → startItem() →
+    // the ticket reply → startAttempt() does, minus the request and the load:
+    // the engine is already opening the next file under `started`.
+    const GaplessPrefetch next = std::exchange(m_gapless, {});
+    qCInfo(logPlayback) << "gapless: continuing into" << next.itemId;
+    setEngineReady(false);
+    // The track that finished is reported stopped at its full runtime, the
+    // engine's duration still being its own here, so the server marks it
+    // played exactly as it would after an ordinary end.
+    if (m_reporting)
+        m_lastPositionMs = qMax(m_lastPositionMs, durationMs());
+    closeCurrentSession();
+    setUpNext(false, 0);
+    {
+        const QScopedValueRollback<bool> guard(m_queueDriving, true);
+        m_queue->advance();
+    }
+    emit queueStateChanged();
+
+    const QVariantMap item = m_queue->currentItem();
+    const QScopedValueRollback<bool> transport(m_transportStart, true);
+    clearAbLoop();
+    m_itemReachedReady = false;
+    beginItem(next.itemId, queueEntryTitle(item), next.startMs, -1,
+              item.value(QStringLiteral("type")).toString(), /*initiallyPaused=*/false);
+    adoptTicket(next.ticket, next.itemId);
+    beginAttempt();
+    m_expectedLoadId = started;
+    m_governor->noteTransient();
+    // No applyVolume()/applyReplayGain(): mpv keeps both across files, and a
+    // write to either at the seam is the one place it could be heard.
 }
 
 bool PlayerController::tryAutoPlayNextEpisode()
@@ -1571,6 +1800,7 @@ void PlayerController::cancelUpNext()
 {
     m_upNextCancelled = true;
     setUpNext(false, 0);
+    updateGaplessPrefetch();
 }
 
 // The property side of every queue signal: hasNext / hasPrevious / nextItem and
@@ -1580,6 +1810,8 @@ void PlayerController::onQueueCurrentChanged()
 {
     emit queueStateChanged();
     updateUpNext();
+    // Repeat, shuffle, a move or a removal can each change what comes next.
+    updateGaplessPrefetch();
     if (m_queueDriving)
         return;
     if (m_queue->currentIndex() < 0 && m_active)
@@ -1726,6 +1958,7 @@ void PlayerController::cycleAudioTrack()
 
 void PlayerController::cycleSubtitleTrack()
 {
+    m_deferredSubtitleTrack.reset();
     m_trackSelectionPending = true;
     m_backend->cycleSubtitleTrack();
 }
@@ -1742,6 +1975,7 @@ void PlayerController::setSubtitleTrack(int id)
 {
     if (!m_backend)
         return;
+    m_deferredSubtitleTrack.reset();
     m_pendingSubtitleTrack = id;
     m_backend->setSubtitleTrack(id);
 }
@@ -1874,9 +2108,89 @@ void PlayerController::restoreRememberedTracks()
         m_backend->setAudioTrack(remembered.first);
     // A remembered -1 for subtitles is "the user turned them off" and is
     // applied; that is why hasRememberedTracks() had to exist.
-    if ((remembered.second < 0 || known(subtitles, remembered.second))
-        && remembered.second != m_backend->currentSubtitleTrackId())
+    if (remembered.second >= 0 && !known(subtitles, remembered.second)) {
+        // Not in the list yet is not the same as gone: an external subtitle is
+        // fetched after the file is up and joins the list when it has been
+        // read. Wait for it rather than dropping the choice.
+        if (!externalSubtitlesForCurrentRung().isEmpty())
+            m_deferredSubtitleTrack = remembered.second;
+    } else if (remembered.second != m_backend->currentSubtitleTrackId()) {
         m_backend->setSubtitleTrack(remembered.second);
+    }
+}
+
+void PlayerController::applyDeferredSubtitleTrack()
+{
+    if (!m_deferredSubtitleTrack || !m_backend)
+        return;
+    // The user chose something in the meantime; theirs stands.
+    if (m_pendingSubtitleTrack || m_trackSelectionPending) {
+        m_deferredSubtitleTrack.reset();
+        return;
+    }
+    const int wanted = *m_deferredSubtitleTrack;
+    const QVariantList subtitles = m_backend->subtitleTracks();
+    const bool arrived =
+        std::any_of(subtitles.cbegin(), subtitles.cend(), [wanted](const QVariant &track) {
+            return track.toMap().value(QStringLiteral("id")).toInt() == wanted;
+        });
+    if (!arrived)
+        return;
+    m_deferredSubtitleTrack.reset();
+    if (wanted == m_backend->currentSubtitleTrackId())
+        return;
+    m_restoringTracks = true;
+    m_backend->setSubtitleTrack(wanted);
+    m_restoringTracks = false;
+}
+
+QList<MediaStream> PlayerController::externalSubtitlesForCurrentRung() const
+{
+    // The ticket has to be this item's: across an item change it still
+    // describes the previous one until the next PlaybackInfo reply lands.
+    if (m_ticketItemId.isEmpty() || m_ticketItemId != m_itemId)
+        return {};
+    const MediaSourceCandidates *entry = m_ticket.source(m_sourceIndex);
+    const StreamCandidate *candidate = currentCandidate();
+    // Music has no picture to draw a subtitle on; its lyrics go another way.
+    if (!entry || !candidate || !entry->source.videoStream())
+        return {};
+    QList<MediaStream> external;
+    for (const MediaStream &stream : entry->source.streams) {
+        if (!stream.isDeliveredExternally())
+            continue;
+        // Direct play opens the original file, and a stream that lives in that
+        // file is already in the engine's list whatever delivery the server
+        // wrote next to it. Only a sidecar is missing. A remux or a transcode
+        // is the server's own output, so there its word is taken.
+        if (candidate->method == PlayMethod::DirectPlay && !stream.isExternal)
+            continue;
+        external.append(stream);
+    }
+    return external;
+}
+
+void PlayerController::attachExternalSubtitles()
+{
+    if (!m_backend || m_expectedLoadId == 0 || m_externalSubtitlesLoadId == m_expectedLoadId)
+        return;
+    m_externalSubtitlesLoadId = m_expectedLoadId;
+    const QList<MediaStream> streams = externalSubtitlesForCurrentRung();
+    if (streams.isEmpty())
+        return;
+    const MediaSource &source = m_ticket.source(m_sourceIndex)->source;
+    // The server's pick is the default, shown the way a burned-in one was. A
+    // choice the user made for this item and version outranks it, "off"
+    // included; restoreRememberedTracks() applies that one.
+    const bool remembered = m_settings && m_settings->hasRememberedTracks(m_itemId, source.id);
+    for (const MediaStream &stream : streams) {
+        const bool select = !remembered && stream.index >= 0
+                            && stream.index == source.defaultSubtitleStreamIndex;
+        // The stream's index, never its URL: that carries the access token.
+        qCInfo(logPlayback) << "attaching external subtitle stream" << stream.index
+                            << (select ? "(selected)" : "(not selected)");
+        m_backend->addExternalSubtitle(stream.externalUrl, stream.label(), stream.language, select);
+    }
 }
 
 PlaybackProgress PlayerController::progressNow() const
@@ -1988,6 +2302,7 @@ void PlayerController::finishSession(TerminationReason reason)
     closeCurrentSession();
     ++m_generation;
     m_expectedLoadId = 0;
+    cancelGaplessPrefetch();
     m_backend->stop();
     setUpNext(false, 0);
     m_progressTimer.stop();
@@ -2012,6 +2327,7 @@ void PlayerController::finishSession(TerminationReason reason)
     m_trackSelectionPending = false;
     m_pendingAudioTrack.reset();
     m_pendingSubtitleTrack.reset();
+    m_deferredSubtitleTrack.reset();
     m_sourceIndex = -1;
     m_rung = 0;
     m_preferredSourceIndex = -1;

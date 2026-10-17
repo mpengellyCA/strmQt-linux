@@ -50,6 +50,18 @@ class HomeController : public QObject
     Q_PROPERTY(QVariantList genreRails READ genreRails NOTIFY genreRailsChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+    // The one item Home's stage features, chosen from what Home already holds:
+    // the first of Continue Watching, else the first of Next Up, else the
+    // newest item of the first Latest rail. Empty when none of them has a row.
+    // The item's own map (MediaItemModel::get(), so every verb takes it as it
+    // is) plus three keys of the stage's own:
+    //   featuredKind  "resume" | "nextUp" | "latest"
+    //   featuredLabel the line that says why this item, "Continue watching"
+    //   artUrl        full-bleed art: the item's backdrop, else its series',
+    //                 else other wide art; never a poster cropped to 16:9
+    // Re-derived whenever one of those rails changes, so a resume point moved
+    // anywhere reaches the stage's Resume label as it reaches the cards.
+    Q_PROPERTY(QVariantMap featured READ featured NOTIFY featuredChanged)
 
 public:
     explicit HomeController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -63,16 +75,13 @@ public:
     QVariantList genreRails() const { return m_genreRails; }
     bool busy() const { return m_pending > 0; }
     QString errorMessage() const { return m_errorMessage; }
+    QVariantMap featured() const { return m_featured; }
 
     // Authentication owns every row, descriptor and deferred refresh in this
     // controller. Called synchronously before EmbyClient changes identity.
     void resetSessionState();
 
     Q_INVOKABLE void refresh();
-
-    // Fire-and-forget toggles; models update optimistically on success.
-    Q_INVOKABLE void togglePlayed(const QString &itemId, bool played, bool favorite);
-    Q_INVOKABLE void toggleFavorite(const QString &itemId, bool played, bool favorite);
 
     // Wires every live-update signal this controller cares about. Application
     // may call this instead of connecting the slots below by hand.
@@ -99,6 +108,7 @@ signals:
     void genreRailsChanged();
     void busyChanged();
     void errorMessageChanged();
+    void featuredChanged();
 
 private:
     void fetchGenreRails();
@@ -134,14 +144,17 @@ private:
     void noteInvalidationWhileBusy(bool library);
     void runOwedRefresh();
     void applySnapshot(const Snapshot &snapshot);
+    void applySnapshotRails(const Snapshot &snapshot);
     void beginRequest();
     void endRequest(int generation);
     void setError(const QString &message);
-    void updateAllModels(const QString &itemId, bool played, bool favorite);
     void updateAllModels(const QString &itemId, bool played, bool favorite,
                          qint64 positionTicks, int playCount);
     MediaItemModel *railModelFor(const QString &libraryId);
     void syncRailDescriptors();
+    // Re-derives `featured` from the rails; emits only when it changed.
+    void syncFeatured();
+    void watchForFeatured(MediaItemModel *model);
 
     emby::EmbyClient *m_client;
     QElapsedTimer m_lastUserDataRefresh;
@@ -162,7 +175,14 @@ private:
     QHash<QString, MediaItemModel *> m_genreModels;
     QVariantList m_genreRails;
     bool m_genreRailsFetched = false;
+    // Home has asked for the genre rails this session, so a refresh may fetch
+    // them again after a failure without a user who never reached them paying.
+    bool m_genreRailsWanted = false;
     QString m_errorMessage;
+    QVariantMap m_featured;
+    // Set while a snapshot replaces several rails at once, so the stage is
+    // chosen once from the finished set rather than from each half-applied one.
+    bool m_applyingSnapshot = false;
     int m_pending = 0;
     int m_generation = 0; // invalidates in-flight replies across refreshes
     // False until control returns to the event loop after startRefresh(): up to

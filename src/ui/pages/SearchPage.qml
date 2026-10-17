@@ -680,7 +680,14 @@ FocusScope {
             }
         }
 
+        // Mouse affordances only, as on StrmRail: a shelf is one Tab stop, and
+        // a hovered one must not slip its chevrons into the Tab chain or offer
+        // them to an arrow. A click still gives a button the keyboard, and at
+        // the end of the shelf it then disables itself — so it goes straight
+        // back to the cards.
         StrmIconButton {
+            activeFocusOnTab: false
+            onActiveFocusChanged: if (activeFocus) cards.forceActiveFocus(Qt.OtherFocusReason)
             anchors.left: cards.left
             anchors.leftMargin: Theme.spacingTight
             anchors.verticalCenter: cards.verticalCenter
@@ -699,6 +706,8 @@ FocusScope {
         }
 
         StrmIconButton {
+            activeFocusOnTab: false
+            onActiveFocusChanged: if (activeFocus) cards.forceActiveFocus(Qt.OtherFocusReason)
             anchors.right: cards.right
             anchors.rightMargin: Theme.spacingTight
             anchors.verticalCenter: cards.verticalCenter

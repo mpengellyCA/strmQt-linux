@@ -9,6 +9,8 @@
 #include <QVariant>
 #include <QVariantMap>
 
+#include <optional>
+
 namespace strmqt {
 
 // The keystone abstraction (ARCHITECTURE.md): an ordered list of MediaItems
@@ -16,7 +18,7 @@ namespace strmqt {
 // and "play all" are five features that were all blocked on this one concept.
 //
 // It is a QAbstractListModel so the queue panel can reuse the same delegates as
-// every rail and grid: the roles below MediaItemModel::SubtitleRole *are*
+// every rail and grid: the roles up to MediaItemModel::LogoUrlRole *are*
 // MediaItemModel's roles, with the same names and the same values. Both model
 // surfaces use MediaItemModel's shared role conversion, so the queue does not
 // need a second copy of every item. Two extra roles (queueIndex, isCurrent) are
@@ -54,7 +56,7 @@ public:
     // Queue-only roles; everything below these is MediaItemModel's, unchanged.
     enum Role
     {
-        QueueIndexRole = MediaItemModel::SubtitleRole + 1,
+        QueueIndexRole = MediaItemModel::LogoUrlRole + 1,
         IsCurrentRole,
     };
     Q_ENUM(Role)
@@ -95,8 +97,26 @@ public:
     // bare play knows an id, a title and a type — not the artwork, the series
     // or the episode number — so every now-playing surface had nothing to draw
     // for anything played straight from a card, while music (which arrives as
-    // a queue of complete items) looked right. Matched by id, never by row.
+    // a queue of complete items) looked right. Matched by id, never by row —
+    // so every entry holding that item is enriched, and each keeps the
+    // playlistItemId it was queued with when the record carries none.
     void enrichEntry(const MediaItem &item);
+
+    // The user data of an item changed (a toggle here, or the server's record
+    // from anywhere): every entry holding that item takes the new values. An
+    // absent field is left as it is. Returns how many entries really changed.
+    //
+    // NOT enrichEntry() with fewer fields. That one announces the current row
+    // as currentItemChanged(), which PlayerController reads as "play this" —
+    // and the record that most reliably arrives for the current row is the
+    // server's own, straight after the stop report, with the queue intact and
+    // nothing playing. So this announces rows (dataChanged) and payload
+    // (queueChanged, which is what the surfaces reading itemAt() listen to),
+    // never the cursor, and stays silent when nothing changed.
+    int updateUserData(const QString &itemId, std::optional<bool> played,
+                       std::optional<bool> favorite,
+                       std::optional<qint64> playbackPositionTicks = std::nullopt,
+                       std::optional<int> playCount = std::nullopt);
 
     // Derived from what the queue HOLDS, not remembered from the verb that
     // filled it. A label carried in from a click can outlive the queue it
@@ -110,6 +130,10 @@ public:
     void setSourceLabel(const QString &label);
 
     int currentIndex() const { return m_currentIndex; }
+    // The identity of the entry at `row`, 0 when there is none: unique within
+    // this queue and kept through shuffling and moves, unlike the row, and
+    // unlike the item id, which repeats when an item is queued twice.
+    quint64 entryKeyAt(int row) const;
     // {} when the queue is empty.
     MediaItem current() const;
     Q_INVOKABLE QVariantMap currentItem() const;

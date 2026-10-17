@@ -61,6 +61,9 @@ public:
         OfficialRatingRole,
         UnplayedCountRole,
         SubtitleRole, // "1999" / "2013 – Present" / "S2E4 · 47 min"
+        // ClearLogo (MediaItem::logoSource()): the item's own, else its
+        // series'. Empty when the server sent none, which is the usual case.
+        LogoUrlRole,
     };
     Q_ENUM(Role)
 

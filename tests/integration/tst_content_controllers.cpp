@@ -394,7 +394,8 @@ void ContentControllersTest::detailsClearsBetweenItems()
 {
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/a").arg(kUserId), 200,
                      QByteArrayLiteral("{\"Id\":\"a\",\"Name\":\"A\",\"Type\":\"Movie\","
-                                       "\"Genres\":[\"Action\"],\"CriticRating\":93}"));
+                                       "\"Genres\":[\"Action\"],\"CriticRating\":93,"
+                                       "\"ImageTags\":{\"Logo\":\"logo-a\"}}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/b").arg(kUserId), 200,
                      QByteArrayLiteral("{\"Id\":\"b\",\"Name\":\"B\",\"Type\":\"Movie\"}"));
     m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/a/Similar"), 200,
@@ -408,6 +409,7 @@ void ContentControllersTest::detailsClearsBetweenItems()
     details.load(QStringLiteral("a"));
     QCOMPARE(details.itemId(), QStringLiteral("a"));
     QTRY_COMPARE_WITH_TIMEOUT(details.criticRating(), 93.0, 5000);
+    QCOMPARE(details.logoUrl(), QStringLiteral("image://emby/test-session/a/Logo/logo-a"));
 
     // The second item has no rating and no genres. Anything left over would be
     // shown as if it belonged to this item — the failure the user actually
@@ -418,6 +420,8 @@ void ContentControllersTest::detailsClearsBetweenItems()
     QVERIFY(details.genres().isEmpty());
     QVERIFY(details.trailers().isEmpty());
     QVERIFY(details.collections().isEmpty());
+    // Nor its logo: the header would set B's title in A's ClearLogo.
+    QVERIFY(details.logoUrl().isEmpty());
 }
 
 void ContentControllersTest::detailsEnsureJoinsUsableStateAndRetriesFailure()
@@ -784,6 +788,15 @@ void ContentControllersTest::seriesNextUnwatchedRefetchesAfterPlayedChanges()
     series.notePlayed(QStringLiteral("first"), true);
     QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 4, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!series.hasNextUnwatched(), 5000);
+
+    // Several episodes changing together (a season marked watched, another
+    // client's burst) are answered by one refetch, not one per episode.
+    series.notePlayed(QStringLiteral("first"), true);
+    series.notePlayed(QStringLiteral("second"), true);
+    series.notePlayed(QStringLiteral("third"), true);
+    QTRY_COMPARE_WITH_TIMEOUT(requestsFor(itemsPath), 5, 5000);
+    QTest::qWait(100);
+    QCOMPARE(requestsFor(itemsPath), 5);
 
     // A phone/player update reaches SeriesController through the same
     // debounced invalidation channel as every other live consumer and causes
@@ -1170,15 +1183,16 @@ void ContentControllersTest::playlistQueuePolicyPreservesDuplicateEntries()
     QCOMPARE(ordered.at(1).toMap().value(QStringLiteral("playlistItemId")).toString(),
              QStringLiteral("entry-b"));
 
+    // Shuffle hands the playlist over in its own order; the queue shuffles it
+    // and can therefore give this order back.
+    QSignalSpy shuffleRequested(&playlists, &PlaylistController::shuffleItemsRequested);
     playlists.requestShuffle();
-    QCOMPARE(played.count(), 2);
-    const QVariantList shuffled = played.at(1).at(0).toList();
-    QCOMPARE(shuffled.size(), ordered.size());
-    QCOMPARE(played.at(1).at(1).toInt(), 0);
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(shuffleRequested.count(), 1);
+    const QVariantList shuffled = shuffleRequested.first().at(0).toList();
     QStringList shuffledEntries;
     for (const QVariant &record : shuffled)
         shuffledEntries.append(record.toMap().value(QStringLiteral("playlistItemId")).toString());
-    shuffledEntries.sort();
     QCOMPARE(shuffledEntries,
              QStringList({QStringLiteral("entry-a"), QStringLiteral("entry-b"),
                           QStringLiteral("entry-c")}));

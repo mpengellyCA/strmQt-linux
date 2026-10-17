@@ -23,6 +23,24 @@ bool wantsLatestRail(const Library &library)
            library.collectionType == QLatin1String("tvshows");
 }
 
+// The stage is full-bleed and wide, so it wants fanart: the item's own
+// backdrop, then its series' (an episode has none of its own), then whatever
+// other wide art thumbSource() finds — for an episode that includes its still.
+// A film's poster is never stretched across it; with nothing wide the stage
+// draws no art and keeps its ground.
+MediaItem::ImageRef stageArt(const MediaItem &item)
+{
+    if (!item.backdropImageTags.isEmpty())
+        return {item.id, QStringLiteral("Backdrop"), item.backdropImageTags.first()};
+    if (!item.parentBackdropImageTag.isEmpty() && !item.parentBackdropItemId.isEmpty())
+        return {item.parentBackdropItemId, QStringLiteral("Backdrop"), item.parentBackdropImageTag};
+    const MediaItem::ImageRef wide = item.thumbSource();
+    const bool episode = item.type.compare(QLatin1String("Episode"), Qt::CaseInsensitive) == 0;
+    if (wide.isValid() && (episode || wide.imageType != QLatin1String("Primary")))
+        return wide;
+    return {};
+}
+
 } // namespace
 
 HomeController::HomeController(emby::EmbyClient *client, QObject *parent)
@@ -35,6 +53,9 @@ HomeController::HomeController(emby::EmbyClient *client, QObject *parent)
     connect(m_nextUp, &MediaItemModel::countChanged, this, syncRails);
     connect(m_favorites, &MediaItemModel::countChanged, this, syncRails);
     connect(m_libraries, &LibraryListModel::countChanged, this, syncRails);
+    watchForFeatured(m_resume);
+    watchForFeatured(m_nextUp);
+    connect(this, &HomeController::latestRailsChanged, this, &HomeController::syncFeatured);
 
     m_userDataRefreshTimer.setSingleShot(true);
     connect(&m_userDataRefreshTimer, &QTimer::timeout, this, [this] {
@@ -83,12 +104,14 @@ void HomeController::resetSessionState()
     }
     m_genreModels.clear();
     m_genreRailsFetched = false;
+    m_genreRailsWanted = false;
     if (hadGenreRails)
         emit genreRailsChanged();
     syncRailDescriptors();
 
     m_incoming = Snapshot{};
     setError({});
+    syncFeatured();
 }
 
 void HomeController::bindLiveUpdates(LiveUpdateService *service)
@@ -186,6 +209,11 @@ void HomeController::startRefresh()
         if (generation == m_generation)
             m_refreshOnWire = true;
     });
+
+    // HomePage asks for the genre rails once, when it is built. A refresh is
+    // the retry for a /Genres call that failed (fetchGenreRails() unlatches).
+    if (m_genreRailsWanted && !m_genreRailsFetched)
+        loadGenreRails();
 
     beginRequest();
     m_client->resumeItems(20).then(this, [this, generation](const Result<ItemsPage> &result) {
@@ -311,7 +339,69 @@ MediaItemModel *HomeController::railModelFor(const QString &libraryId)
         return it.value();
     auto *model = new MediaItemModel(this);
     m_railModels.insert(libraryId, model);
+    watchForFeatured(model);
     return model;
+}
+
+void HomeController::watchForFeatured(MediaItemModel *model)
+{
+    // Every way a row can change: a refresh replaces the rows, a live record
+    // or a verb patches one in place (ItemActions patches these models itself,
+    // not only through this controller).
+    const auto sync = [this] { syncFeatured(); };
+    connect(model, &QAbstractItemModel::modelReset, this, sync);
+    connect(model, &QAbstractItemModel::rowsInserted, this, sync);
+    connect(model, &QAbstractItemModel::rowsRemoved, this, sync);
+    connect(model, &QAbstractItemModel::dataChanged, this, sync);
+}
+
+void HomeController::syncFeatured()
+{
+    if (m_applyingSnapshot)
+        return;
+
+    // Continue Watching, then Next Up, then the newest arrival: the order
+    // answers "what is next for me" before "what is new", and every one of
+    // them is a rail Home has already fetched, so the stage costs no request.
+    const MediaItem *chosen = nullptr;
+    QString kind;
+    QString label;
+    if (!m_resume->items().isEmpty()) {
+        chosen = &m_resume->items().first();
+        kind = QStringLiteral("resume");
+        label = tr("Continue watching");
+    } else if (!m_nextUp->items().isEmpty()) {
+        chosen = &m_nextUp->items().first();
+        kind = QStringLiteral("nextUp");
+        label = tr("Up next");
+    } else {
+        for (const QVariant &value : std::as_const(m_latestRails)) {
+            const QVariantMap rail = value.toMap();
+            auto *model = rail.value(QStringLiteral("model")).value<MediaItemModel *>();
+            if (!model || model->items().isEmpty())
+                continue;
+            chosen = &model->items().first();
+            kind = QStringLiteral("latest");
+            const QString library = rail.value(QStringLiteral("libraryName")).toString();
+            label = library.isEmpty() ? tr("Just added") : tr("New in %1").arg(library);
+            break;
+        }
+    }
+
+    QVariantMap featured;
+    if (chosen && !chosen->id.isEmpty()) {
+        featured = MediaItemModel::mapForItem(*chosen);
+        featured.insert(QStringLiteral("featuredKind"), kind);
+        featured.insert(QStringLiteral("featuredLabel"), label);
+        const MediaItem::ImageRef art = stageArt(*chosen);
+        featured.insert(QStringLiteral("artUrl"),
+                        art.isValid() ? embyImageSource(art.itemId, art.imageType, art.tag)
+                                      : QString());
+    }
+    if (featured == m_featured)
+        return;
+    m_featured = featured;
+    emit featuredChanged();
 }
 
 void HomeController::syncRailDescriptors()
@@ -361,6 +451,14 @@ void HomeController::syncRailDescriptors()
 
 void HomeController::applySnapshot(const Snapshot &snapshot)
 {
+    m_applyingSnapshot = true;
+    applySnapshotRails(snapshot);
+    m_applyingSnapshot = false;
+    syncFeatured();
+}
+
+void HomeController::applySnapshotRails(const Snapshot &snapshot)
+{
     m_resume->setItems(snapshot.resume, snapshot.resumeTotal);
     m_nextUp->setItems(snapshot.nextUp, snapshot.nextUpTotal);
     m_favorites->setItems(snapshot.favorites, snapshot.favoritesTotal);
@@ -381,6 +479,7 @@ void HomeController::applySnapshot(const Snapshot &snapshot)
 
         QVariantMap rail;
         rail.insert(QStringLiteral("libraryId"), entry.first.id);
+        rail.insert(QStringLiteral("libraryName"), entry.first.name);
         rail.insert(QStringLiteral("title"),
                     QStringLiteral("Latest — %1").arg(entry.first.name));
         rail.insert(QStringLiteral("model"), QVariant::fromValue(model));
@@ -407,6 +506,7 @@ void HomeController::applySnapshot(const Snapshot &snapshot)
 
 void HomeController::loadGenreRails()
 {
+    m_genreRailsWanted = true;
     if (m_genreRailsFetched)
         return;
     m_genreRailsFetched = true;
@@ -423,7 +523,16 @@ void HomeController::fetchGenreRails()
     const int generation = ++m_genreGeneration;
     m_client->genres(QString(), kGenreCount)
         .then(this, [this, generation](const Result<QList<MediaItem>> &result) {
-            if (generation != m_genreGeneration || !result.ok() || result.value.isEmpty())
+            if (generation != m_genreGeneration)
+                return;
+            if (!result.ok()) {
+                // Unlatched, so the next time Home asks it asks the server
+                // again: one failed /Genres call must not leave the genre
+                // rails empty until the app restarts.
+                m_genreRailsFetched = false;
+                return;
+            }
+            if (result.value.isEmpty())
                 return;
 
             // Rebuilt in place: each rail's items land independently, and the
@@ -479,45 +588,6 @@ void HomeController::fetchGenreRails()
                     });
             }
         });
-}
-
-void HomeController::togglePlayed(const QString &itemId, bool played, bool favorite)
-{
-    const int sessionGeneration = m_sessionGeneration;
-    m_client->setPlayed(itemId, played)
-        .then(this, [this, sessionGeneration, itemId, played,
-                     favorite](const Result<bool> &result) {
-            if (sessionGeneration != m_sessionGeneration)
-                return;
-            if (result.ok())
-                updateAllModels(itemId, played, favorite);
-            else
-                setError(result.error);
-        });
-}
-
-void HomeController::toggleFavorite(const QString &itemId, bool played, bool favorite)
-{
-    const int sessionGeneration = m_sessionGeneration;
-    m_client->setFavorite(itemId, favorite)
-        .then(this, [this, sessionGeneration, itemId, played,
-                     favorite](const Result<bool> &result) {
-            if (sessionGeneration != m_sessionGeneration)
-                return;
-            if (result.ok())
-                updateAllModels(itemId, played, favorite);
-            else
-                setError(result.error);
-        });
-}
-
-void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite)
-{
-    m_resume->updateUserData(itemId, played, favorite);
-    m_nextUp->updateUserData(itemId, played, favorite);
-    m_favorites->updateUserData(itemId, played, favorite);
-    for (MediaItemModel *model : std::as_const(m_railModels))
-        model->updateUserData(itemId, played, favorite);
 }
 
 void HomeController::updateAllModels(const QString &itemId, bool played, bool favorite,

@@ -68,6 +68,7 @@ private slots:
     void recoveryBurstStartsOnlyOneRefresh();
     void crashResumePersistsAndClears();
     void ladderDemotesOnStartupFailure();
+    void transcodeResumeStartsTheEngineAtTheResumePoint();
     void allRungsFailingSurfacesError();
     void endReachedReportsFullRuntime();
     void stopReportsAndDeactivates();
@@ -81,6 +82,11 @@ private slots:
     void seekAdoptsItsTargetBeforeTheEngineReportsIt();
     void setPausedIsAbsoluteAndSeeksAnnounceThemselves();
     void trackPersistenceWaitsForBackendReadback();
+    void externalSubtitlesAreAttachedOncePerLoad();
+    void directPlaySkipsSubtitlesTheFileAlreadyCarries();
+    void rememberedChoiceOutranksTheServerDefaultSubtitle();
+    void rememberedExternalSubtitleWaitsForItsTrack();
+    void pickingASubtitleCancelsTheWaitForARememberedOne();
     void playbackSettingsFollowBackendReadback();
     void screenshotSuccessRequiresBackendConfirmation();
     void positionSnapshotsBoundQmlChurn();
@@ -108,9 +114,33 @@ private slots:
     void watchdogNudgeStartsTheGovernorGrace();
     void playbackSpeedNeverStepsTheCeiling();
 
+    void gaplessPrefetchWaitsForTheTailOfAMusicTrack();
+    void gaplessPrefetchOnlyForMusicIntoMusicInADeliberateQueue();
+    void gaplessHandoverMatchesAnOrdinaryAdvance();
+    void gaplessPrefetchFollowsWhatIsNext();
+    void gaplessPrefetchIsDroppedWithTheTrack();
+    void lateNextTrackTicketIsIgnored();
+    void failedGaplessPrefetchFallsBack();
+    void engineGoingOnToAnUnwantedTrackIsReplaced();
+
 private:
     void expectReport(const QString &path, const QString &method, bool paused = false);
+    void startSidecarItem();
     void startUpscaling();
+    // Gapless helpers. Track n of an album is item "50100n", with its own
+    // ticket (PlaySessionId "ps50100n") and URLs naming it.
+    void addAudioItem(const QString &id);
+    QVariantMap audioEntry(const QString &id, const QString &name) const;
+    QVariantList album(int tracks);
+    // Plays `tracks` of the album on a prefetching engine, the first one
+    // Playing at 10 s of 200 s. The watchdog is parked: these tests move the
+    // playhead by hand, and a reload it started would be a load of its own.
+    void startGaplessAlbum(int tracks);
+    // Into the last 15 s and until the engine holds the next track.
+    void reachQueuedPrefetch();
+    int requestCount(const QString &method, const QString &path) const;
+    int playbackInfoRequests(const QString &itemId) const;
+    QJsonObject lastBody(const QString &path) const;
 
     MockEmbyServer *m_mock = nullptr;
     emby::EmbyClient *m_client = nullptr;
@@ -329,6 +359,56 @@ void PlayerControllerTest::ladderDemotesOnStartupFailure()
     m_backend->simulateError(QStringLiteral("still failing"));
     QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
     QVERIFY(m_backend->loadedUrls[2].path().endsWith(QStringLiteral("master.m3u8")));
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+}
+
+// A Transcode rung is resumed the way the other two are: the engine is told
+// where to start. Emby is given StartTimeTicks in the PlaybackInfo request, but
+// the HLS TranscodingUrl it answers with carries no offset of its own and
+// describes the whole runtime on the item's own timeline — the recorded
+// fixtures show the first, and seeking and position reports on a transcode
+// rely on the second. Withholding the start from the engine would therefore
+// play a resumed transcode from 0:00 (AUDIT.md §4.4 proposed exactly that).
+void PlayerControllerTest::transcodeResumeStartsTheEngineAtTheResumePoint()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/999/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_transcode_only.json"))));
+    m_controller->setTimingForTests(20, 1000, 10); // not about the watchdog
+
+    m_controller->playItem(QStringLiteral("999"), QStringLiteral("Transcode only"), 60'000);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    QVERIFY(m_backend->loadedUrls[0].path().endsWith(QStringLiteral("master.m3u8")));
+
+    // The server was told the resume point...
+    const QJsonObject asked =
+        QJsonDocument::fromJson(m_mock
+                                    ->lastRequestFor(QStringLiteral("POST"),
+                                                     QStringLiteral("/Items/999/PlaybackInfo"))
+                                    .body)
+            .object();
+    QCOMPARE(static_cast<qint64>(asked.value(QLatin1String("StartTimeTicks")).toDouble()),
+             Q_INT64_C(600000000));
+    // ...its URL does not start there by itself...
+    QVERIFY(!m_backend->loadedUrls[0].query().contains(QLatin1String("StartTimeTicks"),
+                                                       Qt::CaseInsensitive));
+    // ...so the engine is.
+    QCOMPARE(m_backend->loadedStarts[0], Q_INT64_C(60000));
+
+    // And the engine's position is the item's position: no offset is added to
+    // what a transcode reports.
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(61'000);
+    m_controller->togglePause();
+    QTRY_VERIFY([this] {
+        const auto request = m_mock->lastRequestFor(QStringLiteral("POST"),
+                                                    QStringLiteral("/Sessions/Playing/Progress"));
+        const QJsonObject body = QJsonDocument::fromJson(request.body).object();
+        return body.value(QLatin1String("IsPaused")).toBool() &&
+               static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()) ==
+                   Q_INT64_C(610000000);
+    }());
     QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
 }
 
@@ -882,6 +962,258 @@ void PlayerControllerTest::trackPersistenceWaitsForBackendReadback()
     m_backend->simulateTrackDescription(QStringLiteral("Audio: Commentary"));
     QCOMPARE(toast.count(), 1);
     QCOMPARE(toast.takeFirst().constFirst().toString(), QStringLiteral("Audio: Commentary"));
+}
+
+// ── External (sidecar) subtitles ──────────────────────────────────────────────
+// EmbyClient's device profile declares "Method": "External" for text
+// subtitles, so the server no longer puts a sidecar subtitle into the stream:
+// it names a URL per stream and the client has to hand each one to the engine.
+// Item 7700 is a film with an in-file subrip (2), two sidecars (3 srt — the
+// server's default for this user — and 4 ass), an in-file PGS (5), and an
+// in-file ass the server marked External as well (6).
+
+namespace {
+const auto kSidecarItem = QStringLiteral("7700");
+const auto kSidecarSource = QStringLiteral("ms7700");
+
+QStringList subtitlePaths(const QList<FakePlayerBackend::ExternalSubtitle> &subtitles,
+                          PlayerBackend::LoadId loadId)
+{
+    QStringList paths;
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : subtitles) {
+        if (subtitle.loadId == loadId)
+            paths.append(subtitle.url.path());
+    }
+    return paths;
+}
+} // namespace
+
+void PlayerControllerTest::startSidecarItem()
+{
+    QVERIFY(m_mock->addRouteFromFile(
+        QStringLiteral("POST"), QStringLiteral("/Items/7700/PlaybackInfo"),
+        fixturePath(QStringLiteral("playback_info_external_subtitle.json"))));
+    m_controller->playItem(kSidecarItem, QStringLiteral("Sidecar"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectPlay"));
+}
+
+void PlayerControllerTest::externalSubtitlesAreAttachedOncePerLoad()
+{
+    startSidecarItem();
+    // An engine can only add a subtitle to a file it has open.
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+    m_backend->simulateTracks({FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+    const PlayerBackend::LoadId first = m_backend->loadedIds.at(0);
+
+    // Stream 3: the server's default, so it is shown — the subtitle a viewer
+    // used to get burned into a transcode. Its DeliveryUrl came with a key.
+    const FakePlayerBackend::ExternalSubtitle &dutch = m_backend->externalSubtitles.at(0);
+    QCOMPARE(dutch.loadId, first);
+    QCOMPARE(dutch.url.scheme(), m_mock->baseUrl().scheme());
+    QCOMPARE(dutch.url.host(), m_mock->baseUrl().host());
+    QCOMPARE(dutch.url.port(), m_mock->baseUrl().port());
+    QCOMPARE(dutch.url.path(), QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"));
+    QCOMPARE(QUrlQuery(dutch.url).allQueryItemValues(QStringLiteral("api_key")),
+             QStringList{kToken});
+    QCOMPARE(dutch.title, QStringLiteral("Dutch (SRT)"));
+    QCOMPARE(dutch.language, QStringLiteral("nld"));
+    QVERIFY(dutch.select);
+
+    // Stream 4: offered, not shown. Its DeliveryUrl had no key; it has ours.
+    const FakePlayerBackend::ExternalSubtitle &english = m_backend->externalSubtitles.at(1);
+    QCOMPARE(english.url.path(), QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass"));
+    QCOMPARE(QUrlQuery(english.url).allQueryItemValues(QStringLiteral("api_key")),
+             QStringList{kToken});
+    QCOMPARE(english.title, QStringLiteral("English (ASS)"));
+    QCOMPARE(english.language, QStringLiteral("eng"));
+    QVERIFY(!english.select);
+
+    // The default arriving selected is the server's choice, not the user's:
+    // nothing is remembered for it.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+         FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)"), {}, {}, true)});
+    QVERIFY(!m_settings->hasRememberedTracks(kSidecarItem, kSidecarSource));
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+
+    // Pausing, resuming and buffering are the same file: nothing is added again.
+    m_backend->simulateState(PlayerBackend::State::Paused);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateBuffering(true);
+    m_backend->simulateBuffering(false);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+
+    // The user picking it in the track panel is an ordinary engine track id.
+    m_controller->setSubtitleTrack(1);
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, 1);
+
+    // A reload is a new file to the engine, which starts without them.
+    m_controller->reloadStream();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    const PlayerBackend::LoadId second = m_backend->loadedIds.at(1);
+    QVERIFY(second != first);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, second).isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, second),
+             (QStringList{QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass")}));
+    // By now the user has chosen for this item, so the server's default is no
+    // longer forced on top of that choice.
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : m_backend->externalSubtitles) {
+        if (subtitle.loadId == second)
+            QVERIFY(!subtitle.select);
+    }
+    QCOMPARE(m_backend->externalSubtitles.size(), 4);
+
+    // Nothing leaks into the next thing played.
+    m_controller->playUrl(QUrl(QStringLiteral("file:///tmp/no-ticket.mkv")), QStringLiteral("Raw"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 4);
+}
+
+// Direct play opens the original file, and stream 6 is in it: mpv lists it by
+// itself, so attaching the server's copy would show it twice. A remux or a
+// transcode is the server's own output, and there an External delivery is the
+// only place the subtitle exists.
+void PlayerControllerTest::directPlaySkipsSubtitlesTheFileAlreadyCarries()
+{
+    startSidecarItem();
+    // The rung fails before it starts, twice: DirectPlay → DirectStream →
+    // Transcode. Nothing was attached to a file that never opened.
+    m_backend->simulateError(QStringLiteral("network stream error"));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectStream"));
+    QVERIFY(m_backend->externalSubtitles.isEmpty());
+
+    const QStringList all{QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/4/0/Stream.ass"),
+                          QStringLiteral("/Videos/7700/ms7700/Subtitles/6/0/Stream.ass")};
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, m_backend->loadedIds.at(1)), all);
+    // Still the server's default that is shown, on every rung.
+    QVERIFY(m_backend->externalSubtitles.at(0).select);
+    QVERIFY(!m_backend->externalSubtitles.at(1).select);
+    QVERIFY(!m_backend->externalSubtitles.at(2).select);
+
+    // A stall: nudge, then the watchdog reloads the same rung, then demotes.
+    // Each of those is a new file to the engine and gets its subtitles again.
+    m_backend->simulatePosition(100'000);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectStream"));
+    const PlayerBackend::LoadId reload = m_backend->loadedIds.at(2);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, reload).isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, reload), all);
+
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 4);
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("Transcode"));
+    const PlayerBackend::LoadId transcode = m_backend->loadedIds.at(3);
+    QVERIFY(subtitlePaths(m_backend->externalSubtitles, transcode).isEmpty());
+    m_backend->simulateBuffering(true); // hold the watchdog off the last rung
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(subtitlePaths(m_backend->externalSubtitles, transcode), all);
+    QCOMPARE(m_backend->externalSubtitles.size(), 9);
+    // Never the embedded-and-Embed ones, on any rung.
+    for (const FakePlayerBackend::ExternalSubtitle &subtitle : m_backend->externalSubtitles) {
+        QVERIFY(!subtitle.url.path().contains(QStringLiteral("/Subtitles/2/")));
+        QVERIFY(!subtitle.url.path().contains(QStringLiteral("/Subtitles/5/")));
+    }
+}
+
+// "Off" is a choice. A viewer who turned subtitles off for this film does not
+// get the server's default turned back on by the attach.
+void PlayerControllerTest::rememberedChoiceOutranksTheServerDefaultSubtitle()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, -1);
+    startSidecarItem();
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2);
+    QVERIFY(!m_backend->externalSubtitles.at(0).select);
+    QVERIFY(!m_backend->externalSubtitles.at(1).select);
+
+    // The engine came up with its own default on; the remembered "off" wins.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{-1});
+    // The sidecars joining the list later change nothing.
+    m_backend->simulateTracks(
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)},
+        {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+         FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+         FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{-1});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, -1);
+}
+
+// A remembered sidecar is not in the engine's list when the list is first
+// published: it is fetched after the file is up. Its choice has to survive
+// until the track arrives, and be applied exactly once.
+void PlayerControllerTest::rememberedExternalSubtitleWaitsForItsTrack()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, 3);
+    startSidecarItem();
+    const QVariantList audio{FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)};
+    // mpv publishes the container's tracks before it reports Playing.
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QVERIFY(!m_backend->externalSubtitles.at(0).select);
+
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)"))});
+    QVERIFY(m_backend->subtitleTrackRequests.isEmpty());
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+                               FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+    QCOMPARE(m_backend->currentSubtitleTrackId(), 3);
+    m_backend->republishTracksUnchanged();
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource), qMakePair(1, 3));
+
+    // An item with nothing external does not wait for a track that will never
+    // come: a remembered id its list lacks is dropped, as before.
+    m_settings->rememberTracks(QStringLiteral("301001"), QStringLiteral("ms301001"), 1, 9);
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QCOMPARE(m_backend->externalSubtitles.size(), 2); // the first item's, none new
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English")),
+                               FakePlayerBackend::makeTrack(9, QStringLiteral("Late"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{3});
+}
+
+void PlayerControllerTest::pickingASubtitleCancelsTheWaitForARememberedOne()
+{
+    m_settings->rememberTracks(kSidecarItem, kSidecarSource, 1, 3);
+    startSidecarItem();
+    const QVariantList audio{FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true)};
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateTracks(audio, {FakePlayerBackend::makeTrack(1, QStringLiteral("English"))});
+
+    m_controller->setSubtitleTrack(1);
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    m_backend->simulateTracks(audio,
+                              {FakePlayerBackend::makeTrack(1, QStringLiteral("English"), {}, {}, true),
+                               FakePlayerBackend::makeTrack(2, QStringLiteral("Dutch (SRT)")),
+                               FakePlayerBackend::makeTrack(3, QStringLiteral("English (ASS)"))});
+    QCOMPARE(m_backend->subtitleTrackRequests, QList<int>{1});
+    QCOMPARE(m_backend->currentSubtitleTrackId(), 1);
+    QCOMPARE(m_settings->recalledTracks(kSidecarItem, kSidecarSource).second, 1);
 }
 
 void PlayerControllerTest::playbackSettingsFollowBackendReadback()
@@ -1441,6 +1773,517 @@ void PlayerControllerTest::playbackSpeedNeverStepsTheCeiling()
     m_backend->simulateFrameDrops(8);
     QCOMPARE(m_controller->upscaleCeiling(), 3);
     QCOMPARE(m_controller->upscaleActive(), QStringLiteral("FSRCNNX 8"));
+}
+
+// ── Gapless advance ───────────────────────────────────────────────────────────
+
+void PlayerControllerTest::addAudioItem(const QString &id)
+{
+    QFile fixture(fixturePath(QStringLiteral("playback_info_audio.json")));
+    QVERIFY(fixture.open(QIODevice::ReadOnly));
+    QByteArray body = fixture.readAll();
+    body.replace("301004", id.toUtf8());
+    body.replace("ps0014", "ps" + id.toUtf8());
+    m_mock->addRoute(QStringLiteral("POST"), QStringLiteral("/Items/%1/PlaybackInfo").arg(id), 200,
+                     body);
+}
+
+QVariantMap PlayerControllerTest::audioEntry(const QString &id, const QString &name) const
+{
+    return {{QStringLiteral("itemId"), id},
+            {QStringLiteral("name"), name},
+            {QStringLiteral("label"), name},
+            {QStringLiteral("type"), QStringLiteral("Audio")},
+            {QStringLiteral("runtimeMs"), 200'000}};
+}
+
+QVariantList PlayerControllerTest::album(int tracks)
+{
+    QVariantList entries;
+    for (int n = 1; n <= tracks; ++n) {
+        const QString id = QStringLiteral("50100%1").arg(n);
+        addAudioItem(id);
+        entries.append(audioEntry(id, QStringLiteral("Track %1").arg(n)));
+    }
+    return entries;
+}
+
+void PlayerControllerTest::startGaplessAlbum(int tracks)
+{
+    m_backend->prefetchSupported = true;
+    m_controller->setTimingForTests(60'000, 2, 10);
+    const qsizetype loadsBefore = m_backend->loadedUrls.size();
+    m_controller->playQueue(album(tracks), 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), loadsBefore + 1);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501001")));
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(200'000);
+    m_backend->simulatePosition(10'000);
+    QVERIFY(m_controller->isAudio());
+}
+
+void PlayerControllerTest::reachQueuedPrefetch()
+{
+    m_backend->simulatePosition(190'000);
+    QTRY_VERIFY(m_backend->queuedPrefetch().loadId != 0);
+}
+
+int PlayerControllerTest::requestCount(const QString &method, const QString &path) const
+{
+    int count = 0;
+    for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests()) {
+        if (request.method == method && request.path == path)
+            ++count;
+    }
+    return count;
+}
+
+int PlayerControllerTest::playbackInfoRequests(const QString &itemId) const
+{
+    return requestCount(QStringLiteral("POST"), QStringLiteral("/Items/%1/PlaybackInfo").arg(itemId));
+}
+
+QJsonObject PlayerControllerTest::lastBody(const QString &path) const
+{
+    return QJsonDocument::fromJson(m_mock->lastRequestFor(QStringLiteral("POST"), path).body)
+        .object();
+}
+
+// Nothing is asked for until the last 15 s, then the next track is asked for
+// once and handed to the engine; nothing about the playing track changes.
+void PlayerControllerTest::gaplessPrefetchWaitsForTheTailOfAMusicTrack()
+{
+    startGaplessAlbum(3);
+    m_backend->simulatePosition(184'000); // 16 s left
+    QTest::qWait(50);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 0);
+    QVERIFY(m_backend->prefetchRequests.isEmpty());
+
+    m_backend->simulatePosition(186'000); // 14 s left
+    QTRY_COMPARE(m_backend->prefetchRequests.size(), 1);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 1);
+    const FakePlayerBackend::Prefetch request = m_backend->prefetchRequests.constFirst();
+    QVERIFY(request.url.toString().contains(QStringLiteral("501002")));
+    QCOMPARE(request.startMs, Q_INT64_C(0));
+    QVERIFY(request.loadId != 0);
+    QVERIFY(!m_backend->loadedIds.contains(request.loadId));
+    QCOMPARE(m_backend->queuedPrefetch().loadId, request.loadId);
+
+    // Once per track, however many ticks follow.
+    m_backend->simulatePosition(190'000);
+    m_backend->simulatePosition(195'000);
+    m_backend->simulateDuration(200'000);
+    QTest::qWait(50);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 1);
+    QCOMPARE(m_backend->prefetchRequests.size(), 1);
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 1"));
+    QCOMPARE(m_controller->queue()->currentIndex(), 0);
+
+    // A track shorter than the lead time is inside it as soon as it plays.
+    QVariantList shortTracks = album(2);
+    m_controller->playQueue(shortTracks, 0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_backend->queuedPrefetch().loadId, PlayerBackend::LoadId(0));
+    m_backend->simulateDuration(9'000);
+    QTest::qWait(30);
+    QCOMPARE(m_backend->prefetchRequests.size(), 1); // not before it is playing
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QTRY_COMPARE(m_backend->prefetchRequests.size(), 2);
+    QVERIFY(m_backend->prefetchRequests.constLast().url.toString().contains(QStringLiteral("501002")));
+}
+
+void PlayerControllerTest::gaplessPrefetchOnlyForMusicIntoMusicInADeliberateQueue()
+{
+    m_backend->prefetchSupported = true;
+    m_controller->setTimingForTests(60'000, 2, 10);
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("POST"),
+                                     QStringLiteral("/Items/301002/PlaybackInfo"),
+                                     fixturePath(QStringLiteral("playback_info.json"))));
+    const auto playTail = [this](const QVariantList &queue) {
+        const qsizetype loads = m_backend->loadedUrls.size();
+        m_controller->playQueue(queue, 0);
+        QTRY_COMPARE(m_backend->loadedUrls.size(), loads + 1);
+        m_backend->simulateState(PlayerBackend::State::Playing);
+        m_backend->simulateDuration(200'000);
+        m_backend->simulatePosition(190'000);
+        QTest::qWait(50);
+    };
+    const QVariantMap episodeOne{{QStringLiteral("itemId"), QStringLiteral("301001")},
+                                 {QStringLiteral("name"), QStringLiteral("Episode One")},
+                                 {QStringLiteral("type"), QStringLiteral("Episode")}};
+    QVariantMap episodeTwo = episodeOne;
+    episodeTwo[QStringLiteral("itemId")] = QStringLiteral("301002");
+
+    // An engine that cannot is not asked, and costs no request.
+    m_backend->prefetchSupported = false;
+    playTail(album(2));
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 0);
+    m_backend->prefetchSupported = true;
+
+    // One item played on its own: there is no next track.
+    playTail({audioEntry(QStringLiteral("501001"), QStringLiteral("Track 1"))});
+    // Repeat-one: the next track is this one again.
+    {
+        const qsizetype loads = m_backend->loadedUrls.size();
+        m_controller->playQueue(album(2), 0);
+        m_controller->queue()->setRepeatMode(PlayQueue::RepeatOne);
+        QTRY_COMPARE(m_backend->loadedUrls.size(), loads + 1);
+        m_backend->simulateState(PlayerBackend::State::Playing);
+        m_backend->simulateDuration(200'000);
+        m_backend->simulatePosition(190'000);
+        QTest::qWait(50);
+        m_controller->queue()->setRepeatMode(PlayQueue::RepeatOff);
+        QTRY_COMPARE(m_backend->prefetchRequests.size(), 1); // and it is off again
+        m_controller->stop();
+    }
+    // A record into a film; a film into a film.
+    playTail({audioEntry(QStringLiteral("501001"), QStringLiteral("Track 1")), episodeOne});
+    playTail({episodeOne, episodeTwo});
+    QCOMPARE(playbackInfoRequests(QStringLiteral("301002")), 0);
+    QCOMPARE(m_backend->prefetchRequests.size(), 1);
+
+    // Not while ⏭ is held: the hold seeks and runs the engine at 4×.
+    qint64 now = 0;
+    m_controller->setSkipHoldClockForTests([&now] { return now; });
+    m_backend->maxSpeed = 4.0;
+    playTail(album(2)); // already in the tail: asked for
+    QTRY_VERIFY(m_backend->queuedPrefetch().loadId != 0);
+    const int cancels = m_backend->prefetchCancels;
+    m_controller->skipForwardPressed();
+    now = 500;
+    m_controller->tickSkipHoldForTests();
+    QVERIFY(m_controller->fastForwardRate() > 0.0);
+    QCOMPARE(m_backend->prefetchCancels, cancels + 1);
+    QCOMPARE(m_backend->queuedPrefetch().loadId, PlayerBackend::LoadId(0));
+    m_backend->simulatePosition(191'000);
+    QTest::qWait(50);
+    QCOMPARE(m_backend->queuedPrefetch().loadId, PlayerBackend::LoadId(0));
+    const qsizetype asked = m_backend->prefetchRequests.size();
+    now = 600;
+    m_controller->skipForwardReleased();
+    QCOMPARE(m_controller->fastForwardRate(), 0.0);
+    QTRY_COMPARE(m_backend->prefetchRequests.size(), asked + 1);
+
+    // A dismissed Up Next card means this track ends the session.
+    m_controller->cancelUpNext();
+    QCOMPARE(m_backend->queuedPrefetch().loadId, PlayerBackend::LoadId(0));
+    QSignalSpy stopped(m_controller, &PlayerController::stopped);
+    m_backend->simulateEnd();
+    QCOMPARE(stopped.count(), 1);
+}
+
+// The engine moving on by itself leaves the controller, the queue and the
+// server exactly where an end followed by an ordinary advance would — with no
+// PlaybackInfo and no load at the change.
+void PlayerControllerTest::gaplessHandoverMatchesAnOrdinaryAdvance()
+{
+    startGaplessAlbum(3);
+    const PlayerBackend::LoadId first = m_backend->loadedIds.constLast();
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing")), 1);
+    reachQueuedPrefetch();
+    const PlayerBackend::LoadId second = m_backend->queuedPrefetch().loadId;
+    const int infoRequests = playbackInfoRequests(QStringLiteral("501002"));
+
+    QSignalSpy stopped(m_controller, &PlayerController::stopped);
+    QSignalSpy itemStarted(m_controller, &PlayerController::itemStarted);
+    QSignalSpy cursor(m_controller->queue(), &PlayQueue::currentItemChanged);
+    QSignalSpy queueState(m_controller, &PlayerController::queueStateChanged);
+    m_backend->simulatePosition(199'900);
+    m_backend->simulateEnd();
+
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_backend->stopCalls, 0);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), infoRequests);
+    QCOMPARE(stopped.count(), 0);
+    QCOMPARE(itemStarted.count(), 0); // an advance, not a choice
+    QVERIFY(m_controller->active());
+    QCOMPARE(m_controller->queue()->currentIndex(), 1);
+    QCOMPARE(cursor.count(), 1);
+    QVERIFY(queueState.count() > 0);
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 2"));
+    QCOMPARE(m_controller->streamMethod(), QStringLiteral("DirectPlay"));
+    QCOMPARE(m_controller->sourceCount(), 1);
+    QVERIFY(m_controller->busy());
+    QVERIFY(!m_controller->engineReady());
+    QVERIFY(m_controller->isAudio());
+    QCOMPARE(m_controller->positionMs(), Q_INT64_C(0));
+
+    // The finished track was reported stopped at its full runtime, so it is
+    // marked played, under its own ticket.
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")), 1);
+    QJsonObject body = lastBody(QStringLiteral("/Sessions/Playing/Stopped"));
+    QCOMPARE(body.value(QLatin1String("ItemId")).toString(), QStringLiteral("501001"));
+    QCOMPARE(body.value(QLatin1String("PlaySessionId")).toString(), QStringLiteral("ps501001"));
+    QCOMPARE(static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()),
+             Q_INT64_C(200000) * kTicksPerMs);
+
+    // The engine's next events are the new track's, under the prefetch's id.
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    QVERIFY(!m_controller->busy());
+    QVERIFY(m_controller->engineReady());
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing")), 2);
+    body = lastBody(QStringLiteral("/Sessions/Playing"));
+    QCOMPARE(body.value(QLatin1String("ItemId")).toString(), QStringLiteral("501002"));
+    QCOMPARE(body.value(QLatin1String("PlaySessionId")).toString(), QStringLiteral("ps501002"));
+    QCOMPARE(body.value(QLatin1String("PlayMethod")).toString(), QStringLiteral("DirectPlay"));
+    QCOMPARE(m_controller->crashResumeInfo().value(QStringLiteral("itemId")).toString(),
+             QStringLiteral("501002"));
+    m_backend->simulateDuration(200'000, second);
+    m_backend->simulatePosition(5'000, second);
+    QCOMPARE(m_controller->positionSeconds(), Q_INT64_C(5));
+    m_backend->simulatePosition(150'000, first); // the finished load is not listened to
+    QCOMPARE(m_controller->positionSeconds(), Q_INT64_C(5));
+    QCOMPARE(m_backend->stopCalls, 0);
+
+    // And it chains: track 2's tail queues track 3, whose end ends the album.
+    reachQueuedPrefetch();
+    QVERIFY(m_backend->queuedPrefetch().url.toString().contains(QStringLiteral("501003")));
+    m_backend->simulateEnd();
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 3"));
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(200'000);
+    m_backend->simulatePosition(195'000);
+    QTest::qWait(50);
+    QCOMPARE(m_backend->queuedPrefetch().loadId, PlayerBackend::LoadId(0));
+    m_backend->simulateEnd();
+    QCOMPARE(stopped.count(), 1);
+    QVERIFY(!m_controller->active());
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")), 3);
+    QCOMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing")), 3);
+}
+
+// Whatever happens to the queue, what the engine holds is what comes next.
+void PlayerControllerTest::gaplessPrefetchFollowsWhatIsNext()
+{
+    startGaplessAlbum(4);
+    reachQueuedPrefetch();
+    PlayQueue *queue = m_controller->queue();
+    const auto queuedIsNext = [this, queue] {
+        const QString next = queue->itemAt(queue->nextIndex()).value(QStringLiteral("itemId")).toString();
+        return m_backend->queuedPrefetch().loadId != 0 &&
+               m_backend->queuedPrefetch().url.toString().contains(next);
+    };
+    QVERIFY(queuedIsNext());
+
+    queue->moveItem(3, 1); // Track 4 is next now
+    QCOMPARE(m_backend->prefetchCancels, 1);
+    QTRY_VERIFY(queuedIsNext());
+    QVERIFY(m_backend->queuedPrefetch().url.toString().contains(QStringLiteral("501004")));
+
+    queue->removeAt(1); // and gone again: Track 2
+    QCOMPARE(m_backend->prefetchCancels, 2);
+    QTRY_VERIFY(queuedIsNext());
+    QVERIFY(m_backend->queuedPrefetch().url.toString().contains(QStringLiteral("501002")));
+
+    // Track 3 played next — the same item as the copy later on, another entry.
+    queue->playNext(QVariant(audioEntry(QStringLiteral("501003"), QStringLiteral("Track 3"))));
+    QCOMPARE(m_backend->prefetchCancels, 3);
+    QTRY_VERIFY(queuedIsNext());
+    QVERIFY(m_backend->queuedPrefetch().url.toString().contains(QStringLiteral("501003")));
+
+    // An edit further down changes nothing.
+    queue->removeAt(queue->rowCount() - 1);
+    QCOMPARE(m_backend->prefetchCancels, 3);
+
+    // Repeat-one: dropped, and not asked for again until it is off.
+    const qsizetype asked = m_backend->prefetchRequests.size();
+    queue->setRepeatMode(PlayQueue::RepeatOne);
+    QCOMPARE(m_backend->prefetchCancels, 4);
+    QTest::qWait(50);
+    QCOMPARE(m_backend->prefetchRequests.size(), asked);
+    queue->setRepeatMode(PlayQueue::RepeatOff);
+    QTRY_VERIFY(queuedIsNext());
+
+    // Shuffled: whatever the deal put next is what is held.
+    queue->setShuffled(true);
+    QTRY_VERIFY(queuedIsNext());
+    queue->setShuffled(false);
+    QTRY_VERIFY(queuedIsNext());
+
+    // Nothing of this reloaded the track playing.
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 1"));
+}
+
+// Every user action that ends or replaces the playing track takes the
+// prefetch with it.
+void PlayerControllerTest::gaplessPrefetchIsDroppedWithTheTrack()
+{
+    const PlayerBackend::LoadId none = 0;
+
+    // A seek back out of the lead time drops it; coming back asks again.
+    startGaplessAlbum(3);
+    reachQueuedPrefetch();
+    m_controller->seekTo(60'000);
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+    QCOMPARE(m_backend->prefetchCancels, 1);
+    reachQueuedPrefetch();
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 2);
+
+    // A skip: the next track starts the ordinary way.
+    m_controller->playNext();
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501002")));
+
+    // A stop.
+    startGaplessAlbum(3);
+    reachQueuedPrefetch();
+    m_controller->stop();
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+
+    // A film chosen over the record.
+    startGaplessAlbum(3);
+    reachQueuedPrefetch();
+    const qsizetype loads = m_backend->loadedUrls.size();
+    m_controller->playItem(QStringLiteral("301001"), QStringLiteral("The Matrix"), 0, -1,
+                           QStringLiteral("Movie"));
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), loads + 1);
+    m_controller->stop();
+    QTRY_COMPARE(m_controller->queue()->currentItem().value(QStringLiteral("itemId")).toString(),
+                 QStringLiteral("501001")); // the record is back, and waits paused
+    m_controller->stop();
+
+    // A failure of the playing track: its recovery reloads it, and the
+    // prefetch is asked for again once it plays.
+    startGaplessAlbum(3);
+    reachQueuedPrefetch();
+    const qsizetype beforeError = m_backend->loadedUrls.size();
+    m_backend->simulateError(QStringLiteral("connection reset"));
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), beforeError + 1);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501001")));
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(200'000);
+    reachQueuedPrefetch();
+
+    // A sign-out.
+    m_controller->shutdownForSessionBoundary();
+    QCOMPARE(m_backend->queuedPrefetch().loadId, none);
+}
+
+// The next track's ticket lands after the user has already moved on.
+void PlayerControllerTest::lateNextTrackTicketIsIgnored()
+{
+    startGaplessAlbum(3);
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/501002/PlaybackInfo"), 300);
+    m_backend->simulatePosition(190'000);
+    QTRY_COMPARE(playbackInfoRequests(QStringLiteral("501002")), 1);
+    m_controller->playNext();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QTest::qWait(400);
+    QVERIFY(m_backend->prefetchRequests.isEmpty());
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 2"));
+
+    // ...and after the track has ended: the ordinary advance has it.
+    startGaplessAlbum(3);
+    m_backend->simulatePosition(190'000);
+    QTRY_COMPARE(playbackInfoRequests(QStringLiteral("501002")), 3);
+    m_backend->simulateEnd();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 4);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501002")));
+    QTest::qWait(400);
+    QVERIFY(m_backend->prefetchRequests.isEmpty());
+    QCOMPARE(m_controller->queue()->currentIndex(), 1);
+}
+
+void PlayerControllerTest::failedGaplessPrefetchFallsBack()
+{
+    // The engine will not take it: asked once, and the end advances as ever.
+    m_backend->prefetchAccepted = false;
+    startGaplessAlbum(3);
+    m_backend->simulatePosition(190'000);
+    QTRY_COMPARE(m_backend->prefetchRequests.size(), 1);
+    m_backend->simulatePosition(192'000);
+    m_backend->simulatePosition(194'000);
+    QTest::qWait(50);
+    QCOMPARE(m_backend->prefetchRequests.size(), 1);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), 1);
+    m_backend->simulateEnd();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501002")));
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 2"));
+    m_controller->stop();
+
+    // The ticket request fails: not retried, and the end advances as ever.
+    m_backend->prefetchAccepted = true;
+    m_backend->prefetchRequests.clear();
+    startGaplessAlbum(3);
+    m_mock->enqueueRoute(QStringLiteral("POST"), QStringLiteral("/Items/501002/PlaybackInfo"), 500,
+                         "{}");
+    const int asked = playbackInfoRequests(QStringLiteral("501002"));
+    m_backend->simulatePosition(190'000);
+    QTRY_COMPARE(playbackInfoRequests(QStringLiteral("501002")), asked + 1);
+    m_backend->simulatePosition(194'000);
+    QTest::qWait(100);
+    QCOMPARE(playbackInfoRequests(QStringLiteral("501002")), asked + 1);
+    QVERIFY(m_backend->prefetchRequests.isEmpty());
+    const qsizetype loads = m_backend->loadedUrls.size();
+    m_backend->simulateEnd();
+    QTRY_COMPARE(m_backend->loadedUrls.size(), loads + 1);
+    QCOMPARE(m_controller->title(), QStringLiteral("Track 2"));
+    m_controller->stop();
+
+    // The queued file does not open: the handover has happened, and the new
+    // track's own ladder takes over exactly as for a load that failed.
+    startGaplessAlbum(3);
+    reachQueuedPrefetch();
+    const PlayerBackend::LoadId second = m_backend->queuedPrefetch().loadId;
+    const qsizetype before = m_backend->loadedUrls.size();
+    QSignalSpy stopped(m_controller, &PlayerController::stopped);
+    m_backend->simulateEnd();
+    m_backend->simulateError(QStringLiteral("cannot open"), second);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), before + 1);
+    QVERIFY(m_backend->loadedUrls.constLast().toString().contains(QStringLiteral("501002")));
+    QCOMPARE(m_controller->queue()->currentIndex(), 1);
+    QCOMPARE(stopped.count(), 0);
+    QVERIFY(m_controller->streamMethod() != QStringLiteral("DirectPlay"));
+}
+
+namespace {
+// An engine that had already moved on by the time it was told not to: the
+// cancel reaches it after mpv started the entry.
+class LateCancelBackend : public FakePlayerBackend
+{
+public:
+    using FakePlayerBackend::FakePlayerBackend;
+    void cancelPrefetch() override { ++prefetchCancels; }
+};
+} // namespace
+
+void PlayerControllerTest::engineGoingOnToAnUnwantedTrackIsReplaced()
+{
+    LateCancelBackend backend;
+    backend.prefetchSupported = true;
+    PlayerController controller(m_client, &backend, m_settings);
+    controller.setTimingForTests(60'000, 2, 10);
+    controller.playQueue(album(3), 0);
+    QTRY_COMPARE(backend.loadedUrls.size(), 1);
+    backend.simulateState(PlayerBackend::State::Playing);
+    backend.simulateDuration(200'000);
+    backend.simulatePosition(190'000);
+    QTRY_VERIFY(backend.queuedPrefetch().loadId != 0);
+
+    // Track 3 is next now; the engine still holds Track 2 and plays it.
+    m_mock->setRouteDelay(QStringLiteral("POST"), QStringLiteral("/Items/501003/PlaybackInfo"), 200);
+    controller.queue()->moveItem(2, 1);
+    QCOMPARE(backend.prefetchCancels, 1);
+    backend.simulateEnd();
+
+    // Treated as the end it was: the ordinary advance, into Track 3.
+    QTRY_COMPARE(backend.loadedUrls.size(), 2);
+    QVERIFY(backend.loadedUrls.constLast().toString().contains(QStringLiteral("501003")));
+    QCOMPARE(controller.title(), QStringLiteral("Track 3"));
+    QCOMPARE(controller.queue()->currentIndex(), 1);
+    QVERIFY(backend.stopCalls >= 1);
+    QTRY_COMPARE(requestCount(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped")), 1);
+    const QJsonObject body = lastBody(QStringLiteral("/Sessions/Playing/Stopped"));
+    QCOMPARE(body.value(QLatin1String("ItemId")).toString(), QStringLiteral("501001"));
+    QCOMPARE(static_cast<qint64>(body.value(QLatin1String("PositionTicks")).toDouble()),
+             Q_INT64_C(200000) * kTicksPerMs);
 }
 
 QTEST_GUILESS_MAIN(PlayerControllerTest)

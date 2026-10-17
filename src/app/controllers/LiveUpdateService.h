@@ -10,6 +10,9 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include <functional>
+#include <utility>
+
 namespace strmqt {
 
 class Settings;
@@ -74,6 +77,16 @@ public:
 
     emby::EmbyWebSocket *socket() const { return m_socket; }
 
+    // Runs on every rich record before userDataPatched() carries it, and its
+    // return value is what goes out. One stage, set by Application: ItemActions,
+    // the only object that knows which fields have a request on the wire. A
+    // record older than a toggle the user just made would otherwise reach every
+    // page as the server's word and put the old value back on the row, and a
+    // successful send does not patch the row again. A stage, rather than a
+    // "first connection" on the signal, so the order cannot be got wrong.
+    using UserDataStage = std::function<QVariantList(const QVariantList &)>;
+    void setUserDataStage(UserDataStage stage) { m_userDataStage = std::move(stage); }
+
     // Test seams: shrink the debounce windows and the poll period so a test runs
     // in milliseconds. Settings deliberately floors the poll period at 15 s.
     void setDebounceForTests(int libraryMs, int userDataMs, int maxDeferralMs);
@@ -112,6 +125,7 @@ private:
     emby::EmbyClient *m_client;
     Settings *m_settings;
     emby::EmbyWebSocket *m_socket;
+    UserDataStage m_userDataStage;
 
     QTimer m_pollTimer;
     QTimer m_libraryDebounce;

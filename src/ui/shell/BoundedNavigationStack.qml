@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import StrmQt
 
 // Browser-style navigation with a bounded page cache. History records are
 // deliberately scalar route descriptors: covered pages may retain rich input
@@ -85,6 +86,52 @@ StackView {
     readonly property int semanticTraversalLimit: 4096
     readonly property int semanticIndexLimit: 2147483646
     readonly property int focusRetryLimit: 400
+
+    // ── Page motion ─────────────────────────────────────────────────────────
+    // A page that arrives by navigation fades up and settles a few pixels
+    // sideways — in from the right going forward, from the left going back,
+    // the shared-axis convention — instead of replacing the last one in a
+    // single frame. It is drawn ENTIRELY outside StackView: every structural
+    // operation stays StackView.Immediate, so a page's status, the live
+    // window, prepareRequested and focus memory change exactly as and when
+    // they did before. A StackView transition would have kept the leaving
+    // page Deactivating and the arriving one Activating for its whole length,
+    // and the covered-page content gates (LibraryPage, the music pages) hang
+    // off StackView.Active: the leaving page would empty while it faded and
+    // the returning one would fade in blank. It would also have put the
+    // eviction rebuild (trimLivePages) and the destroy of a popped page in
+    // the middle of a running transition.
+    //
+    // So the page that leaves is gone at once, as before, and only the
+    // arriving page moves. Nothing is layered: the fade is the page's own
+    // opacity, which costs no offscreen texture (and lets a card show the
+    // backdrop behind it faintly for those few frames, which is the price).
+    //
+    // Off under reduced motion, under the page self-test (STRMQT_SELFTEST),
+    // for the YouTube pages (routeMoves) and for anything that is not the
+    // user going somewhere: the first page, a reset, the eviction rebuild.
+    readonly property bool pageMotionEnabled: !Theme.reducedMotion
+                                              && !(typeof SelfTest !== "undefined" && SelfTest)
+    readonly property real pageSettleDistance: Theme.scale(6)
+    // FocusNavigator treats a fully transparent subtree as a surface still
+    // loading and skips it, so an arriving page is never quite at zero.
+    readonly property real pageMotionFloor: 0.02
+    readonly property bool pageMotionRunning: pageMotion.running
+    // The page the running motion belongs to; null at rest.
+    property Item _motionPage: null
+
+    onPageMotionEnabledChanged: {
+        if (!navigation.pageMotionEnabled)
+            navigation.finishPageMotion();
+    }
+
+    // Something other than this stack's own navigation changed the top — the
+    // player pushed over a page that was still arriving. That page is at rest
+    // from here on, whatever happens to it next.
+    onCurrentItemChanged: {
+        if (navigation._motionPage !== null && navigation.currentItem !== navigation._motionPage)
+            navigation.finishPageMotion();
+    }
 
     // The window can never be wider than the tail the route history keeps
     // CONTIGUOUS. pushRoute's route trim keeps navTrail[0] plus the newest
@@ -683,6 +730,66 @@ StackView {
         }
     }
 
+    // ── Page motion (see the note at pageMotionEnabled) ────────────────────
+
+    // A web view decides for itself whether it is on show, and what it
+    // concludes from an arrival it cannot see coming is not worth the frames:
+    // the YouTube pages arrive as they always have.
+    function routeMoves(route): bool {
+        return route !== null && route !== undefined
+               && route.kind !== "youtube" && route.kind !== "youtubeMusic";
+    }
+
+    // Puts whatever page was moving at rest — fully opaque, in its place —
+    // and returns how far its fade had got, so a navigation that interrupts
+    // a running one carries on from there instead of dipping back to the
+    // background. Every navigation calls this before it touches the stack.
+    function interruptPageMotion(): real {
+        const page = navigation._motionPage;
+        const reached = pageMotion.running && page !== null ? page.opacity : 0;
+        navigation.finishPageMotion();
+        return reached;
+    }
+
+    function finishPageMotion(): void {
+        const page = navigation._motionPage;
+        pageMotion.stop();
+        navigation._motionPage = null;
+        if (page !== null) {
+            page.opacity = 1;
+            page.x = 0;
+        }
+    }
+
+    // `direction` is 1 for a page arriving forward (a push, Forward) and -1
+    // for one arriving back (Back, Home). Called after every structural
+    // change of the navigation is complete, eviction rebuild included, so
+    // the stack can never move the page out from under the animation.
+    function enterPage(route, direction, reached): void {
+        const page = navigation.currentItem;
+        if (page === null || !navigation.ownsCurrentItem())
+            return;
+        if (!navigation.pageMotionEnabled || !navigation.routeMoves(route)) {
+            // A page re-entered without motion may still carry what covering
+            // it left behind (the player's transition dims the page under
+            // it); it arrives at rest all the same.
+            page.opacity = 1;
+            page.x = 0;
+            return;
+        }
+        const from = Math.min(1, Math.max(navigation.pageMotionFloor, reached));
+        // Assigned here, not bound: Theme.animFastMs changes with reduced
+        // motion, and a binding would edit the animation while it runs.
+        pageMotionFade.duration = Theme.animFastMs;
+        pageMotionSettle.duration = Theme.animFastMs;
+        pageMotionFade.from = from;
+        pageMotionSettle.from = direction * navigation.pageSettleDistance * (1 - from);
+        page.opacity = pageMotionFade.from;
+        page.x = pageMotionSettle.from;
+        navigation._motionPage = page;
+        pageMotion.start();
+    }
+
     // ── Live page ownership ────────────────────────────────────────────────
     // Every page in instantiatedPages is OURS, so every removal has to destroy
     // it here; StackView's pop()/clear() only free what StackView created. The
@@ -800,6 +907,8 @@ StackView {
     function resetToRoute(route): void {
         navigation.cancelFocusRetry();
         navigation.cancelLiveFocusRestores();
+        // A new session, not a step through this one: it arrives at rest.
+        navigation.finishPageMotion();
         const entry = navigation.descriptor(route, null);
         navigation.clearLivePages();
         navigation.navTrail = [entry];
@@ -834,7 +943,9 @@ StackView {
 
         navigation.pruneFocusMemory();
 
-        navigation.pushResolved(entry, initialProperties, StackView.Immediate);
+        const reached = navigation.interruptPageMotion();
+        if (navigation.pushResolved(entry, initialProperties, StackView.Immediate))
+            navigation.enterPage(entry, 1, reached);
         Qt.callLater(navigation.focusCurrentPage);
     }
 
@@ -848,9 +959,11 @@ StackView {
         navigation.navForward = [leaving].concat(navigation.navForward);
 
         const target = navigation.currentEntry;
+        const reached = navigation.interruptPageMotion();
         // Inside the live window this is a pop and the page is already built.
         // Past it — the common case now that the window is four deep — the page
-        // is rebuilt from the retained descriptor.
+        // is rebuilt from the retained descriptor. Either way it arrives back:
+        // which of the two happened is the stack's business, not the user's.
         if (navigation.instantiatedTokens.length > 1) {
             navigation.popLivePage();
             navigation.prepareRequested(target);
@@ -859,6 +972,7 @@ StackView {
             navigation.prepareRequested(target);
             navigation.pushResolved(target, null, StackView.Immediate);
         }
+        navigation.enterPage(target, -1, reached);
         navigation.pruneFocusMemory();
         Qt.callLater(navigation.restoreFocusToCurrentPage);
     }
@@ -870,8 +984,10 @@ StackView {
         const entry = navigation.navForward[0];
         navigation.navForward = navigation.navForward.slice(1);
         navigation.navTrail = navigation.navTrail.concat([entry]);
+        const reached = navigation.interruptPageMotion();
         navigation.prepareRequested(entry);
-        navigation.pushResolved(entry, null, StackView.Immediate);
+        if (navigation.pushResolved(entry, null, StackView.Immediate))
+            navigation.enterPage(entry, 1, reached);
         navigation.pruneFocusMemory();
         Qt.callLater(navigation.restoreFocusToCurrentPage);
     }
@@ -887,9 +1003,14 @@ StackView {
         navigation.navForward = navigation.navTrail.slice(1).reverse()
                                 .concat(navigation.navForward);
         navigation.navTrail = [home];
+        const reached = navigation.interruptPageMotion();
 
         // Home usually falls out of the live window long before this runs, in
         // which case it is rebuilt from its descriptor like any other deep Back.
+        //
+        // Either way the root route is prepared once, where goBack() prepares
+        // its target: after the pages above it are gone, so none of them sees
+        // its controller retargeted, and before a rebuilt page is constructed.
         if (navigation.instantiatedTokens.length > 0
                 && navigation.instantiatedTokens[0] === home.token) {
             while (navigation.instantiatedTokens.length > 1) {
@@ -900,15 +1021,43 @@ StackView {
                 if (navigation.instantiatedTokens.length >= before)
                     break;
             }
+            navigation.prepareRequested(home);
         } else {
             navigation.clearLivePages();
+            navigation.prepareRequested(home);
             navigation.pushResolved(home, null, StackView.Immediate);
         }
+        navigation.enterPage(home, -1, reached);
         navigation.pruneFocusMemory();
         Qt.callLater(navigation.restoreFocusToCurrentPage);
     }
 
     Component.onCompleted: navigation.adoptInitialRoute(navigation.initialRoute)
+
+    ParallelAnimation {
+        id: pageMotion
+
+        // Run to its end, the page is at rest already and this only lets go
+        // of it. Stopped early, finishPageMotion() puts it at rest itself.
+        onFinished: navigation.finishPageMotion()
+
+        NumberAnimation {
+            id: pageMotionFade
+
+            target: navigation._motionPage
+            property: "opacity"
+            to: 1
+            easing.type: Theme.easeStandard
+        }
+        NumberAnimation {
+            id: pageMotionSettle
+
+            target: navigation._motionPage
+            property: "x"
+            to: 0
+            easing.type: Theme.easeStandard
+        }
+    }
 
     Timer {
         id: focusRetry

@@ -38,10 +38,17 @@ void MusicModelBase::indexRow(int row)
 void MusicModelBase::setTotal(int total)
 {
     const int floored = qMax(total, size());
-    if (floored == m_total)
+    if (floored != m_total) {
+        m_total = floored;
+        emit totalRecordCountChanged();
+    }
+    // Not inside the branch above: appending the final page leaves the total
+    // where the first page put it, and that is exactly when the answer flips.
+    const bool more = canLoadMore();
+    if (more == m_announcedCanLoadMore)
         return;
-    m_total = floored;
-    emit totalRecordCountChanged();
+    m_announcedCanLoadMore = more;
+    emit canLoadMoreChanged();
 }
 
 } // namespace strmqt::music

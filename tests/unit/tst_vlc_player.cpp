@@ -20,13 +20,17 @@ class VlcPlayerTest : public QObject
 
 private slots:
     void loadPlayReloadStopDestroy();
+    void resumedLoadOpensAtTheResumePoint();
+    void selectedExternalSubtitleIsDrawn();
 };
 
 namespace {
 
 // Tiny video-only clip: no audio track, so the test does not depend on a sound
 // device. mpeg4-in-avi uses ffmpeg's built-in encoder — no libx264 requirement.
-QString generateClip(QTemporaryDir &dir)
+// A keyframe every second, so a seek has somewhere exact to land.
+QString generateClip(QTemporaryDir &dir,
+                     const QString &source = QStringLiteral("testsrc=duration=2:size=64x64:rate=10"))
 {
     const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
     if (ffmpeg.isEmpty())
@@ -36,8 +40,8 @@ QString generateClip(QTemporaryDir &dir)
     process.start(ffmpeg,
                   {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
                    QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
-                   QStringLiteral("testsrc=duration=2:size=64x64:rate=10"),
-                   QStringLiteral("-c:v"), QStringLiteral("mpeg4"), path});
+                   source, QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-g"),
+                   QStringLiteral("10"), path});
     if (!process.waitForFinished(15000) || process.exitCode() != 0)
         return {};
     return path;
@@ -89,6 +93,108 @@ void VlcPlayerTest::loadPlayReloadStopDestroy()
     delete player;
     QCoreApplication::sendPostedEvents();
     QCoreApplication::processEvents();
+}
+
+// A resume that is not paused used to open the file at 0:00 and seek only once
+// libvlc reported Playing, so the opening of the film was decoded and shown
+// before the jump. The input has to open at the resume point whether or not
+// the load starts paused. The clip is black for its first half and white for
+// its second, so a single dark picture is the opening having been shown.
+void VlcPlayerTest::resumedLoadOpensAtTheResumePoint()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip = generateClip(
+        dir, QStringLiteral("color=black:duration=15:size=64x64:rate=10[a];"
+                            "color=white:duration=15:size=64x64:rate=10[b];[a][b]concat"));
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate smoke-test media");
+
+    VlcPlayer player;
+    QSignalSpy errorSpy(&player, &PlayerBackend::errorOccurred);
+    int pictures = 0;
+    int darkPictures = 0;
+    connect(&player, &VlcPlayer::frameReady, &player, [&] {
+        const QImage frame = player.currentFrame();
+        if (frame.isNull())
+            return;
+        ++pictures;
+        if (frame.pixelColor(frame.width() / 2, frame.height() / 2).lightness() < 128)
+            ++darkPictures;
+    });
+
+    constexpr qint64 kResumeMs = 20'000;
+    player.load(QUrl::fromLocalFile(clip), kResumeMs, 1);
+    // The requested position is published at once, not a synthetic zero.
+    QCOMPARE(player.positionMs(), kResumeMs);
+    QTRY_VERIFY_WITH_TIMEOUT(player.state() == PlayerBackend::State::Playing && pictures >= 5,
+                             15000);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(darkPictures, 0);
+    QVERIFY2(player.positionMs() >= kResumeMs - 2000,
+             qPrintable(QString::number(player.positionMs())));
+    player.stop();
+}
+
+// PlayerController hands this engine the subtitle the server delivers outside
+// the stream. libVLC has no track list here to look it up in, so the evidence
+// is the picture: the clip is black from start to end, and the only thing that
+// can put a light pixel into a frame is subtitle text drawn over it.
+void VlcPlayerTest::selectedExternalSubtitleIsDrawn()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString clip =
+        generateClip(dir, QStringLiteral("color=black:duration=60:size=320x180:rate=10"));
+    if (clip.isEmpty())
+        QSKIP("ffmpeg is required to generate smoke-test media");
+    // Named unlike the clip, so libVLC's own sidecar detection cannot find it.
+    const QString subtitle = dir.filePath(QStringLiteral("sidecar-en.srt"));
+    {
+        QFile file(subtitle);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("1\n00:00:00,000 --> 00:00:59,000\nMMMMMMMMMMMM\nMMMMMMMMMMMM\n");
+    }
+
+    VlcPlayer player;
+    QSignalSpy errorSpy(&player, &PlayerBackend::errorOccurred);
+    int pictures = 0;
+    int litPictures = 0;
+    connect(&player, &VlcPlayer::frameReady, &player, [&] {
+        const QImage frame = player.currentFrame();
+        if (frame.isNull())
+            return;
+        ++pictures;
+        for (int y = 0; y < frame.height(); ++y) {
+            for (int x = 0; x < frame.width(); ++x) {
+                if (frame.pixelColor(x, y).lightness() > 160) {
+                    ++litPictures;
+                    return;
+                }
+            }
+        }
+    });
+
+    // Before the input runs there is nothing to attach to: ignored.
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), {}, {}, true);
+    player.load(QUrl::fromLocalFile(clip), 0, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(player.state() == PlayerBackend::State::Playing && pictures >= 5,
+                             15000);
+    // Offered but not to be shown: this engine could never have it picked, so
+    // it is not fetched, and the picture stays black.
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), QStringLiteral("English"),
+                               QStringLiteral("eng"), false);
+    const int before = pictures;
+    QTRY_VERIFY_WITH_TIMEOUT(pictures >= before + 10, 15000);
+    QCOMPARE(litPictures, 0);
+
+    player.addExternalSubtitle(QUrl::fromLocalFile(subtitle), QStringLiteral("English"),
+                               QStringLiteral("eng"), true);
+    QTRY_VERIFY2_WITH_TIMEOUT(litPictures > 0, "the attached subtitle never reached the picture",
+                              20000);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(player.state(), PlayerBackend::State::Playing);
+    player.stop();
 }
 
 QTEST_GUILESS_MAIN(VlcPlayerTest)

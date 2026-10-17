@@ -1,3 +1,4 @@
+#include <QSet>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -67,6 +68,7 @@ private slots:
     void playNextInsertsAfterCurrentAndAddToQueueAppends();
     void insertingIntoAnEmptyQueueStartsIt();
     void moveItemKeepsTheCursorOnTheSameItem();
+    void entryKeysFollowEntriesNotRowsOrIds();
     void jumpToAndClear();
     void snapshotRestoresOrderCursorAndModes();
     void batchAppendIsOneModelOperation();
@@ -76,6 +78,9 @@ private slots:
     void playCountSurvivesTheRoundTrip();
     void contextLabelNamesTheRecordTheQueueCameFrom();
     void sourceLabelFollowsTheQueueItDescribes();
+    void enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds();
+    void updateUserDataPatchesEveryOccurrenceAndNeverTheCursor();
+    void updateUserDataLeavesAbsentFieldsAndRepeatsAlone();
 };
 
 void PlayQueueTest::initTestCase()
@@ -367,6 +372,41 @@ void PlayQueueTest::moveItemKeepsTheCursorOnTheSameItem()
     QCOMPARE(queue.rowCount(), 4);
 }
 
+// PlayerController's gapless prefetch is for one queue ENTRY: it has to tell
+// "the same next track" from "another copy of it" and survive a re-index.
+void PlayQueueTest::entryKeysFollowEntriesNotRowsOrIds()
+{
+    PlayQueue queue;
+    QCOMPARE(queue.entryKeyAt(0), quint64(0));
+    QList<MediaItem> items = episodes(3);
+    items.append(episode(2)); // the same item queued twice
+    queue.setItems(items, 0);
+
+    const quint64 second = queue.entryKeyAt(1);
+    const quint64 again = queue.entryKeyAt(3);
+    QVERIFY(second != 0 && again != 0);
+    QVERIFY(second != again);
+    QVERIFY(second != queue.entryKeyAt(0) && second != queue.entryKeyAt(2));
+    QCOMPARE(queue.entryKeyAt(-1), quint64(0));
+    QCOMPARE(queue.entryKeyAt(4), quint64(0));
+
+    // A move re-indexes; the key goes with the entry.
+    queue.moveItem(1, 3);
+    QCOMPARE(queue.entryKeyAt(3), second);
+    QCOMPARE(queue.entryKeyAt(2), again);
+    QCOMPARE(queue.itemAt(3).value(QStringLiteral("itemId")).toString(), QStringLiteral("ep2"));
+
+    // So does a shuffle, and turning it off again.
+    QSet<quint64> keys;
+    for (int row = 0; row < queue.rowCount(); ++row)
+        keys.insert(queue.entryKeyAt(row));
+    queue.setShuffled(true);
+    QSet<quint64> shuffled;
+    for (int row = 0; row < queue.rowCount(); ++row)
+        shuffled.insert(queue.entryKeyAt(row));
+    QCOMPARE(shuffled, keys);
+}
+
 void PlayQueueTest::jumpToAndClear()
 {
     PlayQueue queue;
@@ -512,6 +552,30 @@ void PlayQueueTest::itemFromVariantRoundTripsAModelMap()
     again.setItems({restoredTrack});
     QCOMPARE(again.get(0).value(QStringLiteral("posterUrl")).toString(),
              map.value(QStringLiteral("posterUrl")).toString());
+
+    // A ClearLogo makes the same trip: an episode's is its series' (a parent
+    // id), a film's its own, and the URL out is the URL back in, so the OSD can
+    // still set the title as a logo after the entry passed through QML.
+    MediaItem withSeriesLogo = episode(5);
+    withSeriesLogo.parentLogoItemId = QStringLiteral("400001");
+    withSeriesLogo.parentLogoImageTag = QStringLiteral("series-logo");
+    MediaItem film;
+    film.id = QStringLiteral("301001");
+    film.type = QStringLiteral("Movie");
+    film.logoImageTag = QStringLiteral("film-logo");
+    MediaItemModel logos;
+    logos.setItems({withSeriesLogo, film});
+    const MediaItem restoredEpisode = PlayQueue::itemFromVariant(logos.get(0));
+    QCOMPARE(restoredEpisode.logoSource().itemId, QStringLiteral("400001"));
+    QCOMPARE(restoredEpisode.logoSource().tag, QStringLiteral("series-logo"));
+    QVERIFY(restoredEpisode.logoImageTag.isEmpty());
+    const MediaItem restoredFilm = PlayQueue::itemFromVariant(logos.get(1));
+    QCOMPARE(restoredFilm.logoImageTag, QStringLiteral("film-logo"));
+    MediaItemModel logosAgain;
+    logosAgain.setItems({restoredEpisode, restoredFilm});
+    for (int row = 0; row < 2; ++row)
+        QCOMPARE(logosAgain.get(row).value(QStringLiteral("logoUrl")).toString(),
+                 logos.get(row).value(QStringLiteral("logoUrl")).toString());
 }
 
 // An album or a playlist plays through Actions.playAllFrom() → playQueue(), i.e.
@@ -739,6 +803,167 @@ void PlayQueueTest::sourceLabelFollowsTheQueueItDescribes()
     QCOMPARE(queue.sourceLabel(), QStringLiteral("Sunburned Almanac")); // nothing added: kept
     queue.clear();
     QCOMPARE(queue.sourceLabel(), QString());
+}
+
+// A playlist may hold the same track twice. Enrichment is matched by item id,
+// so both rows are that item and both get the record — and each stays the
+// playlist ENTRY it was queued as, which the server's record of the item
+// knows nothing about.
+void PlayQueueTest::enrichEntryReachesEveryOccurrenceAndKeepsTheirEntryIds()
+{
+    const auto entry = [](const QString &id, const QString &entryId) {
+        MediaItem item;
+        item.id = id;
+        item.name = QStringLiteral("seed");
+        item.type = QStringLiteral("Audio");
+        item.playlistItemId = entryId;
+        return item;
+    };
+    PlayQueue queue;
+    queue.setItems({entry(QStringLiteral("same"), QStringLiteral("entry-a")),
+                    entry(QStringLiteral("other"), QStringLiteral("entry-b")),
+                    entry(QStringLiteral("same"), QStringLiteral("entry-c"))},
+                   2);
+
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy cursorSpy(&queue, &PlayQueue::currentItemChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+
+    MediaItem record;
+    record.id = QStringLiteral("same");
+    record.name = QStringLiteral("The whole record");
+    record.type = QStringLiteral("Audio");
+    record.album = QStringLiteral("Sunburned Almanac");
+    queue.enrichEntry(record);
+
+    for (const int row : {0, 2}) {
+        QCOMPARE(queue.itemAt(row).value(QStringLiteral("name")).toString(),
+                 QStringLiteral("The whole record"));
+        QCOMPARE(queue.itemAt(row).value(QStringLiteral("album")).toString(),
+                 QStringLiteral("Sunburned Almanac"));
+    }
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(queue.itemAt(2).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-c"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("name")).toString(), QStringLiteral("seed"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-b"));
+
+    // One gesture: a row signal per occurrence, one announcement for the queue,
+    // and one for the cursor because the current row was among them.
+    QCOMPARE(dataSpy.count(), 2);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(cursorSpy.count(), 1);
+    QCOMPARE(queue.currentIndex(), 2);
+
+    // A record that does name an entry is believed.
+    record.playlistItemId = QStringLiteral("entry-z");
+    queue.enrichEntry(record);
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-z"));
+
+    // No occurrence, no announcement.
+    record.id = QStringLiteral("absent");
+    queue.enrichEntry(record);
+    QCOMPARE(queueSpy.count(), 2);
+}
+
+// The server's record for the item under the cursor arrives straight after the
+// stop report, with the queue intact and nothing playing. currentItemChanged is
+// what PlayerController turns into "play this", so a user-data patch must never
+// raise it — nor either of the other cursor signals.
+void PlayQueueTest::updateUserDataPatchesEveryOccurrenceAndNeverTheCursor()
+{
+    const auto entry = [](const QString &id, const QString &entryId) {
+        MediaItem item;
+        item.id = id;
+        item.name = id;
+        item.type = QStringLiteral("Audio");
+        item.playlistItemId = entryId;
+        item.runtimeTicks = 200 * kTicksPerSecond;
+        return item;
+    };
+    PlayQueue queue;
+    queue.setItems({entry(QStringLiteral("same"), QStringLiteral("entry-a")),
+                    entry(QStringLiteral("other"), QStringLiteral("entry-b")),
+                    entry(QStringLiteral("same"), QStringLiteral("entry-c"))},
+                   2);
+
+    QSignalSpy itemSpy(&queue, &PlayQueue::currentItemChanged);
+    QSignalSpy displacedSpy(&queue, &PlayQueue::currentItemDisplaced);
+    QSignalSpy cursorSpy(&queue, &PlayQueue::currentChanged);
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+    QSignalSpy resetSpy(&queue, &PlayQueue::modelReset);
+
+    // The current row (2) holds the item, and so does row 0.
+    QCOMPARE(queue.updateUserData(QStringLiteral("same"), true, true, 50 * kTicksPerSecond, 3), 2);
+
+    QCOMPARE(itemSpy.count(), 0);
+    QCOMPARE(displacedSpy.count(), 0);
+    QCOMPARE(cursorSpy.count(), 0);
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(queue.currentIndex(), 2);
+    for (const int row : {0, 2}) {
+        const QVariantMap map = queue.itemAt(row);
+        QCOMPARE(map.value(QStringLiteral("played")).toBool(), true);
+        QCOMPARE(map.value(QStringLiteral("favorite")).toBool(), true);
+        QCOMPARE(map.value(QStringLiteral("positionMs")).toLongLong(), 50'000);
+        QCOMPARE(map.value(QStringLiteral("playCount")).toInt(), 3);
+    }
+    // Still the entries they were.
+    QCOMPARE(queue.itemAt(0).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-a"));
+    QCOMPARE(queue.itemAt(2).value(QStringLiteral("playlistItemId")).toString(),
+             QStringLiteral("entry-c"));
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("played")).toBool(), false);
+    QCOMPARE(queue.itemAt(1).value(QStringLiteral("favorite")).toBool(), false);
+
+    // One row announcement per entry, naming the user-data roles; one queue
+    // announcement for the surfaces that read itemAt().
+    QCOMPARE(dataSpy.count(), 2);
+    QCOMPARE(dataSpy.at(0).at(0).toModelIndex().row(), 0);
+    QCOMPARE(dataSpy.at(1).at(0).toModelIndex().row(), 2);
+    const QList<int> roles = dataSpy.at(0).at(2).value<QList<int>>();
+    QVERIFY(roles.contains(MediaItemModel::PlayedRole));
+    QVERIFY(roles.contains(MediaItemModel::FavoriteRole));
+    QVERIFY(roles.contains(MediaItemModel::PositionMsRole));
+    QCOMPARE(queueSpy.count(), 1);
+}
+
+void PlayQueueTest::updateUserDataLeavesAbsentFieldsAndRepeatsAlone()
+{
+    MediaItem item;
+    item.id = QStringLiteral("a");
+    item.type = QStringLiteral("Audio");
+    item.played = true;
+    item.favorite = false;
+    item.playbackPositionTicks = 7 * kTicksPerSecond;
+    item.playCount = 4;
+    PlayQueue queue;
+    queue.setItems({item});
+
+    QSignalSpy queueSpy(&queue, &PlayQueue::queueChanged);
+    QSignalSpy dataSpy(&queue, &PlayQueue::dataChanged);
+    QSignalSpy itemSpy(&queue, &PlayQueue::currentItemChanged);
+
+    // Only the favourite is stated; nothing else may be invented.
+    QCOMPARE(queue.updateUserData(QStringLiteral("a"), std::nullopt, true), 1);
+    QCOMPARE(queue.current().played, true);
+    QCOMPARE(queue.current().favorite, true);
+    QCOMPARE(queue.current().playbackPositionTicks, 7 * kTicksPerSecond);
+    QCOMPARE(queue.current().playCount, 4);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(dataSpy.count(), 1);
+
+    // The same values again, an unknown id and an empty one: all silent.
+    QCOMPARE(queue.updateUserData(QStringLiteral("a"), true, true, 7 * kTicksPerSecond, 4), 0);
+    QCOMPARE(queue.updateUserData(QStringLiteral("nobody"), false, false), 0);
+    QCOMPARE(queue.updateUserData(QString(), false, false), 0);
+    QCOMPARE(queueSpy.count(), 1);
+    QCOMPARE(dataSpy.count(), 1);
+    QCOMPARE(itemSpy.count(), 0);
 }
 
 QTEST_GUILESS_MAIN(PlayQueueTest)

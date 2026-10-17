@@ -1,4 +1,5 @@
 #include <QAbstractItemModelTester>
+#include <QMetaProperty>
 #include <QSignalSpy>
 #include <QtTest>
 
@@ -66,6 +67,8 @@ private slots:
     void initTestCase() { setEmbyImageSourceNamespace(QStringLiteral("t")); }
     void albumRolesAndGet();
     void pagingAndIdentity();
+    void canLoadMoreAnnouncesTheLastPage();
+    void resetAnnouncesCountOnlyWhenItMoves();
     void albumUserDataPatchesInPlace();
     void artistAndPlaylistRoles();
     void mapForItemMatchesMediaModelGet();
@@ -121,6 +124,94 @@ void MusicModelsTest::pagingAndIdentity()
     model.clear();
     QCOMPARE(model.rowCount(), 0);
     QCOMPARE(model.totalRecordCount(), 0);
+}
+
+// canLoadMore is size() < totalRecordCount. Its NOTIFY used to be
+// totalRecordCountChanged, which the final page does not emit: the total is
+// already what page one said it was, only the size moved. A binding on it kept
+// reading true and went on asking for a page that does not exist.
+//
+// Spied through the property's own NOTIFY rather than a named signal, because
+// that is what a QML binding listens to.
+void MusicModelsTest::canLoadMoreAnnouncesTheLastPage()
+{
+    AlbumGridModel model;
+    const QMetaObject *meta = model.metaObject();
+    const QMetaProperty property = meta->property(meta->indexOfProperty("canLoadMore"));
+    QVERIFY(property.isValid());
+    QVERIFY(property.hasNotifySignal());
+    QSignalSpy notified(&model, property.notifySignal());
+    QVERIFY(notified.isValid());
+    QSignalSpy total(&model, &MusicModelBase::totalRecordCountChanged);
+
+    QVERIFY(!property.read(&model).toBool());
+
+    model.setItems({album("a1"), album("a2")}, 4);
+    QVERIFY(property.read(&model).toBool());
+    QCOMPARE(notified.count(), 1);
+    QCOMPARE(total.count(), 1);
+
+    // A middle page: still more to come, so nothing to say.
+    model.appendItems({album("a3")}, 4);
+    QVERIFY(property.read(&model).toBool());
+    QCOMPARE(notified.count(), 1);
+
+    // The last page. The total has not moved; the answer has.
+    model.appendItems({album("a4")}, 4);
+    QVERIFY(!property.read(&model).toBool());
+    QCOMPARE(total.count(), 1);
+    QCOMPARE(notified.count(), 2);
+
+    // An empty page (the server ran out early) settles nothing new.
+    model.appendItems({}, 4);
+    QCOMPARE(notified.count(), 2);
+
+    // A refill in place that is a full first page of a longer list.
+    model.setItems({album("b1"), album("b2"), album("b3"), album("b4")}, 9);
+    QVERIFY(property.read(&model).toBool());
+    QCOMPARE(notified.count(), 3);
+
+    model.clear();
+    QVERIFY(!property.read(&model).toBool());
+    QCOMPARE(notified.count(), 4);
+
+    // The one model that is not a MusicListModel goes through the same door.
+    StationModel stations;
+    QSignalSpy stationNotified(&stations, &MusicModelBase::canLoadMoreChanged);
+    stations.setStations({Station{StationKind::HeavyRotation, QStringLiteral("Heavy rotation"), {}, {}}});
+    QVERIFY(stations.rowCount() > 0);
+    QVERIFY(!stations.canLoadMore());
+    QCOMPARE(stationNotified.count(), 0);
+}
+
+// `count` says how many rows there are. A sort or filter change refills a lane
+// with the same number of different rows; the model reset is what says so.
+void MusicModelsTest::resetAnnouncesCountOnlyWhenItMoves()
+{
+    AlbumGridModel model;
+    QSignalSpy count(&model, &MusicModelBase::countChanged);
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+
+    model.setItems({album("a1"), album("a2")});
+    QCOMPARE(count.count(), 1);
+    QCOMPARE(reset.count(), 1);
+
+    model.setItems({album("b1"), album("b2")});
+    QCOMPARE(reset.count(), 2);
+    QCOMPARE(count.count(), 1);
+    QCOMPARE(model.idAt(0), QStringLiteral("b1"));
+    QCOMPARE(model.indexOfNavigationIdentity(QStringLiteral("i:b2")), 1);
+
+    model.setItems({album("c1")});
+    QCOMPARE(count.count(), 2);
+
+    model.appendItems({album("c2")});
+    QCOMPARE(count.count(), 3);
+
+    model.clear();
+    QCOMPARE(count.count(), 4);
+    model.clear();
+    QCOMPARE(count.count(), 4);
 }
 
 void MusicModelsTest::albumUserDataPatchesInPlace()

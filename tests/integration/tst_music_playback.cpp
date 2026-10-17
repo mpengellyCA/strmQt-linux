@@ -15,6 +15,7 @@
 #include "core/Settings.h"
 #include "server/emby/EmbyClient.h"
 #include "server/dto/music/MusicQuery.h"
+#include "server/dto/music/MusicTypes.h"
 
 using namespace strmqt;
 using namespace strmqt::music;
@@ -67,6 +68,11 @@ private slots:
 
     void playAlbumQueuesInDiscOrderFromTheStart();
     void shuffleAlbumKeepsEveryTrack();
+    void shuffleAlbumStartsOnARandomTrack();
+    void shuffleVerbsLeaveTheQueueShuffled_data();
+    void shuffleVerbsLeaveTheQueueShuffled();
+    void shuffleAllFromShufflesTheGivenOrderInTheQueue();
+    void supersededShuffleIsDropped();
     void radioDeduplicatesAndLabels();
     void stationTileResolvesByKey();
     void failureLeavesTheQueueAndReports();
@@ -161,9 +167,152 @@ void MusicPlaybackTest::shuffleAlbumKeepsEveryTrack()
     QStringList ids = queueIds(queue());
     ids.sort();
     QCOMPARE(ids, (QStringList{"a1", "a2", "a3"}));
-    QCOMPARE(queue()->currentIndex(), 0);
-    QVERIFY(!queue()->shuffled());
+    // The queue did the shuffling, so it says so (the player's indicator and
+    // MPRIS Shuffle read this) and it still knows the record's own order.
+    QVERIFY(queue()->shuffled());
     QCOMPARE(queue()->sourceLabel(), QStringLiteral("Shuffle · Sunburned Almanac"));
+    QCOMPARE(queue()->contextLabel(), QStringLiteral("from Album alA"));
+
+    const QString playing = queue()->current().id;
+    QSignalSpy cursor(queue(), &PlayQueue::currentItemChanged);
+    queue()->setShuffled(false);
+    QCOMPARE(queueIds(queue()), (QStringList{"a1", "a2", "a3"}));
+    QCOMPARE(queue()->current().id, playing); // what is playing keeps playing
+    QCOMPARE(cursor.count(), 0);
+    // Reordering is not a new queue: the label survives (ARCHITECTURE.md §3).
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("Shuffle · Sunburned Almanac"));
+}
+
+// A queue shuffled around a fixed first row would open every shuffle of a
+// record on its first track. Twenty shuffles of three tracks all landing on
+// the same one has a probability of 3^-19.
+void MusicPlaybackTest::shuffleAlbumStartsOnARandomTrack()
+{
+    QSet<QString> first;
+    QSignalSpy replaced(m_actions, &ItemActions::queueChanged);
+    for (int round = 0; round < 20; ++round) {
+        m_playback->shuffleAlbum(QStringLiteral("alA"), QStringLiteral("Sunburned Almanac"));
+        QTRY_COMPARE(replaced.count(), round + 1);
+        QVERIFY(queue()->shuffled());
+        first.insert(queue()->current().id);
+    }
+    QVERIFY2(first.size() > 1, qPrintable(first.values().join(QLatin1Char(','))));
+}
+
+void MusicPlaybackTest::shuffleVerbsLeaveTheQueueShuffled_data()
+{
+    QTest::addColumn<QString>("verb");
+    QTest::addColumn<QString>("label");
+    QTest::newRow("artist") << QStringLiteral("artist") << QStringLiteral("Shuffle · Björk");
+    QTest::newRow("station") << QStringLiteral("station") << QStringLiteral("Station · More like Björk");
+    QTest::newRow("query") << QStringLiteral("query") << QStringLiteral("Shuffle · Favourites");
+}
+
+// Every shuffle verb, not only the album's. Where the server made the draw
+// (an artist, a filtered scope) or the list is a station, the order it arrived
+// in is the one the queue gives back.
+void MusicPlaybackTest::shuffleVerbsLeaveTheQueueShuffled()
+{
+    QFETCH(QString, verb);
+    QFETCH(QString, label);
+
+    QStringList given;
+    if (verb == QLatin1String("artist")) {
+        m_mock->addQueryRoute("GET", itemsPath(), Q{{"ArtistIds", "ar1"}, {"SortBy", "Random"}}, 200,
+                              page({trackJson("a3", "alA", 3), trackJson("a1", "alA", 1),
+                                    trackJson("b2", "alB", 2), trackJson("a2", "alA", 2)}));
+        given = QStringList{"a3", "a1", "b2", "a2"};
+        m_playback->shuffleArtist(QStringLiteral("ar1"), QStringLiteral("Björk"));
+    } else if (verb == QLatin1String("station")) {
+        Station station;
+        station.kind = StationKind::MoreLike;
+        station.label = QStringLiteral("More like Björk");
+        station.seedId = QStringLiteral("ar1");
+        given = QStringList{"m1", "m2"}; // the mix, de-duplicated by the repository
+        m_playback->shuffleStation(kLibrary, station);
+    } else {
+        m_mock->addQueryRoute("GET", itemsPath(), Q{{"IncludeItemTypes", "Audio"}, {"SortBy", "Random"}},
+                              200,
+                              page({trackJson("b1", "alB", 1), trackJson("a2", "alA", 2),
+                                    trackJson("a1", "alA", 1)}));
+        given = QStringList{"b1", "a2", "a1"};
+        MusicQuery query;
+        query.libraryId = kLibrary;
+        m_playback->shuffleQuery(query, QStringLiteral("Favourites"));
+    }
+
+    QTRY_COMPARE(queue()->rowCount(), given.size());
+    QVERIFY(queue()->shuffled());
+    QCOMPARE(queue()->sourceLabel(), label);
+    QStringList sorted = queueIds(queue());
+    sorted.sort();
+    QStringList expected = given;
+    expected.sort();
+    QCOMPARE(sorted, expected);
+
+    queue()->setShuffled(false);
+    QCOMPARE(queueIds(queue()), given);
+    QCOMPARE(queue()->sourceLabel(), label);
+}
+
+// The verb a playlist page shuffles through: items the caller already has, in
+// playlist order, the same track twice included. Queue identity is per entry,
+// so both occurrences survive the shuffle and come back in their own places.
+void MusicPlaybackTest::shuffleAllFromShufflesTheGivenOrderInTheQueue()
+{
+    QVariantList playlist;
+    for (const QString &id : {QStringLiteral("a1"), QStringLiteral("a2"), QStringLiteral("a1"),
+                              QStringLiteral("a3")}) {
+        playlist.append(QVariantMap{{QStringLiteral("itemId"), id},
+                                    {QStringLiteral("name"), id},
+                                    {QStringLiteral("type"), QStringLiteral("Audio")}});
+    }
+    // A folder among them is not playable and is not queued.
+    playlist.insert(1, QVariantMap{{QStringLiteral("itemId"), QStringLiteral("folder")},
+                                   {QStringLiteral("type"), QStringLiteral("Folder")}});
+
+    queue()->setShuffled(true); // a previous shuffled session
+    QSignalSpy replaced(m_actions, &ItemActions::queueChanged);
+    m_actions->shuffleAllFrom(playlist);
+
+    QCOMPARE(replaced.count(), 1);
+    QCOMPARE(queue()->rowCount(), 4);
+    QVERIFY(queue()->shuffled());
+    QVERIFY(m_player->active());
+    QCOMPARE(queue()->sourceLabel(), QString());
+    const int playingRow = queue()->currentIndex();
+
+    queue()->setShuffled(false);
+    QCOMPARE(queueIds(queue()), (QStringList{"a1", "a2", "a1", "a3"}));
+    QVERIFY(!queue()->shuffled());
+    // The current entry kept the row it was dealt around.
+    QCOMPARE(queue()->currentIndex(), playingRow);
+
+    QSignalSpy failed(m_actions, &ItemActions::actionFailed);
+    m_actions->shuffleAllFrom({});
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(queue()->rowCount(), 4);
+}
+
+// The generation guard holds for a shuffle as it does for a play: a reply that
+// lands after a newer verb replaced the intent builds nothing.
+void MusicPlaybackTest::supersededShuffleIsDropped()
+{
+    m_playback->shuffleAlbum(QStringLiteral("alA"), QStringLiteral("A"));
+    m_playback->playAlbum(QStringLiteral("alB"), QStringLiteral("B")); // before A's reply
+    QTRY_COMPARE(queueIds(queue()), (QStringList{"b1", "b2"}));
+    QTest::qWait(100);
+    QCOMPARE(queueIds(queue()), (QStringList{"b1", "b2"}));
+    QVERIFY(!queue()->shuffled());
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("B"));
+
+    const quint64 stale = m_actions->reservePlaybackIntent();
+    m_actions->reservePlaybackIntent();
+    const QVariantList one{QVariantMap{{QStringLiteral("itemId"), QStringLiteral("a1")},
+                                       {QStringLiteral("type"), QStringLiteral("Audio")}}};
+    m_actions->shuffleAllFromIfCurrent(one, stale, QStringLiteral("stale"));
+    QCOMPARE(queueIds(queue()), (QStringList{"b1", "b2"}));
+    QCOMPARE(queue()->sourceLabel(), QStringLiteral("B"));
 }
 
 void MusicPlaybackTest::radioDeduplicatesAndLabels()
@@ -236,12 +385,14 @@ void MusicPlaybackTest::shuffleArtistQueuesTheServersRandomDraw()
 
     m_playback->shuffleArtist(QStringLiteral("ar1"), QStringLiteral("Björk"));
 
-    // The server already shuffled. A second shuffle here would be harmless but
-    // would make the order untestable, so the draw is queued as given.
-    QTRY_COMPARE(queueIds(queue()), (QStringList{QStringLiteral("m2"), QStringLiteral("m1")}));
-    QCOMPARE(queue()->currentIndex(), 0);
+    // The server already shuffled, and the user still asked for a shuffle: the
+    // queue is flagged as one, and the server's draw is the order it holds as
+    // its original — there being no better one for a sample of a discography.
+    QTRY_COMPARE(queue()->rowCount(), 2);
     QCOMPARE(queue()->sourceLabel(), QStringLiteral("Shuffle · Björk"));
-    QVERIFY(!queue()->shuffled());
+    QVERIFY(queue()->shuffled());
+    queue()->setShuffled(false);
+    QCOMPARE(queueIds(queue()), (QStringList{QStringLiteral("m2"), QStringLiteral("m1")}));
 
     const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
     QCOMPARE(query.queryItemValue(QStringLiteral("Limit")), QStringLiteral("200"));

@@ -86,6 +86,26 @@ Item {
         cardComponent: Component { Tile {} }
     }
 
+    // The stock card, which a shelf builds when it is given no card of its
+    // own. Hidden until its test: an invisible shelf is nowhere an arrow can
+    // go, so the geometry the tests above walk is unchanged by it.
+    property int stockActivated: -1
+    StrmRail {
+        id: stock
+        objectName: "stock"
+        x: 100; y: 100
+        z: 10
+        width: 1000
+        visible: false
+        title: "Stock"
+        railModel: rows
+        onItemActivated: index => root.stockActivated = index
+    }
+
+    function showStock(on) { stock.visible = on }
+    function focusStock() { stock.forceActiveFocus() }
+    function stockIndex() { return stock.currentIndex }
+
     function gridIndex() { return grid.currentIndex }
     function gridColumns() { return grid.columns }
     function setGridIndex(i) { grid.restoreNavigationCursor(i) }
@@ -173,6 +193,7 @@ private slots:
     void gridShortLastRowIsReachable();
     void tabBarDeclinesAtItsEnds();
     void shelfEndLeadsToSeeAll();
+    void shelfBuildsOnlyTheCardItDraws();
 
 private:
     int call(const char *name)
@@ -292,6 +313,81 @@ void NavigationControlsTest::shelfEndLeadsToSeeAll()
     press(Qt::Key_Left);
     QCOMPARE(where(), QStringLiteral("shelf"));
     QCOMPARE(call("shelfIndex"), 6);
+}
+
+// Every StrmCard under `from`, the shelf's hidden metrics card included.
+static void collectStockCards(QQuickItem *from, QList<QQuickItem *> &out)
+{
+    if (QByteArray(from->metaObject()->className()).startsWith("StrmCard_QMLTYPE"))
+        out.append(from);
+    for (QQuickItem *child : from->childItems())
+        collectStockCards(child, out);
+}
+
+static QQuickItem *stockCardLabelled(QQuickItem *shelf, const QString &label)
+{
+    QList<QQuickItem *> cards;
+    collectStockCards(shelf, cards);
+    for (QQuickItem *card : cards) {
+        if (card->isVisible() && card->property("label").toString() == label)
+            return card;
+    }
+    return nullptr;
+}
+
+void NavigationControlsTest::shelfBuildsOnlyTheCardItDraws()
+{
+    // A shelf given a card of its own used to build a hidden StrmCard behind
+    // every one of them. The only stock card left on it is the one the shelf
+    // measures with.
+    QQuickItem *shelf = m_root->findChild<QQuickItem *>(QStringLiteral("shelf"));
+    QVERIFY(shelf);
+    QTRY_COMPARE(shelf->property("count").toInt(), 7);
+    QList<QQuickItem *> onCustomShelf;
+    collectStockCards(shelf, onCustomShelf);
+    QCOMPARE(onCustomShelf.size(), 1);
+    QVERIFY(!onCustomShelf.constFirst()->isVisible());
+
+    // The stock card is behind the same loader now, and everything the shelf
+    // did with it has to survive the move: it is fed its row, it follows the
+    // cursor, and a key, a click and the pointer all reach the shelf.
+    QMetaObject::invokeMethod(m_root, "showStock", Q_ARG(QVariant, true));
+    QQuickItem *stock = m_root->findChild<QQuickItem *>(QStringLiteral("stock"));
+    QVERIFY(stock);
+    QTRY_COMPARE(stock->property("count").toInt(), 7);
+    QTRY_VERIFY(stockCardLabelled(stock, QStringLiteral("A")));
+    QTRY_VERIFY(stockCardLabelled(stock, QStringLiteral("B")));
+    QQuickItem *first = stockCardLabelled(stock, QStringLiteral("A"));
+    QQuickItem *second = stockCardLabelled(stock, QStringLiteral("B"));
+
+    run("focusStock");
+    QCOMPARE(where(), QStringLiteral("stock"));
+    QCOMPARE(call("stockIndex"), 0);
+    QTRY_VERIFY(first->property("highlighted").toBool());
+    QVERIFY(!second->property("highlighted").toBool());
+
+    press(Qt::Key_Right);
+    QCOMPARE(call("stockIndex"), 1);
+    QTRY_VERIFY(second->property("highlighted").toBool());
+    QVERIFY(!first->property("highlighted").toBool());
+    press(Qt::Key_Return);
+    QCOMPARE(m_root->property("stockActivated").toInt(), 1);
+
+    // The pointer over a card is published by the shelf, and moves nothing.
+    const QPoint onFirstLabel =
+        first->mapToScene(QPointF(first->width() / 2, first->height() - 6)).toPoint();
+    QTest::mouseMove(&m_view, onFirstLabel);
+    QTest::mouseMove(&m_view, onFirstLabel + QPoint(1, 0));
+    QTRY_COMPARE(stock->property("hoveredIndex").toInt(), 0);
+    QCOMPARE(call("stockIndex"), 1);
+
+    // A click is a commit: it activates the card and brings the cursor to it.
+    QTest::mouseClick(&m_view, Qt::LeftButton, {}, onFirstLabel);
+    QTRY_COMPARE(m_root->property("stockActivated").toInt(), 0);
+    QCOMPARE(call("stockIndex"), 0);
+    QCOMPARE(where(), QStringLiteral("stock"));
+
+    QMetaObject::invokeMethod(m_root, "showStock", Q_ARG(QVariant, false));
 }
 
 QTEST_MAIN(NavigationControlsTest)

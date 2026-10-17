@@ -63,6 +63,31 @@ QString versionString()
 #endif
 }
 
+// One value of the X-Emby-Authorization field list, made safe to sit between
+// its quotes. The device name is the machine's hostname and the device id comes
+// out of the settings file, so neither is ours to trust.
+//
+// The characters that could change what the header means are dropped rather
+// than backslash-escaped: a quote would end the value and let the rest pose as
+// fields of its own, and nothing documents the server unescaping `\"`, so an
+// escape would only reach the device list as a literal backslash. Line breaks
+// and other control characters go too: Qt refuses a header that contains one,
+// and the request would leave with no X-Emby-Authorization at all.
+QString authFieldValue(const QString &value)
+{
+    QString clean;
+    clean.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('"') || ch == QLatin1Char('\\'))
+            continue;
+        if (ch.category() == QChar::Other_Control || ch == QChar::LineSeparator
+            || ch == QChar::ParagraphSeparator)
+            continue;
+        clean.append(ch);
+    }
+    return clean.trimmed();
+}
+
 } // namespace
 
 struct RequestHandle::State
@@ -176,12 +201,12 @@ QNetworkRequest EmbyClient::baseRequest(const QUrl &url, const RequestContext &c
     QNetworkRequest request(url);
     request.setTransferTimeout(kTransferTimeoutMs);
     request.setRawHeader("Accept", "application/json");
+    const QString deviceName = authFieldValue(context.deviceName);
     const QString authorization =
         QStringLiteral("MediaBrowser Client=\"%1\", Device=\"%2\", DeviceId=\"%3\", "
                        "Version=\"%4\"")
-            .arg(kClientName,
-                 context.deviceName.isEmpty() ? QStringLiteral("linux") : context.deviceName,
-                 context.deviceId, versionString());
+            .arg(kClientName, deviceName.isEmpty() ? QStringLiteral("linux") : deviceName,
+                 authFieldValue(context.deviceId), authFieldValue(versionString()));
     request.setRawHeader("X-Emby-Authorization", authorization.toUtf8());
     if (!context.accessToken.isEmpty())
         request.setRawHeader("X-Emby-Token", context.accessToken.toUtf8());
@@ -892,12 +917,34 @@ QJsonObject deviceProfileJson(int maxBitrateKbps = 0,
     transcoding.insert(QLatin1String("AudioCodec"), QLatin1String("aac,ac3"));
     transcoding.insert(QLatin1String("Protocol"), QLatin1String("hls"));
 
+    // Embed for everything mpv reads out of the container, listed first so a
+    // stream that is in the file keeps being delivered in the file.
     QJsonArray subtitles;
     for (const char *format : {"srt", "subrip", "ass", "ssa", "pgssub", "sub", "vtt"}) {
         QJsonObject profile;
         profile.insert(QLatin1String("Format"), QLatin1String(format));
         profile.insert(QLatin1String("Method"), QLatin1String("Embed"));
         subtitles.append(profile);
+    }
+    // "Method": "External" for the text formats would let the server
+    // direct-play a file whose subtitle is a sidecar, and stop burning a text
+    // subtitle into a transcode, handing it over as MediaStream.DeliveryUrl
+    // instead. The client half exists — the mapper resolves the URL, and
+    // PlayerController attaches each such stream to the engine once the file is
+    // up — but what the server does with the declaration has not been seen
+    // against a live server yet: which subtitle it marks default
+    // (DefaultSubtitleStreamIndex), and whether a subtitle delivered beside an
+    // HLS transcode lines up with the transcode after a resume. Until it has,
+    // it is opt-in (STRMQT_EXTERNAL_SUBTITLES=1), so it can be tried without a
+    // build. Image subtitles (pgssub, VobSub "sub") stay Embed-only either way:
+    // a text profile does not cover them.
+    if (qEnvironmentVariableIntValue("STRMQT_EXTERNAL_SUBTITLES") == 1) {
+        for (const char *format : {"srt", "subrip", "ass", "ssa", "vtt"}) {
+            QJsonObject profile;
+            profile.insert(QLatin1String("Format"), QLatin1String(format));
+            profile.insert(QLatin1String("Method"), QLatin1String("External"));
+            subtitles.append(profile);
+        }
     }
 
     QJsonObject deviceProfile;

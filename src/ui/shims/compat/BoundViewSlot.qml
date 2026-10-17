@@ -10,6 +10,16 @@ import QtQuick
 // the bound one with createObject(), which uses the creation context. The
 // view's headerItem/footerItem is that host; it is a plain Item, not a focus
 // scope, so focus reaches the created item as it would without the host.
+//
+// The host takes the created item's size and gives it none: a view does not
+// size its header or footer either, so the item's own `width:` is what
+// decides, as on the full tier. Assigning one from here would replace that
+// binding with a number.
+//
+// `component` stays the one component whatever `sourceComponent` becomes, so
+// the view is never told to build a new footer the way it is on the full
+// tier, where the two are the same object. Each host follows the change
+// itself.
 QtObject {
     id: slot
 
@@ -23,9 +33,26 @@ QtObject {
             implicitWidth: host.content ? host.content.width : 0
             implicitHeight: host.content ? host.content.height : 0
 
-            Component.onCompleted: {
+            function rebuild() {
+                const old = host.content;
+                if (old) {
+                    host.content = null;
+                    old.visible = false;
+                    old.parent = null;
+                    old.destroy();
+                }
                 if (slot.sourceComponent !== null)
                     host.content = slot.sourceComponent.createObject(host);
+            }
+
+            Component.onCompleted: host.rebuild()
+
+            Connections {
+                target: slot
+
+                function onSourceComponentChanged() {
+                    host.rebuild();
+                }
             }
         }
     }

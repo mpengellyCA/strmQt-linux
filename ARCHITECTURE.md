@@ -173,6 +173,19 @@ back to polling when the socket is unavailable, suspends while the video decoder
 running, suspends while the window is unfocused, and refreshes immediately on
 playback stop and on regaining focus.
 
+**User data has one gatekeeper.** A socket record (watched, favourite, resume
+point) passes through `ItemActions` before any page sees it: `ItemActions` is the
+service's *user-data stage* (`LiveUpdateService::setUserDataStage`), not one
+connection among many, so the order cannot be got wrong. It patches the models
+registered with it and the play queue, announces only answers that changed, and
+hands every other binding the merged record — a field with a toggle still on the
+wire carries the user's intent, so a stale record crossing a toggle cannot put the
+old value back on a search row or an episode. The details page's own item is often
+in no registered model, so the details reply is fed to `ItemActions` as a server
+record too; the hero button's label and the verb it fires then read the same
+answer. `wireUserData()` (`src/app/UserDataWiring.h`) is that wiring, shared by
+`Application` and the tests.
+
 ### Emby behaviour worth knowing
 
 Every item here was measured against a live Emby 4.9.5.0 server, and most of them
@@ -211,6 +224,7 @@ codebase look the way they do.
 | **List queries hide track play counts and last-played dates** | An `Audio` list sorted by `DatePlayed` is correctly ordered, but each row reports `PlayCount: 0` and no `LastPlayedDate`. `Fields=UserDataPlayCount,UserDataLastPlayedDate` makes the list carry the real values. |
 | Audio lists carry `MediaStreams` and album lists carry `RunTimeTicks` | Format badges and album runtimes need no per-item fetch. |
 | `GenreItems[].Id` is a JSON number | Artist ids on the same item are strings. Id parsing accepts both. |
+| An episode's or season's logo is its parent's | It comes as `ParentLogoItemId` + `ParentLogoImageTag` (the id can be a number); `SeriesId` is not a logo source. A season or episode with `ImageTags.Logo` of its own uses that. |
 
 ---
 
@@ -229,6 +243,20 @@ chose*; it does not silently swap to a different cut with a different runtime.
 and crash resume. Engines report clean EOF separately from fatal errors; the
 controller never guesses that an error is EOF from the playhead position. Position
 is reported to the server on a timer and at start/stop so watch state survives.
+
+**Gapless music.** In the last 15 s of a track in a music queue, with an audio
+track next (not RepeatOne, not during a fast-forward hold or a recovery), the
+controller resolves the next track's ticket and hands its URL to the engine with
+`PlayerBackend::prefetchNext` (mpv: `loadfile … append` with a per-file `start`,
+`gapless-audio=weak`, `prefetch-playlist`). When the engine moves on by itself it
+emits `prefetchStarted` *instead of* `endReached`, and the controller replays an
+ordinary advance minus the request and the load: stop report at full runtime,
+queue advance, the new ticket and load id adopted. mpv holds the finished file's
+EOF until it sees the next entry start or goes idle, so exactly one of the two
+signals is ever emitted. The prefetch is keyed on the next entry's queue key and
+is dropped whenever that key, the eligibility or the load changes; dropping it is
+always safe, because an end the engine reports the ordinary way is advanced the
+ordinary way. Engines without support (VLC, QtMultimedia) keep the old path.
 
 ### Queue
 
@@ -336,15 +364,16 @@ own passes; a second one around the render call is a nested begin, which GL
 forbids, and the shaders then silently stop running while every frame logs
 `INVALID_OPERATION`.
 
-**The target-time wait moved.** The render call no longer blocks
-(`BLOCK_FOR_TARGET_TIME = 0`), because mpv's wait would land between the two
-timestamps. The item waits until the frame's target time itself, after the
-second timestamp, so pacing and A/V sync are what they were. libmpv's render
-API delivers `target_time` in the `mpv_get_time_ns()` base on current libmpv
-(2.5), not microseconds as `render.h` documents, so the item picks the clock at
-runtime (`src/playback/mpv/MpvTargetTime.h`) when the libmpv client API is 2.2 or newer; older libmpv (Debian 12's 0.35) is
-microseconds-only and uses `mpv_get_time_us()`. It also calls `glFlush()` after
-the end timestamp, so the wait is not counted as GPU time.
+**Nothing waits for a frame's display time.** The render call does not block
+(`BLOCK_FOR_TARGET_TIME = 0`): mpv's wait would land between the two timestamps
+and count as GPU time, and any wait at all is on the scene graph's render
+thread, where it held every animation in the window to the video's frame rate
+(a 45 ms median render pass on a 10 fps clip, measured). `MpvVideoItem` sets
+mpv's `video-timing-offset` to 0 on every core instead, the alternative
+`render.h` names: mpv then raises its update callback when the frame is due
+rather than 50 ms ahead, and drawing it at once shows it on time (0.4-10 ms
+after its target, measured on libmpv 2.5). The item still calls `glFlush()`
+after the end timestamp, so the query is submitted with the render it brackets.
 
 `tst_mpv_shader_compile` renders every chain through a real libmpv render
 context on Mesa's software renderer in every CI container, which is what proves
@@ -426,6 +455,12 @@ Two conventions worth knowing:
   a `FocusClip`, which keeps their geometry and clips `Theme.focusRingOutset` further
   out (or `Theme.focusHeadroom()` for a raised card). Padding the content instead does
   not work: `positionViewAtIndex()` ignores a view's margins.
+- **"Add to playlist" is one control.** `PlaylistPicker` is the type-to-narrow panel
+  every surface raises, and it claims the result of its own write: `PlaylistCtl`'s
+  results are global, and several pages with a picker are alive at once. A page
+  either takes `resultReady` into a toast host of its own (the music surfaces) or
+  sets `notifiesWindow` so the window says it (the video pages, which may be covered
+  by the time the server answers).
 
 ### Moving about with a D-pad
 
@@ -464,15 +499,42 @@ the only route to signing out, and every one of them was a pointer or a Tab away
 
 ### Pages
 
-`Main.qml` owns a `StackView`, the navigation history (including a forward stack,
-which `StackView` does not provide), and focus memory. It restores the exact
-loaded item by stable identity after Back/Forward; if that item is absent when
-the controller's bounded refill finishes, it uses the nearest eligible row (or
-the page's normal empty-state focus) without fetching extra pages.
+`Main.qml` owns a `StackView`; `BoundedNavigationStack` (`src/ui/shell`) owns
+the navigation history (including a forward stack, which `StackView` does not
+provide) and focus memory. It restores the exact loaded item by stable identity
+after Back/Forward; if that item is absent when the controller's bounded refill
+finishes, it uses the nearest eligible row (or the page's normal empty-state
+focus) without fetching extra pages.
+
+**A page arrives with a short fade and a few pixels of settle** — from the
+right going forward, from the left going back — while the page being left
+goes at once. It is the stack's own animation run after an immediate
+`StackView` operation, not a `StackView` transition: during one, `StackView`
+holds both pages short of `Active`, and the covered-page content gates key
+off `StackView.status === Active`, so the leaving page would empty itself
+while fading and the arriving one would fade in blank; the live-window trim
+that follows a push would also cut a running transition off at partial
+opacity. A navigation that interrupts one starts from the opacity already
+reached, so a held Back never dips to the background. The arriving page is
+never fully transparent, because `FocusNavigator` skips a subtree at opacity
+0. There is no motion under reduced motion or the self-test, on sign-in/out,
+or arriving on a YouTube route, whose web view must never sit inside
+something partly hidden.
 
 Pages: Login · Home · Library · Details · Series · Person · Playlist · Search ·
 Settings · Player, and for music: Music Home · Music Browse · Album · Artist ·
 Music Playlist.
+
+**Home opens on a stage**: one featured item over its own fanart, with its
+ClearLogo (`TitleLogo`, which shows the title text until the logo has loaded
+and again if it fails), metadata and Play/Resume and More info. `HomeController`
+chooses it from rails Home already fetched — the first Continue Watching row,
+else Next Up, else the newest item of the first Latest rail — so it costs no
+request. It does not rotate: it answers "what's next for me", and a carousel
+turns that into something to wait out or chase under a focus ring. The stage
+is drawn over room reserved at the top of the first rail's cell rather than as
+a list header, so the list's own highlight range keeps it fully on screen when
+focus returns to the first rail.
 
 **A film or TV library is narrowed by its metadata** — genre, year, studio (or
 network), age rating, community rating, series status, and for films resolution,
@@ -590,7 +652,10 @@ the pad and the phone with it, and a gamepad hint shown in the UI is the binding
 that actually fires. A navigation action with a gamepad hint must resolve to
 exactly one key — asserted in tests, because a hint without a working binding is
 worse than no hint. Keys posted to a background window still land because
-`WindowFocusKeeper` stops Qt clearing the focus chain on deactivation.
+`WindowFocusKeeper` stops Qt clearing the focus chain on deactivation. Because
+focus is kept, it also releases any key the real keyboard was holding when the
+window lost focus — the release itself goes to whichever application was
+clicked — while a key a pad is holding is left alone.
 
 ### Where an arrow goes
 
@@ -754,12 +819,28 @@ Capabilities are re-sent on every reconnect: a resumed socket is a new session t
 the server, so a single announcement at startup is forgotten the first time the
 network blinks.
 
+**The web remote asks for a PIN, and guessing it is rationed.** Failed PINs are
+counted per peer — an IPv4 address, an IPv6 address on this computer's own link
+(link-local, or in the /64 the connection arrived on), or the /64 of an IPv6 peer
+from elsewhere, since one host commonly holds a whole routed /64. Keying the LAN by
+its /64 would let one guesser lock every phone on it out. The fifth miss in a row
+locks that peer out for 2 s, doubling to 5 min. Peers that have not given the
+current PIN also share one allowance (twenty misses, then one per 5 min), so
+rotating addresses buys nothing; a phone that has given it is held to its own
+lockout only, and a new PIN from Settings clears every count.
+
+The certificate is self-signed and names every address the remote is served on.
+When the computer gains an address the certificate does not name, it is replaced —
+keeping the names it had, IPv6 aside — and **every device has to trust the new
+one**, which is the price of a browser that would otherwise refuse the page on the
+new address.
+
 ---
 
 ## 7. Testing
 
 ```bash
-ctest --preset dev                     # 80 suites
+ctest --preset dev                     # 87 suites
 cmake --build <dir> --target strmqt_qmllint
 STRMQT_SELFTEST=1 QT_QPA_PLATFORM=offscreen ./strmqt
 ```
@@ -951,9 +1032,12 @@ assertion catches the rot.
   YouTube still signed in.
 - **The upscaling shaders do not apply to YouTube.** They are mpv's; YouTube plays in
   Chromium.
-- **Zero-copy VAAPI is unreachable**: `MpvVideoItem::ensureContext()` does not pass
-  `MPV_RENDER_PARAM_WL_DISPLAY`, so mpv finds no native display. Hardware decode
-  still works via `vulkan-copy`; this costs a copy, not the feature.
+- **Zero-copy VAAPI is verified on Wayland only.** `MpvVideoItem::ensureContext()`
+  passes the native display (`MPV_RENDER_PARAM_WL_DISPLAY` / `X11_DISPLAY`), and
+  on Wayland mpv reports `hwdec-current=vaapi`. On X11 the handle is passed but
+  Qt's default GLX context is not expected to satisfy mpv's EGL interop, so the
+  `-copy` decoders are the likely result there; Qt 6.4 has no
+  `QWaylandApplication` and gets the copy path too.
 - **VLC video output** is broken (`STRMQT_WITH_VLC` builds only). Suspected forced
   `RV32` chroma with no fallback.
 - **Upscaling is mpv-only, and `gpu-next`-only shaders are out.** libmpv's render
@@ -965,8 +1049,12 @@ assertion catches the rot.
 - **The upscaling governor's thresholds are reasoned, not measured, on weak
   GPUs.** The debug setting `upscale/budgetScale` exercises the mechanism; a
   real laptop or iGPU measurement is still owed.
-- **No gapless audio advance.** mpv gapless wants a playlist handed to the engine,
-  not per-item loads.
+- **Gapless advance is mpv-only and unverified by ear.** The handover is tested
+  against real mpv with `ao=null` (§3), not listened to on a live album. A
+  transcoded (HLS) next track is not opened early by `prefetch-playlist`, and a
+  dropped prefetch does not tell the server to stop a transcode job it started.
+  At a sample-rate change the audio device is reopened (`gapless-audio=weak`),
+  which is a short gap by choice rather than resampling.
 - **Forgotten favourites is not least-recently-played.** The Music Home shelf asks
   for favourite albums sorted by `DatePlayed`, but Emby keeps no play date on an
   album, so the order is not yet the one the shelf's name promises.
@@ -985,17 +1073,22 @@ assertion catches the rot.
 - **The Secret Service backend's session is unencrypted on the session bus**
   (`plain`, §8) — the same exposure KWallet's own API already has. A
   negotiated DH-AES session is follow-up work.
-- **Season badges go stale outside the loaded season.** `SeriesController`'s seasons
-  model is not registered with `ItemActions` and nothing recomputes its unplayed
-  counts, so marking an episode watched updates the badge only for the season
-  currently on screen. A real fix needs the server's `UserData.UnplayedItemCount`
-  refetched per season, not a UI hook.
-- **Held volume on a gamepad is unclamped.** Held horizontal seeks in the player
-  are floored at 250 ms, but the right stick's volume runs the fast ladder — at
-  its 38 ms floor, 5% per step sweeps the whole range in well under a second.
-  Horizontal repeat in player context is floored everywhere, including the OSD
-  button row, because `GamepadManager` can see the action and the context but
-  not which control has focus.
+- **External subtitle delivery is off by default.** The client can load a
+  subtitle the server delivers as a separate file (`PlayerBackend::addExternalSubtitle`,
+  mpv `sub-add`), but the device profile declares `External` only with
+  `STRMQT_EXTERNAL_SUBTITLES=1` until it has been checked against a live server:
+  that the server's default subtitle index is filled in, and that a resumed
+  transcode's sidecar stays in sync. libmpv 0.41 can deadlock when a file is
+  replaced while a `sub-add` is in flight with a subtitle selected; `MpvPlayer`
+  adds with `auto` only, selects through `sid`, and aborts and waits for any
+  add before every `loadfile`, `stop` and core destruction. A gapless prefetch
+  lets mpv change file on its own, so none is queued while an add is pending,
+  and an add drops a queued one.
+- **Horizontal repeat in player context is floored everywhere.** Held seeks are
+  floored at 250 ms, and so is the OSD button row, because `GamepadManager` can
+  see the action and the context but not which control has focus. Held volume
+  on the right stick has its own steady 150 ms step (about three seconds across
+  the range) rather than the accelerating ladder.
 - **`Component.onDestruction` cannot read a delegate's `index`** — it has already
   been reset to -1 by then. Any cleanup keyed on index there is dead code; track
   the delegate's identity instead (`StrmRail`, `StrmGrid`, `HomePage` do).

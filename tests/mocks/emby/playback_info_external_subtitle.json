@@ -1,0 +1,108 @@
+{
+    "_comment": "Hand-written, not recorded from a server. It follows Emby's documented PlaybackInfo contract for a device profile that declares Method External for text subtitles: DefaultSubtitleStreamIndex on the source, DeliveryMethod and a server-relative DeliveryUrl on each subtitle stream. One DeliveryUrl carries api_key and one does not, because servers have shipped both. Stream 6 is an in-file stream the server marked External, which a client must not attach a second time when it direct-plays the file.",
+    "MediaSources": [
+        {
+            "Protocol": "File",
+            "Id": "ms7700",
+            "Path": "/media/movies/Sidecar (2020)/Sidecar.mkv",
+            "Type": "Default",
+            "Container": "mkv",
+            "Size": 2232567890,
+            "Name": "Sidecar",
+            "IsRemote": false,
+            "RunTimeTicks": 54000000000,
+            "SupportsTranscoding": true,
+            "SupportsDirectStream": true,
+            "SupportsDirectPlay": true,
+            "DefaultAudioStreamIndex": 1,
+            "DefaultSubtitleStreamIndex": 3,
+            "MediaStreams": [
+                {
+                    "Codec": "h264",
+                    "Type": "Video",
+                    "Index": 0,
+                    "Width": 1920,
+                    "Height": 1080,
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "aac",
+                    "Language": "eng",
+                    "Type": "Audio",
+                    "Index": 1,
+                    "Channels": 2,
+                    "IsDefault": true
+                },
+                {
+                    "Codec": "subrip",
+                    "Language": "eng",
+                    "Type": "Subtitle",
+                    "Index": 2,
+                    "DisplayTitle": "English (SUBRIP)",
+                    "IsExternal": false,
+                    "IsTextSubtitleStream": true,
+                    "SupportsExternalStream": true,
+                    "DeliveryMethod": "Embed"
+                },
+                {
+                    "Codec": "srt",
+                    "Language": "nld",
+                    "Type": "Subtitle",
+                    "Index": 3,
+                    "DisplayTitle": "Dutch (SRT)",
+                    "IsExternal": true,
+                    "IsTextSubtitleStream": true,
+                    "SupportsExternalStream": true,
+                    "Path": "/media/movies/Sidecar (2020)/Sidecar.nl.srt",
+                    "DeliveryMethod": "External",
+                    "DeliveryUrl": "/Videos/7700/ms7700/Subtitles/3/0/Stream.srt?api_key=not-a-real-token-fixture-only",
+                    "IsExternalUrl": false
+                },
+                {
+                    "Codec": "ass",
+                    "Language": "eng",
+                    "Type": "Subtitle",
+                    "Index": 4,
+                    "DisplayTitle": "English (ASS)",
+                    "IsExternal": true,
+                    "IsTextSubtitleStream": true,
+                    "SupportsExternalStream": true,
+                    "Path": "/media/movies/Sidecar (2020)/Sidecar.en.ass",
+                    "DeliveryMethod": "External",
+                    "DeliveryUrl": "/Videos/7700/ms7700/Subtitles/4/0/Stream.ass",
+                    "IsExternalUrl": false
+                },
+                {
+                    "Codec": "pgssub",
+                    "Language": "eng",
+                    "Type": "Subtitle",
+                    "Index": 5,
+                    "DisplayTitle": "English (PGSSUB)",
+                    "IsExternal": false,
+                    "IsTextSubtitleStream": false,
+                    "SupportsExternalStream": false,
+                    "DeliveryMethod": "Embed"
+                },
+                {
+                    "Codec": "ass",
+                    "Language": "jpn",
+                    "Type": "Subtitle",
+                    "Index": 6,
+                    "DisplayTitle": "Japanese (ASS)",
+                    "IsExternal": false,
+                    "IsTextSubtitleStream": true,
+                    "SupportsExternalStream": true,
+                    "DeliveryMethod": "External",
+                    "DeliveryUrl": "/Videos/7700/ms7700/Subtitles/6/0/Stream.ass?api_key=not-a-real-token-fixture-only",
+                    "IsExternalUrl": false
+                }
+            ],
+            "Bitrate": 3892345,
+            "DirectStreamUrl": "/videos/7700/stream.mkv?DeviceId=test-device&MediaSourceId=ms7700&Static=true",
+            "TranscodingUrl": "/videos/7700/master.m3u8?DeviceId=test-device&MediaSourceId=ms7700&PlaySessionId=ps7700&api_key=not-a-real-token-fixture-only&VideoCodec=h264&AudioCodec=aac",
+            "TranscodingSubProtocol": "hls",
+            "TranscodingContainer": "ts"
+        }
+    ],
+    "PlaySessionId": "ps7700"
+}

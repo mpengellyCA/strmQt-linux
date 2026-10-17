@@ -1637,6 +1637,7 @@ FocusScope {
 
         z: 800
         mediaType: "Audio"
+        onResultReady: (message, severity) => browseToasts.show(message, severity);
         onDismissed: page.focusContent()
     }
 
@@ -1742,24 +1743,6 @@ FocusScope {
         Keys.onEscapePressed: event => {
             createPrompt.dismiss();
             event.accepted = true;
-        }
-    }
-
-    // `pending` tells this page's result apart from a playlist edited elsewhere.
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return;
-            playlistPicker.pending = false;
-            browseToasts.show(message, "success");
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return;
-            playlistPicker.pending = false;
-            browseToasts.show(message, "error");
         }
     }
 

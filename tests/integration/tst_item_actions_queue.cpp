@@ -64,6 +64,7 @@ private slots:
     void shuffleAsksTheServerForARandomOrder();
     void shuffleNarrowsATvLibraryToEpisodes();
     void shuffleSeriesQueuesEveryEpisodeFromARandomStart();
+    void shuffleASeasonOrAnAlbumKeepsItsOwnOrderToReturnTo();
     void seasonDispatchExpandsEpisodeChildren();
     void playAllFromQueuesTheItemsItIsGiven();
     void playNextAndAddToQueueDoNotInterrupt();
@@ -225,6 +226,49 @@ void ItemActionsQueueTest::shuffleSeriesQueuesEveryEpisodeFromARandomStart()
     QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(),
              QStringLiteral("402002"));
     QCOMPARE(m_player->queue()->current().id, playing);
+}
+
+// A season and a record have an order of their own and are small enough to
+// fetch whole: shuffle fetches them in that order and lets the queue shuffle,
+// so turning shuffle off gives back the episode or track list. The server's
+// Random would leave nothing to return to.
+void ItemActionsQueueTest::shuffleASeasonOrAnAlbumKeepsItsOwnOrderToReturnTo()
+{
+    struct Case
+    {
+        QString id;
+        QString type;
+        QString includeTypes;
+    };
+    for (const Case &container : {Case{QStringLiteral("season-7"), QStringLiteral("Season"),
+                                       QStringLiteral("Episode")},
+                                  Case{QStringLiteral("album-3"), QStringLiteral("MusicAlbum"),
+                                       QStringLiteral("Audio")}}) {
+        QSignalSpy queueSpy(m_actions, &ItemActions::queueChanged);
+        m_actions->performItemVerb(QStringLiteral("shuffle"),
+                                   QVariantMap{{QStringLiteral("itemId"), container.id},
+                                               {QStringLiteral("name"), container.id},
+                                               {QStringLiteral("type"), container.type}});
+        QTRY_COMPARE(queueSpy.count(), 1);
+        const QUrlQuery query(m_mock->lastRequestFor(QStringLiteral("GET"), itemsPath()).query);
+        QCOMPARE(query.queryItemValue(QStringLiteral("ParentId")), container.id);
+        QVERIFY2(query.queryItemValue(QStringLiteral("SortBy")) != QStringLiteral("Random"),
+                 qPrintable(query.toString()));
+        QVERIFY2(query.queryItemValue(QStringLiteral("IncludeItemTypes"))
+                     .contains(container.includeTypes),
+                 qPrintable(query.toString()));
+        QVERIFY(m_player->queue()->shuffled());
+
+        // Un-shuffled, the queue is the order the server returned.
+        m_player->queue()->setShuffled(false);
+        QCOMPARE(m_player->queue()->rowCount(), 3);
+        QCOMPARE(m_player->queue()->itemAt(0).value(QStringLiteral("itemId")).toString(),
+                 QStringLiteral("301001"));
+        QCOMPARE(m_player->queue()->itemAt(1).value(QStringLiteral("itemId")).toString(),
+                 QStringLiteral("301002"));
+        QCOMPARE(m_player->queue()->itemAt(2).value(QStringLiteral("itemId")).toString(),
+                 QStringLiteral("301003"));
+    }
 }
 
 void ItemActionsQueueTest::seasonDispatchExpandsEpisodeChildren()

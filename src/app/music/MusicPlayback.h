@@ -31,8 +31,9 @@ public:
     void playTracks(const QList<Track> &tracks, int startIndex, const QString &sourceLabel);
     Q_INVOKABLE void playAlbum(const QString &albumId, const QString &title, int startIndex = 0);
     Q_INVOKABLE void shuffleAlbum(const QString &albumId, const QString &title);
-    // The server draws at random (MusicRepository::artistTracks); the draw is
-    // queued as given. Label: "Shuffle · " + name.
+    // The server draws at random (MusicRepository::artistTracks); that draw is
+    // the queue's original order, and the queue is flagged shuffled and dealt
+    // from a random start. Label: "Shuffle · " + name.
     Q_INVOKABLE void shuffleArtist(const QString &artistId, const QString &name);
     Q_INVOKABLE void radio(const QString &seedId, const QString &seedName);
     void playStation(const QString &libraryId, const Station &station);

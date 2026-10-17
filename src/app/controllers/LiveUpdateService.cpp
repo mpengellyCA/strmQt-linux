@@ -268,7 +268,7 @@ void LiveUpdateService::onUserDataEntries(
             }
         }
     }
-    emit userDataPatched(payload);
+    emit userDataPatched(m_userDataStage ? m_userDataStage(payload) : payload);
 
     armUserDataFlush();
 }

@@ -77,6 +77,7 @@ private slots:
     void legacyFlatTokenIsAdoptedIntoTheAccountScope();
     void homeRefreshBuildsRails();
     void homeSessionResetRetiresOldCountersAndGenreCallbacks();
+    void homeGenreRailsRetryAfterAFailedGenresCall();
     void libraryPaging();
     void librarySessionResetRetiresOldPage();
 
@@ -612,6 +613,31 @@ void ControllersTest::homeRefreshBuildsRails()
     QCOMPARE(home.latestRails().first().toMap()
                  .value(QStringLiteral("model")).value<MediaItemModel *>(),
              railModel);
+    // The Home stage features the first thing in progress.
+    QCOMPARE(home.featured().value(QStringLiteral("itemId")).toString(), QStringLiteral("402014"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredKind")).toString(),
+             QStringLiteral("resume"));
+
+    // With nothing in progress and nothing next, the newest arrival of the
+    // first library takes the stage, labelled with that library, over its own
+    // fanart. Settled once, not flickered through the snapshot's rail swaps.
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items/Resume").arg(kUserId),
+                     200, QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Shows/NextUp"), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    QSignalSpy featuredSpy(&home, &HomeController::featuredChanged);
+    home.refresh();
+    QTRY_VERIFY(!home.busy());
+    QCOMPARE(home.resume()->rowCount(), 0);
+    QCOMPARE(home.nextUp()->rowCount(), 0);
+    QCOMPARE(featuredSpy.count(), 1);
+    QCOMPARE(home.featured().value(QStringLiteral("itemId")).toString(), QStringLiteral("301099"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredKind")).toString(),
+             QStringLiteral("latest"));
+    QCOMPARE(home.featured().value(QStringLiteral("featuredLabel")).toString(),
+             QStringLiteral("New in Movies"));
+    QVERIFY(home.featured().value(QStringLiteral("artUrl")).toString().endsWith(
+        QStringLiteral("/301099/Backdrop/33cc44dd")));
 }
 
 void ControllersTest::libraryPaging()
@@ -739,6 +765,71 @@ void ControllersTest::homeSessionResetRetiresOldCountersAndGenreCallbacks()
              QStringLiteral("B Resume"));
     QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
              QStringLiteral("B Genre"));
+}
+
+// HomePage asks for the genre rails once, when it is built. A failed /Genres
+// call used to latch "fetched" anyway, so the rails stayed empty until the app
+// restarted; the next refresh must ask again, and only while Home wants them.
+void ControllersTest::homeGenreRailsRetryAfterAFailedGenresCall()
+{
+    const QString items = QStringLiteral("/Users/%1/Items").arg(kUserId);
+    m_client->setBaseUrl(m_mock->baseUrl());
+    m_client->setSession(kToken, kUserId);
+    const QByteArray empty = QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}");
+    for (const QString &path : {QStringLiteral("/Users/%1/Items/Resume").arg(kUserId),
+                                QStringLiteral("/Shows/NextUp"), items,
+                                QStringLiteral("/Users/%1/Views").arg(kUserId)})
+        m_mock->addRoute(QStringLiteral("GET"), path, 200, empty);
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 500, QByteArray());
+
+    const auto genreCalls = [this] {
+        int count = 0;
+        for (const MockEmbyServer::ReceivedRequest &request : m_mock->requests())
+            count += request.path == QLatin1String("/Genres") ? 1 : 0;
+        return count;
+    };
+
+    HomeController home(m_client);
+    // Never asked for: a refresh does not fetch them.
+    home.refresh();
+    QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
+    QCOMPARE(genreCalls(), 0);
+
+    home.loadGenreRails();
+    QTRY_COMPARE_WITH_TIMEOUT(genreCalls(), 1, 5000);
+    QTest::qWait(50);
+    QVERIFY(home.genreRails().isEmpty());
+
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Genres"), 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"g1\",\"Name\":\"Drama\","
+                                       "\"Type\":\"Genre\"}],\"TotalRecordCount\":1}"));
+    m_mock->addRoute(QStringLiteral("GET"), items, 200,
+                     QByteArrayLiteral("{\"Items\":[{\"Id\":\"m1\",\"Name\":\"A Film\","
+                                       "\"Type\":\"Movie\"}],\"TotalRecordCount\":1}"));
+    home.refresh();
+    QTRY_COMPARE_WITH_TIMEOUT(home.genreRails().size(), 1, 5000);
+    QCOMPARE(genreCalls(), 2);
+    QCOMPARE(home.genreRails().first().toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("Drama"));
+
+    // Fetched: neither a refresh nor Home asking again costs another call.
+    home.refresh();
+    home.loadGenreRails();
+    QTRY_VERIFY_WITH_TIMEOUT(!home.busy(), 5000);
+    QCOMPARE(genreCalls(), 2);
+
+    // A live record reaches a genre rail's row like any other rail's.
+    auto *genreModel =
+        home.genreRails().first().toMap().value(QStringLiteral("model")).value<MediaItemModel *>();
+    QVERIFY(genreModel);
+    QVERIFY(!genreModel->get(0).value(QStringLiteral("played")).toBool());
+    home.onUserDataPatched({QVariantMap{{QStringLiteral("itemId"), QStringLiteral("m1")},
+                                        {QStringLiteral("played"), true},
+                                        {QStringLiteral("favorite"), true},
+                                        {QStringLiteral("positionTicks"), 0},
+                                        {QStringLiteral("playCount"), 1}}});
+    QVERIFY(genreModel->get(0).value(QStringLiteral("played")).toBool());
+    QVERIFY(genreModel->get(0).value(QStringLiteral("favorite")).toBool());
 }
 
 void ControllersTest::librarySessionResetRetiresOldPage()

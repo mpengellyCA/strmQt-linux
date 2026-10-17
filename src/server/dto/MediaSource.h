@@ -3,6 +3,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVariant>
 #include <QVariantMap>
 
@@ -34,6 +35,22 @@ struct MediaStream
     bool isForced = false;
     bool isExternal = false;
 
+    // Subtitle delivery, as PlaybackInfo decided it for this device profile:
+    // "Embed" (in the stream the engine opens), "External" (a file of its own
+    // the client has to fetch), "Encode" (burned into the picture), "Hls", or
+    // empty when the server did not say (an item's details carry none).
+    QString deliveryMethod;
+    // Server-relative, exactly as sent. Only meaningful for "External".
+    QString deliveryUrl;
+    // True when deliveryUrl points at some other host and is already absolute.
+    bool isExternalUrl = false;
+    // deliveryUrl made loadable: absolute, and carrying the access token when it
+    // is our own server's. Filled in by the mapper for a playback ticket and
+    // only for an External delivery; empty everywhere else. It is a credential:
+    // it goes to the player engine and nowhere else — never into
+    // toVariantMap(), which feeds QML and the web remote, and never into a log.
+    QUrl externalUrl;
+
     // Video
     int width = 0;
     int height = 0;
@@ -54,6 +71,9 @@ struct MediaStream
     bool isVideo() const { return kind() == Kind::Video; }
     bool isAudio() const { return kind() == Kind::Audio; }
     bool isSubtitle() const { return kind() == Kind::Subtitle; }
+    // A subtitle the engine will not find in the media it opens: the server
+    // hands it over on a URL of its own and the player has to be given it.
+    bool isDeliveredExternally() const { return isSubtitle() && externalUrl.isValid(); }
 
     // True for any non-SDR video range the server reports.
     bool isHdr() const;
@@ -88,6 +108,10 @@ struct MediaSource
     // Why the server will not direct play ("VideoCodecNotSupported", …). Exactly
     // what a stats overlay needs to explain a transcode.
     QStringList transcodeReasons;
+    // MediaStream::index of the subtitle the server picked for this user (their
+    // subtitle mode and language preferences applied); -1 for none, or when the
+    // server did not say.
+    int defaultSubtitleStreamIndex = -1;
     QList<MediaStream> streams;
 
     // Server name if present, else a resolution + codec summary, else the

@@ -120,13 +120,17 @@ const MODES = [
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3];
 
+// The desktop's list (Theme.subtitleColors), so a colour picked on either
+// side shows as picked on the other.
 const SUB_COLOURS = [
   { value: '#FFFFFF', label: 'White' },
-  { value: '#E8E4DC', label: 'Warm white' },
-  { value: '#FFE066', label: 'Yellow' },
-  { value: '#8AE0FF', label: 'Cyan' },
+  { value: '#E8E2D6', label: 'Soft white' },
+  { value: '#F0A02A', label: 'Amber' },
+  { value: '#F2E14C', label: 'Yellow' },
+  { value: '#7FD8E8', label: 'Cyan' },
   { value: '#8CE08C', label: 'Green' },
-  { value: '#BFBFBF', label: 'Grey' },
+  { value: '#A0A0A0', label: 'Grey' },
+  { value: '#000000', label: 'Black' },
 ];
 
 function speedLabel(speed) {
@@ -556,14 +560,37 @@ export function initPlayer({ openItem }) {
   // Swipe the header down to close.
   let swipeStart = null;
   const head = root.querySelector('.player-head');
+  let swipePointer = null;
   head.addEventListener('pointerdown', (event) => {
     if (event.target.closest('button')) return;
     swipeStart = event.clientY;
+    swipePointer = event.pointerId;
+    // A swipe long enough to close ends below the header. A finger is captured
+    // by the element it landed on anyway; a mouse or a pen is not, and its
+    // pointerup would go to whatever is under it. Throws for a pointer that is
+    // already gone, and then there is nothing to capture.
+    try {
+      head.setPointerCapture(event.pointerId);
+    } catch {
+      // Without capture the swipe still works while it ends over the header.
+    }
   });
   head.addEventListener('pointerup', (event) => {
+    if (event.pointerId !== swipePointer) return;
     if (swipeStart !== null && event.clientY - swipeStart > 60) closeTopOverlay();
     swipeStart = null;
+    swipePointer = null;
   });
+  // The browser took the gesture over, or the capture went elsewhere: no
+  // pointerup follows, and a start left behind would turn the next tap that
+  // ends lower down into a swipe. (After a pointerup this finds nothing to do.)
+  const endSwipe = (event) => {
+    if (event.pointerId !== swipePointer) return;
+    swipeStart = null;
+    swipePointer = null;
+  };
+  head.addEventListener('pointercancel', endSwipe);
+  head.addEventListener('lostpointercapture', endSwipe);
 
   subscribe((kind) => {
     if (kind === 'status') render();
@@ -695,7 +722,9 @@ function openSubtitleSheet() {
           },
         })));
       };
-      renderSwatches(style.color);
+      // The server names the swatch a stored colour shows as (an older shade
+      // as the entry that replaced it); an older server sends only the colour.
+      renderSwatches(style.swatch || style.color);
 
       const background = rangeRow('Background', style.background, 0, 100, 5, (v) => `${v}%`,
         (value) => command.subtitleStyle({ background: value }));

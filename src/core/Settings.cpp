@@ -6,12 +6,15 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHash>
 #include <QRegularExpression>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 #include <QSet>
 
 #include <QUuid>
+
+#include <algorithm>
 
 namespace strmqt {
 
@@ -90,6 +93,27 @@ QString upscaleCeilingKey(const QString &glRenderer)
         QCryptographicHash::hash(glRenderer.toUtf8(), QCryptographicHash::Sha1).toHex().left(16);
     return QStringLiteral("upscale/ceiling/") + QString::fromLatin1(digest);
 }
+
+bool isWebRemotePin(const QString &pin)
+{
+    return pin.size() == 4 && std::all_of(pin.cbegin(), pin.cend(), [](QChar c) {
+        return c >= QLatin1Char('0') && c <= QLatin1Char('9');
+    });
+}
+
+QString generateWebRemotePin()
+{
+    return QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
+}
+
+// The phone remote's PIN exists from the first run, so reading it never has to
+// write. A PIN already in the store is the one phones were given: it is left
+// alone, and only a missing or unusable one is replaced.
+void ensureWebRemotePin(QSettings &store)
+{
+    if (!isWebRemotePin(store.value(kWebRemotePinKey).toString()))
+        store.setValue(kWebRemotePinKey, generateWebRemotePin());
+}
 } // namespace
 
 Settings::Settings(QObject *parent) : QObject(parent)
@@ -102,6 +126,7 @@ Settings::Settings(QObject *parent) : QObject(parent)
             m_store.sync();
         }
     });
+    ensureWebRemotePin(m_store);
 }
 
 Settings::Settings(const QString &iniFilePath, QObject *parent)
@@ -115,6 +140,7 @@ Settings::Settings(const QString &iniFilePath, QObject *parent)
             m_store.sync();
         }
     });
+    ensureWebRemotePin(m_store);
 }
 
 Settings::~Settings()
@@ -658,6 +684,18 @@ QString Settings::subtitleColor() const
     return hex.match(stored).hasMatch() ? stored.toUpper() : QStringLiteral("#FFFFFF");
 }
 
+QString Settings::subtitleColorSwatch(const QString &color)
+{
+    static const QHash<QString, QString> kReplaced = {
+        {QStringLiteral("#E8E4DC"), QStringLiteral("#E8E2D6")},
+        {QStringLiteral("#FFE066"), QStringLiteral("#F2E14C")},
+        {QStringLiteral("#8AE0FF"), QStringLiteral("#7FD8E8")},
+        {QStringLiteral("#BFBFBF"), QStringLiteral("#A0A0A0")},
+    };
+    const QString written = color.toUpper();
+    return kReplaced.value(written, written);
+}
+
 void Settings::setSubtitleColor(const QString &color)
 {
     if (color == subtitleColor())
@@ -952,22 +990,17 @@ void Settings::setWebRemoteRequirePin(bool required)
 
 QString Settings::webRemotePin() const
 {
-    const QString pin = m_store.value(kWebRemotePinKey).toString();
-    bool ok = false;
-    pin.toInt(&ok);
-    if (pin.length() == 4 && ok && pin.toInt() >= 0)
-        return pin;
-
-    const QString generated = QString::asprintf("%04u", QRandomGenerator::global()->bounded(10000u));
-    const_cast<Settings *>(this)->m_store.setValue(kWebRemotePinKey, generated);
-    return generated;
+    return m_store.value(kWebRemotePinKey).toString();
 }
 
 void Settings::setWebRemotePin(const QString &pin)
 {
-    if (pin == m_store.value(kWebRemotePinKey).toString())
+    // The getter is a plain read, so the store only ever holds a usable PIN:
+    // anything else is answered with a fresh one rather than kept.
+    const QString usable = isWebRemotePin(pin) ? pin : generateWebRemotePin();
+    if (usable == webRemotePin())
         return;
-    m_store.setValue(kWebRemotePinKey, pin);
+    m_store.setValue(kWebRemotePinKey, usable);
     emit webRemotePinChanged();
 }
 

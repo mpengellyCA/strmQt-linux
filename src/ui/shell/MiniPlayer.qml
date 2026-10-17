@@ -88,8 +88,49 @@ FocusScope {
     readonly property bool shown: mini.active && !mini.playerOnTop
     // The one answer, shared with PlayerPage (MUSIC.md §4).
     readonly property bool isAudio: PlayerCtl.isAudio === true
+    // ── What fits ───────────────────────────────────────────────────────────
+    // The transport is centred and the right-hand cluster is pinned to the
+    // edge, so the two meet when half the row is narrower than half the
+    // transport plus the cluster. The fixed breakpoints below are right for an
+    // ordinary track and wrong for a long one: the timecode grows with the
+    // clock ("1:02:03 / 1:10:00", ten hours of audiobook), and just above 900
+    // it ran into the repeat button.
+    //
+    // So each layout is also asked whether it FITS, and the bar steps down in
+    // a fixed order when it does not:
+    //
+    //   full     everything
+    //   compact  drops the timecode, shuffle, repeat and favourite — a readout
+    //            and three toggles the full player has
+    //   tight    (audio) drops mute and the queue peek as well; play/pause,
+    //            previous, next, stop and "open player" are never dropped
+    //
+    // The sums are of declared sizes and the measured timecode, never read back
+    // off the Rows: their width changes with the answer, and a layout that
+    // sizes itself by what it is hiding flips every frame.
+    readonly property int stripStep: Theme.scale(34) + Theme.spacingTight
+    readonly property int stripWidth: mini.width - Theme.spacingValue
+                                      - (mini.isAudio ? 0 : Theme.spacingValue)
+    readonly property int fullTransport: Theme.scale(40) + (mini.isAudio ? 4 : 3) * mini.stripStep
+    readonly property int fullCluster: Math.ceil(timeMetrics.width)
+                                       + (mini.isAudio ? 5 : 1) * mini.stripStep
+    readonly property int compactTransport: Theme.scale(40)
+                                            + (mini.isAudio ? 2 : 3) * mini.stripStep
+    readonly property int compactCluster: (mini.isAudio ? 4 : 1) * mini.stripStep
+                                          - Theme.spacingTight
+
+    // Room for a centred `transport` beside a `cluster`, with clear air
+    // between them.
+    function stripFits(transport: int, cluster: int): bool {
+        return mini.stripWidth >= transport + 2 * (cluster + Theme.spacingValue);
+    }
+
     readonly property bool compactWidth: mini.width < Theme.scale(900)
+                                         || !mini.stripFits(mini.fullTransport, mini.fullCluster)
     readonly property bool narrowWidth: mini.width < Theme.scale(620)
+    readonly property bool tightWidth: mini.isAudio
+                                       && !mini.stripFits(mini.compactTransport,
+                                                          mini.compactCluster)
 
     // Fixed metrics, declared here rather than read back off the children: the
     // root's implicitHeight is what the owner reserves, and deriving it from
@@ -989,7 +1030,7 @@ FocusScope {
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.tightWidth
                     activeFocusOnTab: false
                     iconName: (PlayerCtl.muted === true || PlayerCtl.volume <= 0)
                               ? "volume-mute"
@@ -1011,7 +1052,7 @@ FocusScope {
 
                     anchors.verticalCenter: parent.verticalCenter
                     size: Theme.scale(34)
-                    visible: mini.isAudio
+                    visible: mini.isAudio && !mini.tightWidth
                     activeFocusOnTab: false
                     iconName: "queue"
                     tooltip: qsTr("Queue")
@@ -1279,6 +1320,16 @@ FocusScope {
             queuePeek.close();
         // One turn later: the controls' own `visible` bindings react to this
         // same change, and nothing orders them against this handler.
+        Qt.callLater(mini.reseatFocusAfterMode);
+    }
+
+    // A step down hides controls just as a mode change does, and it no longer
+    // takes a resize to cause one: the next track being an hour long is enough.
+    onCompactWidthChanged: Qt.callLater(mini.reseatFocusAfterMode)
+    onTightWidthChanged: {
+        // The button that closes the peek has just gone.
+        if (mini.tightWidth)
+            queuePeek.close();
         Qt.callLater(mini.reseatFocusAfterMode);
     }
 }

@@ -203,6 +203,10 @@ public:
     void stop() override;
     void seekTo(qint64 positionMs) override;
     void setVolume(int percent) override;
+    // Only a subtitle that is to be shown: this engine has no track surface, so
+    // one added unselected could never be picked and is not fetched at all.
+    void addExternalSubtitle(const QUrl &url, const QString &title, const QString &language,
+                             bool select) override;
 
     State state() const override { return m_state; }
     qint64 positionMs() const override { return m_positionMs; }

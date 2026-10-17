@@ -4,6 +4,7 @@
 #include <QtTest>
 
 #include "server/dto/ItemsQuery.h"
+#include "server/dto/PlaybackTicket.h"
 #include "server/emby/EmbyDtoMapper.h"
 
 using namespace strmqt;
@@ -35,8 +36,14 @@ private slots:
     void emptyJsonDoesNotCrash();
     void wideArtPicksPerItemKind();
     void squareArtPrefersTheAlbumCover();
+    void clearLogoIsOwnThenTheSeries();
     void musicGenresMapAndPageOnTheArray();
     void artistIdsLineUpWithTheNamesTheyBelongTo();
+    void streamUrlKeepsPercentEncodedQueryValues();
+    void externalSubtitleDeliveryIsResolvedForTheEngineOnly();
+    void subtitleDeliveryFieldsAreOptional();
+    void externalSubtitleUrlsAreVetted_data();
+    void externalSubtitleUrlsAreVetted();
 };
 
 // /MusicGenres, from a payload recorded off the live 4.9.5.0 server.
@@ -156,6 +163,53 @@ void EmbyDtoTest::wideArtPicksPerItemKind()
         "Id": "6", "Name": "Bare", "Type": "Episode"
     })json").object());
     QVERIFY(!bareEpisode.thumbSource().isValid());
+}
+
+// ClearLogo. Hand-written payloads in the BaseItemDto shape: a film or series
+// carries ImageTags.Logo; an episode or season carries none of its own and
+// names its series' through ParentLogoItemId / ParentLogoImageTag, the same
+// pairing as the parent backdrop (which this server sends as a number).
+void EmbyDtoTest::clearLogoIsOwnThenTheSeries()
+{
+    const MediaItem episode = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "402015", "Name": "Granite State", "Type": "Episode",
+        "SeriesId": "400001",
+        "ImageTags": { "Primary": "still-tag" },
+        "ParentLogoItemId": 400001,
+        "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QVERIFY(episode.logoImageTag.isEmpty());
+    QCOMPARE(episode.parentLogoItemId, QStringLiteral("400001"));
+    MediaItem::ImageRef ref = episode.logoSource();
+    QVERIFY(ref.isValid());
+    // The series' tag against the SERIES' id: the episode has no such image.
+    QCOMPARE(ref.itemId, QStringLiteral("400001"));
+    QCOMPARE(ref.imageType, QStringLiteral("Logo"));
+    QCOMPARE(ref.tag, QStringLiteral("series-logo-tag"));
+
+    // An item's own logo wins over a parent's.
+    const MediaItem season = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "400500", "Name": "Season 5", "Type": "Season",
+        "ImageTags": { "Logo": "season-logo-tag" },
+        "ParentLogoItemId": "400001", "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QCOMPARE(season.logoSource().itemId, QStringLiteral("400500"));
+    QCOMPARE(season.logoSource().tag, QStringLiteral("season-logo-tag"));
+
+    // A tag without the item it belongs to addresses nothing, and SeriesId is
+    // never used to guess one: the server says when the series has a logo.
+    const MediaItem orphanTag = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "402016", "Type": "Episode", "SeriesId": "400001",
+        "ParentLogoImageTag": "series-logo-tag"
+    })json").object());
+    QVERIFY(!orphanTag.logoSource().isValid());
+
+    // Wrong types on the wire are absence, not a crash (AGENTS.md).
+    const MediaItem drift = emby::parseMediaItem(QJsonDocument::fromJson(R"json({
+        "Id": "9", "Type": "Movie", "ImageTags": { "Logo": 17 },
+        "ParentLogoImageTag": ["x"]
+    })json").object());
+    QVERIFY(!drift.logoSource().isValid());
 }
 
 // The square is the unit for music, and for a TRACK the trustworthy square is
@@ -294,6 +348,11 @@ void EmbyDtoTest::itemsPage()
     QCOMPARE(matrix.primaryImageTag, QStringLiteral("aaa111"));
     QCOMPARE(matrix.backdropImageTags,
              (QStringList{QStringLiteral("ccc333"), QStringLiteral("ddd444")}));
+    QCOMPARE(matrix.logoImageTag, QStringLiteral("bbb222"));
+    QCOMPARE(matrix.logoSource().itemId, QStringLiteral("301001"));
+    QCOMPARE(matrix.logoSource().imageType, QStringLiteral("Logo"));
+    // No logo on the wire is the common case, and it is no logo — not a guess.
+    QVERIFY(!page.items[1].logoSource().isValid());
 
     const MediaItem &bladeRunner = page.items[1];
     QVERIFY(bladeRunner.isResumable());
@@ -403,6 +462,245 @@ void EmbyDtoTest::artistIdsLineUpWithTheNamesTheyBelongTo()
     })json").object());
     QCOMPARE(namesOnly.artists, QStringList{QStringLiteral("Main Band")});
     QVERIFY(namesOnly.artistIds.isEmpty());
+}
+
+// The server hands back a finished stream URL and the client's whole job is to
+// put a host in front of it. A value the server percent-encoded has to arrive
+// as the same bytes: decoding `%26` to `&` on the way through turns one
+// parameter into two, and `%2B` to `+` turns a plus into a space.
+void EmbyDtoTest::streamUrlKeepsPercentEncodedQueryValues()
+{
+    const QString query =
+        QStringLiteral("DeviceId=test-device&Tag=a%26b%3Dc&Plus=1%2B1&Path=%2Fmnt%2Fa%20b"
+                       "&Pct=100%25&Hash=a%23b&Name=caf%C3%A9&api_key=tok%2Ben");
+    QJsonObject source;
+    source.insert(QLatin1String("Id"), QStringLiteral("ms1"));
+    source.insert(QLatin1String("SupportsTranscoding"), true);
+    source.insert(QLatin1String("TranscodingUrl"),
+                  QStringLiteral("/videos/1/master.m3u8?") + query);
+    source.insert(QLatin1String("TranscodingContainer"), QStringLiteral("ts"));
+    QJsonObject json;
+    json.insert(QLatin1String("MediaSources"), QJsonArray{source});
+    json.insert(QLatin1String("PlaySessionId"), QStringLiteral("ps1"));
+
+    const PlaybackTicket ticket =
+        emby::parsePlaybackTicket(json, QUrl(QStringLiteral("https://server.example/emby")),
+                                  QStringLiteral("1"), QStringLiteral("other-token"),
+                                  QStringLiteral("test-device"));
+    QVERIFY(ticket.isValid());
+    const StreamCandidate *hls = ticket.candidate(0, 0);
+    QVERIFY(hls);
+    QCOMPARE(hls->method, PlayMethod::Transcode);
+    QCOMPARE(hls->url.path(), QStringLiteral("/emby/videos/1/master.m3u8"));
+    // Byte for byte what the server sent, and no second api_key appended.
+    QCOMPARE(hls->url.query(QUrl::FullyEncoded), query);
+    QCOMPARE(QString::fromLatin1(hls->url.toEncoded()),
+             QStringLiteral("https://server.example/emby/videos/1/master.m3u8?") + query);
+}
+
+namespace {
+
+const MediaStream *streamWithIndex(const MediaSource &source, int index)
+{
+    for (const MediaStream &stream : source.streams) {
+        if (stream.index == index)
+            return &stream;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+// With "Method": "External" declared, the server stops delivering a sidecar
+// subtitle inside the stream and names a URL for it instead. That URL is what
+// the player engine fetches, so it has to come out absolute and authenticated
+// exactly like a stream URL — and, being a credential, come out nowhere else.
+void EmbyDtoTest::externalSubtitleDeliveryIsResolvedForTheEngineOnly()
+{
+    const QJsonDocument doc = loadFixture(QStringLiteral("playback_info_external_subtitle.json"));
+    QVERIFY(doc.isObject());
+    const QString token = QStringLiteral("session-token");
+    const PlaybackTicket ticket =
+        emby::parsePlaybackTicket(doc.object(), QUrl(QStringLiteral("https://server.example/emby")),
+                                  QStringLiteral("7700"), token, QStringLiteral("test-device"));
+    QVERIFY(ticket.isValid());
+    const MediaSource &source = ticket.sources.at(0).source;
+    // The subtitle the server chose for this user, by MediaStream index.
+    QCOMPARE(source.defaultSubtitleStreamIndex, 3);
+
+    // A sidecar whose DeliveryUrl already carries a key keeps the server's own,
+    // behind the reverse-proxy base path, with no second key appended.
+    const MediaStream *dutch = streamWithIndex(source, 3);
+    QVERIFY(dutch);
+    QVERIFY(dutch->isExternal);
+    QCOMPARE(dutch->deliveryMethod, QStringLiteral("External"));
+    QCOMPARE(dutch->deliveryUrl,
+             QStringLiteral("/Videos/7700/ms7700/Subtitles/3/0/Stream.srt"
+                            "?api_key=not-a-real-token-fixture-only"));
+    QVERIFY(dutch->isDeliveredExternally());
+    QCOMPARE(QString::fromLatin1(dutch->externalUrl.toEncoded()),
+             QStringLiteral("https://server.example/emby/Videos/7700/ms7700/Subtitles/3/0/"
+                            "Stream.srt?api_key=not-a-real-token-fixture-only"));
+
+    // One that carries none is given the session's.
+    const MediaStream *english = streamWithIndex(source, 4);
+    QVERIFY(english);
+    QVERIFY(english->isDeliveredExternally());
+    QCOMPARE(QString::fromLatin1(english->externalUrl.toEncoded()),
+             QStringLiteral("https://server.example/emby/Videos/7700/ms7700/Subtitles/4/0/"
+                            "Stream.ass?api_key=session-token"));
+
+    // Streams delivered in the file have nothing to fetch.
+    for (int index : {2, 5}) {
+        const MediaStream *embedded = streamWithIndex(source, index);
+        QVERIFY(embedded);
+        QCOMPARE(embedded->deliveryMethod, QStringLiteral("Embed"));
+        QVERIFY(!embedded->isDeliveredExternally());
+        QVERIFY(embedded->externalUrl.isEmpty());
+    }
+    // Neither do video and audio, whatever a server writes next to them.
+    QVERIFY(!streamWithIndex(source, 0)->isDeliveredExternally());
+    QVERIFY(!streamWithIndex(source, 1)->isDeliveredExternally());
+
+    // The map is what QML and the web remote's status JSON are built from. No
+    // token in it, the server's or ours, and no delivery URL at all.
+    const QByteArray published =
+        QJsonDocument::fromVariant(source.toVariantMap()).toJson(QJsonDocument::Compact);
+    QVERIFY(published.contains("Dutch (SRT)"));
+    QVERIFY2(!published.contains("api_key"), published.constData());
+    QVERIFY2(!published.contains("not-a-real-token-fixture-only"), published.constData());
+    QVERIFY2(!published.contains("session-token"), published.constData());
+    QVERIFY2(!published.contains("Stream.srt"), published.constData());
+
+    // Parsed on its own — an item's details, where there is no base URL and no
+    // session to resolve against — the stream says what the server said and
+    // offers nothing to load.
+    const MediaSource bare = emby::parseMediaSource(
+        doc.object().value(QLatin1String("MediaSources")).toArray().at(0).toObject());
+    QCOMPARE(streamWithIndex(bare, 3)->deliveryMethod, QStringLiteral("External"));
+    QVERIFY(!streamWithIndex(bare, 3)->isDeliveredExternally());
+}
+
+// Every recorded PlaybackInfo predates these fields. Their absence, and any
+// nonsense in their place, is "the server did not say".
+void EmbyDtoTest::subtitleDeliveryFieldsAreOptional()
+{
+    const QJsonDocument doc = loadFixture(QStringLiteral("playback_info_multi_version.json"));
+    QVERIFY(doc.isObject());
+    const PlaybackTicket ticket =
+        emby::parsePlaybackTicket(doc.object(), QUrl(QStringLiteral("https://server.example")),
+                                  QStringLiteral("4242"), QStringLiteral("t"),
+                                  QStringLiteral("test-device"));
+    QVERIFY(ticket.isValid());
+    for (const MediaSourceCandidates &entry : ticket.sources) {
+        QCOMPARE(entry.source.defaultSubtitleStreamIndex, -1);
+        for (const MediaStream &stream : entry.source.streams) {
+            QVERIFY(stream.deliveryMethod.isEmpty());
+            QVERIFY(stream.deliveryUrl.isEmpty());
+            QVERIFY(!stream.isDeliveredExternally());
+        }
+    }
+
+    const QJsonObject wrong{
+        {QLatin1String("Type"), QStringLiteral("Subtitle")},
+        {QLatin1String("Index"), 2},
+        {QLatin1String("DeliveryMethod"), 7},
+        {QLatin1String("DeliveryUrl"), QJsonArray{QStringLiteral("/x.srt")}},
+        {QLatin1String("IsExternalUrl"), QStringLiteral("yes")},
+    };
+    const QJsonObject source{
+        {QLatin1String("Id"), QStringLiteral("ms1")},
+        {QLatin1String("Container"), QStringLiteral("mkv")},
+        {QLatin1String("SupportsDirectPlay"), true},
+        {QLatin1String("DefaultSubtitleStreamIndex"), QStringLiteral("two")},
+        {QLatin1String("MediaStreams"), QJsonArray{wrong}},
+    };
+    const PlaybackTicket odd = emby::parsePlaybackTicket(
+        QJsonObject{{QLatin1String("MediaSources"), QJsonArray{source}}},
+        QUrl(QStringLiteral("https://server.example")), QStringLiteral("1"), QStringLiteral("t"),
+        QStringLiteral("test-device"));
+    QVERIFY(odd.isValid());
+    QCOMPARE(odd.sources.at(0).source.defaultSubtitleStreamIndex, -1);
+    const MediaStream &stream = odd.sources.at(0).source.streams.at(0);
+    QVERIFY(stream.deliveryMethod.isEmpty());
+    QVERIFY(stream.deliveryUrl.isEmpty());
+    QVERIFY(!stream.isExternalUrl);
+    QVERIFY(!stream.isDeliveredExternally());
+}
+
+void EmbyDtoTest::externalSubtitleUrlsAreVetted_data()
+{
+    QTest::addColumn<QString>("type");
+    QTest::addColumn<QString>("method");
+    QTest::addColumn<QString>("deliveryUrl");
+    QTest::addColumn<bool>("isExternalUrl");
+    QTest::addColumn<QString>("expected"); // empty: nothing for the engine to load
+
+    const QString sub = QStringLiteral("Subtitle");
+    QTest::newRow("relative, ours")
+        << sub << QStringLiteral("External") << QStringLiteral("/Videos/1/ms1/Subtitles/2/0/Stream.vtt")
+        << false << QStringLiteral("https://server.example/emby/Videos/1/ms1/Subtitles/2/0/Stream.vtt?api_key=tok");
+    QTest::newRow("method spelled in lower case")
+        << sub << QStringLiteral("external") << QStringLiteral("/s.srt") << false
+        << QStringLiteral("https://server.example/emby/s.srt?api_key=tok");
+    // A subtitle hosted elsewhere is fetched from there as it is. Our token is
+    // for our server and is never sent to another host.
+    QTest::newRow("another host gets no token")
+        << sub << QStringLiteral("External") << QStringLiteral("https://subs.example/a/b.srt?k=v")
+        << true << QStringLiteral("https://subs.example/a/b.srt?k=v");
+    // An absolute URL the server does not flag as foreign is treated as a path
+    // on our own server: the token still only ever goes to the configured host.
+    QTest::newRow("unflagged absolute URL stays on our host")
+        << sub << QStringLiteral("External") << QStringLiteral("https://evil.example/Videos/s.srt")
+        << false << QStringLiteral("https://server.example/emby/Videos/s.srt?api_key=tok");
+    // The engine opens anything it is handed. The server names http(s) only.
+    QTest::newRow("local file") << sub << QStringLiteral("External")
+                                << QStringLiteral("file:///etc/passwd") << true << QString();
+    QTest::newRow("no host") << sub << QStringLiteral("External")
+                             << QStringLiteral("/relative/but/flagged.srt") << true << QString();
+    QTest::newRow("other scheme") << sub << QStringLiteral("External")
+                                  << QStringLiteral("smb://nas/share/a.srt") << true << QString();
+    QTest::newRow("external without a URL")
+        << sub << QStringLiteral("External") << QString() << false << QString();
+    QTest::newRow("embedded with a URL")
+        << sub << QStringLiteral("Embed") << QStringLiteral("/s.srt") << false << QString();
+    QTest::newRow("burned in") << sub << QStringLiteral("Encode") << QStringLiteral("/s.srt")
+                               << false << QString();
+    QTest::newRow("hls") << sub << QStringLiteral("Hls") << QStringLiteral("/s.m3u8") << false
+                         << QString();
+    QTest::newRow("not a subtitle") << QStringLiteral("Audio") << QStringLiteral("External")
+                                    << QStringLiteral("/s.srt") << false << QString();
+}
+
+void EmbyDtoTest::externalSubtitleUrlsAreVetted()
+{
+    QFETCH(QString, type);
+    QFETCH(QString, method);
+    QFETCH(QString, deliveryUrl);
+    QFETCH(bool, isExternalUrl);
+    QFETCH(QString, expected);
+
+    const QJsonObject stream{
+        {QLatin1String("Type"), type},
+        {QLatin1String("Index"), 2},
+        {QLatin1String("DeliveryMethod"), method},
+        {QLatin1String("DeliveryUrl"), deliveryUrl},
+        {QLatin1String("IsExternalUrl"), isExternalUrl},
+    };
+    const QJsonObject source{
+        {QLatin1String("Id"), QStringLiteral("ms1")},
+        {QLatin1String("Container"), QStringLiteral("mkv")},
+        {QLatin1String("SupportsDirectPlay"), true},
+        {QLatin1String("MediaStreams"), QJsonArray{stream}},
+    };
+    const PlaybackTicket ticket = emby::parsePlaybackTicket(
+        QJsonObject{{QLatin1String("MediaSources"), QJsonArray{source}}},
+        QUrl(QStringLiteral("https://server.example/emby")), QStringLiteral("1"),
+        QStringLiteral("tok"), QStringLiteral("test-device"));
+    QVERIFY(ticket.isValid());
+    const MediaStream &parsed = ticket.sources.at(0).source.streams.at(0);
+    QCOMPARE(QString::fromLatin1(parsed.externalUrl.toEncoded()), expected);
+    QCOMPARE(parsed.isDeliveredExternally(), !expected.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(EmbyDtoTest)

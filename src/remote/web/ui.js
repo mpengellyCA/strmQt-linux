@@ -249,7 +249,11 @@ export function openSheet({ title, subtitle, build, tall = false }) {
     startY = event.clientY;
     dragged = 0;
     panel.style.transition = 'none';
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // The pointer is already gone; the drag then ends where it leaves the grip.
+    }
   };
   const onMove = (event) => {
     if (startY === null) return;
@@ -263,11 +267,22 @@ export function openSheet({ title, subtitle, build, tall = false }) {
     panel.style.transform = '';
     if (dragged > 90) closeTopOverlay();
   };
+  // The gesture was taken away (a system swipe, a call coming in, the capture
+  // lost), not finished: the sheet goes back where it was, however far it had
+  // been dragged. After a pointerup there is nothing left to undo.
+  const onCancel = () => {
+    if (startY === null) return;
+    startY = null;
+    dragged = 0;
+    panel.style.transition = '';
+    panel.style.transform = '';
+  };
   for (const target of [grip, head]) {
     target.addEventListener('pointerdown', onDown);
     target.addEventListener('pointermove', onMove);
     target.addEventListener('pointerup', onUp);
-    target.addEventListener('pointercancel', onUp);
+    target.addEventListener('pointercancel', onCancel);
+    target.addEventListener('lostpointercapture', onCancel);
   }
 
   const onKey = (event) => {

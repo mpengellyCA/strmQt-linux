@@ -19,6 +19,7 @@
 #include <cstdio>
 
 #ifdef Q_OS_UNIX
+#include <csignal>
 #include <termios.h>
 #include <unistd.h>
 #endif
@@ -52,23 +53,96 @@ template<class T> Result<T> await(QFuture<Result<T>> future)
     return future.result();
 }
 
+#ifdef Q_OS_UNIX
+// What the signal handler below needs, and nothing else may be: a handler can
+// only use what is async-signal-safe, which rules out Qt, iostreams and locks.
+termios g_echoRestoreAttrs{};
+volatile std::sig_atomic_t g_echoIsOff = 0;
+
+// Ctrl+C at the password prompt must not hand the shell back a terminal that
+// no longer shows what is typed. Put echo back, then die of the same signal:
+// the handler was installed one-shot, so the default action is in force again,
+// and the caller sees "killed by SIGINT" rather than a made-up exit code.
+extern "C" void restoreEchoThenDie(int signalNumber)
+{
+    if (g_echoIsOff) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_echoRestoreAttrs);
+        // The Return that would have ended the line never came.
+        const ssize_t ignored = write(STDERR_FILENO, "\n", 1);
+        (void)ignored;
+    }
+    raise(signalNumber);
+}
+
+// Echo off for as long as this lives; back on however the scope is left.
+class EchoOff
+{
+public:
+    EchoOff()
+    {
+        // Not a terminal (a pipe, a file, /dev/null): there is no echo to turn
+        // off and nothing to restore.
+        if (tcgetattr(STDIN_FILENO, &g_echoRestoreAttrs) != 0)
+            return;
+        // Handlers first, so there is no moment with echo off and no way back.
+        for (Guarded &guarded : m_signals) {
+            struct sigaction action{};
+            action.sa_handler = restoreEchoThenDie;
+            action.sa_flags = SA_RESETHAND;
+            sigemptyset(&action.sa_mask);
+            // A signal the caller chose to ignore (nohup) stays ignored.
+            if (sigaction(guarded.number, nullptr, &guarded.previous) == 0
+                && guarded.previous.sa_handler != SIG_IGN) {
+                guarded.installed = sigaction(guarded.number, &action, nullptr) == 0;
+            }
+        }
+        termios noEcho = g_echoRestoreAttrs;
+        noEcho.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+        m_active = tcsetattr(STDIN_FILENO, TCSANOW, &noEcho) == 0;
+        g_echoIsOff = m_active ? 1 : 0;
+    }
+    ~EchoOff()
+    {
+        if (m_active)
+            tcsetattr(STDIN_FILENO, TCSANOW, &g_echoRestoreAttrs);
+        g_echoIsOff = 0;
+        for (Guarded &guarded : m_signals) {
+            if (guarded.installed)
+                sigaction(guarded.number, &guarded.previous, nullptr);
+        }
+    }
+    Q_DISABLE_COPY_MOVE(EchoOff)
+
+    bool active() const { return m_active; }
+
+private:
+    struct Guarded
+    {
+        int number;
+        struct sigaction previous{};
+        bool installed = false;
+    };
+    // Everything a terminal sends that ends the process: Ctrl+C, Ctrl+\, the
+    // window closing, and a plain kill.
+    Guarded m_signals[4] = {{SIGINT}, {SIGQUIT}, {SIGHUP}, {SIGTERM}};
+    bool m_active = false;
+};
+#endif
+
 QString promptPassword()
 {
     err() << "Password: " << Qt::flush;
 #ifdef Q_OS_UNIX
-    termios oldAttrs{};
-    const bool haveTty = tcgetattr(STDIN_FILENO, &oldAttrs) == 0;
-    if (haveTty) {
-        termios noEcho = oldAttrs;
-        noEcho.c_lflag &= ~static_cast<tcflag_t>(ECHO);
-        tcsetattr(STDIN_FILENO, TCSANOW, &noEcho);
+    QString password;
+    bool echoWasOff = false;
+    {
+        const EchoOff echoOff;
+        echoWasOff = echoOff.active();
+        QTextStream in(stdin);
+        password = in.readLine();
     }
-    QTextStream in(stdin);
-    const QString password = in.readLine();
-    if (haveTty) {
-        tcsetattr(STDIN_FILENO, TCSANOW, &oldAttrs);
+    if (echoWasOff)
         err() << "\n" << Qt::flush;
-    }
     return password;
 #else
     QTextStream in(stdin);
@@ -118,16 +192,23 @@ bool restoreSession(emby::EmbyClient &client, Settings &settings, SecretsStore &
     const QString userId = settings.userId();
     if (userId.isEmpty())
         return false;
-    const QString scopedKey = Settings::tokenSecretKeyFor(settings.serverUrl(), userId);
+    // The server the client will actually talk to, which --server may have
+    // pointed away from the stored one: a token is only ever looked up for,
+    // and so only ever sent to, the server it was issued by.
+    const QUrl serverUrl = client.baseUrl().isEmpty() ? settings.serverUrl() : client.baseUrl();
+    const QString scopedKey = Settings::tokenSecretKeyFor(serverUrl, userId);
+    const bool isStoredServer =
+        scopedKey == Settings::tokenSecretKeyFor(settings.serverUrl(), userId);
     Result<QString> stored = await(secrets.readSecret(scopedKey));
     if (!stored.ok()) {
         err() << "warning: could not read the saved access token: " << stored.error << "\n";
         return false;
     }
-    if (stored.value.isEmpty()) {
+    if (stored.value.isEmpty() && isStoredServer) {
         // Pre-scoping installs kept one flat token; adopt it into this
         // account's scope. The flat key is forgotten only once the scoped copy
-        // is safely stored — it is the last resort if the write fails.
+        // is safely stored — it is the last resort if the write fails. It was
+        // issued by the stored server, so it is not offered to any other.
         const Result<QString> legacy = await(secrets.readSecret(Settings::legacyTokenSecretKey()));
         if (legacy.ok() && !legacy.value.isEmpty()) {
             if (await(secrets.writeSecret(scopedKey, legacy.value)).ok())

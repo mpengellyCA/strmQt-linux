@@ -12,6 +12,9 @@
 #include "app/controllers/LiveUpdateService.h"
 #include "app/controllers/PlayerController.h"
 #include "app/controllers/RemoteControlService.h"
+#include "app/controllers/music/NowPlayingMusicController.h"
+#include "app/music/MusicPlayback.h"
+#include "app/music/MusicRepository.h"
 #include "core/Settings.h"
 #include "server/emby/EmbyClient.h"
 #include "server/emby/EmbyWebSocket.h"
@@ -104,8 +107,11 @@ private slots:
     void everyAdvertisedCommandIsRouted();
     void transportCommandsReachThePlayer();
     void pauseAndUnpauseAreIdempotent();
+    void unpauseWhileLoadingIsNotDropped();
     void seekKeepsFullTickPrecision();
     void skipCommandsCarryTheirOwnAmount();
+    void nextAndPreviousStepByChapterBeforeTheQueue();
+    void nextAndPreviousStepByEntryWithoutChapters();
     void playNowStartsAtTheRequestedPosition();
     void playNextPreservesOrderOnAnEmptyQueue();
     void playNextPreservesOrderAfterACurrentItem();
@@ -116,6 +122,7 @@ private slots:
     void uiCommandsBecomeSignals();
     void subtitleOffIsHonouredAndAudioHasNoOff();
     void capabilitiesAreAnnouncedOnEveryConnect();
+    void nowPlayingForgetsFavouritesAtTheSessionBoundary();
 
 private:
     void send(const QString &type, const QJsonObject &data);
@@ -305,6 +312,22 @@ void RemoteControlTest::pauseAndUnpauseAreIdempotent()
     QVERIFY(!m_player->paused());
 }
 
+// Pause and Unpause are absolute. While a load is still settling the engine
+// reads neither Playing nor Paused, and the old handler guarded a toggle with
+// that read: Pause went through (it was "not paused"), and the Unpause meant to
+// undo it was dropped (it was "not paused" either), so the item started paused.
+// Both must reach the engine whatever state it reports.
+void RemoteControlTest::unpauseWhileLoadingIsNotDropped()
+{
+    m_player->playItem(kItemA, QStringLiteral("Item"), 0);
+    QTRY_COMPARE(m_backend->state(), PlayerBackend::State::Loading);
+    m_backend->pauseRequests.clear();
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("Pause")));
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("Unpause")));
+    QCOMPARE(m_backend->pauseRequests, (QList<bool>{true, false}));
+}
+
 // SeekPositionTicks is a JSON number too large to survive a double past roughly
 // 104 days of runtime. The handler goes through toVariant().toLongLong() for
 // exactly that reason, so the test uses a value that a double would round.
@@ -343,6 +366,97 @@ void RemoteControlTest::skipCommandsCarryTheirOwnAmount()
     QVERIFY(!m_backend->seeks.isEmpty());
     QVERIFY2(m_backend->seeks.constLast() < forward,
              "Rewind must move the playhead backward");
+}
+
+// NextTrack / PreviousTrack are the remote's ⏭ / ⏮, and ⏭ / ⏮ follow one rule
+// everywhere (PlayerController::skipForward / skipBack): a video with chapters
+// steps by chapter, then through the queue. The handler called playNext() /
+// playPrevious() instead, so a phone's ⏭ threw away a film for the next queue
+// entry while the same button on the pad, MPRIS and the web remote moved one
+// chapter.
+void RemoteControlTest::nextAndPreviousStepByChapterBeforeTheQueue()
+{
+    // Chapters at 0 s, 10 s and 20 s on the first of two queued episodes.
+    m_mock->addRoute(QStringLiteral("GET"),
+                     QStringLiteral("/Users/%1/Items/%2").arg(kUserId, kItemA), 200,
+                     QStringLiteral(R"json({
+                         "Id": "%1", "Name": "A", "Type": "Episode",
+                         "Chapters": [
+                             {"Name": "One", "StartPositionTicks": 0},
+                             {"Name": "Two", "StartPositionTicks": 100000000},
+                             {"Name": "Three", "StartPositionTicks": 200000000}
+                         ]
+                     })json")
+                         .arg(kItemA)
+                         .toUtf8());
+
+    m_player->playQueue({itemMap(kItemA, QStringLiteral("A")), itemMap(kItemB, QStringLiteral("B"))},
+                        0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(60'000);
+    QTRY_COMPARE(m_player->chapters().size(), 3);
+    m_backend->simulatePosition(1'000);
+    QCOMPARE(m_player->currentChapter(), 0);
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("NextTrack")));
+    QVERIFY(!m_backend->seeks.isEmpty());
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(10'000));
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("NextTrack")));
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(20'000));
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
+
+    // 5 s into the third chapter: ⏮ restarts the chapter, not the episode.
+    m_backend->simulatePosition(25'000);
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("PreviousTrack")));
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(20'000));
+    // ...and from its start, steps back one.
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("PreviousTrack")));
+    QCOMPARE(m_backend->seeks.constLast(), Q_INT64_C(10'000));
+    QCOMPARE(m_backend->loadedUrls.size(), 1);
+
+    // Past the last chapter the queue takes over.
+    m_backend->simulatePosition(25'000);
+    QCOMPARE(m_player->currentChapter(), 2);
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("NextTrack")));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_player->queue()->currentIndex(), 1);
+}
+
+// The other half of the rule, and what the handler did before: with no
+// chapters a one-shot command moves one queue entry, on the command itself —
+// it is not a key, so nothing waits for a release to tell a tap from a hold.
+void RemoteControlTest::nextAndPreviousStepByEntryWithoutChapters()
+{
+    m_player->playQueue({itemMap(kItemA, QStringLiteral("A")), itemMap(kItemB, QStringLiteral("B"))},
+                        0);
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 1);
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulateDuration(60'000);
+    m_backend->simulatePosition(1'000);
+    QVERIFY(m_player->chapters().isEmpty());
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("NextTrack")));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 2);
+    QCOMPARE(m_player->queue()->currentIndex(), 1);
+    QCOMPARE(m_player->playbackSpeed(), 1.0);
+
+    // The end of the queue: nothing, and above all not a stop.
+    m_backend->simulateState(PlayerBackend::State::Playing);
+    m_backend->simulatePosition(1'000);
+    const int stopsBefore = m_backend->stopCalls;
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("NextTrack")));
+    QCOMPARE(m_player->queue()->currentIndex(), 1);
+    QVERIFY(m_player->active());
+    QCOMPARE(m_backend->stopCalls, stopsBefore);
+    QCOMPARE(m_backend->loadedUrls.size(), 2);
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("PreviousTrack")));
+    QTRY_COMPARE(m_backend->loadedUrls.size(), 3);
+    QCOMPARE(m_player->queue()->currentIndex(), 0);
 }
 
 // "Play from the resume point" used to restart from zero: seekTo() ran against
@@ -591,6 +705,53 @@ void RemoteControlTest::capabilitiesAreAnnouncedOnEveryConnect()
             announcedAgain = true;
     }
     QVERIFY2(announcedAgain, "capabilities must be re-sent after a reconnect");
+}
+
+// Not a remote-control behaviour: it lives here because this suite already owns
+// the player, the fake engine and ItemActions that NowPlayingMusicController
+// needs, and the session boundary had no suite of its own to put it in.
+//
+// The controller remembers every favourite this session toggled, keyed by item
+// id, so the heart is right before the server's own record catches up. Item
+// ids are the server's, not the account's: without a reset at the boundary the
+// next person to sign in saw the previous one's hearts on the same tracks.
+void RemoteControlTest::nowPlayingForgetsFavouritesAtTheSessionBoundary()
+{
+    m_mock->addRoute(QStringLiteral("POST"),
+                     QStringLiteral("/Users/%1/FavoriteItems/%2").arg(kUserId, kItemA), 200,
+                     QByteArrayLiteral("{\"IsFavorite\":true}"));
+
+    music::MusicRepository repository(m_client);
+    music::MusicPlayback playback(&repository, m_actions);
+    music::NowPlayingMusicController nowPlaying(&repository, &playback);
+    nowPlaying.bind(m_player, m_actions);
+
+    QVariantMap track = itemMap(kItemA, QStringLiteral("Track"));
+    track.insert(QStringLiteral("type"), QStringLiteral("Audio"));
+    m_player->playQueue({track}, 0);
+    QTRY_COMPARE(nowPlaying.trackId(), kItemA);
+    QVERIFY(!nowPlaying.favourite());
+
+    nowPlaying.toggleFavourite();
+    QVERIFY(nowPlaying.favourite());
+    QTRY_COMPARE(m_actions->pendingUserStateRequestCountForTests(), 0);
+    QVERIFY(nowPlaying.favourite());
+
+    // Application::teardownAuthenticatedSession()'s order: the player first,
+    // which empties the queue, then the controllers.
+    QSignalSpy favouriteChanged(&nowPlaying, &music::NowPlayingMusicController::favouriteChanged);
+    m_player->shutdownForSessionBoundary();
+    nowPlaying.resetSessionState();
+    m_actions->resetSessionState();
+    QVERIFY(!nowPlaying.active());
+    QVERIFY(nowPlaying.trackId().isEmpty());
+    QVERIFY(!nowPlaying.favourite());
+    QVERIFY(favouriteChanged.count() >= 1);
+
+    // The next account plays the same server item, which it never favourited.
+    m_player->playQueue({track}, 0);
+    QTRY_COMPARE(nowPlaying.trackId(), kItemA);
+    QVERIFY(!nowPlaying.favourite());
 }
 
 QTEST_GUILESS_MAIN(RemoteControlTest)
