@@ -140,6 +140,9 @@ signals:
     // controller-materialized intent to that boundary without QML rebuilding
     // or shuffling domain records.
     void playItemsRequested(const QVariantList &items, int startIndex);
+    // The playlist in its own order: the queue does the shuffling, so it can
+    // say it is shuffled and give that order back when shuffle is turned off.
+    void shuffleItemsRequested(const QVariantList &items);
     void queueItemsRequested(const QVariantList &items);
     // The server owns playlist order. After a successful move and authoritative
     // reload, ask the view to follow the same entry at its new row.

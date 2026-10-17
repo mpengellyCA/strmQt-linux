@@ -15,6 +15,7 @@
 #include <QVariantMap>
 
 #include <memory>
+#include <optional>
 
 namespace strmqt {
 
@@ -100,6 +101,13 @@ public:
     // the queue is replaced, so PlayQueue's reset does not wipe it.
     void playAllFromIfCurrent(const QVariantList &items, int startIndex, quint64 generation,
                               const QString &sourceLabel = QString());
+    // Shuffle items the caller already has. They are handed over in their
+    // NATURAL order — never pre-shuffled — and it is the queue that shuffles
+    // them, from a random first item: PlayQueue::shuffled() is then true and
+    // turning shuffle off gives back the order they were handed over in.
+    Q_INVOKABLE void shuffleAllFrom(const QVariantList &items);
+    void shuffleAllFromIfCurrent(const QVariantList &items, quint64 generation,
+                                 const QString &sourceLabel = QString());
 
     // ── Batch verbs (MUSIC.md §7) ─────────────────────────────────────────
     // What a multi-selection in a track table can be done to. Both are the
@@ -179,10 +187,43 @@ public:
     // docked bar's subline.
     Q_INVOKABLE QVariantMap artistTarget(const QVariant &item) const;
 
+    // The server's record for an item, from anywhere: another client, or this
+    // one's own playback once the stop report has been counted
+    // (LiveUpdateService::userDataPatched). Sends nothing. A field with a
+    // request on the wire keeps the value the user asked for and only its
+    // rollback baseline moves, so a record that crosses a toggle neither
+    // flickers the UI nor leaves a later failure rolling back to a value the
+    // server no longer holds. Every other field becomes the best-known state:
+    // the registered models and the play queue are patched, and
+    // playedChanged()/favoriteChanged() fire only for an answer that really
+    // changed — the same record twice is silent the second time. A field the
+    // record does not carry is left exactly as it was.
+    //
+    // Must run BEFORE anything else that patches a registered model from the
+    // same record (LiveUpdateService::setUserDataStage): "did the answer
+    // change" is measured against what the models held, and the signals keep
+    // their contract that the rows are already patched when they fire.
+    void applyExternalUserData(const QString &itemId, std::optional<bool> played,
+                               std::optional<bool> favorite,
+                               std::optional<qint64> playbackPositionTicks = std::nullopt,
+                               std::optional<int> playCount = std::nullopt);
+    // The same, for the payload LiveUpdateService::userDataPatched carries: one
+    // map per item with itemId / played / favorite / positionTicks / playCount.
+    // Returns the payload every other consumer should see: a played or
+    // favorite field with a request on the wire says what the user asked for,
+    // not what the record said, so a page patching its own rows from it
+    // agrees with isPlayed() / isFavorite() instead of reverting the toggle.
+    QVariantList applyUserDataPatches(const QVariantList &entries);
+
     // Best-known user state, including changes not yet confirmed by the server.
-    Q_INVOKABLE bool isPlayed(const QString &itemId) const;
-    Q_INVOKABLE bool isFavorite(const QString &itemId) const;
-    // Only locally changed or externally refreshed rows need a mirror here.
+    // `fallback` is the caller's item map, consulted exactly where the verbs
+    // consult it (knownState()): a label read without it can disagree with the
+    // toggle it sits on for an item nothing here holds.
+    Q_INVOKABLE bool isPlayed(const QString &itemId, const QVariantMap &fallback = {}) const;
+    Q_INVOKABLE bool isFavorite(const QString &itemId, const QVariantMap &fallback = {}) const;
+    // Only locally changed or externally refreshed rows need a mirror here: an
+    // item a registered model holds is answered by its row, and a server
+    // record is mirrored only for an item nothing else here can answer for.
     // Pending mutations are pinned in the same bounded set: admission evicts
     // only settled rows and rejects a new id when every slot is in flight.
     static constexpr int kMaxCachedUserStates = 1024;
@@ -262,17 +303,42 @@ private:
     // page to the player as a queue. `randomStart` picks the first item at
     // random, which is what makes a shuffle of an ordered fetch a real shuffle.
     void fetchIntoQueue(const ItemsQuery &query, bool shuffled, bool randomStart);
+    // "Shuffle" on a container small enough to have an order worth keeping.
+    void shuffleInOrder(const QString &parentId, const QString &collectionType);
+    void replaceQueueIfCurrent(const QVariantList &items, int startIndex, bool shuffled,
+                               quint64 generation, const QString &sourceLabel);
     void continueCollectionWalk(const std::shared_ptr<CollectionWalk> &walk);
     bool requireQueueTarget();
-    UserState knownState(const QString &itemId) const;
+    // `fallback` is the caller's item map, consulted only for an item that
+    // neither the cache nor a registered model holds (every music item).
+    UserState knownState(const QString &itemId, const QVariantMap &fallback = {}) const;
+    static UserState stateFromMap(const QVariantMap &map);
+    // True when the cache or a registered model already answers for the item.
+    bool hasSettledState(const QString &itemId) const;
+    void adoptStateFromMap(const QString &itemId, const QVariantMap &map);
     void rememberState(const QString &itemId, const UserState &state);
+    // What a server-side value did to the best-known state of one item.
+    struct ServerMerge
+    {
+        UserState before;
+        UserState after;
+    };
+    // The one place a value that came FROM the server meets the request
+    // tables: shared by the registered models' change hook and by
+    // applyExternalUserData(). `admitUnanswered` is the difference between
+    // them — a model row needs no mirror until something here tracks it, a
+    // record for an item no model holds has nowhere else to be remembered.
+    ServerMerge mergeServerState(const QString &itemId, std::optional<bool> played,
+                                 std::optional<bool> favorite, bool admitUnanswered);
     void syncCachedUserState(MediaItemModel *model, int firstRow, int lastRow);
     bool admitUserState(const QString &itemId);
     bool evictOldestSettledUserState();
     bool hasPendingUserState(const QString &itemId) const;
     void applyPlayed(const QString &itemId, bool played);
     void applyFavorite(const QString &itemId, bool favorite);
-    void patchModels(const QString &itemId, const UserState &state);
+    // Negative position / play count: leave the rows' own value alone.
+    void patchModels(const QString &itemId, const UserState &state,
+                     qint64 playbackPositionTicks = -1, int playCount = -1);
     void sendPlayed(const QString &itemId, bool played, bool baseline);
     void sendFavorite(const QString &itemId, bool favorite, bool baseline);
 

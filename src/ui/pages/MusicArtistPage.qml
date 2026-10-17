@@ -988,6 +988,7 @@ FocusScope {
 
         z: 800
         mediaType: "Audio"
+        onResultReady: (message, severity) => artistToasts.show(message, severity)
         onDismissed: {
             // The table may have gone away under the overlay (a retry that
             // came back empty); handing focus to a hidden item is the bug
@@ -996,25 +997,6 @@ FocusScope {
                 topTracks.forceActiveFocus(Qt.OtherFocusReason)
             else
                 page.recoverStranded()
-        }
-    }
-
-    // `pending` is what tells this page's toast apart from a playlist edited
-    // on some other surface: PlaylistCtl's results are global.
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            artistToasts.show(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            artistToasts.show(message, "error")
         }
     }
 

@@ -644,7 +644,30 @@ FocusScope {
         onMenuRequested: (index, mx, my) => page.showMenu(index, mx, my)
     }
 
-    ItemMenu { id: itemMenu }
+    ItemMenu {
+        id: itemMenu
+
+        allowAddToPlaylist: true
+        onAddToPlaylistRequested: item => page.addToPlaylist(item)
+    }
+
+    // ── Add to playlist ────────────────────────────────────────────────────
+    // The shared type-and-pick panel, as on the details page, so a film or an
+    // episode can be filed from where it was found. The keyboard
+    // goes back to the grid.
+    function addToPlaylist(item): void {
+        playlistPicker.showItem(item)
+    }
+
+    PlaylistPicker {
+        id: playlistPicker
+
+        z: 800
+        // The result goes to the window's toast host: by the time the server
+        // answers, this page may be covered, and a covered page shows nothing.
+        notifiesWindow: true
+        onDismissed: grid.forceActiveFocus(Qt.OtherFocusReason)
+    }
 
     // ── Page states ────────────────────────────────────────────────────────
     LoadingState {

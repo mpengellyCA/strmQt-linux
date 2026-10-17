@@ -307,6 +307,27 @@ FocusScope {
         contentHeight: sleeveStack.implicitHeight + Theme.spacingLoose
         boundsBehavior: Flickable.StopAtBounds
 
+        // A pad's way to the end of the notes. The genre chips are the only
+        // stop in this column and the rows under them (label, format, added)
+        // are plain text, so on a short window the navigator's "scroll the
+        // focused control into view" has nothing down there to focus and the
+        // wheel was the only way to read them. While the column has more to
+        // show that way, Up and Down from the chips scroll it; at either end
+        // they are declined and are an ordinary arrow again (FocusNavigator).
+        // A column that fits scrolls nothing and declines both.
+        function scrollStep(direction: int): bool {
+            const limit = Math.max(0, sleeveColumn.contentHeight - sleeveColumn.height)
+            const wanted = Math.max(0, Math.min(limit, sleeveColumn.contentY
+                                                       + direction * Theme.scale(96)))
+            if (wanted === sleeveColumn.contentY)
+                return false
+            sleeveColumn.contentY = wanted
+            return true
+        }
+
+        Keys.onUpPressed: event => { event.accepted = sleeveColumn.scrollStep(-1) }
+        Keys.onDownPressed: event => { event.accepted = sleeveColumn.scrollStep(1) }
+
         Column {
             id: sleeveStack
 
@@ -803,24 +824,8 @@ FocusScope {
 
         z: 800
         mediaType: "Audio"
+        onResultReady: (message, severity) => albumToasts.show(message, severity)
         onDismissed: playlistButton.forceActiveFocus(Qt.OtherFocusReason)
-    }
-
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            albumToasts.show(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            albumToasts.show(message, "error")
-        }
     }
 
     StrmToastHost {

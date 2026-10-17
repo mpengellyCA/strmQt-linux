@@ -3,6 +3,11 @@ import Qt5Compat.GraphicalEffects
 
 // Tier shim (spec §4.3), compat tier. MultiEffect's shadowBlur is a 0..1
 // fraction of blurMax (default 32 px); DropShadow wants a radius in pixels.
+//
+// `shadowColor` is declared here because DropShadow has none; black is
+// MultiEffect's own default, so an unset one is the same ink on both tiers.
+// `transparentBorder` is what the full tier's autoPaddingEnabled is: the blur
+// is drawn past the item's edges instead of being cut off at them.
 DropShadow {
     property var elevation: ({ blur: 0, y: 0, opacity: 0 })
     property color shadowColor: "black"

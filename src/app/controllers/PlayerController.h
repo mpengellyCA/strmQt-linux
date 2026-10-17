@@ -463,6 +463,24 @@ private:
                    int preferredSourceIndex, bool fromQueue,
                    const QString &itemType = QString(), bool initiallyPaused = false,
                    const MediaItem *seedItem = nullptr);
+    // The parts of a start that a gapless handover shares with startItem():
+    // the per-item state reset (returns the new generation), taking the
+    // item's ticket, and the per-attempt reset before an engine load.
+    int beginItem(const QString &itemId, const QString &title, qint64 startPositionMs,
+                  int preferredSourceIndex, const QString &itemType, bool initiallyPaused);
+    void adoptTicket(const PlaybackTicket &ticket, const QString &itemId);
+    void beginAttempt();
+    static QString queueEntryTitle(const QVariantMap &item);
+    static qint64 queueEntryStartMs(const QVariantMap &item);
+    // Gapless advance: resolve the next track of a music queue in the last
+    // kGaplessLeadMs of this one and queue it in the engine; adopt it when the
+    // engine moves on to it by itself (PlayerBackend::prefetchNext).
+    bool gaplessPrefetchWanted() const;
+    // Requests, keeps or cancels the prefetch to match the state right now.
+    void updateGaplessPrefetch();
+    void requestGaplessPrefetch();
+    void cancelGaplessPrefetch();
+    void onPrefetchStarted(PlayerBackend::LoadId finished, PlayerBackend::LoadId started);
     // Plays whatever the queue's cursor points at. Without `force`, an item that
     // is already the running one is left alone (a re-index is not a restart).
     bool startQueueCurrent(bool force);
@@ -529,6 +547,15 @@ private:
     void rememberCurrentTracks();
     // Applies a remembered pair once the engine has published its track list.
     void restoreRememberedTracks();
+    // The subtitles of the selected source that the engine will not find in
+    // the stream the current rung opens, and so has to be handed separately.
+    QList<MediaStream> externalSubtitlesForCurrentRung() const;
+    // Hands those to the engine, once per load: every retry, demotion and
+    // reload is a new file to the engine and starts without them.
+    void attachExternalSubtitles();
+    // A remembered subtitle that was not in the engine's list when the choice
+    // was restored, because it is one of the external ones still on its way.
+    void applyDeferredSubtitleTrack();
     void setBusy(bool busy);
     // The answer isAudio() caches, and the one place that recomputes it. Both
     // inputs — the queue's cursor and the chosen media source — move on their
@@ -644,6 +671,29 @@ private:
     // playback twice.
     bool m_queueDriving = false;
     bool m_upNextCancelled = false;
+
+    // The next track's prefetch. Failed means "tried for this entry and could
+    // not": not retried while the same entry is next, and harmless, because
+    // the ordinary advance still runs at the end.
+    enum class GaplessStage
+    {
+        None,
+        Resolving, // its PlaybackInfo request is out
+        Queued,    // the engine holds it
+        Failed,
+    };
+    struct GaplessPrefetch
+    {
+        GaplessStage stage = GaplessStage::None;
+        int token = 0; // matches the reply that belongs to this request
+        quint64 entryKey = 0; // PlayQueue entry it is for; ids repeat, keys do not
+        QString itemId;
+        qint64 startMs = 0;
+        PlaybackTicket ticket;
+        PlayerBackend::LoadId loadId = 0;
+    };
+    GaplessPrefetch m_gapless;
+    int m_gaplessToken = 0;
     bool m_upNextVisible = false;
     int m_upNextSeconds = 0;
 
@@ -653,6 +703,9 @@ private:
     bool m_restoringTracks = false;
     std::optional<int> m_pendingAudioTrack;
     std::optional<int> m_pendingSubtitleTrack;
+    std::optional<int> m_deferredSubtitleTrack;
+    // The load whose external subtitles have been attached; 0 for none yet.
+    PlayerBackend::LoadId m_externalSubtitlesLoadId = 0;
 
     // Hold-to-fast-forward. m_fastForwarding spans from the moment a press
     // became a hold to its release; the speed and the mute it overrode are put

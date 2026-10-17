@@ -359,6 +359,8 @@ private slots:
     void genrePickerRowHoverPreviewsWithoutStealingFocus();
     void genrePickerOpenShowsFocusOnTheSearchField();
     void genrePickerHiddenButtonsAreNotTabStops();
+    void genrePickerKeepsItsCursorInView();
+    void genrePickerStationaryPointerDoesNotTakeTheCursor();
 
 private:
     QTemporaryDir m_dir;
@@ -887,6 +889,138 @@ void CrateControlsTest::genrePickerOpenShowsFocusOnTheSearchField()
     QTRY_COMPARE(border->property("color").value<QColor>(), accent);
 
     QVERIFY(QMetaObject::invokeMethod(picker, "close"));
+}
+
+namespace {
+
+// The measured library has 289 genres; forty is enough to run well past the
+// list's ten-row window.
+QVariantList manyGenres()
+{
+    QVariantList out;
+    for (int i = 0; i < 40; ++i) {
+        out.append(QVariantMap{{QStringLiteral("id"), QString::number(100 + i)},
+                               {QStringLiteral("name"), QStringLiteral("Genre %1").arg(i, 2, 10, QLatin1Char('0'))},
+                               {QStringLiteral("subtitle"), QStringLiteral("1 record")},
+                               {QStringLiteral("selected"), false}});
+    }
+    return out;
+}
+
+// The current row lies wholly inside the list's own window.
+bool currentRowShown(QQuickItem *list)
+{
+    QQuickItem *current = list->property("currentItem").value<QQuickItem *>();
+    if (!current)
+        return false;
+    const qreal top = current->y() - list->property("contentY").toReal();
+    return top >= -0.5 && top + current->height() <= list->height() + 0.5;
+}
+
+} // namespace
+
+// The rows are walked from the search field and the view draws no highlight,
+// so nothing of ListView's own follows currentIndex: Down used to walk the
+// cursor off the bottom of the list, and Return ticked a row nobody could see.
+void CrateControlsTest::genrePickerKeepsItsCursorInView()
+{
+    QQuickItem *picker = item("genrePicker");
+    QVERIFY(picker);
+    const QVariant options = picker->property("options");
+    picker->setProperty("options", manyGenres());
+    QVERIFY(QMetaObject::invokeMethod(picker, "open"));
+    QTRY_VERIFY(picker->property("opened").toBool());
+
+    QQuickItem *field = item("genrePickerField");
+    QQuickItem *list = item("genrePickerList");
+    QVERIFY(field);
+    QVERIFY(list);
+    QTRY_VERIFY(field->hasActiveFocus());
+    QTRY_COMPARE(list->property("count").toInt(), 40);
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
+    // The premise: the list is shorter than what it holds.
+    QTRY_VERIFY(list->property("contentHeight").toReal() > list->height() + 1);
+
+    for (int i = 0; i < 25; ++i)
+        QTest::keyClick(&m_view, Qt::Key_Down);
+    QCOMPARE(list->property("currentIndex").toInt(), 25);
+    QVERIFY(list->property("contentY").toReal() > 0);
+    QTRY_VERIFY(currentRowShown(list));
+    QVERIFY(field->hasActiveFocus());
+
+    for (int i = 0; i < 25; ++i)
+        QTest::keyClick(&m_view, Qt::Key_Up);
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(currentRowShown(list));
+
+    // Narrowing keeps the cursor's row number where it can, and that row has
+    // to be on show in the list the filter rebuilt.
+    for (int i = 0; i < 30; ++i)
+        QTest::keyClick(&m_view, Qt::Key_Down);
+    QTest::keyClick(&m_view, Qt::Key_G);
+    QTRY_COMPARE(list->property("count").toInt(), 40);
+    QCOMPARE(list->property("currentIndex").toInt(), 30);
+    QTRY_VERIFY(currentRowShown(list));
+
+    QVERIFY(QMetaObject::invokeMethod(picker, "close"));
+    QTRY_VERIFY(!picker->property("opened").toBool());
+    picker->setProperty("options", options);
+}
+
+// ARCHITECTURE.md §4, "a pointer nobody is moving is not hovering anything":
+// a pointer that MOVES over a row previews it, and one left resting on the
+// list takes nothing — not as rows scroll under it from the arrow keys, and
+// not as the filter rebuilds them from what is being typed.
+void CrateControlsTest::genrePickerStationaryPointerDoesNotTakeTheCursor()
+{
+    QQuickItem *picker = item("genrePicker");
+    QVERIFY(picker);
+    const QVariant options = picker->property("options");
+    picker->setProperty("options", manyGenres());
+    QVERIFY(QMetaObject::invokeMethod(picker, "open"));
+    QTRY_VERIFY(picker->property("opened").toBool());
+
+    QQuickItem *field = item("genrePickerField");
+    QQuickItem *list = item("genrePickerList");
+    QVERIFY(field);
+    QVERIFY(list);
+    QTRY_VERIFY(field->hasActiveFocus());
+    QTRY_COMPARE(list->property("count").toInt(), 40);
+    // The picker keeps its cursor between openings; start from the top.
+    for (int i = 0; i < 40; ++i)
+        QTest::keyClick(&m_view, Qt::Key_Up);
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QTRY_COMPARE(list->property("contentY").toReal(), 0.0);
+
+    QQuickItem *row = nullptr;
+    QTRY_VERIFY((row = item("genrePickerRow-103")) != nullptr);
+    const QPoint onRow = row->mapToScene(QPointF(row->width() / 2, row->height() / 2)).toPoint();
+
+    // The first sighting only says where the pointer is; travel previews.
+    QTest::mouseMove(&m_view, onRow);
+    QTest::mouseMove(&m_view, onRow + QPoint(3, 1));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 3);
+    QVERIFY(field->hasActiveFocus());
+
+    // From here the pointer is not touched again. Rows scroll under it…
+    for (int i = 0; i < 20; ++i) {
+        QTest::keyClick(&m_view, Qt::Key_Down);
+        QTest::qWait(1);
+    }
+    QTest::qWait(60);
+    QCOMPARE(list->property("currentIndex").toInt(), 23);
+    QVERIFY(list->property("contentY").toReal() > 0);
+
+    // …and are rebuilt under it by a keystroke in the field.
+    QTest::keyClick(&m_view, Qt::Key_G);
+    QTRY_COMPARE(list->property("count").toInt(), 40);
+    QTest::qWait(60);
+    QCOMPARE(list->property("currentIndex").toInt(), 23);
+
+    QTest::mouseMove(&m_view, QPoint(5, 5));
+    QVERIFY(QMetaObject::invokeMethod(picker, "close"));
+    QTRY_VERIFY(!picker->property("opened").toBool());
+    picker->setProperty("options", options);
 }
 
 QTEST_MAIN(CrateControlsTest)

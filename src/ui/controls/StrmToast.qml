@@ -101,8 +101,12 @@ Item {
         elide: Text.ElideRight
     }
 
+    // Mouse affordances only (the header's contract): left as Tab stops they
+    // were also arrow targets, so a Right from the page's last column landed
+    // on a toast that was about to disappear and took the keyboard with it.
     StrmButton {
         id: actionButton
+        activeFocusOnTab: false
         anchors.right: dismissButton.left
         anchors.rightMargin: Theme.spacingTight / 2
         anchors.verticalCenter: parent.verticalCenter
@@ -114,6 +118,7 @@ Item {
 
     StrmIconButton {
         id: dismissButton
+        activeFocusOnTab: false
         anchors.right: parent.right
         anchors.rightMargin: Theme.spacingTight / 2
         anchors.verticalCenter: parent.verticalCenter

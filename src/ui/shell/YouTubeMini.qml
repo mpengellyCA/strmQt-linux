@@ -48,7 +48,19 @@ FocusScope {
                ? address : "";
     }
     readonly property string artist: mini.report.artist ? String(mini.report.artist) : ""
+    // MiniPlayer's rule ("What fits"): the centred transport and the cluster
+    // pinned to the right-hand edge meet when half the row is narrower than
+    // half the one plus the other, and the timecode's width is the page's to
+    // decide. The breakpoint covers every clock measured; asking as well makes
+    // the timecode the thing that gives way, whatever it grows to. Sums of
+    // declared sizes, never the Rows' own width.
+    readonly property int stripStep: Theme.scale(34) + Theme.spacingTight
+    readonly property int fullTransport: Theme.scale(40) + 3 * mini.stripStep
+    readonly property int fullCluster: Math.ceil(timeMetrics.width) + 4 * mini.stripStep
     readonly property bool compactWidth: mini.width < Theme.scale(900)
+                                         || mini.width - 2 * Theme.spacingValue
+                                            < mini.fullTransport
+                                              + 2 * (mini.fullCluster + Theme.spacingValue)
     readonly property bool narrowWidth: mini.width < Theme.scale(620)
 
     // MiniPlayer's video metrics, one for one.

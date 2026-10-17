@@ -119,12 +119,47 @@ QtObject {
     readonly property color selectionTint: Qt.rgba(theme.accentColor.r, theme.accentColor.g,
                                                    theme.accentColor.b, 0.16)
 
+    // ── Subtitle colours ───────────────────────────────────────────────────
+    // The colours a subtitle can be set in, offered by Settings and by the
+    // player's own sheet. One list, here, because the two used to keep a copy
+    // each and the copies drifted: a colour picked in one showed in the other
+    // as a hex code, or as nothing selected. mpv takes #RRGGBB and Settings
+    // refuses anything else, so a value is stored exactly as it is written.
+    readonly property var subtitleColors: [
+        ({ "text": qsTr("White"), "value": "#FFFFFF" }),
+        ({ "text": qsTr("Soft white"), "value": "#E8E2D6" }),
+        ({ "text": qsTr("Amber"), "value": "#F0A02A" }),
+        ({ "text": qsTr("Yellow"), "value": "#F2E14C" }),
+        ({ "text": qsTr("Cyan"), "value": "#7FD8E8" }),
+        ({ "text": qsTr("Green"), "value": "#8CE08C" }),
+        ({ "text": qsTr("Grey"), "value": "#A0A0A0" }),
+        ({ "text": qsTr("Black"), "value": "#000000" })
+    ]
+
+    // The entry of subtitleColors a stored colour is shown as, or -1 for one
+    // that came from somewhere else and has no name. A shade an older list
+    // offered is named as the entry that replaced it (Settings::
+    // subtitleColorSwatch, which the web remote is handed too); it is still
+    // drawn exactly as stored.
+    function subtitleColorIndex(value: string): int {
+        const written = String(value).toUpperCase();
+        const wanted = typeof Prefs !== "undefined" ? Prefs.subtitleColorSwatch(written) : written;
+        return theme.subtitleColors.findIndex(entry => entry.value === wanted);
+    }
+
+    // What to call a stored colour: its entry's name, or "Custom" and the code.
+    function subtitleColorName(value: string): string {
+        const index = theme.subtitleColorIndex(value);
+        return index >= 0 ? theme.subtitleColors[index].text
+                          : qsTr("Custom %1").arg(String(value).toUpperCase());
+    }
+
     // ── Density ────────────────────────────────────────────────────────────
     // One design at two sizes: the desk and the couch get the same tokens
     // scaled, instead of one audience being served and the other apologised to.
-    // Settings drives this; InputMap flips it to "tv" when a gamepad wakes up.
-    // Persisted; SettingsPage writes it live and Settings makes it survive a
-    // restart. Same Prefs guard as the accent above.
+    // Only the user changes it: SettingsPage writes it live and Settings makes
+    // it survive a restart. Nothing switches it for them, a gamepad waking up
+    // included. Same Prefs guard as the accent above.
     property string densityMode: typeof Prefs !== "undefined" ? Prefs.densityMode
                                                               : "comfortable"
     readonly property real density: densityMode === "compact" ? 0.9
@@ -187,7 +222,12 @@ QtObject {
     readonly property int animFastMs: theme.reducedMotion ? 0 : 160
     readonly property int animNormalMs: theme.reducedMotion ? 0 : 240
     readonly property int animSlow: theme.reducedMotion ? 0 : 420
-    readonly property int animAmbient: 1200
+    // The period of a loop (a shimmer, a spinner, a pulse), and zero under
+    // reduced motion like the rest. Zero is not what stills a loop, though: a
+    // looping animation with no duration finishes at once and leaves its
+    // target at the far end. Whatever loops on this also gates `running` on
+    // `reducedMotion` and draws a still state of its own (tst_crate_tokens).
+    readonly property int animAmbient: theme.reducedMotion ? 0 : 1200
 
     readonly property int easeInstant: Easing.OutQuad
     readonly property int easeStandard: Easing.OutCubic

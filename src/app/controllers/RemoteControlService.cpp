@@ -106,17 +106,20 @@ void RemoteControlService::handlePlaystate(const QJsonObject &data)
     if (command == QLatin1String("PlayPause")) {
         m_player->togglePause();
     } else if (command == QLatin1String("Pause")) {
-        if (!m_player->paused())
-            m_player->togglePause();
+        // Absolute verbs, not a toggle guarded by a read of the engine's
+        // state: that read is false while a load is still settling, so a
+        // guarded Unpause was dropped exactly when it had a Pause to undo.
+        m_player->setPaused(true);
     } else if (command == QLatin1String("Unpause")) {
-        if (m_player->paused())
-            m_player->togglePause();
+        m_player->setPaused(false);
     } else if (command == QLatin1String("Stop")) {
         m_player->stop();
     } else if (command == QLatin1String("NextTrack")) {
-        m_player->playNext();
+        // The one ⏭/⏮ rule every other surface follows (ARCHITECTURE.md):
+        // a video with chapters steps by chapter, then through the queue.
+        m_player->skipForward();
     } else if (command == QLatin1String("PreviousTrack")) {
-        m_player->playPrevious();
+        m_player->skipBack();
     } else if (command == QLatin1String("Rewind")) {
         m_player->seekRelative(-kRemoteSkipMs);
     } else if (command == QLatin1String("FastForward")) {

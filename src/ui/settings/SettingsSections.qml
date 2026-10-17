@@ -165,16 +165,20 @@ Item {
     }
 
     // ── A subtitle colour choice ───────────────────────────────────────────
-    // A swatch rather than a colour dialog: mpv takes an #RRGGBB, and the six
-    // colours anyone actually uses for subtitles fit in a row. Pointer- and
-    // focus-capable like everything else, and `selected` is controlled by the
-    // owner so it can never disagree with what is stored.
+    // A swatch rather than a colour dialog: mpv takes an #RRGGBB, and the
+    // colours anyone actually uses for subtitles (Theme.subtitleColors) fit in
+    // a row. Pointer- and focus-capable like everything else, and `selected`
+    // is controlled by the owner so it can never disagree with what is stored.
     component ColorSwatch: Item {
         id: swatch
 
         property color swatchColor: "#FFFFFF"
         property string label: ""
         property bool selected: false
+        // Perceived lightness, 0 to 1: which ink the tick is drawn in, and
+        // whether the swatch needs a stronger edge to be seen at all.
+        readonly property real luma: swatch.swatchColor.r * 0.299 + swatch.swatchColor.g * 0.587
+                                     + swatch.swatchColor.b * 0.114
 
         signal picked
 
@@ -204,7 +208,11 @@ Item {
             radius: Theme.radiusChip
             color: swatch.swatchColor
             border.width: 1
-            border.color: swatch.selected ? Theme.accentColor : Theme.hairline
+            // A hairline around black is black on near-black: the swatch was
+            // a hole in the row. A dark one takes the next ink up.
+            border.color: swatch.selected ? Theme.accentColor
+                        : swatch.luma < 0.2 ? Theme.textDisabled
+                        : Theme.hairline
         }
 
         // The tick is drawn in the swatch's own contrast, not in the accent:
@@ -214,8 +222,7 @@ Item {
             visible: swatch.selected
             name: "check"
             size: Theme.scale(16)
-            color: (swatch.swatchColor.r * 0.299 + swatch.swatchColor.g * 0.587
-                    + swatch.swatchColor.b * 0.114) > 0.6 ? Theme.ground : Theme.textPrimaryColor
+            color: swatch.luma > 0.6 ? Theme.ground : Theme.textPrimaryColor
         }
 
         FocusRing {
@@ -562,6 +569,21 @@ Item {
     // It reports raw key + modifiers and lets the owner call InputMap; the
     // sheet knows nothing about the input map, so a conflict is the owner's
     // message to write.
+    //
+    // ── Listening is focus ──────────────────────────────────────────────────
+    // The key well is a control, and it listens for exactly as long as it holds
+    // the keyboard — the ring says which state the sheet is in. It used to be
+    // an invisible item over the whole sheet that took every key there was, so
+    // nothing but a pointer could reach the two buttons under it.
+    //
+    // A keyboard does not need to reach them: every key it has is a candidate
+    // binding, arrows and Tab included, and Esc and Backspace do what the
+    // buttons do. A pad or a phone is the other way about. Its keys are not
+    // keyboard keys at all — they are whatever the navigation actions happen
+    // to be bound to, delivered on its behalf — so binding one would only ever
+    // report a conflict with the action that produced it. From those the well
+    // takes nothing: it declines the arrow, FocusNavigator walks it to the
+    // buttons, and Up comes back to listen again.
     component KeyCaptureSheet: Item {
         id: sheet
 
@@ -569,10 +591,26 @@ Item {
         property string currentSequence: ""
         property string message: ""
         property bool messageIsError: false
+        // True while the device in use is a pad or a remote. The owner binds it
+        // to the input map; with `keyPressed` it is how the well tells a
+        // delivered key from a typed one.
+        property bool padDriving: false
+        readonly property bool listening: keyWell.activeFocus
+
+        // A sheet (ARCHITECTURE.md §5): arrows and Back stop at its edge, the
+        // shell's shortcuts and shoulder buttons stand down, and focus found
+        // outside it is brought back to the well.
+        property bool navModal: sheet.visible
+        property Item navEntry: keyWell
 
         signal captured(int key, int modifiers)
         signal cleared
         signal dismissed
+        // A key reached the sheet. The owner answers by stamping the keyboard
+        // as the device in use, as the shell does from its own key handler; a
+        // stamp is not believed while a delivered key is being handled, so
+        // `padDriving` still being true afterwards means the pad sent it.
+        signal keyPressed
 
         // Modifier-only presses are the user still assembling the chord, not a
         // binding: Ctrl alone would bind Ctrl and swallow every chord after it.
@@ -584,11 +622,34 @@ Item {
 
         function open(): void {
             sheet.visible = true;
-            catcher.forceActiveFocus(Qt.OtherFocusReason);
+            keyWell.forceActiveFocus(Qt.OtherFocusReason);
         }
 
         visible: false
         z: 40
+
+        // What a button or the well declined arrives here. An arrow is declined
+        // again, which is what hands it to FocusNavigator (it asks a modal
+        // surface first and moves only on a refusal); Esc is still a cancel
+        // with the keyboard on a button; and nothing else may go on to the
+        // page behind the scrim.
+        Keys.onPressed: event => {
+            sheet.keyPressed();
+            if (event.modifiers === Qt.NoModifier
+                    && (event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                        || event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
+                event.accepted = false;
+                return;
+            }
+            event.accepted = true;
+            if (event.key === Qt.Key_Escape && !event.isAutoRepeat)
+                sheet.dismissed();
+        }
+
+        // Releases would otherwise reach the page behind the scrim.
+        Keys.onReleased: event => {
+            event.accepted = true;
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -626,8 +687,8 @@ Item {
                 Text {
                     width: parent.width
                     text: sheet.currentSequence.length > 0
-                          ? qsTr("Currently %1. Press the new combination now.").arg(sheet.currentSequence)
-                          : qsTr("Currently unbound. Press the combination now.")
+                          ? qsTr("Currently %1. Press the new combination on the keyboard.").arg(sheet.currentSequence)
+                          : qsTr("Currently unbound. Press the combination on the keyboard.")
                     color: Theme.textSecondaryColor
                     font.family: Theme.fontBody
                     font.pixelSize: Theme.fontSmall
@@ -636,12 +697,112 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
+                // The key sink, drawn. A tab stop so that the navigator counts
+                // it — Up from the buttons has to have somewhere to land — and
+                // never tabbed *out* of: while it listens, Tab is a key like
+                // any other.
+                Item {
+                    id: keyWell
+
+                    width: parent.width
+                    implicitHeight: Theme.controlHeightLarge
+                    height: implicitHeight
+                    activeFocusOnTab: true
+
+                    // Down goes to Cancel, not to whichever button is nearer:
+                    // the one that changes nothing is where a stray A lands.
+                    property Item navDown: cancelButton
+
+                    Accessible.role: Accessible.HotkeyField
+                    Accessible.name: qsTr("New shortcut for %1").arg(sheet.actionName)
+                    Accessible.description: wellLabel.text
+                    Accessible.focusable: true
+                    Accessible.focused: keyWell.activeFocus
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Theme.radiusChip
+                        color: Theme.surfaceColor
+                        border.width: 1
+                        border.color: sheet.listening ? Theme.accentColor : Theme.hairline
+                    }
+
+                    Text {
+                        id: wellLabel
+
+                        anchors.centerIn: parent
+                        width: parent.width - Theme.spacingValue
+                        horizontalAlignment: Text.AlignHCenter
+                        text: sheet.listening ? qsTr("press a key…")
+                            : sheet.currentSequence.length > 0 ? sheet.currentSequence
+                            : qsTr("unbound")
+                        color: sheet.listening ? Theme.accentColor : Theme.textTertiary
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSmall
+                        elide: Text.ElideRight
+                    }
+
+                    FocusRing {
+                        active: keyWell.activeFocus
+                        radius: Theme.radiusChip
+                        inset: -Theme.scale(3)
+                    }
+
+                    TapHandler {
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: keyWell.forceActiveFocus(Qt.MouseFocusReason)
+                    }
+
+                    // Every key belongs to the well while it listens, the ones
+                    // a window shortcut is bound to above all: unclaimed, "/"
+                    // opened Search behind the scrim and was never offered as a
+                    // binding, so its conflict could not even be reported.
+                    Keys.onShortcutOverride: event => {
+                        event.accepted = true;
+                    }
+
+                    Keys.onPressed: event => {
+                        sheet.keyPressed();
+                        if (sheet.padDriving) {
+                            // Delivered, not typed: Back cancels, an arrow is
+                            // declined and moves the cursor, and the rest —
+                            // Select, paging — has nothing to do here.
+                            const arrow = event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                                       || event.key === Qt.Key_Left || event.key === Qt.Key_Right;
+                            event.accepted = !arrow || event.modifiers !== Qt.NoModifier;
+                            if (event.key === Qt.Key_Escape && !event.isAutoRepeat)
+                                sheet.dismissed();
+                            return;
+                        }
+                        event.accepted = true;
+                        if (event.isAutoRepeat)
+                            return;
+                        if (event.key === Qt.Key_Escape) {
+                            sheet.dismissed();
+                            return;
+                        }
+                        if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+                            sheet.cleared();
+                            return;
+                        }
+                        if (sheet.isModifierOnly(event.key))
+                            return;
+                        sheet.captured(event.key, event.modifiers);
+                    }
+                }
+
+                // What gets out of each state, said for the device in hand.
                 Text {
                     width: parent.width
-                    text: qsTr("Esc cancels · Backspace restores the default")
+                    text: !sheet.listening ? (sheet.padDriving
+                                              ? qsTr("Up listens for a key again · Back cancels")
+                                              : qsTr("Up listens for a key again · Esc cancels"))
+                        : sheet.padDriving ? qsTr("Down for the buttons · Back cancels")
+                        : qsTr("Esc cancels · Backspace restores the default")
                     color: Theme.textTertiary
                     font.family: Theme.fontMono
                     font.pixelSize: Theme.fontCaption
+                    wrapMode: Text.WordWrap
                 }
 
                 Text {
@@ -671,42 +832,13 @@ Item {
                     }
 
                     StrmButton {
+                        id: cancelButton
+
                         text: qsTr("Cancel")
                         variant: "ghost"
                         onClicked: sheet.dismissed()
                     }
                 }
-            }
-        }
-
-        // The key sink. It is an Item, not a control: it must never be reached
-        // by Tab, and it must hold focus for exactly as long as the sheet is up.
-        Item {
-            id: catcher
-
-            anchors.fill: parent
-            focus: sheet.visible
-
-            Keys.onPressed: event => {
-                event.accepted = true;
-                if (event.isAutoRepeat)
-                    return;
-                if (event.key === Qt.Key_Escape) {
-                    sheet.dismissed();
-                    return;
-                }
-                if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
-                    sheet.cleared();
-                    return;
-                }
-                if (sheet.isModifierOnly(event.key))
-                    return;
-                sheet.captured(event.key, event.modifiers);
-            }
-
-            // Releases would otherwise reach the page behind the scrim.
-            Keys.onReleased: event => {
-                event.accepted = true;
             }
         }
     }

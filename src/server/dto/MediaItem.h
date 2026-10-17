@@ -100,6 +100,14 @@ struct MediaItem
     QString parentPrimaryImageItemId;
     QString parentPrimaryImageTag;
 
+    // ClearLogo: a transparent title treatment. A Movie or Series carries its
+    // own under ImageTags.Logo; an Episode or Season has none and names its
+    // series' through ParentLogoItemId / ParentLogoImageTag, the same pairing
+    // the parent backdrop and thumb use. See MediaItem::logoSource().
+    QString logoImageTag;
+    QString parentLogoItemId;
+    QString parentLogoImageTag;
+
     // Client-only fallback for an item launched from a bare id (crash resume,
     // remote control). Emby's image endpoint does not require a tag, so those
     // paths can still probe the current Primary image while the full details
@@ -181,6 +189,22 @@ struct MediaItem
             || type.compare(QLatin1String("MusicArtist"), Qt::CaseInsensitive) == 0
             || type.compare(QLatin1String("Playlist"), Qt::CaseInsensitive) == 0)
             return parent;
+        return {};
+    }
+
+    // The logo that names this item, or an invalid ref when the server sent
+    // none — the common case, and the caller draws the title as text. The
+    // item's own logo first, then the one the server points at for its parent:
+    // for an episode or a season that is the series' logo, which is what a
+    // reader recognises the episode by. No logo is ever guessed from SeriesId:
+    // the server says when the series has one, and a probe for one it does not
+    // have is a 404 per row.
+    ImageRef logoSource() const
+    {
+        if (!logoImageTag.isEmpty())
+            return {id, QStringLiteral("Logo"), logoImageTag};
+        if (!parentLogoImageTag.isEmpty() && !parentLogoItemId.isEmpty())
+            return {parentLogoItemId, QStringLiteral("Logo"), parentLogoImageTag};
         return {};
     }
 };

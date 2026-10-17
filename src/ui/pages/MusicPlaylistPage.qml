@@ -192,6 +192,10 @@ FocusScope {
             if (page.StackView.status === StackView.Active)
                 Actions.playAllFrom(items, startIndex)
         }
+        function onShuffleItemsRequested(items) {
+            if (page.StackView.status === StackView.Active)
+                Actions.shuffleAllFrom(items)
+        }
         function onQueueItemsRequested(items) {
             if (page.StackView.status === StackView.Active)
                 Actions.addAllToQueue(items)
@@ -789,9 +793,9 @@ FocusScope {
                 width: parent.width
                 placeholderText: qsTr("Playlist name")
                 onAccepted: renameSheet.commit()
-                // The field's own signal, not Keys.onEscapePressed: an attached
-                // handler re-declared here would REPLACE the one inside
-                // StrmSearchField rather than add to it.
+                // The field's own signal, which every owner of StrmSearchField
+                // uses. (An attached Keys.onEscapePressed here would run as
+                // well as the control's own, not instead of it.)
                 onEscapePressed: renameSheet.close()
             }
 

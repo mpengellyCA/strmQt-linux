@@ -3,7 +3,6 @@
 qt_add_library(strmqt_core STATIC
     core/Log.h core/Log.cpp
     core/Settings.h core/Settings.cpp
-    server/MediaServerBackend.h server/MediaServerBackend.cpp
     server/dto/ItemsPage.h
     server/dto/Library.h
     server/dto/MediaItem.h
@@ -65,6 +64,7 @@ qt_add_library(strmqt_app STATIC
     app/controllers/SeriesController.h app/controllers/SeriesController.cpp
     app/controllers/DetailsController.h app/controllers/DetailsController.cpp
     app/ItemActions.h app/ItemActions.cpp
+    app/UserDataWiring.h app/UserDataWiring.cpp
     app/YouTubeLinks.h
     app/PlayQueue.h app/PlayQueue.cpp
     app/music/TtlCache.h
@@ -151,7 +151,6 @@ qt_add_executable(strmqt
     playback/mpv/MpvPlayer.h playback/mpv/MpvPlayer.cpp
     playback/mpv/MpvVideoItem.h playback/mpv/MpvVideoItem.cpp
     playback/mpv/GpuTimer.h playback/mpv/GpuTimer.cpp
-    playback/mpv/MpvTargetTime.h
 )
 if(LIBVLC_FOUND)
     target_sources(strmqt PRIVATE

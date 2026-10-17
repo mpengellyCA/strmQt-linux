@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
@@ -225,6 +226,7 @@ private slots:
     void stockRailIsUnchanged();
     void railChevronsAreNotTabStops();
     void viewCreatesAFooterFromABoundFile();
+    void titleLogoKeepsItsBoxAndFallsBackToText();
 
 private:
     QTemporaryDir m_dir;
@@ -383,6 +385,117 @@ void CardComponentTest::stockRailIsUnchanged()
     // shape instead of a vacuous absence.
     QVERIFY(stock->property("showHeading").toBool());
     QCOMPARE(stock->property("count").toInt(), 4);
+}
+
+// TitleLogo (src/ui/controls) sets a title as its ClearLogo. It shares the
+// staged StrmQt module (Theme, the StrmShadow shim) but sits in a directory of
+// its own, so it is added without re-declaring the module the probe imported.
+void CardComponentTest::titleLogoKeepsItsBoxAndFallsBackToText()
+{
+    ensureProbe();
+    const QString logoDir = m_dir.filePath(QStringLiteral("logo"));
+    QVERIFY(QDir().mkpath(logoDir));
+    QVERIFY(QFile::copy(QStringLiteral(STRMQT_SOURCE_DIR "/src/ui/controls/TitleLogo.qml"),
+                        logoDir + QStringLiteral("/TitleLogo.qml")));
+    QImage wordmark(1000, 100, QImage::Format_ARGB32);
+    wordmark.fill(Qt::white);
+    QVERIFY(wordmark.save(logoDir + QStringLiteral("/wordmark.png")));
+    QImage badge(200, 200, QImage::Format_ARGB32);
+    badge.fill(Qt::white);
+    QVERIFY(badge.save(logoDir + QStringLiteral("/badge.png")));
+
+    QFile probe(logoDir + QStringLiteral("/LogoProbe.qml"));
+    QVERIFY(probe.open(QIODevice::WriteOnly));
+    probe.write(R"QML(
+import QtQuick
+import StrmQt
+
+Item {
+    width: 600
+    height: 300
+    readonly property string spokenName: logo.Accessible.name
+
+    Column {
+        width: parent.width
+        TitleLogo {
+            id: logo
+            objectName: "titleLogo"
+            width: parent.width
+            title: "The Long Title"
+            logoMaxWidth: 420
+            logoMaxHeight: 120
+            pixelSize: 20
+            shadow: true
+        }
+        // Whatever sits under the title: it must never move.
+        Item { objectName: "below"; width: 10; height: 10 }
+    }
+}
+)QML");
+    probe.close();
+
+    QQuickView view;
+    view.engine()->addImportPath(m_dir.path());
+    view.setSource(QUrl::fromLocalFile(probe.fileName()));
+    QVERIFY2(view.status() == QQuickView::Ready,
+             qPrintable(view.errors().isEmpty() ? QStringLiteral("no root object")
+                                                : view.errors().first().toString()));
+    view.resize(600, 300);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    QQuickItem *logo = findItem(view.rootObject(), QStringLiteral("titleLogo"));
+    QQuickItem *text = findItem(view.rootObject(), QStringLiteral("titleLogoText"));
+    QQuickItem *image = findItem(view.rootObject(), QStringLiteral("titleLogoImage"));
+    QQuickItem *below = findItem(view.rootObject(), QStringLiteral("below"));
+    QVERIFY(logo && text && image && below);
+
+    // No logo: it is the text and nothing else, sized like the text.
+    QVERIFY(!logo->property("hasLogo").toBool());
+    QCOMPARE(logo->height(), text->implicitHeight());
+    QCOMPARE(text->opacity(), 1.0);
+    QVERIFY(!image->isVisible());
+
+    // A logo URL reserves the box at once, before any pixel arrives, and the
+    // text stays up until the logo is Ready.
+    const QString wordmarkUrl = QUrl::fromLocalFile(logoDir + QStringLiteral("/wordmark.png")).toString();
+    logo->setProperty("logoUrl", wordmarkUrl);
+    QCOMPARE(logo->height(), 120.0);
+    QTRY_COMPARE(below->y(), 120.0); // the Column re-lays out on polish
+    const qreal belowY = below->y();
+    QTRY_VERIFY(logo->property("logoShown").toBool());
+    QCOMPARE(logo->height(), 120.0);
+    QCOMPARE(below->y(), belowY);
+    QTRY_COMPARE(text->opacity(), 0.0);
+    // A 10:1 wordmark stops at the box's width, keeping its proportion,
+    // left-aligned and sitting on the box's bottom edge.
+    QCOMPARE(image->width(), 420.0);
+    QCOMPARE(image->height(), 42.0);
+    QCOMPARE(image->x(), 0.0);
+    QCOMPARE(image->y() + image->height(), logo->height());
+
+    // A caller laying out upward from a bottom edge lets the box hug the
+    // drawn logo instead of holding its full height.
+    logo->setProperty("reserveBox", false);
+    QCOMPARE(logo->height(), 42.0);
+    logo->setProperty("reserveBox", true);
+    QCOMPARE(logo->height(), 120.0);
+
+    // A square badge stops at the box's height instead.
+    logo->setProperty("logoUrl", QUrl::fromLocalFile(logoDir + QStringLiteral("/badge.png")).toString());
+    QTRY_VERIFY(logo->property("logoShown").toBool());
+    QCOMPARE(image->width(), 120.0);
+    QCOMPARE(image->height(), 120.0);
+    QCOMPARE(below->y(), belowY);
+
+    // A logo that fails is the title again, in the same box.
+    logo->setProperty("logoUrl", QUrl::fromLocalFile(logoDir + QStringLiteral("/missing.png")).toString());
+    QTRY_VERIFY(!logo->property("logoShown").toBool());
+    QTRY_COMPARE(text->opacity(), 1.0);
+    QCOMPARE(logo->height(), 120.0);
+    QCOMPARE(below->y(), belowY);
+    QCOMPARE(text->y() + text->height(), logo->height());
+    // Whatever is drawn, the title is what a screen reader says.
+    QCOMPARE(view.rootObject()->property("spokenName").toString(), QStringLiteral("The Long Title"));
 }
 
 QTEST_MAIN(CardComponentTest)

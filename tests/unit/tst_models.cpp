@@ -60,9 +60,31 @@ void ModelsTest::episodeRoles()
     QCOMPARE(model.data(index, MediaItemModel::PosterUrlRole).toString(),
              QStringLiteral("image://emby/test-session/402014/Primary/tag123"));
     QCOMPARE(model.data(index, MediaItemModel::BackdropUrlRole).toString(), QString());
+    // No logo on the item or its parent: no URL, and the page draws the title.
+    QCOMPARE(model.data(index, MediaItemModel::LogoUrlRole).toString(), QString());
     QVERIFY(model.data(index, MediaItemModel::ResumableRole).toBool());
     const double progress = model.data(index, MediaItemModel::ProgressRole).toDouble();
     QVERIFY(progress > 0.40 && progress < 0.45);
+
+    // An episode's logo is its series', addressed by the series' id; an item's
+    // own logo wins when it has one. Same role name the queue and get() use.
+    MediaItem withSeriesLogo = makeEpisode();
+    withSeriesLogo.parentLogoItemId = QStringLiteral("400001");
+    withSeriesLogo.parentLogoImageTag = QStringLiteral("logo1");
+    MediaItem film;
+    film.id = QStringLiteral("301001");
+    film.type = QStringLiteral("Movie");
+    film.logoImageTag = QStringLiteral("logo2");
+    film.parentLogoItemId = QStringLiteral("elsewhere");
+    film.parentLogoImageTag = QStringLiteral("not-this");
+    model.setItems({withSeriesLogo, film});
+    QCOMPARE(model.data(model.index(0), MediaItemModel::LogoUrlRole).toString(),
+             QStringLiteral("image://emby/test-session/400001/Logo/logo1"));
+    QCOMPARE(model.data(model.index(1), MediaItemModel::LogoUrlRole).toString(),
+             QStringLiteral("image://emby/test-session/301001/Logo/logo2"));
+    QCOMPARE(model.roleNames().value(MediaItemModel::LogoUrlRole), QByteArray("logoUrl"));
+    QCOMPARE(model.get(0).value(QStringLiteral("logoUrl")).toString(),
+             QStringLiteral("image://emby/test-session/400001/Logo/logo1"));
 }
 
 void ModelsTest::appendAndReset()

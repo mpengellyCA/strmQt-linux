@@ -48,7 +48,41 @@ FocusScope {
     readonly property bool isEpisode: page.capabilities.episode === true
     readonly property bool isCollection: page.capabilities.collection === true
     readonly property bool isPlayable: page.capabilities.leaf === true
-    readonly property bool resumable: page.capabilities.resume === true
+
+    // DetailsCtl is process-wide and a covered details page stays alive under
+    // the one that retargeted it, so anything read from it is this page's only
+    // while it is this page's item that owns it.
+    readonly property bool mine: page.itemId.length > 0 && DetailsCtl.itemId === page.itemId
+
+    // ── Where Resume resumes from ──────────────────────────────────────────
+    // `item` is a snapshot taken when the page was opened: watch twenty
+    // minutes, come back, and it still said "Resume 0:41:10" — or "Play".
+    // DetailsCtl keeps the item's user data current (its own reply, then live
+    // records), so once it has answered for this item that is what the verbs
+    // show. The snapshot stands in until then, and whenever the controller is
+    // somebody else's.
+    readonly property bool liveUserState: page.mine && !DetailsCtl.itemLoading
+    readonly property bool resumable: page.liveUserState
+                                      ? page.isPlayable && DetailsCtl.resumable
+                                      : page.capabilities.resume === true
+    readonly property real resumePositionMs: page.liveUserState
+                                             ? DetailsCtl.positionMs
+                                             : (page.item.positionMs > 0 ? page.item.positionMs : 0)
+    // What Play and Start over are handed: the snapshot, with the resume point
+    // DetailsCtl holds for it (DetailsController::withUserState). Read at the
+    // click, so it is never a step behind the label above.
+    function playItem() {
+        return DetailsCtl.withUserState(page.item)
+    }
+
+    // ── ClearLogo ──────────────────────────────────────────────────────────
+    // The route's map carries the role when the item came from a model; the
+    // controller's reply carries it for an item opened from a bare id. The
+    // two name the same image whenever both have one.
+    readonly property string logoUrl: (page.mine && DetailsCtl.logoUrl.length > 0)
+                                      ? DetailsCtl.logoUrl
+                                      : (page.item.logoUrl ? String(page.item.logoUrl) : "")
+    readonly property bool seriesMark: page.isEpisode && page.logoUrl.length > 0
 
     // Cached projections of Actions' state, not a second copy of it: QML cannot
     // bind to a Q_INVOKABLE, so the value is re-read whenever Actions says it
@@ -517,7 +551,14 @@ FocusScope {
             }
         }
 
+        // Mouse affordances only, as on StrmRail: a shelf is one Tab stop, and
+        // a hovered one must not slip its chevrons into the Tab chain or offer
+        // them to an arrow. A click still gives a button the keyboard, and at
+        // the end of the shelf it then disables itself — so it goes straight
+        // back to the cards.
         StrmIconButton {
+            activeFocusOnTab: false
+            onActiveFocusChanged: if (activeFocus) cards.forceActiveFocus(Qt.OtherFocusReason)
             anchors.left: cards.left
             anchors.leftMargin: Theme.spacingTight
             anchors.verticalCenter: cards.verticalCenter
@@ -536,6 +577,8 @@ FocusScope {
         }
 
         StrmIconButton {
+            activeFocusOnTab: false
+            onActiveFocusChanged: if (activeFocus) cards.forceActiveFocus(Qt.OtherFocusReason)
             anchors.right: cards.right
             anchors.rightMargin: Theme.spacingTight
             anchors.verticalCenter: cards.verticalCenter
@@ -550,334 +593,6 @@ FocusScope {
 
             Behavior on opacity {
                 NumberAnimation { duration: Theme.animInstant; easing.type: Theme.easeInstant }
-            }
-        }
-    }
-
-    // ── Add to playlist (ARCHITECTURE.md) ────────────────────────────────
-    // A searchable panel, not a dropdown. There are ~1,500 playlists on this
-    // server; a menu with 1,500 rows is not a control, it is a scrollbar with
-    // words on it. The shape is the command palette's — type to narrow, arrows
-    // to move, Return to commit — because that is the interaction this app
-    // already teaches for "find one of very many", and a second idiom for the
-    // same problem is a second thing to learn.
-    //
-    // Typing a name that does not exist offers to CREATE it with this item in
-    // it, which is `create(name, itemIds)` — one verb, one round trip, and the
-    // only way "put this in a new list" is not a two-step detour through the
-    // playlists page.
-    //
-    // Inline rather than a file under controls/ for the same reason ChipStrip
-    // and CastShelf above are inline: a QML file that is not registered in CMake
-    // is invisible to the module, and registering one is not this file's to do.
-    component PlaylistPicker: FocusScope {
-        id: picker
-
-        // The item being filed. Set by show(); never assigned from a handler.
-        property var target: ({})
-        property bool opened: false
-        // { row, id, name, lower } per playlist, cached once per model reload so
-        // that typing filters a string array rather than re-marshalling several
-        // hundred QVariantMaps on every keystroke.
-        property var records: []
-        // The rows on screen: the create offer (if any) followed by the matches.
-        property var rows: []
-        // A write is in flight and its result belongs to this picker, so the
-        // page can tell PlaylistCtl's global signals apart from anyone else's.
-        property bool pending: false
-
-        signal dismissed
-
-        // Nothing under the scrim is reachable while the picker is up, and it
-        // is entered on its field (FocusNavigator.h).
-        property bool navModal: picker.opened
-        property Item navEntry: pickerField
-
-        readonly property string itemName: picker.target && picker.target.name
-                                           ? String(picker.target.name) : ""
-        readonly property string itemId: picker.target && picker.target.itemId
-                                         ? String(picker.target.itemId) : ""
-
-        function show(item): void {
-            picker.target = item ? item : ({})
-            picker.opened = true
-            pickerField.text = ""
-            // Resume the walk to the end of the list rather than fetching one
-            // page of it; a complete list costs nothing here.
-            PlaylistCtl.ensureAllPlaylists()
-            picker.rebuildRecords()
-            pickerField.forceActiveFocus(Qt.OtherFocusReason)
-        }
-
-        function dismiss(): void {
-            if (!picker.opened)
-                return
-            picker.opened = false
-            picker.dismissed()
-        }
-
-        function rebuildRecords(): void {
-            picker.records = ModelUtils.playlistRecords(PlaylistCtl.playlists)
-            picker.rebuild()
-        }
-
-        function rebuild(): void {
-            const typed = pickerField.text.trim()
-            const needle = typed.toLowerCase()
-            const source = picker.records
-            const out = []
-            let exact = false
-            for (let i = 0; i < source.length; ++i) {
-                if (source[i].lower === needle)
-                    exact = true
-                if (needle.length === 0 || source[i].lower.indexOf(needle) >= 0)
-                    out.push(source[i])
-            }
-            // Offered only when it would actually make something new; an exact
-            // match already on the list is the row above, not a duplicate. And
-            // only once the WHOLE list is loaded — see PlaylistPicker.qml's
-            // header: with one page of 500 against 1,564 playlists, every name
-            // sorting past the first page read as free and Return made a second
-            // playlist with a name the user already had.
-            if (typed.length > 0 && !exact && PlaylistCtl.playlistsComplete)
-                out.unshift({ "create": true, "id": "", "name": typed, "lower": needle })
-            picker.rows = out
-            pickerList.currentIndex = out.length > 0 ? 0 : -1
-        }
-
-        function activate(index): void {
-            if (index < 0 || index >= picker.rows.length || picker.itemId.length === 0)
-                return
-            const row = picker.rows[index]
-            picker.pending = true
-            if (row.create)
-                PlaylistCtl.create(row.name, [picker.itemId])
-            else
-                PlaylistCtl.addItems(row.id, [picker.itemId])
-            picker.dismiss()
-        }
-
-        anchors.fill: parent
-        // `opened` as well as the animated opacity: forceActiveFocus() runs
-        // in the same call as show(), before the fade has ticked once, and an
-        // item that is still invisible at that moment does not take focus.
-        visible: picker.opened || picker.opacity > 0.01
-        enabled: picker.opened
-        opacity: picker.opened ? 1.0 : 0.0
-
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.animFastMs; easing.type: Theme.easeStandard }
-        }
-
-        // Only while the panel is up: the reply this waits for is the one show()
-        // asked for, and rebuilding several hundred records behind a closed
-        // overlay is work nobody can see.
-        // The controller's signal, not the model's count: the walk's last page
-        // may add no rows at all, and it is that reply which flips
-        // `playlistsComplete` and so decides whether the create offer may appear.
-        Connections {
-            target: PlaylistCtl
-            function onPlaylistsChanged() {
-                if (picker.opened)
-                    picker.rebuildRecords()
-            }
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            color: Theme.scrimColor
-
-            TapHandler {
-                gesturePolicy: TapHandler.ReleaseWithinBounds
-                onTapped: picker.dismiss()
-            }
-        }
-
-        Rectangle {
-            id: pickerSurface
-
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: Math.round(parent.height * 0.14)
-            width: Math.min(parent.width - Theme.pageMarginValue * 2, Theme.scale(620))
-            height: pickerHead.height + pickerList.height + pickerHint.height
-                    + Theme.spacingValue
-            radius: Theme.radiusPanel
-            color: Theme.surfaceOverlay
-            border.width: 1
-            border.color: Theme.hairline
-
-            // Keeps clicks inside the panel off the scrim behind it.
-            TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds }
-
-            Column {
-                id: pickerHead
-
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: Theme.spacingTight
-                spacing: Theme.spacingTight
-
-                Text {
-                    width: parent.width
-                    leftPadding: Theme.spacingTight
-                    topPadding: Theme.spacingTight
-                    text: picker.itemName.length > 0
-                          ? qsTr("Add “%1” to…").arg(picker.itemName)
-                          : qsTr("Add to playlist")
-                    color: Theme.textPrimaryColor
-                    font.family: Theme.fontDisplay
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
-
-                StrmSearchField {
-                    id: pickerField
-
-                    width: parent.width
-                    implicitHeight: Theme.controlHeightLarge
-                    placeholderText: qsTr("Find a playlist, or type a new name…")
-
-                    onTextEdited: picker.rebuild()
-                    onCleared: picker.rebuild()
-                    onEscapePressed: picker.dismiss()
-                    onAccepted: picker.activate(pickerList.currentIndex)
-
-                    // Arrows walk the list without taking the caret out of the
-                    // field: this panel is a type-and-pick, so the keyboard's
-                    // place is the box and the list is what it drives.
-                    Keys.onUpPressed: {
-                        if (pickerList.count > 0)
-                            pickerList.currentIndex = Math.max(0, pickerList.currentIndex - 1)
-                    }
-                    Keys.onDownPressed: {
-                        if (pickerList.count > 0)
-                            pickerList.currentIndex = Math.min(pickerList.count - 1,
-                                                               pickerList.currentIndex + 1)
-                    }
-                    Keys.onReturnPressed: event => {
-                        if (!event.isAutoRepeat)
-                            picker.activate(pickerList.currentIndex)
-                    }
-                    Keys.onEnterPressed: event => {
-                        if (!event.isAutoRepeat)
-                            picker.activate(pickerList.currentIndex)
-                    }
-                }
-            }
-
-            ListView {
-                id: pickerList
-
-                anchors.top: pickerHead.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.leftMargin: Theme.spacingTight
-                anchors.rightMargin: Theme.spacingTight
-                anchors.topMargin: Theme.spacingTight
-                height: Math.min(contentHeight, Theme.scale(380))
-                clip: true
-                model: picker.rows
-                currentIndex: -1
-                keyNavigationEnabled: false
-                highlightMoveDuration: Theme.animFastMs
-                boundsBehavior: Flickable.StopAtBounds
-                cacheBuffer: Theme.controlHeightLarge * 6
-
-                ScrollBar.vertical: StrmScrollBar {}
-
-                delegate: Item {
-                    id: pickerRow
-
-                    required property int index
-                    required property var modelData
-
-                    readonly property bool current: pickerList.currentIndex === pickerRow.index
-
-                    width: pickerList.width
-                    height: Theme.controlHeightLarge
-
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: Theme.scale(2)
-                        radius: Theme.radiusChip
-                        color: pickerRow.current ? Theme.hoverTint : "transparent"
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: Theme.animInstant
-                                easing.type: Theme.easeInstant
-                            }
-                        }
-                    }
-
-                    StrmIcon {
-                        id: pickerGlyph
-
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.spacingValue
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: pickerRow.modelData.create ? "plus" : "playlist"
-                        color: pickerRow.current ? Theme.accentColor : Theme.textTertiary
-                    }
-
-                    Text {
-                        anchors.left: pickerGlyph.right
-                        anchors.leftMargin: Theme.spacingValue
-                        anchors.right: parent.right
-                        anchors.rightMargin: Theme.spacingValue
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: pickerRow.modelData.create
-                              ? qsTr("Create “%1”").arg(pickerRow.modelData.name)
-                              : pickerRow.modelData.name
-                        color: Theme.textPrimaryColor
-                        font.family: Theme.fontBody
-                        font.pixelSize: Theme.fontBodySize
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                    }
-
-                    // Hover previews the row; it never commits, and it never
-                    // takes the caret out of the field the user is typing in.
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                        onHoveredChanged: {
-                            if (hovered)
-                                pickerList.currentIndex = pickerRow.index
-                        }
-                    }
-
-                    TapHandler {
-                        gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: picker.activate(pickerRow.index)
-                    }
-                }
-            }
-
-            // Never a bare "no results": the line says what to do next, and it
-            // reserves its own height so the panel does not collapse around an
-            // invisible child (ARCHITECTURE.md).
-            Text {
-                id: pickerHint
-
-                anchors.top: pickerList.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.leftMargin: Theme.spacingValue
-                anchors.rightMargin: Theme.spacingValue
-                height: pickerHint.visible ? Theme.controlHeightLarge : Theme.spacingTight
-                verticalAlignment: Text.AlignVCenter
-                visible: picker.rows.length === 0
-                text: picker.records.length === 0
-                      ? qsTr("You have no playlists yet — type a name to make one.")
-                      : qsTr("Nothing matches. Keep typing to create a new playlist.")
-                color: Theme.textTertiary
-                font.family: Theme.fontBody
-                font.pixelSize: Theme.fontSmall
-                wrapMode: Text.WordWrap
             }
         }
     }
@@ -902,8 +617,10 @@ FocusScope {
     }
 
     function syncUserState() {
-        page.itemPlayed = page.itemId.length > 0 && Actions.isPlayed(page.itemId)
-        page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId)
+        // With the map the verbs below are handed, so the label and the
+        // toggle it sits on fall back to the same snapshot.
+        page.itemPlayed = page.itemId.length > 0 && Actions.isPlayed(page.itemId, page.item)
+        page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId, page.item)
     }
 
     function episodeCode(item) {
@@ -1161,6 +878,38 @@ FocusScope {
         return null
     }
 
+    // ── Rows of verbs ──────────────────────────────────────────────────────
+    // The verbs wrap (see buttonRow), so Up and Down have to be answered among
+    // them before they leave the hero: the nearest verb in the next row that
+    // way, by centre. Null when there is no such row — the caller then names
+    // the hero's own exit (Down) or leaves the key to the navigator (Up).
+    // Left and Right keep walking heroVerbs in reading order, so the end of
+    // one row continues at the start of the next and nothing is skipped.
+    function verbOnAdjacentRow(button, step) {
+        let best = null
+        let bestRow = 0
+        let bestOffset = 0
+        const centre = button.x + button.width / 2
+        for (var i = 0; i < page.heroVerbs.length; ++i) {
+            const verb = page.heroVerbs[i]
+            if (!verb.visible || (verb.y - button.y) * step <= 0)
+                continue
+            const row = Math.abs(verb.y - button.y)
+            const offset = Math.abs(verb.x + verb.width / 2 - centre)
+            if (best === null || row < bestRow || (row === bestRow && offset < bestOffset)) {
+                best = verb
+                bestRow = row
+                bestOffset = offset
+            }
+        }
+        return best
+    }
+
+    function verbBelow(button) {
+        const below = page.verbOnAdjacentRow(button, 1)
+        return below ? below : page.heroDown
+    }
+
     // Where Up out of the first section lands: whichever primary verb this item
     // type actually shows.
     readonly property Item heroButton: {
@@ -1175,7 +924,19 @@ FocusScope {
     // sits between the action row and the first section, so it takes both ends
     // of that chain whenever the item has one.
     readonly property Item heroDown: page.multiVersion ? versionSelect : page.sectionBelow(0)
-    readonly property Item heroExit: page.multiVersion ? versionSelect : page.heroButton
+    readonly property Item heroExit: page.multiVersion ? versionSelect : page.heroFoot
+
+    // The first verb of the LAST row: what is directly above whatever follows
+    // the verbs. The same button as heroButton while they fit on one line.
+    readonly property Item heroFoot: {
+        let foot = null
+        for (var i = 0; i < page.heroVerbs.length; ++i) {
+            const verb = page.heroVerbs[i]
+            if (verb.visible && (foot === null || verb.y > foot.y))
+                foot = verb
+        }
+        return foot ? foot : moreButton
+    }
 
     // ── Where the keyboard starts ──────────────────────────────────────────
     // On the primary verb, chosen once the payload that decides which verb
@@ -1301,6 +1062,7 @@ FocusScope {
         gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: eventPoint => {
             var p = page.mapToItem(null, eventPoint.position.x, eventPoint.position.y)
+            page.menuOrigin = null
             itemMenu.popupForItemNoDetails(page.item, p.x, p.y)
         }
     }
@@ -1419,26 +1181,50 @@ FocusScope {
                         readonly property int proseWidth: Math.min(infoColumn.width,
                                                                    Theme.scale(820))
 
-                        Text {
+                        // An episode's logo is its series' (logoUrl falls back
+                        // to the parent's), so for an episode it stands over
+                        // the title as the series' mark, in place of the
+                        // series' name in the line below — the episode's own
+                        // name stays the heading. While it loads, or if it
+                        // fails, the series' name sits in its box instead.
+                        TitleLogo {
                             width: parent.width
-                            text: page.item.name ? page.item.name : ""
-                            color: Theme.textPrimaryColor
-                            font.family: Theme.fontDisplay
-                            font.pixelSize: Theme.fontDisplaySize
-                            font.weight: Font.DemiBold
-                            wrapMode: Text.Wrap
+                            visible: page.seriesMark
+                            title: page.item.seriesName ? String(page.item.seriesName) : ""
+                            logoUrl: page.seriesMark ? page.logoUrl : ""
+                            logoMaxWidth: Theme.scale(360)
+                            logoMaxHeight: Theme.scale(72)
+                            fontFamily: Theme.fontBody
+                            pixelSize: Theme.fontTitle
+                            fontWeight: Font.Normal
+                            color: Theme.textSecondaryColor
+                            maximumLineCount: 1
+                        }
+
+                        TitleLogo {
+                            width: parent.width
+                            title: page.item.name ? String(page.item.name) : ""
+                            logoUrl: page.isEpisode ? "" : page.logoUrl
+                            logoMaxWidth: Theme.scale(560)
+                            logoMaxHeight: Theme.scale(140)
+                            pixelSize: Theme.fontDisplaySize
                             maximumLineCount: 2
-                            elide: Text.ElideRight
                         }
 
                         Text {
                             width: parent.width
-                            visible: page.isEpisode
-                            text: (page.item.seriesName ? page.item.seriesName : "")
-                                  + (page.item.parentIndexNumber >= 0
-                                     ? "  ·  " + qsTr("Season %1, Episode %2")
-                                           .arg(page.item.parentIndexNumber).arg(page.item.indexNumber)
-                                     : "")
+                            visible: page.isEpisode && text.length > 0
+                            text: {
+                                const series = !page.seriesMark && page.item.seriesName
+                                               ? String(page.item.seriesName) : ""
+                                const where = page.item.parentIndexNumber >= 0
+                                              ? qsTr("Season %1, Episode %2")
+                                                    .arg(page.item.parentIndexNumber)
+                                                    .arg(page.item.indexNumber)
+                                              : ""
+                                return series.length > 0 && where.length > 0
+                                       ? series + "  ·  " + where : series + where
+                            }
                             color: Theme.textSecondaryColor
                             font.family: Theme.fontBody
                             font.pixelSize: Theme.fontTitle
@@ -1513,8 +1299,18 @@ FocusScope {
                         // Every one of these is reachable by click and by
                         // keyboard, and the Left/Right chain skips whatever is
                         // hidden for this item type.
-                        Row {
+                        //
+                        // A Flow, not a Row: a film with a resume point and a
+                        // trailer shows seven of these, which at TV density or
+                        // in a small window is wider than the column beside
+                        // the poster, and a Row ran off its right-hand edge
+                        // with the last verbs out of sight. They wrap
+                        // instead of folding into ⋯, because the menu does not
+                        // carry Trailer and a verb that moves into a menu at
+                        // one window size is a verb that has to be looked for.
+                        Flow {
                             id: buttonRow
+                            width: parent.width
                             spacing: Theme.spacingTight
 
                             StrmButton {
@@ -1536,7 +1332,8 @@ FocusScope {
                                 variant: "primary"
                                 onClicked: Actions.play(DetailsCtl.nextEpisode)
                                 property Item navRight: page.verbAfter(0)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(playNextSeriesButton, -1)
+                                property Item navDown: page.verbBelow(playNextSeriesButton)
                             }
 
                             StrmButton {
@@ -1548,7 +1345,8 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("series", page.item)
                                 property Item navLeft: page.verbBefore(1)
                                 property Item navRight: page.verbAfter(1)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(episodesButton, -1)
+                                property Item navDown: page.verbBelow(episodesButton)
                             }
 
                             // A collection has no stream of its own, so its
@@ -1562,7 +1360,8 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("play", page.item)
                                 property Item navLeft: page.verbBefore(2)
                                 property Item navRight: page.verbAfter(2)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(playAllButton, -1)
+                                property Item navDown: page.verbBelow(playAllButton)
                             }
 
                             // The collection's own way in, the exact counterpart
@@ -1579,24 +1378,26 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("browseCollection", page.item)
                                 property Item navLeft: page.verbBefore(3)
                                 property Item navRight: page.verbAfter(3)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(viewItemsButton, -1)
+                                property Item navDown: page.verbBelow(viewItemsButton)
                             }
 
                             StrmButton {
                                 id: playButton
                                 visible: page.isPlayable
                                 text: page.resumable
-                                      ? qsTr("Resume %1").arg(page.formatPosition(page.item.positionMs))
+                                      ? qsTr("Resume %1").arg(page.formatPosition(page.resumePositionMs))
                                       : qsTr("Play")
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: {
-                                    Actions.performItemVerb("play", page.item)
+                                    Actions.performItemVerb("play", page.playItem())
                                     page.applyVersion()
                                 }
                                 property Item navLeft: page.verbBefore(4)
                                 property Item navRight: page.verbAfter(4)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(playButton, -1)
+                                property Item navDown: page.verbBelow(playButton)
                             }
 
                             StrmButton {
@@ -1605,12 +1406,13 @@ FocusScope {
                                 text: qsTr("Start over")
                                 iconName: "skip-previous"
                                 onClicked: {
-                                    Actions.performItemVerb("playFromStart", page.item)
+                                    Actions.performItemVerb("playFromStart", page.playItem())
                                     page.applyVersion()
                                 }
                                 property Item navLeft: page.verbBefore(5)
                                 property Item navRight: page.verbAfter(5)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(startOverButton, -1)
+                                property Item navDown: page.verbBelow(startOverButton)
                             }
 
                             // Shuffle sits next to Episodes / Play all, for the
@@ -1623,7 +1425,8 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("shuffle", page.item)
                                 property Item navLeft: page.verbBefore(6)
                                 property Item navRight: page.verbAfter(6)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(shuffleButton, -1)
+                                property Item navDown: page.verbBelow(shuffleButton)
                             }
 
                             // ── Trailer (ARCHITECTURE.md) ────────────────────
@@ -1652,7 +1455,8 @@ FocusScope {
                                 }
                                 property Item navLeft: page.verbBefore(7)
                                 property Item navRight: page.verbAfter(7)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(trailerButton, -1)
+                                property Item navDown: page.verbBelow(trailerButton)
                             }
 
                             // Named for what clicking it does, in both states.
@@ -1675,7 +1479,8 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("played", page.item)
                                 property Item navLeft: page.verbBefore(8)
                                 property Item navRight: page.verbAfter(8)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(playedButton, -1)
+                                property Item navDown: page.verbBelow(playedButton)
                             }
 
                             StrmButton {
@@ -1686,7 +1491,8 @@ FocusScope {
                                 onClicked: Actions.performItemVerb("favorite", page.item)
                                 property Item navLeft: page.verbBefore(9)
                                 property Item navRight: page.verbAfter(9)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(favoriteButton, -1)
+                                property Item navDown: page.verbBelow(favoriteButton)
                             }
 
                             // ── Add to playlist (ARCHITECTURE.md) ────────
@@ -1699,10 +1505,11 @@ FocusScope {
                                 visible: page.capabilities.addToPlaylist === true
                                 text: qsTr("Add to playlist")
                                 iconName: "playlist"
-                                onClicked: playlistPicker.show(page.item)
+                                onClicked: page.addToPlaylist(page.item, playlistButton)
                                 property Item navLeft: page.verbBefore(10)
                                 property Item navRight: page.verbAfter(10)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(playlistButton, -1)
+                                property Item navDown: page.verbBelow(playlistButton)
                             }
 
                             StrmIconButton {
@@ -1711,10 +1518,12 @@ FocusScope {
                                 tooltip: qsTr("More actions")
                                 onClicked: {
                                     var p = moreButton.mapToItem(null, 0, moreButton.height)
+                                    page.menuOrigin = moreButton
                                     itemMenu.popupForItemNoDetails(page.item, p.x, p.y)
                                 }
                                 property Item navLeft: page.verbBefore(11)
-                                property Item navDown: page.heroDown
+                                property Item navUp: page.verbOnAdjacentRow(moreButton, -1)
+                                property Item navDown: page.verbBelow(moreButton)
                             }
                         }
 
@@ -1788,7 +1597,7 @@ FocusScope {
                                     currentIndex: page.versionIndex
                                     onActivated: index => page.selectVersion(index)
 
-                                    property Item navUp: page.heroButton
+                                    property Item navUp: page.heroFoot
                                     property Item navDown: page.sectionBelow(0)
                                 }
                             }
@@ -1883,8 +1692,10 @@ FocusScope {
                 onItemPlayRequested: index => Actions.play(DetailsCtl.upcomingEpisodes.get(index))
                 onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.upcomingEpisodes.get(index))
                 onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.upcomingEpisodes.get(index))
-                onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index),
-                                                                          mx, my)
+                onMenuRequested: (index, mx, my) => {
+                    page.menuOrigin = episodesRail
+                    itemMenu.popupForItem(DetailsCtl.upcomingEpisodes.get(index), mx, my)
+                }
             }
 
             // ── Genres ─────────────────────────────────────────────────────
@@ -2018,8 +1829,10 @@ FocusScope {
                 onItemPlayRequested: index => Actions.play(DetailsCtl.similar.get(index))
                 onItemPlayedToggled: index => Actions.togglePlayed(DetailsCtl.similar.get(index))
                 onItemFavoriteToggled: index => Actions.toggleFavorite(DetailsCtl.similar.get(index))
-                onMenuRequested: (index, mx, my) => itemMenu.popupForItem(DetailsCtl.similar.get(index),
-                                                                          mx, my)
+                onMenuRequested: (index, mx, my) => {
+                    page.menuOrigin = similarRail
+                    itemMenu.popupForItem(DetailsCtl.similar.get(index), mx, my)
+                }
             }
 
             Item { width: 1; height: Math.max(0, Theme.pageMarginValue - content.spacing) }
@@ -2047,14 +1860,13 @@ FocusScope {
     // with Home, Library, Search and Series; only "Details" differs, because
     // for the page's own item it would navigate to where the user already is.
     //
-    // "Add to playlist" is opted into here and nowhere else so far, because the
-    // row needs a surface to open and this is the page that has one — a menu
-    // entry that does nothing is worse than an absent one.
+    // "Add to playlist" needs a surface to open, and the page supplies it: the
+    // shared PlaylistPicker below.
     ItemMenu {
         id: itemMenu
 
         allowAddToPlaylist: true
-        onAddToPlaylistRequested: item => playlistPicker.show(item)
+        onAddToPlaylistRequested: item => page.addToPlaylist(item, page.menuOrigin)
     }
 
     // The trailer chooser, only ever opened for items with more than one.
@@ -2064,42 +1876,41 @@ FocusScope {
         onTriggered: index => page.openTrailer(index)
     }
 
+    // ── Add to playlist ────────────────────────────────────────────────────
+    // The picker is raised from three places — the hero's own verb, the ⋯
+    // menu, and the menu of a card in either shelf — and gives the keyboard
+    // back to whichever of them it was. It used to hand it to the hero's
+    // button unconditionally, so filing a film from "More like this" threw the
+    // page back to the top. `menuOrigin` is what raised the menu; `pickerOrigin`
+    // is what raised the picker, kept apart because a menu can be opened and
+    // dismissed without the picker ever appearing.
+    property Item menuOrigin: null
+    property Item pickerOrigin: null
+
+    function addToPlaylist(item, origin): void {
+        if (!item || !item.itemId)
+            return
+        page.pickerOrigin = origin
+        playlistPicker.showItem(item)
+    }
+
+    function restorePickerFocus(): void {
+        const origin = page.pickerOrigin
+        page.pickerOrigin = null
+        // An origin that has since gone (a shelf that emptied, a right-click on
+        // the page itself) falls back to the hero rather than to nothing.
+        const target = (origin && origin.visible && origin.enabled) ? origin
+                     : playlistButton.visible ? playlistButton : page.heroButton
+        target.forceActiveFocus(Qt.OtherFocusReason)
+    }
+
     PlaylistPicker {
         id: playlistPicker
 
         z: 800
-        // Focus goes back to the button that opened it, not to the page: a
-        // dismissed overlay that drops the keyboard at the top of the page is
-        // the same bug as one that never gave it back.
-        onDismissed: playlistButton.forceActiveFocus(Qt.OtherFocusReason)
-    }
-
-    // PlaylistCtl's results are global signals, so they are only claimed while
-    // this page has a write of its own outstanding — otherwise a playlist edit
-    // made elsewhere would toast here too.
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            detailsToasts.show(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            detailsToasts.show(message, "error")
-        }
-    }
-
-    // "Did that work?" has to be answered where the work happened. The window's
-    // own toast host only carries ItemActions' failures, not PlaylistCtl's.
-    StrmToastHost {
-        id: detailsToasts
-
-        anchors.fill: parent
-        z: 900
+        // The result goes to the window's toast host: by the time the server
+        // answers, this page may be covered, and a covered page shows nothing.
+        notifiesWindow: true
+        onDismissed: page.restorePickerFocus()
     }
 }

@@ -31,6 +31,10 @@ class DetailsController : public QObject
     // failure or when the shared request lane is handed to a Person page.
     Q_PROPERTY(bool itemLoading READ itemLoading NOTIFY detailsChanged)
     Q_PROPERTY(QString tagline READ tagline NOTIFY detailsChanged)
+    // The item's ClearLogo as the details reply describes it (its own, else its
+    // series'), or empty. The route's item map carries the same role when it
+    // came from a model; a page opened from a bare id has only this.
+    Q_PROPERTY(QString logoUrl READ logoUrl NOTIFY detailsChanged)
     // Playable versions of this item, one QVariantMap per MediaSource (the
     // MediaSource::toVariantMap() shape, plus an "index"). A later wave builds
     // the version picker and the media-info panel on top of this; the details
@@ -76,6 +80,16 @@ class DetailsController : public QObject
     Q_PROPERTY(bool upcomingEpisodesLoading READ upcomingEpisodesLoading NOTIFY upcomingEpisodesChanged)
     Q_PROPERTY(QVariantMap nextEpisode READ nextEpisode NOTIFY upcomingEpisodesChanged)
     Q_PROPERTY(bool hasNextEpisode READ hasNextEpisode NOTIFY upcomingEpisodesChanged)
+    // User data of the item named by itemId: seeded by the primary details
+    // reply, then kept current by live UserDataChanged records and by
+    // ItemActions' own changes. The route's item map is a snapshot taken when
+    // the page was opened, so without these a resume point moved on a phone
+    // never reaches a page that is already showing. All four are the defaults
+    // while no item owns the controller.
+    Q_PROPERTY(bool played READ played NOTIFY userStateChanged)
+    Q_PROPERTY(bool favorite READ favorite NOTIFY userStateChanged)
+    Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY userStateChanged)
+    Q_PROPERTY(bool resumable READ resumable NOTIFY userStateChanged)
 
 public:
     explicit DetailsController(emby::EmbyClient *client, QObject *parent = nullptr);
@@ -84,6 +98,7 @@ public:
     QString itemId() const { return m_itemId; }
     bool itemLoading() const { return m_itemLoading; }
     QString tagline() const { return m_tagline; }
+    QString logoUrl() const { return m_logoUrl; }
     QVariantList mediaSources() const { return m_mediaSources; }
     int mediaSourceCount() const { return static_cast<int>(m_mediaSources.size()); }
     QVariantList chapters() const { return m_chapters; }
@@ -104,9 +119,23 @@ public:
     bool upcomingEpisodesLoading() const { return m_upcomingEpisodesLoading; }
     QVariantMap nextEpisode() const { return m_nextEpisode; }
     bool hasNextEpisode() const { return !m_nextEpisode.isEmpty(); }
+    bool played() const { return m_played; }
+    bool favorite() const { return m_favorite; }
+    qint64 positionMs() const { return m_positionMs; }
+    // MediaItem::isResumable()'s rule, so this and a model row cannot disagree.
+    bool resumable() const { return m_positionMs > 0 && !m_played; }
 
     void bindLiveUpdates(LiveUpdateService *service);
     Q_INVOKABLE void refreshUpcomingEpisodes();
+
+    // What Play and Start over hand ItemActions: the route's item map, with
+    // the resume point this controller holds copied over the map's when the
+    // controller has answered for that item. ItemActions takes the start
+    // position from the map it is given, so a button labelled from the live
+    // position over a map that still carries the snapshot taken when the page
+    // opened would promise one place and start at another. Any other item, or
+    // this one while its reply is still in flight, comes back unchanged.
+    Q_INVOKABLE QVariantMap withUserState(const QVariant &item) const;
 
     void resetSessionState();
 
@@ -121,22 +150,40 @@ public:
     // "more like this" requests, which mean nothing for a person.
     Q_INVOKABLE void loadPerson(const QString &personId);
 
+public slots:
+    // ItemActions::playedChanged / favoriteChanged. Only the loaded item's own
+    // id matters here; the rails are models ItemActions patches itself.
+    void notePlayed(const QString &itemId, bool played);
+    void noteFavorite(const QString &itemId, bool favorite);
+
 signals:
     void detailsChanged();
+    // played / favorite / positionMs / resumable. Emitted only when one of
+    // them actually moved.
+    void userStateChanged();
     void collectionsChanged();
     void personChanged();
     void similarStatusChanged();
     void upcomingEpisodesChanged();
+    // The details reply's user data, when nothing newer has arrived since it
+    // was requested. The loaded item is often in no model ItemActions holds,
+    // so without this the page's watched / favourite button and the verb it
+    // fires would each fall back to a different snapshot (Application.cpp).
+    void itemUserDataLoaded(const QString &itemId, bool played, bool favorite,
+                            qint64 positionTicks);
 
 private:
     void cancelRequests();
     void setSimilarLoading(bool loading);
+    void onUserDataPatched(const QVariantList &entries);
+    void setUserState(bool played, bool favorite, qint64 positionMs);
 
     emby::EmbyClient *m_client;
     MediaItemModel *m_similar;
     QString m_itemId;
     bool m_itemLoading = false;
     QString m_tagline;
+    QString m_logoUrl;
     QVariantList m_mediaSources;
     QVariantList m_chapters;
     QVariantList m_people;
@@ -161,6 +208,13 @@ private:
     bool m_isSeries = false;
     int m_upcomingEpisodesGeneration = 0;
     emby::RequestHandle m_upcomingEpisodesRequest;
+    bool m_played = false;
+    bool m_favorite = false;
+    qint64 m_positionMs = 0;
+    // The load generation in which user state last arrived from somewhere
+    // newer than that load's own REST reply (a live record, or a change made
+    // here). The reply was requested first, so it must not seed over it.
+    int m_userStateGeneration = -1;
 };
 
 } // namespace strmqt

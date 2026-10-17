@@ -43,6 +43,8 @@ private slots:
     void pinRequirementCheck();
     void pinRateLimiting();
     void pinLockoutEscalatesPerAddress();
+    void pinPeerKeyGroupsWhatOneHostCanHold();
+    void pinMissesAreLimitedAcrossAddresses();
     void pinLengthMismatchIsRefused();
     void newPinSignsEveryPhoneOut();
     void keyNavigationSignal();
@@ -57,6 +59,7 @@ private slots:
     void subtitleStyleValidatesColour();
     void playbackWithoutPlayerIsUnavailable();
     void nextAndPreviousStepByChapter();
+    void screenshotReplyHasNoPath();
     void imageProxyServesOnlyRasterImages();
 
     // Request framing
@@ -294,6 +297,103 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
     QCOMPARE(fromOther("0000"), 200);
 }
 
+void WebRemoteServerTest::pinPeerKeyGroupsWhatOneHostCanHold()
+{
+    const auto key = [](const char *address) {
+        return WebRemoteServer::pinPeerKey(QHostAddress(QString::fromLatin1(address)));
+    };
+    // IPv4 by address; the IPv4-mapped IPv6 form is the same peer.
+    QCOMPARE(key("192.168.1.5"), QStringLiteral("192.168.1.5"));
+    QCOMPARE(key("::ffff:192.168.1.5"), key("192.168.1.5"));
+    QVERIFY(key("192.168.1.6") != key("192.168.1.5"));
+    // IPv6 by /64: every address a host can give itself inside its prefix
+    // (AUDIT §5.2.2), however it is spelled.
+    QCOMPARE(key("2001:db8:1:2::1"), key("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+    QCOMPARE(key("2001:DB8:1:2:0:0:0:9"), key("2001:db8:1:2::1"));
+    QVERIFY(key("2001:db8:1:3::1") != key("2001:db8:1:2::1"));
+    QVERIFY(key("2001:db8:1:2::1") != key("192.168.1.5"));
+    QCOMPARE(key("::1"), key("::2"));
+
+    // On this computer's own link the /64 is the whole LAN: one guesser must
+    // not lock out every phone on it, so there the address is the peer. A
+    // link-local address is always on the link; anything else is when it is
+    // in the /64 of the address the connection arrived on.
+    const auto via = [](const char *address, const char *local) {
+        return WebRemoteServer::pinPeerKey(QHostAddress(QString::fromLatin1(address)),
+                                           QHostAddress(QString::fromLatin1(local)));
+    };
+    // The scope id names an interface of this computer, not the peer.
+    QCOMPARE(key("fe80::1%eth0"), key("fe80::1%wlan0"));
+    QVERIFY(key("fe80::1%eth0") != key("fe80::2%eth0"));
+    QVERIFY(via("fe80::1", "fe80::99") != via("fe80::2", "fe80::99"));
+    QVERIFY(via("2001:db8:1:2::1", "2001:db8:1:2::99") !=
+            via("2001:db8:1:2::5", "2001:db8:1:2::99"));
+    QVERIFY(via("fd12:3456:789a:1::1", "fd12:3456:789a:1::99") !=
+            via("fd12:3456:789a:1::5", "fd12:3456:789a:1::99"));
+    QCOMPARE(via("2001:db8:1:2::1", "2001:db8:1:2::99"),
+             via("2001:DB8:1:2:0:0:0:1", "2001:db8:1:2::99"));
+    // From another prefix it is still the /64, whatever this end is.
+    QCOMPARE(via("2001:db8:9:9::1", "2001:db8:1:2::99"),
+             via("2001:db8:9:9::2", "2001:db8:1:2::99"));
+    QCOMPARE(via("2001:db8:9:9::1", "192.168.1.2"), key("2001:db8:9:9::2"));
+    // IPv4 is the address either way.
+    QCOMPARE(via("::ffff:192.168.1.5", "::ffff:192.168.1.2"), key("192.168.1.5"));
+}
+
+void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
+{
+    qint64 now = 90000000;
+    m_server->setClockForTests([&now] { return now; });
+    const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
+    m_settings->setWebRemoteRequirePin(true);
+    m_settings->setWebRemotePin(QStringLiteral("2468")); // a new PIN: every count starts over
+    const QString path = QStringLiteral("/api/auth/pin");
+    const auto from = [this](int host, const QByteArray &pin) {
+        const QByteArray body = "{\"pin\":\"" + pin + "\"}";
+        return RemoteTestClient::statusOf(m_http->raw(
+            "POST /api/auth/pin HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body,
+            3000, QHostAddress(QStringLiteral("127.0.1.%1").arg(host))));
+    };
+
+    // The phone that is already paired (127.0.0.1).
+    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
+
+    // Five addresses, four misses each: none reaches its own lockout.
+    for (int host = 1; host <= 5; ++host) {
+        for (int i = 0; i < 4; ++i)
+            QCOMPARE(from(host, "1111"), 403);
+    }
+    // Twenty misses between them: a sixth address is not even heard out...
+    QCOMPARE(from(6, "2468"), 429);
+    QCOMPARE(from(6, "1111"), 429);
+    // ...nor is one of the five, which still had a try of its own left.
+    QCOMPARE(from(1, "2468"), 429);
+    // The phone that gave this PIN before is not locked out with them, and
+    // answers for its own misses only.
+    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
+    QCOMPARE(m_http->post(path, R"({"pin":"1111"})").status, 403);
+    QCOMPARE(m_http->post(path, R"({"pin":"2468"})").status, 200);
+    QCOMPARE(from(6, "2468"), 429); // and its success forgives the others nothing
+
+    // One try comes back every 5 min, whoever takes it.
+    now += 5 * 60 * 1000 - 1;
+    QCOMPARE(from(6, "2468"), 429);
+    now += 1;
+    QCOMPARE(from(6, "1111"), 403);
+    QCOMPARE(from(7, "2468"), 429);
+    now += 5 * 60 * 1000;
+    QCOMPARE(from(7, "2468"), 200);
+    // 127.0.1.7 has shown the PIN; the others are still one miss from the limit.
+    QCOMPARE(from(8, "1111"), 403);
+    QCOMPARE(from(9, "2468"), 429);
+    QCOMPARE(from(7, "2468"), 200);
+
+    // A new PIN, set at the desktop, clears it for everyone.
+    m_settings->setWebRemotePin(QStringLiteral("9753"));
+    QCOMPARE(from(9, "9753"), 200);
+}
+
 void WebRemoteServerTest::pinLengthMismatchIsRefused()
 {
     m_settings->setWebRemoteRequirePin(true);
@@ -506,6 +606,17 @@ void WebRemoteServerTest::subtitleStyleValidatesColour()
     QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
     QCOMPARE(request("POST", QStringLiteral("/api/subtitles/style"), R"({"color":"red;x"})").status, 400);
     QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
+
+    // #FFE066 is the yellow an older list offered: drawn as stored, shown
+    // picked as the Yellow that replaced it, as the desktop does.
+    const QJsonObject style = QJsonDocument::fromJson(request("GET", QStringLiteral("/api/status")).body)
+                                  .object()
+                                  .value(QStringLiteral("subtitleStyle"))
+                                  .toObject();
+    QCOMPARE(style.value(QStringLiteral("color")).toString(), QStringLiteral("#FFE066"));
+    QCOMPARE(style.value(QStringLiteral("swatch")).toString(), QStringLiteral("#F2E14C"));
+    QCOMPARE(Settings::subtitleColorSwatch(QStringLiteral("#bfbfbf")), QStringLiteral("#A0A0A0"));
+    QCOMPARE(Settings::subtitleColorSwatch(QStringLiteral("#123456")), QStringLiteral("#123456"));
 }
 
 void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()
@@ -596,6 +707,69 @@ void WebRemoteServerTest::nextAndPreviousStepByChapter()
     // Exactly at chapter three's start: skipBack's rule is "restart the current
     // chapter past the window, else step back" — at 0 into it, that is chapter two.
     QCOMPARE(backend.seeks.constLast(), Q_INT64_C(600'000));
+}
+
+// AUDIT §5.2.3: where the screenshot went (/home/<user>/Pictures/...) is not
+// the phone's business, and the page never read it.
+void WebRemoteServerTest::screenshotReplyHasNoPath()
+{
+    const QString userId = QStringLiteral("a1b2c3d4e5f60718293a4b5c6d7e8f90");
+    const QString itemId = QStringLiteral("301001");
+
+    MockEmbyServer emby;
+    QVERIFY(emby.start());
+    QVERIFY(emby.addRouteFromFile(QStringLiteral("POST"),
+                                  QStringLiteral("/Items/%1/PlaybackInfo").arg(itemId),
+                                  QStringLiteral(STRMQT_FIXTURES_DIR "/playback_info.json")));
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing"), 204, {});
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Progress"), 204, {});
+    emby.addRoute(QStringLiteral("POST"), QStringLiteral("/Sessions/Playing/Stopped"), 204, {});
+
+    emby::EmbyClient client;
+    client.setBaseUrl(emby.baseUrl());
+    client.setDeviceId(QStringLiteral("test-device"));
+    client.setSession(QStringLiteral("not-a-real-token-fixture-only"), userId);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings settings(dir.filePath(QStringLiteral("settings.ini")));
+    settings.setWebRemotePort(m_port + 1);
+    settings.setWebRemoteBindMode(QStringLiteral("localhost"));
+    settings.setWebRemoteRequirePin(false);
+
+    FakePlayerBackend backend;
+    PlayerController controller(&client, &backend, &settings);
+    controller.setScreenshotDirectoryForTests(dir.filePath(QStringLiteral("shots")));
+    WebRemoteServer server(&settings, &controller, nullptr, nullptr, nullptr, &client);
+    QVERIFY(server.start());
+    const auto stopServer = qScopeGuard([&server] { server.stop(); });
+    RemoteTestClient http(static_cast<quint16>(m_port + 1));
+
+    QVariantMap item;
+    item.insert(QStringLiteral("itemId"), itemId);
+    item.insert(QStringLiteral("name"), itemId);
+    item.insert(QStringLiteral("label"), itemId);
+    item.insert(QStringLiteral("type"), QStringLiteral("Movie"));
+    item.insert(QStringLiteral("runtimeMs"), 1800'000);
+    controller.playQueue({item}, 0);
+    QTRY_COMPARE(backend.loadedUrls.size(), 1);
+    backend.simulateState(PlayerBackend::State::Playing);
+    QTRY_VERIFY(controller.active());
+
+    const RemoteResponse taken = http.post(QStringLiteral("/api/playback"), R"({"action":"screenshot"})");
+    QCOMPARE(taken.status, 200);
+    QCOMPARE(backend.screenshots.size(), 1); // it was taken, on this computer
+    QVERIFY(backend.screenshots.constFirst().startsWith(dir.path()));
+    const QJsonObject reply = taken.json();
+    QCOMPARE(reply.value(QStringLiteral("ok")).toBool(), true);
+    QVERIFY(!reply.contains(QStringLiteral("path")));
+    QVERIFY(!taken.body.contains(dir.path().toUtf8()));
+
+    backend.screenshotSucceeds = false;
+    const RemoteResponse failed = http.post(QStringLiteral("/api/playback"), R"({"action":"screenshot"})");
+    QCOMPARE(failed.status, 500);
+    QCOMPARE(failed.json().value(QStringLiteral("ok")).toBool(), false);
+    QVERIFY(!failed.json().contains(QStringLiteral("path")));
 }
 
 void WebRemoteServerTest::imageProxyServesOnlyRasterImages()

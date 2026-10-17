@@ -7,10 +7,8 @@ import StrmQt
 // "row skeleton" components: pages compose rows and grids of these, so the
 // shimmer stays one implementation and one animation clock.
 //
-// Reduced motion: `reduceMotion` collapses the sweep to a flat tint. There is
-// no platform token for this yet (Theme has no reducedMotion role), so it is a
-// property the caller sets; wiring it to a settings/portal signal is a one-line
-// change here once that token exists.
+// Reduced motion: `reduceMotion` collapses the sweep to a flat tint. It
+// defaults to Theme.reducedMotion, so a caller only sets it to override.
 Rectangle {
     id: skeleton
 

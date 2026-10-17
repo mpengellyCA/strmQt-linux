@@ -387,6 +387,11 @@ FocusScope {
                 }
             }
 
+            // The stock card's hover, mirrored on the cell: the card is behind
+            // the loader below, and re-use has to read it without reaching
+            // through an untyped `item`.
+            property bool stockHovered: false
+
             // Hover ownership is the delegate itself, not its index: `index` is
             // already reset to -1 by the time Component.onDestruction runs, so
             // an index comparison there can never match, and a card removed
@@ -408,7 +413,7 @@ FocusScope {
             // owner while pooled, then synchronize it with the live handler
             // after the cell receives its new model identity.
             ListView.onPooled: cell.setHovered(false)
-            ListView.onReused: cell.setHovered(rail.customCards ? cellHover.hovered : cardItem.hovered)
+            ListView.onReused: cell.setHovered(rail.customCards ? cellHover.hovered : cell.stockHovered)
 
             // A row removed above this card renumbers it without the pointer
             // moving, so the published index has to follow it.
@@ -442,13 +447,73 @@ FocusScope {
                 onHoveredChanged: cell.setHovered(cellHover.hovered)
             }
 
+            // Exactly one card per cell, and it is the loader's. A StrmCard used
+            // to be declared here unconditionally and merely hidden on a custom
+            // shelf, so every Crate sleeve, portrait and station tile carried a
+            // whole unused card behind it — image, four overlay buttons, ring,
+            // handlers. A component inside the delegate rather than a file of
+            // its own because it is this cell's roles it reads.
+            Component {
+                id: stockCard
+
+                StrmCard {
+                    id: cardItem
+                    variant: rail.cardVariant
+                    // A wide card asks for wide art. An episode's "poster" is a
+                    // 16:9 still, so drawing it in a 2:3 frame crops it to a
+                    // fragment of the frame it came from — which is what
+                    // Continue Watching looked like. thumbUrl is empty when the
+                    // item has nothing suitable, and then the poster is still
+                    // the honest answer.
+                    imageUrl: {
+                        const wide = rail.cardVariant === "still" || rail.cardVariant === "backdrop";
+                        const thumb = cell.model.thumbUrl !== undefined ? cell.model.thumbUrl : "";
+                        if (wide && thumb.length > 0)
+                            return thumb;
+                        return cell.model.posterUrl !== undefined ? cell.model.posterUrl : "";
+                    }
+                    label: rail.preferItemName && cell.model.name !== undefined && cell.model.name.length > 0
+                         ? cell.model.name
+                         : (cell.model.label !== undefined ? cell.model.label
+                            : (cell.model.name !== undefined ? cell.model.name : ""))
+                    sublabel: cell.model.subtitle !== undefined ? cell.model.subtitle : ""
+                    progress: cell.model.progress !== undefined ? cell.model.progress : 0
+                    played: cell.model.played === true
+                    favorite: cell.model.favorite === true
+                    unplayedCount: cell.model.unplayedCount !== undefined
+                                   ? cell.model.unplayedCount : 0
+                    // Focus, not hover: the card's own HoverHandler owns the other
+                    // half of the pair and the two never touch.
+                    highlighted: cell.ListView.isCurrentItem && list.activeFocus
+
+                    onHoveredChanged: {
+                        cell.stockHovered = cardItem.hovered
+                        cell.setHovered(cardItem.hovered)
+                    }
+
+                    onActivated: cell.cardActivated()
+                    onPlayRequested: cell.cardPlayRequested()
+                    onPlayedToggled: {
+                        rail._cancelNavigationFocusForUser()
+                        rail.itemPlayedToggled(cell.index)
+                    }
+                    onFavoriteToggled: {
+                        rail._cancelNavigationFocusForUser()
+                        rail.itemFavoriteToggled(cell.index)
+                    }
+                    onMenuRequested: (mx, my) => cell.cardMenuRequested(mx, my)
+                }
+            }
+
             BoundLoader {
                 id: cardLoader
                 anchors.centerIn: parent
-                active: rail.customCards
-                sourceComponent: rail.cardComponent
-                // By name, not by type: a card declares only what it uses.
+                sourceComponent: rail.customCards ? rail.cardComponent : stockCard
+                // By name, not by type: a card declares only what it uses. The
+                // stock card binds itself, above.
                 onLoaded: {
+                    if (!rail.customCards)
+                        return
                     const card = cardLoader.item
                     const bind = (name, value) => {
                         if (name in card)
@@ -466,55 +531,6 @@ FocusScope {
                     connect("playRequested", cell.cardPlayRequested)
                     connect("menuRequested", cell.cardMenuRequested)
                 }
-            }
-
-            StrmCard {
-                id: cardItem
-                anchors.centerIn: parent
-                visible: !rail.customCards
-                enabled: !rail.customCards
-                variant: rail.cardVariant
-                // A wide card asks for wide art. An episode's "poster" is a
-                // 16:9 still, so drawing it in a 2:3 frame crops it to a
-                // fragment of the frame it came from — which is what
-                // Continue Watching looked like. thumbUrl is empty when the
-                // item has nothing suitable, and then the poster is still
-                // the honest answer.
-                imageUrl: {
-                    if (rail.customCards) return "";
-                    const wide = rail.cardVariant === "still" || rail.cardVariant === "backdrop";
-                    const thumb = cell.model.thumbUrl !== undefined ? cell.model.thumbUrl : "";
-                    if (wide && thumb.length > 0)
-                        return thumb;
-                    return cell.model.posterUrl !== undefined ? cell.model.posterUrl : "";
-                }
-                label: rail.preferItemName && cell.model.name !== undefined && cell.model.name.length > 0
-                     ? cell.model.name
-                     : (cell.model.label !== undefined ? cell.model.label
-                        : (cell.model.name !== undefined ? cell.model.name : ""))
-                sublabel: cell.model.subtitle !== undefined ? cell.model.subtitle : ""
-                progress: cell.model.progress !== undefined ? cell.model.progress : 0
-                played: cell.model.played === true
-                favorite: cell.model.favorite === true
-                unplayedCount: cell.model.unplayedCount !== undefined
-                               ? cell.model.unplayedCount : 0
-                // Focus, not hover: the card's own HoverHandler owns the other
-                // half of the pair and the two never touch.
-                highlighted: cell.ListView.isCurrentItem && list.activeFocus
-
-                onHoveredChanged: cell.setHovered(hovered)
-
-                onActivated: cell.cardActivated()
-                onPlayRequested: cell.cardPlayRequested()
-                onPlayedToggled: {
-                    rail._cancelNavigationFocusForUser()
-                    rail.itemPlayedToggled(cell.index)
-                }
-                onFavoriteToggled: {
-                    rail._cancelNavigationFocusForUser()
-                    rail.itemFavoriteToggled(cell.index)
-                }
-                onMenuRequested: (mx, my) => cell.cardMenuRequested(mx, my)
             }
         }
 

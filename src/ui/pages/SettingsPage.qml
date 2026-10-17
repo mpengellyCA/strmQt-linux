@@ -266,35 +266,6 @@ FocusScope {
         }
     ]
 
-    // The colours anyone actually uses for subtitles. mpv takes #RRGGBB and
-    // Settings refuses anything else, so these are stored verbatim.
-    readonly property var subtitleColors: [
-        {
-            "text": qsTr("White"),
-            "value": "#FFFFFF"
-        },
-        {
-            "text": qsTr("Soft white"),
-            "value": "#E8E2D6"
-        },
-        {
-            "text": qsTr("Amber"),
-            "value": "#F0A02A"
-        },
-        {
-            "text": qsTr("Yellow"),
-            "value": "#F2E14C"
-        },
-        {
-            "text": qsTr("Cyan"),
-            "value": "#7FD8E8"
-        },
-        {
-            "text": qsTr("Grey"),
-            "value": "#A0A0A0"
-        }
-    ]
-
     readonly property var webRemoteBindOptions: [
         {
             "text": qsTr("All interfaces (LAN + Tailscale)"),
@@ -368,6 +339,7 @@ FocusScope {
     readonly property int subtitlePositionValue: page.draftSubtitlePosition >= 0 ? page.draftSubtitlePosition
                                                : page.prefsAvailable ? page.prefs.subtitlePosition : 100
     readonly property string subtitleColorValue: page.prefsAvailable ? page.prefs.subtitleColor : "#FFFFFF"
+    readonly property int subtitleColorIndex: Theme.subtitleColorIndex(page.subtitleColorValue)
 
     // ── Input remapping (ARCHITECTURE.md) ─────────────────────────────────────
     // Grouped off `Input.actions` rather than actionsForCategory(): the property
@@ -1223,6 +1195,17 @@ FocusScope {
                         label: qsTr("Colour")
                         hint: page.prefsAvailable ? qsTr("White is what most releases assume; the rest are for when it disappears into the picture.") : page.unavailableHint
 
+                        // A swatch carries no caption, so the choice is
+                        // named here. It also names a colour no swatch is
+                        // ticked for: one set from somewhere else.
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Theme.subtitleColorName(page.subtitleColorValue)
+                            color: Theme.textSecondaryColor
+                            font.family: Theme.fontBody
+                            font.pixelSize: Theme.fontSmall
+                        }
+
                         Row {
                             id: swatchRow
 
@@ -1230,15 +1213,18 @@ FocusScope {
                             spacing: Theme.spacingTight
 
                             Repeater {
-                                model: page.subtitleColors
+                                // Theme's list, which the player's sheet reads
+                                // too.
+                                model: Theme.subtitleColors
 
                                 delegate: SettingsSections.ColorSwatch {
                                     required property var modelData
+                                    required property int index
 
                                     enabled: page.prefsAvailable
                                     swatchColor: modelData.value
                                     label: modelData.text
-                                    selected: page.subtitleColorValue.toUpperCase() === String(modelData.value).toUpperCase()
+                                    selected: page.subtitleColorIndex === index
                                     onPicked: {
                                         if (page.prefsAvailable)
                                             page.prefs.subtitleColor = modelData.value;
@@ -2049,6 +2035,12 @@ FocusScope {
         id: captureSheet
 
         anchors.fill: parent
+
+        // How the sheet tells a key the pad delivered from one that was typed
+        // (KeyDelivery.h): the stamp below is not believed while a delivered
+        // key is being handled, so the pad stays the device in use.
+        padDriving: Input.gamepadActive
+        onKeyPressed: Input.noteInput("keyboard")
 
         onCaptured: (key, modifiers) => {
             const sequence = Input.sequenceForKey(key, modifiers);

@@ -52,8 +52,8 @@ rm -rf /tmp/w<wave>*       # at the gate, once every agent has reported
 ## Layout
 
 - `src/core` — settings, session, cache, logging (no QtGui dependency).
-- `src/server` — `MediaServerBackend` interface + per-service backends (`emby/` first).
-  Backend-neutral DTOs in `src/server/dto`.
+- `src/server` — `EmbyClient` and its mappers (`emby/`). Backend-neutral DTOs in
+  `src/server/dto`.
 - `src/playback` — `PlayerBackend` interface, `PlayerController` (watchdog/ladder/resume),
   engines in `mpv/`, `vlc/`, `qtmultimedia/`.
 - `src/platform` — MPRIS2, KDE Connect bridge, secrets, power inhibit, HDR probing.

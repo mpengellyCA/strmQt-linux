@@ -21,6 +21,7 @@ qt_target_qml_sources(strmqt QML_FILES
     ui/controls/StrmTooltip.qml
     ui/controls/StrmCard.qml
     ui/controls/StrmImage.qml
+    ui/controls/TitleLogo.qml
     ui/controls/StrmAvatar.qml
     ui/controls/StrmRail.qml
     ui/controls/StrmGrid.qml

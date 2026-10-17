@@ -11,10 +11,12 @@ CMakeLists.txt.user
 
 # Packaging output
 .flatpak-builder/
-packaging/arch/pkg/
-packaging/arch/src/
-packaging/arch/strmqt/
-*.pkg.tar.zst
+# makepkg: its work trees, the bare source clone (SRCDEST defaults to the
+# PKGBUILD's directory), and the built package under any compressor.
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/strmqt/
+*.pkg.tar.*
 *.AppImage
 
 # Brainstorming companion scratch

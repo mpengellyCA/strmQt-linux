@@ -53,9 +53,14 @@ private slots:
     void setupIsOfferedOnceAfterSignIn();
     void acceptingTheOfferEnablesWithAPin();
     void enablingInSettingsWithdrawsTheOffer();
+    void enablingInSettingsOnAFreshInstallRequiresThePin();
+    void enablingInSettingsKeepsAPinRequirementTurnedOff();
 
 private:
     void signIn();
+    // `freshRemote` leaves every remote/* setting but the port and the bind
+    // mode as a new install has it.
+    void build(bool freshRemote);
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<MockEmbyServer> m_emby;
@@ -75,6 +80,11 @@ void WebRemoteControllerTest::initTestCase()
 
 void WebRemoteControllerTest::init()
 {
+    build(false);
+}
+
+void WebRemoteControllerTest::build(bool freshRemote)
+{
     m_dir = std::make_unique<QTemporaryDir>();
     QVERIFY(m_dir->isValid());
     m_emby = std::make_unique<MockEmbyServer>();
@@ -88,8 +98,10 @@ void WebRemoteControllerTest::init()
     m_settings->setWebRemoteBindMode(QStringLiteral("localhost"));
     // The remote is off and PIN-protected by default; most of these tests are
     // about a running, open remote. The offer tests turn it back off.
-    m_settings->setWebRemoteEnabled(true);
-    m_settings->setWebRemoteRequirePin(false);
+    if (!freshRemote) {
+        m_settings->setWebRemoteEnabled(true);
+        m_settings->setWebRemoteRequirePin(false);
+    }
     m_secrets = std::make_unique<SecretsStore>(m_dir->filePath(QStringLiteral("secrets.ini")));
     m_client = std::make_unique<emby::EmbyClient>();
     m_client->setDeviceId(QStringLiteral("test-device"));
@@ -361,6 +373,52 @@ void WebRemoteControllerTest::enablingInSettingsWithdrawsTheOffer()
     // Turning it off again later is a choice already made, not a new install.
     m_remote->setEnabled(false);
     QVERIFY(!m_remote->offerSetup());
+}
+
+// AUDIT §5.2.1 feared that the Settings toggle, unlike the offer, starts an
+// open server. It does not: the PIN requirement is on unless it was turned
+// off, whichever way the remote is enabled.
+void WebRemoteControllerTest::enablingInSettingsOnAFreshInstallRequiresThePin()
+{
+    cleanup();
+    build(true);
+    QVERIFY(!m_remote->isEnabled());
+    signIn();
+    QVERIFY(m_remote->offerSetup()); // the offer was never answered
+
+    m_remote->setEnabled(true); // the Settings switch, not acceptSetup()
+    QVERIFY(m_remote->isRunning());
+    QVERIFY(m_remote->requirePin());
+    QCOMPARE(m_remote->pin().size(), 4);
+
+    RemoteTestClient http(kPort);
+    QCOMPARE(http.get(QStringLiteral("/api/auth/pin")).json().value(QStringLiteral("required")).toBool(),
+             true);
+    QCOMPARE(http.get(QStringLiteral("/api/status")).status, 401);
+    QCOMPARE(http.post(QStringLiteral("/api/navigate"), R"({"key":"back"})").status, 401);
+    const RemoteResponse auth = http.post(QStringLiteral("/api/auth/pin"),
+                                          "{\"pin\":\"" + m_remote->pin().toUtf8() + "\"}");
+    QCOMPARE(auth.status, 200);
+    http.setToken(auth.json().value(QStringLiteral("token")).toString());
+    QCOMPARE(http.get(QStringLiteral("/api/status")).status, 200);
+}
+
+// Someone who turned the PIN requirement off in Settings and then turned the
+// remote on has made both choices; enabling does not undo the first.
+void WebRemoteControllerTest::enablingInSettingsKeepsAPinRequirementTurnedOff()
+{
+    cleanup();
+    build(true);
+    signIn();
+    m_remote->setRequirePin(false);
+    m_remote->setEnabled(true);
+    QVERIFY(m_remote->isRunning());
+    QVERIFY(!m_remote->requirePin());
+    // The offer, shown to someone who has not seen that page, turns it on.
+    m_remote->setEnabled(false);
+    m_settings->setWebRemoteSetupOffered(false);
+    m_remote->acceptSetup();
+    QVERIFY(m_remote->requirePin());
 }
 
 QTEST_GUILESS_MAIN(WebRemoteControllerTest)

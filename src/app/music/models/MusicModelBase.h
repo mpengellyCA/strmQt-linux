@@ -16,7 +16,9 @@ class MusicModelBase : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int count READ count NOTIFY countChanged)
     Q_PROPERTY(int totalRecordCount READ totalRecordCount NOTIFY totalRecordCountChanged)
-    Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY totalRecordCountChanged)
+    // Its own signal: the answer is size() < totalRecordCount, and the last
+    // page of a list moves the size without moving the total.
+    Q_PROPERTY(bool canLoadMore READ canLoadMore NOTIFY canLoadMoreChanged)
 
 public:
     using QAbstractListModel::QAbstractListModel;
@@ -38,6 +40,7 @@ public:
 signals:
     void countChanged();
     void totalRecordCountChanged();
+    void canLoadMoreChanged();
 
 protected:
     virtual int size() const = 0;
@@ -50,6 +53,8 @@ protected:
 
     void rebuildIndex();
     void extendIndex(int fromRow);
+    // Call after every change to the rows, even when the total is the same:
+    // this is also where canLoadMore is re-announced.
     void setTotal(int total);
     QList<int> rowsFor(const QString &itemId) const { return m_rowsById.value(itemId); }
 
@@ -59,6 +64,7 @@ private:
     QHash<QString, int> m_rowByIdentity;
     QHash<QString, QList<int>> m_rowsById;
     int m_total = 0;
+    bool m_announcedCanLoadMore = false; // what canLoadMoreChanged last stood for
 };
 
 } // namespace strmqt::music

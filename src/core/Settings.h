@@ -189,6 +189,12 @@ public:
     void setSubtitleScale(int percent);
     QString subtitleColor() const;
     void setSubtitleColor(const QString &color);
+    // The swatch a stored subtitle colour is shown as selected under: itself,
+    // or for a shade the player's sheet and the web remote offered before the
+    // lists were joined, the entry that replaced it. A stored colour is drawn
+    // exactly as stored; this only names it, here, so the desktop (Theme) and
+    // the web remote name it alike.
+    Q_INVOKABLE static QString subtitleColorSwatch(const QString &color);
     int subtitleBackground() const;
     void setSubtitleBackground(int percent);
     int subtitlePosition() const;

@@ -7,7 +7,6 @@
 
 #include <QCryptographicHash>
 #include <QHash>
-#include <QRandomGenerator>
 
 #include <algorithm>
 #include <utility>
@@ -439,15 +438,9 @@ void PlaylistController::requestPlayFrom(int row)
 
 void PlaylistController::requestShuffle()
 {
-    QVariantList queue = materializeAll();
-    if (queue.isEmpty())
-        return;
-    for (qsizetype row = queue.size() - 1; row > 0; --row) {
-        const qsizetype other =
-            QRandomGenerator::global()->bounded(static_cast<quint32>(row + 1));
-        queue.swapItemsAt(row, other);
-    }
-    emit playItemsRequested(queue, 0);
+    const QVariantList queue = materializeAll();
+    if (!queue.isEmpty())
+        emit shuffleItemsRequested(queue);
 }
 
 void PlaylistController::requestQueueSelection(const QVariantMap &selectedRows)

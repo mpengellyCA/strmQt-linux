@@ -107,6 +107,17 @@ MediaItem PlayQueue::itemFromVariant(const QVariant &value)
         refFromImageSource(map.value(QStringLiteral("backdropUrl")).toString()).tag;
     if (!backdrop.isEmpty())
         item.backdropImageTags = {backdrop};
+    // An episode's logo is its series', so it is restored under whichever
+    // field named it, exactly as the poster above: the player's title reads
+    // the entry, and the full record only arrives with the playback start.
+    const MediaItem::ImageRef logo =
+        refFromImageSource(map.value(QStringLiteral("logoUrl")).toString());
+    if (logo.isValid() && logo.itemId == item.id) {
+        item.logoImageTag = logo.tag;
+    } else if (logo.isValid()) {
+        item.parentLogoItemId = logo.itemId;
+        item.parentLogoImageTag = logo.tag;
+    }
     return item;
 }
 
@@ -151,9 +162,14 @@ void PlayQueue::emitRowMetaChanged()
 
 quint64 PlayQueue::currentKey() const
 {
-    if (m_currentIndex < 0 || m_currentIndex >= m_entries.size())
+    return entryKeyAt(m_currentIndex);
+}
+
+quint64 PlayQueue::entryKeyAt(int row) const
+{
+    if (row < 0 || row >= m_entries.size())
         return 0;
-    return m_entries.at(m_currentIndex).key;
+    return m_entries.at(row).key;
 }
 
 // currentChanged() is the property signal: hasNext/hasPrevious hang off it and
@@ -346,23 +362,79 @@ void PlayQueue::enrichEntry(const MediaItem &item)
 {
     if (item.id.isEmpty())
         return;
+    // Every occurrence, not the first: the same item may legitimately be queued
+    // twice, and stopping early left the repeats on the bare seed for good.
+    bool enriched = false;
+    bool currentEnriched = false;
     for (int row = 0; row < m_entries.size(); ++row) {
         if (m_entries.at(row).item.id != item.id)
             continue;
         // The identity survives: shuffling and re-ordering track the key, not
         // the payload, so replacing what an entry HOLDS must not disturb where
         // it sits or what it is.
+        //
+        // That includes which playlist ENTRY this row is. The server's record
+        // of an item knows nothing about the playlist it was played from, so
+        // an id the record does not carry is the entry's own and stays.
+        QString entryId = std::move(m_entries[row].item.playlistItemId);
         m_entries[row].item = item;
+        if (item.playlistItemId.isEmpty())
+            m_entries[row].item.playlistItemId = std::move(entryId);
         const QModelIndex idx = index(row);
         emit dataChanged(idx, idx);
-        if (row == m_currentIndex)
-            emit currentItemChanged();
-        // What the surfaces bind through: they read itemAt(currentIndex), so a
-        // changed payload has to announce itself as a queue change or nothing
-        // re-reads it.
-        emit queueChanged();
-        return;
+        enriched = true;
+        currentEnriched = currentEnriched || row == m_currentIndex;
     }
+    if (!enriched)
+        return;
+    if (currentEnriched)
+        emit currentItemChanged();
+    // What the surfaces bind through: they read itemAt(currentIndex), so a
+    // changed payload has to announce itself as a queue change or nothing
+    // re-reads it.
+    emit queueChanged();
+}
+
+int PlayQueue::updateUserData(const QString &itemId, std::optional<bool> played,
+                              std::optional<bool> favorite,
+                              std::optional<qint64> playbackPositionTicks,
+                              std::optional<int> playCount)
+{
+    if (itemId.isEmpty())
+        return 0;
+    int changed = 0;
+    // Every occurrence: the same item may be queued twice (enrichEntry()).
+    for (int row = 0; row < m_entries.size(); ++row) {
+        MediaItem &item = m_entries[row].item;
+        if (item.id != itemId)
+            continue;
+        const bool same = (!played || item.played == *played) &&
+                          (!favorite || item.favorite == *favorite) &&
+                          (!playbackPositionTicks ||
+                           item.playbackPositionTicks == *playbackPositionTicks) &&
+                          (!playCount || item.playCount == *playCount);
+        if (same)
+            continue;
+        if (played)
+            item.played = *played;
+        if (favorite)
+            item.favorite = *favorite;
+        if (playbackPositionTicks)
+            item.playbackPositionTicks = *playbackPositionTicks;
+        if (playCount)
+            item.playCount = *playCount;
+        const QModelIndex idx = index(row);
+        emit dataChanged(idx, idx,
+                         {MediaItemModel::PlayedRole, MediaItemModel::PlayCountRole,
+                          MediaItemModel::FavoriteRole, MediaItemModel::ResumableRole,
+                          MediaItemModel::ProgressRole, MediaItemModel::PositionMsRole});
+        ++changed;
+    }
+    // The cursor did not move and the entry under it is the same entry, so
+    // neither cursor signal is due. See the header for why that matters.
+    if (changed > 0)
+        emit queueChanged();
+    return changed;
 }
 
 int PlayQueue::originalPositionOf(quint64 key) const

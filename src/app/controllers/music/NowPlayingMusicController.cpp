@@ -73,18 +73,17 @@ void NowPlayingMusicController::bind(PlayerController *player, ItemActions *acti
     });
     connect(player, &PlayerController::durationChanged, this, &NowPlayingMusicController::refreshTime);
 
-    connect(actions, &ItemActions::favoriteChanged, this, [this](const QString &itemId, bool favourite) {
-        m_favouriteOverrides.insert(itemId, favourite);
-        if (itemId == m_trackId)
-            emit favouriteChanged();
-    });
+    // No ItemActions::favoriteChanged connection: the heart follows the queue
+    // entry, which ItemActions patches before it announces a toggle and which
+    // takes the server's record the same way (PlayQueue::updateUserData).
+    // Both arrive here as queueChanged.
 
     refreshTrack();
 }
 
 bool NowPlayingMusicController::favourite() const
 {
-    return m_active && m_favouriteOverrides.value(m_trackId, m_itemFavourite);
+    return m_active && m_itemFavourite;
 }
 
 QObject *NowPlayingMusicController::albumTracks() const
@@ -120,10 +119,6 @@ void NowPlayingMusicController::refreshTrack()
     if (active && cover.isEmpty())
         cover = m_trackItem.value(QStringLiteral("posterUrl")).toString();
     m_coverUrl = cover;
-    // A newer value from the server (a live patch on the queue item) replaces
-    // whatever this session last toggled.
-    if (active && item.favorite != m_itemFavourite && m_trackId == previousTrackId)
-        m_favouriteOverrides.remove(m_trackId);
     m_itemFavourite = active && item.favorite;
 
     const bool trackMoved = m_trackId != previousTrackId || m_active != wasActive;
@@ -315,6 +310,27 @@ void NowPlayingMusicController::toggleFavourite()
 {
     if (m_actions && m_active)
         m_actions->setFavorite(m_trackId, !favourite());
+}
+
+void NowPlayingMusicController::resetSessionState()
+{
+    const bool wasFavourite = favourite();
+
+    // Retire the album and lyrics replies still in flight for the old identity
+    // and drop what they already delivered.
+    ++m_albumGeneration;
+    m_tracksAlbumId.clear();
+    m_loadedAlbumId.clear();
+    if (m_tracks->rowCount() > 0)
+        m_tracks->clear();
+    setAlbumSummary(QString());
+    clearLyrics();
+
+    // Everything else is derived from the queue and the player, so it is
+    // re-derived rather than cleared by hand.
+    refreshTrack();
+    if (favourite() != wasFavourite)
+        emit favouriteChanged();
 }
 
 void NowPlayingMusicController::setLyricsEnabledForTests(bool enabled)

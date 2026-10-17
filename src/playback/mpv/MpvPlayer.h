@@ -3,6 +3,7 @@
 #include "playback/PlayerBackend.h"
 
 #include <QCoreApplication>
+#include <QList>
 #include <QStringList>
 #include <QTimer>
 
@@ -10,6 +11,7 @@
 #include <memory>
 
 struct mpv_handle;
+struct mpv_event_property;
 
 namespace strmqt {
 
@@ -185,6 +187,13 @@ public:
     int currentSubtitleTrackId() const override { return m_subtitleTrackId; }
     void setAudioTrack(int id) override;
     void setSubtitleTrack(int id) override;
+    void addExternalSubtitle(const QUrl &url, const QString &title, const QString &language,
+                             bool select) override;
+    // `loadfile append`: the next file is an mpv playlist entry after the
+    // current one, so mpv's own gapless audio carries the change of file.
+    bool supportsPrefetch() const override { return true; }
+    bool prefetchNext(const QUrl &url, qint64 startMs, LoadId loadId) override;
+    void cancelPrefetch() override;
 
     // Cached, not read live: the value is a *delta* against positionMs, and
     // recomputing it from the stored cache end keeps it correct between mpv's
@@ -254,6 +263,14 @@ private:
     // Re-read `track-list` and rebuild both lists; emits tracksChanged on change.
     void refreshTracks();
     void setTrackProperty(const char *name, int id);
+    // The loadId of the load() that queued this mpv playlist entry; 0 for one
+    // that is not ours to report on.
+    LoadId takeLoadIdForEntry(qint64 entryId);
+    // The observed properties that belong to the core rather than to a file.
+    // True when `change` was one of them and has been handled.
+    bool handleCoreProperty(const mpv_event_property &change);
+    // Hands mpv the next queued external subtitle, if none is being fetched.
+    void startNextSubtitleAdd();
     void applyVideoProcessing();
     void updateVideoFormat(const QVariantMap &params);
     void noteLogForShaderFailure(const QString &text);
@@ -272,9 +289,66 @@ private:
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
     bool m_loadInFlight = false;
+    // m_loadId is what the caller last asked for; m_eventLoadId is the load
+    // whose file mpv's event stream is currently talking about. The second
+    // follows the events, never the commands: mpv names the playlist entry in
+    // START_FILE, and m_pendingLoads says which load() queued that entry. Two
+    // loads issued before the first START_FILE is drained therefore cannot
+    // lend the first file's events to the second load, and an entry replaced
+    // before it ever started simply never shows up.
     LoadId m_loadId = 0;
     LoadId m_eventLoadId = 0;
-    LoadId m_pendingLoadId = 0;
+    struct PendingLoad
+    {
+        qint64 entryId = 0;
+        LoadId loadId = 0;
+    };
+    QList<PendingLoad> m_pendingLoads;
+    // Only for a libmpv whose loadfile reply names no entry (before 0.33): the
+    // most recent load, attributed the old way.
+    LoadId m_untrackedLoadId = 0;
+    // The entry prefetchNext() appended after the current file; loadId 0 for
+    // none. Its START_FILE is the handover: m_loadId becomes its loadId there.
+    struct Prefetch
+    {
+        qint64 entryId = 0;
+        LoadId loadId = 0;
+        qint64 startMs = 0;
+    };
+    Prefetch m_prefetch;
+    // The current load reached EOF with a prefetch queued, and its end is held
+    // back until mpv shows what it did next: START_FILE of the prefetch (the
+    // handover, and the end is never reported) or going idle (the entry came
+    // too late, and the end is reported after all). 0 when nothing is held.
+    LoadId m_heldEndLoadId = 0;
+    // Forgets the prefetch; with `removeEntry`, also takes it out of mpv's
+    // playlist (load() and stop() need not: they clear the playlist).
+    void dropPrefetch(bool removeEntry);
+    void releaseHeldEnd();
+    // Index of the playlist entry with mpv's id `entryId`, or -1.
+    int playlistIndexOfEntry(qint64 entryId) const;
+    // External subtitles waiting for `sub-add`, for the file that is loaded
+    // now. One at a time: mpv fetches each on a thread of its own and numbers
+    // the track when the fetch ends, so two issued together would get their ids
+    // in download order, and a remembered track id would name a different
+    // subtitle from one play to the next.
+    struct PendingSubtitle
+    {
+        QByteArray url;
+        QByteArray title;
+        QByteArray language;
+        bool select = false;
+    };
+    QList<PendingSubtitle> m_pendingSubtitles;
+    // The sub-add mpv is working on, and its reply_userdata (0: none).
+    PendingSubtitle m_subtitleAdding;
+    quint64 m_subtitleAddInFlight = 0;
+    quint64 m_nextSubtitleAddToken = 0;
+    // Drops the queue and makes sure mpv has no sub-add running. Called before
+    // anything that ends the file — see the .cpp for why that is not optional.
+    void cancelSubtitleAdds();
+    // mpv's id for the external track it read from `url`, or -1.
+    int externalTrackId(const QByteArray &url) const;
     bool m_buffering = false;
     QString m_hwdecCurrent;
 
@@ -294,6 +368,9 @@ private:
     // VideoProcessing means these, not "whatever the last chain left".
     QByteArray m_defaultScale;
     QByteArray m_defaultCscale;
+    // mpv's own subtitle face, read the same way: an empty font in the
+    // subtitle style means this one, not "whatever was chosen last".
+    QByteArray m_defaultSubFont;
     bool m_shaderFailureReported = false;
     QSize m_videoSize;
     bool m_videoHdr = false;

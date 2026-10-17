@@ -117,6 +117,63 @@ public:
     virtual void setAudioTrack(int id) { Q_UNUSED(id); }    // -1 = off/none
     virtual void setSubtitleTrack(int id) { Q_UNUSED(id); } // -1 = off
 
+    // Attach a subtitle that is not in the media itself: a file the server
+    // delivers on a URL of its own (a sidecar .srt next to a direct-played
+    // film, a text subtitle held out of a transcode). It belongs to the load
+    // that is current when this is called and goes with it — the next load()
+    // starts without it, and whoever wants it there attaches it again.
+    //   url       absolute and self-authenticating, like a stream URL. It
+    //             carries the access token: engines must not log it and must
+    //             not publish it in subtitleTracks().
+    //   title     what the track list shows for it
+    //   language  ISO code, may be empty
+    //   select    show it now. False adds it to the list and leaves the
+    //             selection alone, whatever the engine's own defaults say.
+    // Only valid once the load has reached Playing or Paused. The fetch is the
+    // engine's and asynchronous: the track shows up in subtitleTracks() (with
+    // isExternal set) when it has been read, and a file that cannot be read
+    // costs that one subtitle, never the playback. Calls are honoured in order,
+    // so the ids the tracks get do not depend on which download finished first.
+    virtual void addExternalSubtitle(const QUrl &url, const QString &title,
+                                     const QString &language, bool select)
+    {
+        Q_UNUSED(url);
+        Q_UNUSED(title);
+        Q_UNUSED(language);
+        Q_UNUSED(select);
+    }
+
+    // ── Gapless advance (ARCHITECTURE.md §3) ──────────────────────────────────
+    // An engine that can start the next file the moment the current one ends,
+    // with no reload in between, says so here. The controller asks before it
+    // spends a PlaybackInfo request on a next track the engine could not use.
+    virtual bool supportsPrefetch() const { return false; }
+    // Queue `url` to play straight after the current load, under `loadId`, from
+    // `startMs`. Only while the current load is Playing or Paused; a second
+    // call replaces the first. False when the engine did not queue it, and
+    // then nothing has changed.
+    //
+    // What follows is one of two things, never both:
+    //  - the current load ends cleanly and the engine moves on by itself. It
+    //    emits prefetchStarted(current, loadId) INSTEAD of Ended/endReached,
+    //    and from then on behaves exactly as if load(url, startMs, loadId) had
+    //    just been called: position and duration reset, Loading, then Playing,
+    //    Paused or Error under loadId.
+    //  - it does not move on (the current load failed, or the queued entry was
+    //    not there in time). The prefetch is dropped and the current load ends
+    //    the ordinary way, endReached or errorOccurred.
+    // load() and stop() drop a queued prefetch; so does cancelPrefetch().
+    virtual bool prefetchNext(const QUrl &url, qint64 startMs, LoadId loadId)
+    {
+        Q_UNUSED(url);
+        Q_UNUSED(startMs);
+        Q_UNUSED(loadId);
+        return false;
+    }
+    // Drop the queued prefetch, if any. If the current load has already ended
+    // with one queued, the engine still reports that end, as endReached.
+    virtual void cancelPrefetch() {}
+
     // ── Scrubber / stats surface ──────────────────────────────────────────────
     virtual qint64 bufferedMs() const { return 0; }
     virtual qreal playbackSpeed() const { return 1.0; }
@@ -208,6 +265,10 @@ signals:
     void durationChanged(qint64 durationMs, strmqt::PlayerBackend::LoadId loadId);
     // Media ended without a fatal error (State::Ended is set first).
     void endReached(strmqt::PlayerBackend::LoadId loadId);
+    // `finished` ended cleanly and the engine went straight on to the load
+    // queued by prefetchNext(); see there. Emitted before any event of `loadId`.
+    void prefetchStarted(strmqt::PlayerBackend::LoadId finished,
+                         strmqt::PlayerBackend::LoadId loadId);
     // Fatal playback failure; message is human-readable (State::Error is set first).
     void errorOccurred(const QString &message, strmqt::PlayerBackend::LoadId loadId);
     void bufferingChanged(bool buffering, strmqt::PlayerBackend::LoadId loadId);

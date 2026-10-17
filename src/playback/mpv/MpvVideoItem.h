@@ -61,6 +61,7 @@ protected:
 private:
     friend class MpvUpdateBridge;
     void onRenderHandleChanged();
+    void applyFramePacing();
     void updateOutputPixelSize();
     void deliverGpuRenderer(const QString &renderer);
 

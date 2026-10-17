@@ -22,7 +22,7 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
     // MediaItemModel's media roles occupy Qt::UserRole+1 to about +40, so +200
     // cannot collide; verified at compile time rather than with a runtime
     // Q_ASSERT, since the two enums are unrelated types (ruling P1-2).
-    static_assert(int(MediaItemModel::SubtitleRole) < int(TrackListModel::DisplayTitleRole));
+    static_assert(int(MediaItemModel::LogoUrlRole) < int(TrackListModel::DisplayTitleRole));
     QHash<int, QByteArray> names = MediaItemModel::mediaRoleNames();
     names.insert(musicRoleNames());
     return names;

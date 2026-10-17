@@ -31,7 +31,7 @@ public:
 
     enum ExtraRole
     {
-        SourceRowRole = MediaItemModel::SubtitleRole + 1,
+        SourceRowRole = MediaItemModel::LogoUrlRole + 1,
         ArtistTextRole,
         AlbumTextRole,
     };

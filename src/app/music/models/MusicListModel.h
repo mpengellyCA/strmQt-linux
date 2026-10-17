@@ -15,13 +15,17 @@ public:
 
     void setItems(QList<T> items, int total = -1)
     {
+        const int before = size();
         beginResetModel();
         m_items = std::move(items);
         onItemsReset();
         endResetModel();
         rebuildIndex();
         setTotal(total < 0 ? size() : total);
-        emit countChanged();
+        // The reset itself says the rows are different rows; `count` only
+        // announces a different number of them.
+        if (size() != before)
+            emit countChanged();
     }
 
     void appendItems(const QList<T> &items, int total = -1)
