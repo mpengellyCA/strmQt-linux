@@ -312,9 +312,32 @@ void WebRemoteServerTest::pinPeerKeyGroupsWhatOneHostCanHold()
     QCOMPARE(key("2001:DB8:1:2:0:0:0:9"), key("2001:db8:1:2::1"));
     QVERIFY(key("2001:db8:1:3::1") != key("2001:db8:1:2::1"));
     QVERIFY(key("2001:db8:1:2::1") != key("192.168.1.5"));
-    // The scope id names an interface of this computer, not the peer.
-    QCOMPARE(key("fe80::1%eth0"), key("fe80::2%wlan0"));
     QCOMPARE(key("::1"), key("::2"));
+
+    // On this computer's own link the /64 is the whole LAN: one guesser must
+    // not lock out every phone on it, so there the address is the peer. A
+    // link-local address is always on the link; anything else is when it is
+    // in the /64 of the address the connection arrived on.
+    const auto via = [](const char *address, const char *local) {
+        return WebRemoteServer::pinPeerKey(QHostAddress(QString::fromLatin1(address)),
+                                           QHostAddress(QString::fromLatin1(local)));
+    };
+    // The scope id names an interface of this computer, not the peer.
+    QCOMPARE(key("fe80::1%eth0"), key("fe80::1%wlan0"));
+    QVERIFY(key("fe80::1%eth0") != key("fe80::2%eth0"));
+    QVERIFY(via("fe80::1", "fe80::99") != via("fe80::2", "fe80::99"));
+    QVERIFY(via("2001:db8:1:2::1", "2001:db8:1:2::99") !=
+            via("2001:db8:1:2::5", "2001:db8:1:2::99"));
+    QVERIFY(via("fd12:3456:789a:1::1", "fd12:3456:789a:1::99") !=
+            via("fd12:3456:789a:1::5", "fd12:3456:789a:1::99"));
+    QCOMPARE(via("2001:db8:1:2::1", "2001:db8:1:2::99"),
+             via("2001:DB8:1:2:0:0:0:1", "2001:db8:1:2::99"));
+    // From another prefix it is still the /64, whatever this end is.
+    QCOMPARE(via("2001:db8:9:9::1", "2001:db8:1:2::99"),
+             via("2001:db8:9:9::2", "2001:db8:1:2::99"));
+    QCOMPARE(via("2001:db8:9:9::1", "192.168.1.2"), key("2001:db8:9:9::2"));
+    // IPv4 is the address either way.
+    QCOMPARE(via("::ffff:192.168.1.5", "::ffff:192.168.1.2"), key("192.168.1.5"));
 }
 
 void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()

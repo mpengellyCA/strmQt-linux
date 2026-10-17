@@ -103,10 +103,15 @@ public:
     void setClockForTests(std::function<qint64()> nowMs);
 
     // What failed PINs are counted against: the address for IPv4 (an
-    // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6. One host
-    // commonly holds a whole /64, so anything narrower is a fresh allowance
-    // per address it cares to use.
-    static QString pinPeerKey(const QHostAddress &peer);
+    // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6 from
+    // elsewhere — one host commonly holds a whole /64, so anything narrower is
+    // a fresh allowance per address it cares to use. On this computer's own
+    // link (a link-local peer, or one in the /64 of `local`, the address the
+    // connection arrived on) it is the address again: there the /64 is the
+    // whole LAN, and one guesser would lock out every phone on it. Rotating
+    // addresses there buys nothing, because peers that have not given the PIN
+    // also share one allowance (handleApiAuthPin).
+    static QString pinPeerKey(const QHostAddress &peer, const QHostAddress &local = {});
 
 signals:
     void runningChanged(bool running);

@@ -30,6 +30,7 @@
 #include <QUrlQuery>
 #include <QUuid>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -74,7 +75,7 @@ qint64 writeBacklog(const QSslSocket *socket)
     return socket->bytesToWrite() + socket->encryptedBytesToWrite();
 }
 
-// Per peer (WebRemoteServer::pinPeerKey: an IPv4 address or an IPv6 /64): the
+// Per peer (WebRemoteServer::pinPeerKey: an address, or an off-link IPv6 /64): the
 // fifth miss in a row locks that peer out for 2 s; each further miss once the
 // lockout has passed doubles it, up to 5 min. Every try while locked out is
 // 429, even the right PIN. A peer idle for 10 min is forgotten.
@@ -1066,7 +1067,7 @@ bool WebRemoteServer::isAuthorized(const HttpRequest &req) const
     return !queryToken.isEmpty() && m_authorizedTokens.contains(queryToken);
 }
 
-QString WebRemoteServer::pinPeerKey(const QHostAddress &peer)
+QString WebRemoteServer::pinPeerKey(const QHostAddress &peer, const QHostAddress &local)
 {
     bool isV4 = false;
     const quint32 v4 = peer.toIPv4Address(&isV4); // also IPv4-mapped IPv6
@@ -1074,9 +1075,18 @@ QString WebRemoteServer::pinPeerKey(const QHostAddress &peer)
         return QHostAddress(v4).toString();
     if (peer.protocol() != QAbstractSocket::IPv6Protocol)
         return QStringLiteral("unknown");
-    // The network half only. The scope id is not part of it: it names one of
-    // this computer's interfaces, not the peer.
+    // The scope id is never part of the key: it names one of this computer's
+    // interfaces, not the peer.
     const Q_IPV6ADDR raw = peer.toIPv6Address();
+    bool onLink = peer.isLinkLocal();
+    bool localIsV4 = false;
+    local.toIPv4Address(&localIsV4);
+    if (!onLink && !localIsV4 && local.protocol() == QAbstractSocket::IPv6Protocol) {
+        const Q_IPV6ADDR ours = local.toIPv6Address();
+        onLink = std::equal(raw.c, raw.c + 8, ours.c);
+    }
+    if (onLink)
+        return QString::fromLatin1(QByteArray(reinterpret_cast<const char *>(raw.c), 16).toHex());
     return QString::fromLatin1(QByteArray(reinterpret_cast<const char *>(raw.c), 8).toHex())
            + QLatin1String("/64");
 }
@@ -1099,7 +1109,7 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const QJsonObject &bo
             m_pinGlobalSince = now; // a clock set back forgives nothing
         }
     }
-    const QString peerKey = pinPeerKey(socket->peerAddress());
+    const QString peerKey = pinPeerKey(socket->peerAddress(), socket->localAddress());
     const bool known = m_pinKnownPeers.contains(peerKey);
 
     const auto tooMany = [this, socket] {
