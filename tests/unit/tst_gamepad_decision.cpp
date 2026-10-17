@@ -103,41 +103,41 @@ void GamepadDecisionTest::heldVolumeIsASteadyRampNotALadder()
 void GamepadDecisionTest::typableKeysAreTheOnesAFieldWouldEat()
 {
     // The bindings the pad actually resolves to: Menu → "M", Y → "/".
-    QVERIFY(isTypableKey(Qt::Key_M, Qt::NoModifier));
-    QVERIFY(isTypableKey(Qt::Key_Slash, Qt::NoModifier));
-    QVERIFY(isTypableKey(Qt::Key_Space, Qt::NoModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_M, Qt::NoModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Slash, Qt::NoModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Space, Qt::NoModifier));
     // "?" is Shift+/ and is as typable as anything else.
-    QVERIFY(isTypableKey(Qt::Key_Question, Qt::ShiftModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Question, Qt::ShiftModifier));
 
     // Navigation must reach the field, or a search box cannot be left with the
     // pad at all.
-    QVERIFY(!isTypableKey(Qt::Key_Left, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Right, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Up, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Down, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Escape, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Return, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Enter, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Tab, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Home, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_End, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Backtab, Qt::ShiftModifier));
-    QVERIFY(!isTypableKey(Qt::Key_PageUp, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_PageDown, Qt::NoModifier));
-    QVERIFY(!isTypableKey(Qt::Key_F2, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Left, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Right, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Up, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Down, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Escape, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Return, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Enter, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Tab, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Home, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_End, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Backtab, Qt::ShiftModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_PageUp, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_PageDown, Qt::NoModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_F2, Qt::NoModifier));
 
     // The two keys that take a character out are typing, though they are not
     // characters: "Back" resolved to Backspace must not edit the search box.
-    QVERIFY(isTypableKey(Qt::Key_Backspace, Qt::NoModifier));
-    QVERIFY(isTypableKey(Qt::Key_Delete, Qt::NoModifier));
-    QVERIFY(isTypableKey(Qt::Key_Backspace, Qt::ShiftModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Backspace, Qt::NoModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Delete, Qt::NoModifier));
+    QVERIFY(wouldTypeIntoField(Qt::Key_Backspace, Qt::ShiftModifier));
     // Ctrl+Backspace is a chord like any other.
-    QVERIFY(!isTypableKey(Qt::Key_Backspace, Qt::ControlModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Backspace, Qt::ControlModifier));
 
     // A chord is never typing: Ctrl+K opens the command palette from inside the
     // search box, which is exactly where a user reaches for it.
-    QVERIFY(!isTypableKey(Qt::Key_K, Qt::ControlModifier));
-    QVERIFY(!isTypableKey(Qt::Key_Tab, Qt::ControlModifier | Qt::ShiftModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_K, Qt::ControlModifier));
+    QVERIFY(!wouldTypeIntoField(Qt::Key_Tab, Qt::ControlModifier | Qt::ShiftModifier));
 }
 
 void GamepadDecisionTest::suppressionOnlyAppliesWhileAFieldHasFocus()

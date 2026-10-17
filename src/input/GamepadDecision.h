@@ -193,7 +193,7 @@ private:
 // Ctrl/Alt/Meta make a chord, and a chord is never typing: Ctrl+K must still
 // open the command palette with the search box focused. Shift does not count —
 // "?" is Shift+/ and is as typable as any other character.
-inline bool isTypableKey(int key, int modifiers)
+inline bool wouldTypeIntoField(int key, int modifiers)
 {
     constexpr int kChordModifiers =
         static_cast<int>(Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
@@ -212,7 +212,7 @@ inline bool isTypableKey(int key, int modifiers)
 // has to be able to leave a search box with the pad.
 inline bool shouldSuppressKey(int key, int modifiers, bool textInputFocused)
 {
-    return textInputFocused && isTypableKey(key, modifiers);
+    return textInputFocused && wouldTypeIntoField(key, modifiers);
 }
 
 // Tracks which physical devices own a synthesized Qt key. SDL reports removal
