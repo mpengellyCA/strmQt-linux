@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QQmlComponent>
+#include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickView>
@@ -12,6 +13,7 @@
 #include <QTest>
 
 #include "QmlShimStaging.h"
+#include "core/Settings.h"
 
 namespace {
 
@@ -392,6 +394,10 @@ void TestCrateTokens::subtitleColoursAreOneList()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     QQmlEngine engine;
+    // Theme names an older shade through Settings (subtitleColorSwatch), as
+    // the app exposes it.
+    strmqt::Settings prefs(dir.filePath(QStringLiteral("settings.ini")));
+    engine.rootContext()->setContextProperty(QStringLiteral("Prefs"), &prefs);
     const std::unique_ptr<QObject> probe = themeProbe(engine, dir);
     QVERIFY(probe);
 

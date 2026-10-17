@@ -79,6 +79,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	view: youtubeHost
 src/ui/Main.qml: Unqualified access [unqualified]	view: youtubeMusicHost
 src/ui/Main.qml: Unqualified access [unqualified]	{ player: PlayerCtl.backend })
 src/ui/Theme.qml: Unqualified access [unqualified]	? CoverTint.maxWashOpacity : 0.0
+src/ui/Theme.qml: Unqualified access [unqualified]	const wanted = typeof Prefs !== "undefined" ? Prefs.subtitleColorSwatch(written) : written;
 src/ui/Theme.qml: Unqualified access [unqualified]	property bool reducedMotion: typeof Prefs !== "undefined" ? Prefs.reducedMotion : false
 src/ui/Theme.qml: Unqualified access [unqualified]	property string accentName: typeof Prefs !== "undefined" ? Prefs.themeAccent : "projection"
 src/ui/Theme.qml: Unqualified access [unqualified]	property string densityMode: typeof Prefs !== "undefined" ? Prefs.densityMode

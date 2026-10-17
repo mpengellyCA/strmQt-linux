@@ -606,6 +606,17 @@ void WebRemoteServerTest::subtitleStyleValidatesColour()
     QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
     QCOMPARE(request("POST", QStringLiteral("/api/subtitles/style"), R"({"color":"red;x"})").status, 400);
     QCOMPARE(m_settings->subtitleColor().toUpper(), QStringLiteral("#FFE066"));
+
+    // #FFE066 is the yellow an older list offered: drawn as stored, shown
+    // picked as the Yellow that replaced it, as the desktop does.
+    const QJsonObject style = QJsonDocument::fromJson(request("GET", QStringLiteral("/api/status")).body)
+                                  .object()
+                                  .value(QStringLiteral("subtitleStyle"))
+                                  .toObject();
+    QCOMPARE(style.value(QStringLiteral("color")).toString(), QStringLiteral("#FFE066"));
+    QCOMPARE(style.value(QStringLiteral("swatch")).toString(), QStringLiteral("#F2E14C"));
+    QCOMPARE(Settings::subtitleColorSwatch(QStringLiteral("#bfbfbf")), QStringLiteral("#A0A0A0"));
+    QCOMPARE(Settings::subtitleColorSwatch(QStringLiteral("#123456")), QStringLiteral("#123456"));
 }
 
 void WebRemoteServerTest::playbackWithoutPlayerIsUnavailable()

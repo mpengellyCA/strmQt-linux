@@ -1284,6 +1284,9 @@ QJsonObject WebRemoteServer::currentStatusJson() const
         QJsonObject style;
         style[QStringLiteral("scale")] = m_settings->subtitleScale();
         style[QStringLiteral("color")] = m_settings->subtitleColor();
+        // Which swatch shows as picked: a shade an older list offered is the
+        // entry that replaced it, as on the desktop.
+        style[QStringLiteral("swatch")] = Settings::subtitleColorSwatch(m_settings->subtitleColor());
         style[QStringLiteral("background")] = m_settings->subtitleBackground();
         style[QStringLiteral("position")] = m_settings->subtitlePosition();
         obj[QStringLiteral("subtitleStyle")] = style;

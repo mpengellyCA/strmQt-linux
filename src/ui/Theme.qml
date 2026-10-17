@@ -136,23 +136,14 @@ QtObject {
         ({ "text": qsTr("Black"), "value": "#000000" })
     ]
 
-    // The shades the player's sheet and the web remote offered before the lists
-    // were joined, so a settings file may still hold one. A stored
-    // one keeps being drawn exactly as stored; it is only *named* as the entry
-    // above that replaced it, so it reads "Yellow" and not "#FFE066".
-    readonly property var _subtitleColorAliases: ({
-        "#E8E4DC": "#E8E2D6",
-        "#FFE066": "#F2E14C",
-        "#8AE0FF": "#7FD8E8",
-        "#BFBFBF": "#A0A0A0"
-    })
-
     // The entry of subtitleColors a stored colour is shown as, or -1 for one
-    // that came from somewhere else and has no name.
+    // that came from somewhere else and has no name. A shade an older list
+    // offered is named as the entry that replaced it (Settings::
+    // subtitleColorSwatch, which the web remote is handed too); it is still
+    // drawn exactly as stored.
     function subtitleColorIndex(value: string): int {
         const written = String(value).toUpperCase();
-        const alias = theme._subtitleColorAliases[written];
-        const wanted = alias !== undefined ? alias : written;
+        const wanted = typeof Prefs !== "undefined" ? Prefs.subtitleColorSwatch(written) : written;
         return theme.subtitleColors.findIndex(entry => entry.value === wanted);
     }
 

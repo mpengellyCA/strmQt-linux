@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHash>
 #include <QRegularExpression>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
@@ -681,6 +682,18 @@ QString Settings::subtitleColor() const
     // mpv, which would reject the whole property and leave subtitles unstyled.
     static const QRegularExpression hex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
     return hex.match(stored).hasMatch() ? stored.toUpper() : QStringLiteral("#FFFFFF");
+}
+
+QString Settings::subtitleColorSwatch(const QString &color)
+{
+    static const QHash<QString, QString> kReplaced = {
+        {QStringLiteral("#E8E4DC"), QStringLiteral("#E8E2D6")},
+        {QStringLiteral("#FFE066"), QStringLiteral("#F2E14C")},
+        {QStringLiteral("#8AE0FF"), QStringLiteral("#7FD8E8")},
+        {QStringLiteral("#BFBFBF"), QStringLiteral("#A0A0A0")},
+    };
+    const QString written = color.toUpper();
+    return kReplaced.value(written, written);
 }
 
 void Settings::setSubtitleColor(const QString &color)

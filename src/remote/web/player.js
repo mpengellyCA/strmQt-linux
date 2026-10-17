@@ -722,7 +722,9 @@ function openSubtitleSheet() {
           },
         })));
       };
-      renderSwatches(style.color);
+      // The server names the swatch a stored colour shows as (an older shade
+      // as the entry that replaced it); an older server sends only the colour.
+      renderSwatches(style.swatch || style.color);
 
       const background = rangeRow('Background', style.background, 0, 100, 5, (v) => `${v}%`,
         (value) => command.subtitleStyle({ background: value }));
