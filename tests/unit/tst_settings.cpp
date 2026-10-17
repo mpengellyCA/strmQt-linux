@@ -1,4 +1,5 @@
 #include <QFile>
+#include <QDir>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QtTest>
@@ -25,6 +26,7 @@ private slots:
     void webRemoteIsOffAndPinnedByDefault();
     void webRemotePinExistsFromConstruction();
     void webRemotePinIsKeptAcrossRuns();
+    void theAppsOwnSettingsMakeAPinToo();
     void unusableWebRemotePinIsReplaced_data();
     void unusableWebRemotePinIsReplaced();
     void settingAnUnusableWebRemotePinStoresAFreshOne();
@@ -302,6 +304,30 @@ void SettingsTest::webRemotePinExistsFromConstruction()
     QCOMPARE(readOnly.webRemotePin(), stored);
     // Reading is not changing: no phone is signed out by a look at the PIN.
     QCOMPARE(spy.count(), 0);
+}
+
+// The app constructs Settings with no path (QSettings' own location), the
+// tests above with one. Both constructors have to make the PIN: one missing
+// from the app's would hand the web remote an empty PIN to compare against.
+void SettingsTest::theAppsOwnSettingsMakeAPinToo()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // QSettings' user scope, moved under the temporary directory for this test
+    // so the real settings file is never read or written.
+    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, dir.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+
+    QString generated;
+    {
+        Settings settings;
+        generated = settings.webRemotePin();
+        QVERIFY2(isFourDigits(generated), qPrintable(generated));
+        settings.flush();
+    }
+    QVERIFY(QDir(dir.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size() > 0);
+    Settings again;
+    QCOMPARE(again.webRemotePin(), generated);
 }
 
 void SettingsTest::webRemotePinIsKeptAcrossRuns()
