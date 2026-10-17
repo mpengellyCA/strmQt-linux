@@ -1527,7 +1527,7 @@ FocusScope {
                             label: modelData.name
                             hint: (modelData.kind === "strmlight" ? qsTr("StrmLight, paired %1")
                                                                   : qsTr("Phone, paired %1"))
-                                  .arg(Qt.formatDate(new Date(modelData.added), Qt.DefaultLocaleShortDate))
+                                  .arg(new Date(modelData.added).toLocaleDateString(Qt.locale(), Locale.ShortFormat))
 
                             StrmButton {
                                 objectName: "webRemoteRemoveDevice" + index

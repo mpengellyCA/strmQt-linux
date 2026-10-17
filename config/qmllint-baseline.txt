@@ -72,6 +72,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: RemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
 src/ui/Main.qml: Unqualified access [unqualified]	target: Session
+src/ui/Main.qml: Unqualified access [unqualified]	target: WebRemoteCtl
 src/ui/Main.qml: Unqualified access [unqualified]	target: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
 src/ui/Main.qml: Unqualified access [unqualified]	userName: Session.username
 src/ui/Main.qml: Unqualified access [unqualified]	var crash = PlayerCtl.crashResumeInfo();
@@ -850,12 +851,17 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	enabled: modelDa
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	if (Input.setBinding(page.captureActionId, sequence))
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "streamingHostPair" + index
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "streamingHostUnpair" + index
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "webRemoteRemoveDevice" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "youtubeSignInCopy" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Input.resetAll()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: LiveCtl.refreshNow()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: PlayerCtl.toggleMute()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Session.logout()
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: Session.switchUser()
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: page.webRemote.removeDevice(modelData.id)
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: streamingHostPanel.host.unpair(modelData.uuid)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onClicked: youtubeMusicPanel.signIn.request(index)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onCommitted: v => PlayerCtl.setVolume(Math.round(v))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onKeyPressed: Input.noteInput("keyboard")
@@ -874,6 +880,8 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	padDriving: Input.gamepadActive
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
+src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	target: Input
@@ -1000,6 +1008,19 @@ src/ui/shell/MiniPlayer.qml: Unqualified access [unqualified]	tooltip: PlayerCtl
 src/ui/shell/NavRail.qml: Unqualified access [unqualified]	model: HomeCtl.libraries
 src/ui/shell/NavRail.qml: Unqualified access [unqualified]	readonly property var inputRevision: Input.actions
 src/ui/shell/NavRail.qml: Unqualified access [unqualified]	return rail.inputRevision.length > 0 ? Input.binding(actionId) : "";
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	&& OnScreenKeyboardCtl.column === key.index
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	&& OnScreenKeyboardCtl.shifted
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	case "symbols":   return OnScreenKeyboardCtl.symbols ? qsTr("abc") : qsTr("#+=");
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	model: OnScreenKeyboardCtl.rows
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	onTapped: OnScreenKeyboardCtl.press(keyRow.index, key.index)
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	readonly property bool current: OnScreenKeyboardCtl.row === keyRow.index
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	text: OnScreenKeyboardCtl.text
+src/ui/shell/OnScreenKeyboard.qml: Unqualified access [unqualified]	visible: OnScreenKeyboardCtl.open
+src/ui/shell/PairingCodeOverlay.qml: Unqualified access [unqualified]	onActivated: WebRemoteCtl.cancelPairing()
+src/ui/shell/PairingCodeOverlay.qml: Unqualified access [unqualified]	onCodeChanged: overlay.secondsLeft = WebRemoteCtl ? WebRemoteCtl.pairingSeconds : 0
+src/ui/shell/PairingCodeOverlay.qml: Unqualified access [unqualified]	onCodeChanged: overlay.secondsLeft = WebRemoteCtl ? WebRemoteCtl.pairingSeconds : 0
+src/ui/shell/PairingCodeOverlay.qml: Unqualified access [unqualified]	readonly property string code: WebRemoteCtl ? WebRemoteCtl.pairingCode : ""
+src/ui/shell/PairingCodeOverlay.qml: Unqualified access [unqualified]	readonly property string code: WebRemoteCtl ? WebRemoteCtl.pairingCode : ""
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	const names = Input.categories();
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	const revision = Input.actions;
 src/ui/shell/ShortcutSheet.qml: Unqualified access [unqualified]	out.push({ "name": names[i], "actions": Input.actionsForCategory(names[i]) });
@@ -1008,8 +1029,6 @@ src/ui/shell/TopBar.qml: Unqualified access [unqualified]	WebRemoteCtl.copyUrlTo
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	if (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl)
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	source: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeQrDataUri : ""
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	source: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeQrDataUri : ""
-src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
-src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? ("PIN: " + WebRemoteCtl.pin) : ""
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	text: (typeof WebRemoteCtl !== "undefined" && WebRemoteCtl) ? WebRemoteCtl.activeUrl : ""
 src/ui/shell/TopBar.qml: Unqualified access [unqualified]	visible: typeof WebRemoteCtl !== "undefined" && WebRemoteCtl && WebRemoteCtl.requirePin
