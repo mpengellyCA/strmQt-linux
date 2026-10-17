@@ -96,6 +96,22 @@ void VlcPlayer::unlockCb(void *opaque, void *, void *const *)
 void VlcPlayer::displayCb(void *opaque, void *picture)
 {
     auto *self = static_cast<VlcPlayer *>(opaque);
+    if (!self->m_frames.isCurrent(picture))
+        return; // scratch frame from a retired load
+    // A resumed load keeps the opening of the file off the screen (load()).
+    // The first picture is dropped, the ones after it kept back, unshown, for
+    // a resume that starts paused (redrawPausedResume()).
+    if (self->m_skipFirstPicture.exchange(false, std::memory_order_acq_rel)) {
+        const quint64 loadId = self->m_loadId;
+        QMetaObject::invokeMethod(
+            self, [self, loadId] { self->noteFirstPictureSkipped(loadId); },
+            Qt::QueuedConnection);
+        return;
+    }
+    if (self->m_holdPicturesBelowMs.load(std::memory_order_acquire) > 0) {
+        self->m_frames.hold(picture);
+        return;
+    }
     if (!self->m_frames.display(picture))
         return; // scratch frame from a retired load
     if (!self->m_sawFirstFrame.exchange(true, std::memory_order_acq_rel)) {
@@ -141,6 +157,13 @@ void VlcPlayer::eventCb(const libvlc_event_t *event, void *opaque)
     case libvlc_MediaPlayerTimeChanged:
         code = EvTime;
         value = event->u.media_player_time_changed.new_time;
+        // Released here rather than on the GUI thread: the pictures that
+        // follow are displayed on libVLC's threads meanwhile. libVLC reports
+        // no time while the input buffers, so none before the start-time seek.
+        if (qint64 below = self->m_holdPicturesBelowMs.load(std::memory_order_acquire);
+            below > 0 && value >= below)
+            self->m_holdPicturesBelowMs.compare_exchange_strong(below, 0,
+                                                                std::memory_order_acq_rel);
         break;
     case libvlc_MediaPlayerLengthChanged:
         code = EvLength;
@@ -170,6 +193,13 @@ void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
             if (libvlc_media_player_get_time(m_player) < m_pendingStartMs - kStartSeekSlackMs)
                 libvlc_media_player_set_time(m_player, m_pendingStartMs);
             m_pendingStartMs = 0;
+        }
+        // An input that cannot seek never gets to the resume point, and its
+        // pictures are better than none.
+        if (m_holdPicturesBelowMs.load(std::memory_order_acquire) > 0 &&
+            !libvlc_media_player_is_seekable(m_player)) {
+            m_holdPicturesBelowMs.store(0, std::memory_order_release);
+            m_skipFirstPicture.store(false, std::memory_order_release);
         }
         setState(State::Playing, loadId);
         break;
@@ -203,11 +233,49 @@ void VlcPlayer::handleEvent(int type, qint64 value, quint64 loadId)
             m_buffering = buffering;
             emit bufferingChanged(buffering, loadId);
         }
+        if (!buffering) {
+            m_resumeBuffered = true;
+            redrawPausedResume();
+        }
         break;
     }
     default:
         break;
     }
+}
+
+void VlcPlayer::noteFirstPictureSkipped(quint64 loadId)
+{
+    if (loadId != m_loadId)
+        return;
+    m_firstPictureSkipped = true;
+    redrawPausedResume();
+}
+
+void VlcPlayer::redrawPausedResume()
+{
+    // Paused, the input stops once it has buffered at the resume point and
+    // reports no time, so nothing releases the pictures. Once it has buffered
+    // and the first picture is behind it, every picture is of the resume
+    // point: show the one kept back. If there is none (the only one it
+    // decoded was the first), a seek to where it already is decodes the
+    // resume point again; a seek that overlaps another can lose its picture
+    // too, hence a few tries.
+    constexpr int kRedrawSeeks = 3;
+    if (!m_redrawPausedResume || !m_resumeBuffered || !m_firstPictureSkipped ||
+        m_sawFirstFrame.load(std::memory_order_acquire))
+        return;
+    m_holdPicturesBelowMs.store(0, std::memory_order_release);
+    if (m_frames.publishHeld()) {
+        m_redrawPausedResume = false;
+        m_sawFirstFrame.store(true, std::memory_order_release);
+        qCInfo(logPlayback) << "vlc vmem: first frame displayed";
+        emit frameReady();
+        return;
+    }
+    if (++m_redrawSeeks >= kRedrawSeeks)
+        m_redrawPausedResume = false;
+    libvlc_media_player_set_time(m_player, m_heldResumeMs);
 }
 
 void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initiallyPaused)
@@ -243,6 +311,20 @@ void VlcPlayer::load(const QUrl &url, qint64 startMs, LoadId loadId, bool initia
             QByteArrayLiteral(":start-time=") + QByteArray::number(startMs / 1000.0, 'f', 3);
         libvlc_media_add_option(media, startOption.constData());
     }
+    // Even so, libVLC 3 demuxes one block before it acts on :start-time
+    // (src/input/input.c MainLoop), and its decoder shows the first picture
+    // it decodes at once, buffering or not (decoder.c, "Received first
+    // picture"). A block the decoder had already taken when the seek flushed
+    // it is still decoded and shown, possibly after the input has reported
+    // the resume point. Seen on Ubuntu 24.04 (libVLC 3.0.20, where the first
+    // decode is slow) every time; a race anywhere. So until the input has
+    // reported a time at the resume point no picture is shown, and the first
+    // one never is: that is where the opening can be, and only there.
+    const bool hold = startMs > kStartSeekSlackMs;
+    m_heldResumeMs = startMs;
+    m_holdPicturesBelowMs.store(hold ? startMs - kStartSeekSlackMs : 0, std::memory_order_release);
+    m_skipFirstPicture.store(hold, std::memory_order_release);
+    m_redrawPausedResume = hold && initiallyPaused;
 
     m_pendingStartMs = startMs;
     setState(State::Loading, loadId);
@@ -269,6 +351,12 @@ void VlcPlayer::stop()
 void VlcPlayer::resetPerLoadState(LoadId loadId, qint64 positionMs)
 {
     m_pendingStartMs = 0;
+    m_holdPicturesBelowMs.store(0, std::memory_order_release);
+    m_skipFirstPicture.store(false, std::memory_order_release);
+    m_redrawPausedResume = false;
+    m_redrawSeeks = 0;
+    m_resumeBuffered = false;
+    m_firstPictureSkipped = false;
     m_sawFirstFrame.store(false, std::memory_order_release);
     if (m_positionMs != positionMs) {
         m_positionMs = positionMs;

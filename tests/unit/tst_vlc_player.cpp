@@ -134,6 +134,22 @@ void VlcPlayerTest::resumedLoadOpensAtTheResumePoint()
     QVERIFY2(player.positionMs() >= kResumeMs - 2000,
              qPrintable(QString::number(player.positionMs())));
     player.stop();
+
+    // Paused, the picture shown is still the resume point, although the input
+    // stops there and reports no time.
+    pictures = 0;
+    darkPictures = 0;
+    player.load(QUrl::fromLocalFile(clip), kResumeMs, 2, true);
+    QTRY_VERIFY_WITH_TIMEOUT(player.state() == PlayerBackend::State::Paused && pictures >= 1,
+                             15000);
+    QTest::qWait(300);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(darkPictures, 0);
+    QCOMPARE(player.state(), PlayerBackend::State::Paused);
+    const QImage shown = player.currentFrame();
+    QVERIFY(!shown.isNull());
+    QVERIFY(shown.pixelColor(shown.width() / 2, shown.height() / 2).lightness() >= 128);
+    player.stop();
 }
 
 // PlayerController hands this engine the subtitle the server delivers outside

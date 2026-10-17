@@ -34,6 +34,7 @@ public:
         QMutexLocker lock(&m_mutex);
         m_publishToken = 0;
         m_hasFront = false;
+        m_hasHeld = false;
         const quint64 pixels = quint64(width) * height;
         const quint64 rowBytes = quint64(width) * 4;
         const quint64 alignedPitch =
@@ -68,6 +69,7 @@ public:
         QMutexLocker lock(&m_mutex);
         m_publishToken = 0;
         m_hasFront = false;
+        m_hasHeld = false;
         m_front = {};
         m_back = {};
     }
@@ -110,6 +112,14 @@ public:
 
     void unlock() {}
 
+    // Whether display(picture) or hold(picture) would take it.
+    bool isCurrent(void *picture) const
+    {
+        QMutexLocker lock(&m_mutex);
+        const auto token = reinterpret_cast<quintptr>(picture);
+        return token != 0 && token == m_publishToken && !m_back.isNull();
+    }
+
     bool display(void *picture)
     {
         QMutexLocker lock(&m_mutex);
@@ -118,6 +128,32 @@ public:
             return false;
         m_front.swap(m_back);
         m_publishToken = 0;
+        m_hasFront = true;
+        m_hasHeld = false;
+        return true;
+    }
+
+    // Takes the picture like display() but does not publish it, until
+    // publishHeld(). Only while nothing is published: the front is the
+    // picture current() hands out.
+    bool hold(void *picture)
+    {
+        QMutexLocker lock(&m_mutex);
+        const auto token = reinterpret_cast<quintptr>(picture);
+        if (token == 0 || token != m_publishToken || m_back.isNull() || m_hasFront)
+            return false;
+        m_front.swap(m_back);
+        m_publishToken = 0;
+        m_hasHeld = true;
+        return true;
+    }
+
+    bool publishHeld()
+    {
+        QMutexLocker lock(&m_mutex);
+        if (!m_hasHeld)
+            return false;
+        m_hasHeld = false;
         m_hasFront = true;
         return true;
     }
@@ -161,6 +197,7 @@ private:
     quintptr m_nextToken = 0;
     quintptr m_publishToken = 0;
     bool m_hasFront = false;
+    bool m_hasHeld = false;
 };
 
 // A decoder can outrun Qt's render loop, but the UI only ever needs the newest
@@ -242,6 +279,22 @@ private:
     qint64 m_positionMs = 0;
     qint64 m_durationMs = 0;
     qint64 m_pendingStartMs = 0;
+    // A resumed load keeps the opening of the file off the screen (load()):
+    // no picture is shown until the input has reported a time this close to
+    // the resume point (0: none held back), and its first picture never is.
+    // Set by the GUI thread, released by eventCb() or the GUI thread, read by
+    // displayCb() on libVLC's video output thread.
+    std::atomic<qint64> m_holdPicturesBelowMs = 0;
+    std::atomic_bool m_skipFirstPicture = false;
+    // A resume that starts paused gets no time reported, so its picture is
+    // shown once the input is there (GUI thread).
+    void redrawPausedResume();
+    void noteFirstPictureSkipped(quint64 loadId);
+    qint64 m_heldResumeMs = 0;
+    bool m_redrawPausedResume = false;
+    int m_redrawSeeks = 0;
+    bool m_resumeBuffered = false;
+    bool m_firstPictureSkipped = false;
     bool m_buffering = false;
     std::atomic_bool m_sawFirstFrame = false;
     // Written by load()/stop() on the GUI thread and read by eventCb() on
