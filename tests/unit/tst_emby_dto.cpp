@@ -40,6 +40,7 @@ private slots:
     void musicGenresMapAndPageOnTheArray();
     void artistIdsLineUpWithTheNamesTheyBelongTo();
     void streamUrlKeepsPercentEncodedQueryValues();
+    void transcodeUrlCarriesNoStartOffset();
     void externalSubtitleDeliveryIsResolvedForTheEngineOnly();
     void subtitleDeliveryFieldsAreOptional();
     void externalSubtitleUrlsAreVetted_data();
@@ -496,6 +497,40 @@ void EmbyDtoTest::streamUrlKeepsPercentEncodedQueryValues()
     QCOMPARE(hls->url.query(QUrl::FullyEncoded), query);
     QCOMPARE(QString::fromLatin1(hls->url.toEncoded()),
              QStringLiteral("https://server.example/emby/videos/1/master.m3u8?") + query);
+}
+
+// The engine starts every rung at the resume point itself. A progressive
+// transcode (the audio fallback) that the server also started at
+// StartTimeTicks would put a resume twice as far in, so the offset never
+// reaches the engine — however the server spells it — and nothing else in the
+// URL changes.
+void EmbyDtoTest::transcodeUrlCarriesNoStartOffset()
+{
+    const QString kept =
+        QStringLiteral("DeviceId=test-device&MediaSourceId=ms7&PlaySessionId=ps7&AudioCodec=flac"
+                       "&Tag=a%26b&api_key=tok");
+    for (const QString &offset : {QStringLiteral("StartTimeTicks=18000000000"),
+                                  QStringLiteral("starttimeticks=18000000000")}) {
+        QJsonObject source;
+        source.insert(QLatin1String("Id"), QStringLiteral("ms7"));
+        source.insert(QLatin1String("SupportsTranscoding"), true);
+        source.insert(QLatin1String("TranscodingUrl"),
+                      QStringLiteral("/Audio/7/stream.flac?") + offset + QLatin1Char('&') + kept);
+        source.insert(QLatin1String("TranscodingContainer"), QStringLiteral("flac"));
+        QJsonObject json;
+        json.insert(QLatin1String("MediaSources"), QJsonArray{source});
+        json.insert(QLatin1String("PlaySessionId"), QStringLiteral("ps7"));
+
+        const PlaybackTicket ticket = emby::parsePlaybackTicket(
+            json, QUrl(QStringLiteral("https://server.example/emby")), QStringLiteral("7"),
+            QStringLiteral("tok"), QStringLiteral("test-device"));
+        QVERIFY(ticket.isValid());
+        const StreamCandidate *transcode = ticket.candidate(0, 0);
+        QVERIFY(transcode);
+        QCOMPARE(transcode->method, PlayMethod::Transcode);
+        QCOMPARE(transcode->url.path(), QStringLiteral("/emby/Audio/7/stream.flac"));
+        QCOMPARE(transcode->url.query(QUrl::FullyEncoded), kept);
+    }
 }
 
 namespace {
