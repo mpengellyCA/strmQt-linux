@@ -824,24 +824,8 @@ FocusScope {
 
         z: 800
         mediaType: "Audio"
+        onResultReady: (message, severity) => albumToasts.show(message, severity)
         onDismissed: playlistButton.forceActiveFocus(Qt.OtherFocusReason)
-    }
-
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            albumToasts.show(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            albumToasts.show(message, "error")
-        }
     }
 
     StrmToastHost {

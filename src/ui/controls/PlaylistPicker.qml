@@ -28,10 +28,11 @@ import StrmQt
 //
 // A registered control rather than the inline `component` it began as: it was
 // copied into a second page as soon as a second page needed it, and the Songs
-// tab was about to make that a third. Consumers own the surface it reports
-// through — `pending` tells a page's PlaylistCtl handlers that the result
-// belongs to this panel and not to an edit made somewhere else, and `dismissed`
-// is where the keyboard goes back to whatever opened it.
+// tab was about to make that a third. The result of the write it makes is
+// claimed here too, for the same reason: every consumer carried the same
+// PlaylistCtl handlers. Consumers own the surface it reports through —
+// `resultReady`, or the window's toast host with `notifiesWindow` — and
+// `dismissed` is where the keyboard goes back to whatever opened it.
 FocusScope {
     id: picker
 
@@ -57,15 +58,31 @@ FocusScope {
     property point _hoverAt: Qt.point(-1, -1)
     property var records: []
     property var rows: []
-    // A write of this page's is in flight, so PlaylistCtl's global results
-    // can be told apart from an edit made somewhere else.
+    // A write of this panel's is in flight, so PlaylistCtl's global results
+    // can be told apart from an edit made somewhere else. A consumer that
+    // writes through PlaylistCtl itself on the panel's behalf (a bare "new
+    // playlist" prompt) sets it too, and hears the result the same way.
     property bool pending: false
+    // Say the result on the window's toast host (Main.qml's notify) as well as
+    // through resultReady. For a page that may be covered by the time the
+    // server answers: a covered page is not drawn, and neither is anything it
+    // shows. Surfaces with a toast host of their own take resultReady instead.
+    property bool notifiesWindow: false
 
     // Every playlist the user has is loaded, so "no match" is an answer about
     // the library rather than about the first page of it.
     readonly property bool listComplete: PlaylistCtl.playlistsComplete
 
     signal dismissed
+    // The answer to this panel's write: PlaylistCtl's message, and "success"
+    // or "error".
+    signal resultReady(string message, string severity)
+
+    // One item map (a card's, a menu's), filed under its own name.
+    function showItem(item): void {
+        if (item && item.itemId)
+            picker.show(item.name ? String(item.name) : "", [String(item.itemId)])
+    }
 
     function show(subject, ids): void {
         if (!ids || ids.length === 0)
@@ -144,13 +161,39 @@ FocusScope {
     // The controller's signal rather than the model's count: the walk's last page
     // may add no rows at all, and it is that reply which flips `playlistsComplete`
     // and so decides whether the create offer may appear.
+    // PlaylistCtl's results are global signals, and several surfaces with a
+    // picker are alive at once, each hearing every result: only the one with a
+    // write outstanding claims it.
     Connections {
         target: PlaylistCtl
         function onPlaylistsChanged() {
             if (picker.opened)
                 picker.rebuildRecords()
         }
+        function onActionSucceeded(message) {
+            picker.claimResult(message, "success")
+        }
+        function onActionFailed(message) {
+            picker.claimResult(message, "error")
+        }
     }
+
+    function claimResult(message, severity): void {
+        if (!picker.pending)
+            return
+        picker.pending = false
+        picker.resultReady(message, severity)
+        if (!picker.notifiesWindow)
+            return
+        // By name: the window is Main.qml's, and a panel staged without it (a
+        // test, the page self-test) has nowhere to say it and says nothing.
+        const win = picker.toastWindow
+        if (win && typeof win["notify"] === "function")
+            win["notify"](message, severity)
+    }
+
+    // Untyped on purpose: `notify` is Main.qml's, not ApplicationWindow's.
+    readonly property var toastWindow: picker.ApplicationWindow.window
 
     Rectangle {
         anchors.fill: parent

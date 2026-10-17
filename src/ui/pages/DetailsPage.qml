@@ -1891,7 +1891,7 @@ FocusScope {
         if (!item || !item.itemId)
             return
         page.pickerOrigin = origin
-        playlistPicker.show(item.name ? String(item.name) : "", [String(item.itemId)])
+        playlistPicker.showItem(item)
     }
 
     function restorePickerFocus(): void {
@@ -1908,40 +1908,9 @@ FocusScope {
         id: playlistPicker
 
         z: 800
+        // The result goes to the window's toast host: by the time the server
+        // answers, this page may be covered, and a covered page shows nothing.
+        notifiesWindow: true
         onDismissed: page.restorePickerFocus()
     }
-
-    // PlaylistCtl's results are global signals, so they are only claimed while
-    // this page has a write of its own outstanding — otherwise a playlist edit
-    // made elsewhere would toast here too, and so would every other live page
-    // with a picker. They go to the window's toast host rather than one of the
-    // page's own: a covered page is not drawn, so a reply that landed after the
-    // user had moved on was announced to nobody.
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            page.notify(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            page.notify(message, "error")
-        }
-    }
-
-    // By name: the window is Main.qml's, and a page staged without it (a test,
-    // the page self-test) has nowhere to say it and says nothing.
-    function notify(message, severity): void {
-        const win = page.toastWindow
-        if (win && typeof win["notify"] === "function")
-            win["notify"](message, severity)
-    }
-
-    // Untyped on purpose: `notify` is Main.qml's, not ApplicationWindow's.
-    readonly property var toastWindow: page.ApplicationWindow.window
 }

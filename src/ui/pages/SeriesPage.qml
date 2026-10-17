@@ -1339,47 +1339,16 @@ FocusScope {
     // episode's menu grows the row — a series is not something a playlist
     // holds — so the keyboard goes back to the episodes.
     function addToPlaylist(item): void {
-        if (item && item.itemId)
-            playlistPicker.show(item.name ? String(item.name) : "", [String(item.itemId)])
+        playlistPicker.showItem(item)
     }
 
     PlaylistPicker {
         id: playlistPicker
 
         z: 800
+        // The result goes to the window's toast host: by the time the server
+        // answers, this page may be covered, and a covered page shows nothing.
+        notifiesWindow: true
         onDismissed: episodeGrid.forceActiveFocus(Qt.OtherFocusReason)
     }
-
-    // PlaylistCtl's results are global signals, so they are claimed only while
-    // this page has a write of its own outstanding: several pages with a
-    // picker are alive at once, and each of them hears every result. They go
-    // to the window's toast host because a page that has since been covered is
-    // not drawn, and neither is anything it shows.
-    Connections {
-        target: PlaylistCtl
-
-        function onActionSucceeded(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            page.notify(message, "success")
-        }
-        function onActionFailed(message) {
-            if (!playlistPicker.pending)
-                return
-            playlistPicker.pending = false
-            page.notify(message, "error")
-        }
-    }
-
-    // By name: the window is Main.qml's, and a page staged without it has
-    // nowhere to say it and says nothing.
-    function notify(message, severity): void {
-        const win = page.toastWindow
-        if (win && typeof win["notify"] === "function")
-            win["notify"](message, severity)
-    }
-
-    // Untyped on purpose: `notify` is Main.qml's, not ApplicationWindow's.
-    readonly property var toastWindow: page.ApplicationWindow.window
 }
