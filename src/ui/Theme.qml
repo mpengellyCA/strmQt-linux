@@ -166,9 +166,9 @@ QtObject {
     // ── Density ────────────────────────────────────────────────────────────
     // One design at two sizes: the desk and the couch get the same tokens
     // scaled, instead of one audience being served and the other apologised to.
-    // Settings drives this; InputMap flips it to "tv" when a gamepad wakes up.
-    // Persisted; SettingsPage writes it live and Settings makes it survive a
-    // restart. Same Prefs guard as the accent above.
+    // Only the user changes it: SettingsPage writes it live and Settings makes
+    // it survive a restart. Nothing switches it for them, a gamepad waking up
+    // included. Same Prefs guard as the accent above.
     property string densityMode: typeof Prefs !== "undefined" ? Prefs.densityMode
                                                               : "comfortable"
     readonly property real density: densityMode === "compact" ? 0.9
