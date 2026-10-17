@@ -63,10 +63,10 @@ FocusScope {
     }
 
     readonly property var streamingHostSizes: [
-        { "label": qsTr("4K (2160p)"), "value": 2160 },
-        { "label": qsTr("1440p"), "value": 1440 },
-        { "label": qsTr("1080p"), "value": 1080 },
-        { "label": qsTr("720p"), "value": 720 }
+        { "text": qsTr("4K (2160p)"), "value": 2160 },
+        { "text": qsTr("1440p"), "value": 1440 },
+        { "text": qsTr("1080p"), "value": 1080 },
+        { "text": qsTr("720p"), "value": 720 }
     ]
 
     readonly property string unavailableHint: qsTr("Unavailable: the settings object is not exposed to QML.")
