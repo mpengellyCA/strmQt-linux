@@ -7,6 +7,8 @@
 #include <QNetworkDatagram>
 #include <QUdpSocket>
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace strmqt {
@@ -62,7 +64,15 @@ bool DiscoveryResponder::isNearby(const QHostAddress &address)
     bool isV4 = false;
     const QHostAddress v4(address.toIPv4Address(&isV4));
     const QHostAddress &a = isV4 ? v4 : address;
-    return a.isLoopback() || a.isLinkLocal() || a.isPrivateUse() || a.isUniqueLocalUnicast();
+    // The RFC 1918 ranges by hand: QHostAddress::isPrivateUse is Qt 6.6.
+    static const QPair<QHostAddress, int> privateV4[] = {
+        QHostAddress::parseSubnet(QStringLiteral("10.0.0.0/8")),
+        QHostAddress::parseSubnet(QStringLiteral("172.16.0.0/12")),
+        QHostAddress::parseSubnet(QStringLiteral("192.168.0.0/16")),
+    };
+    const bool privateUse = std::any_of(std::begin(privateV4), std::end(privateV4),
+                                        [&a](const auto &net) { return a.isInSubnet(net); });
+    return a.isLoopback() || a.isLinkLocal() || privateUse || a.isUniqueLocalUnicast();
 }
 
 QByteArray DiscoveryResponder::replyTo(const QByteArray &datagram) const
