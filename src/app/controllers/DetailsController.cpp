@@ -252,8 +252,11 @@ void DetailsController::load(const QString &itemId)
         emit detailsChanged();
         // This reply was requested before anything that has since arrived
         // over the socket or been changed here, so it only seeds.
-        if (m_userStateGeneration != generation)
+        if (m_userStateGeneration != generation) {
             setUserState(details.item.played, details.item.favorite, details.item.positionMs());
+            emit itemUserDataLoaded(m_itemId, details.item.played, details.item.favorite,
+                                    details.item.playbackPositionTicks);
+        }
     });
 
     // Collection membership. A separate request because the item payload has no
@@ -437,6 +440,17 @@ void DetailsController::refreshUpcomingEpisodes()
                     emit upcomingEpisodesChanged();
                 });
         });
+}
+
+QVariantMap DetailsController::withUserState(const QVariant &item) const
+{
+    QVariantMap map = item.toMap();
+    const QString itemId = map.value(QStringLiteral("itemId")).toString();
+    if (itemId.isEmpty() || itemId != m_itemId || m_itemLoading)
+        return map;
+    map.insert(QStringLiteral("positionMs"), m_positionMs);
+    map.insert(QStringLiteral("resumable"), resumable());
+    return map;
 }
 
 void DetailsController::ensureLoaded(const QString &itemId)

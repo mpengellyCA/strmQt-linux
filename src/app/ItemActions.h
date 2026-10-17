@@ -200,20 +200,27 @@ public:
     // record does not carry is left exactly as it was.
     //
     // Must run BEFORE anything else that patches a registered model from the
-    // same record (Application.cpp says where): "did the answer change" is
-    // measured against what the models held, and the signals keep their
-    // contract that the rows are already patched when they fire.
+    // same record (LiveUpdateService::setUserDataStage): "did the answer
+    // change" is measured against what the models held, and the signals keep
+    // their contract that the rows are already patched when they fire.
     void applyExternalUserData(const QString &itemId, std::optional<bool> played,
                                std::optional<bool> favorite,
                                std::optional<qint64> playbackPositionTicks = std::nullopt,
                                std::optional<int> playCount = std::nullopt);
     // The same, for the payload LiveUpdateService::userDataPatched carries: one
     // map per item with itemId / played / favorite / positionTicks / playCount.
-    void applyUserDataPatches(const QVariantList &entries);
+    // Returns the payload every other consumer should see: a played or
+    // favorite field with a request on the wire says what the user asked for,
+    // not what the record said, so a page patching its own rows from it
+    // agrees with isPlayed() / isFavorite() instead of reverting the toggle.
+    QVariantList applyUserDataPatches(const QVariantList &entries);
 
     // Best-known user state, including changes not yet confirmed by the server.
-    Q_INVOKABLE bool isPlayed(const QString &itemId) const;
-    Q_INVOKABLE bool isFavorite(const QString &itemId) const;
+    // `fallback` is the caller's item map, consulted exactly where the verbs
+    // consult it (knownState()): a label read without it can disagree with the
+    // toggle it sits on for an item nothing here holds.
+    Q_INVOKABLE bool isPlayed(const QString &itemId, const QVariantMap &fallback = {}) const;
+    Q_INVOKABLE bool isFavorite(const QString &itemId, const QVariantMap &fallback = {}) const;
     // Only locally changed or externally refreshed rows need a mirror here: an
     // item a registered model holds is answered by its row, and a server
     // record is mirrored only for an item nothing else here can answer for.

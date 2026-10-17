@@ -206,8 +206,8 @@ src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browseGen
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browsePerson(person.id ? person.id : "", person.name)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browsePerson(person.id ? person.id : "", person.name)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.browseStudio(studio.id ? studio.id : "", studio.name)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("play", page.playItem)
-src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("playFromStart", page.playItem)
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("play", page.playItem())
+src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	Actions.performItemVerb("playFromStart", page.playItem())
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	DetailsCtl.ensureLoaded(page.itemId)
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.collections
 src/ui/pages/DetailsPage.qml: Unqualified access [unqualified]	chipModel: DetailsCtl.crew

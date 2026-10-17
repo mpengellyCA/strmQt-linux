@@ -3,6 +3,7 @@
 
 #include "MockEmbyServer.h"
 #include "app/ItemActions.h"
+#include "app/UserDataWiring.h"
 #include "app/controllers/DetailsController.h"
 #include "app/controllers/HomeController.h"
 #include "app/controllers/LibraryController.h"
@@ -94,6 +95,8 @@ private slots:
     void detailsRailsAndItemStateFollowALivePatch();
     void detailsReplyDoesNotOverwriteANewerLiveRecord();
     void itemActionsFollowsALiveRecordAheadOfTheModelBindings();
+    void aStaleRecordCannotRevertAToggleStillOnTheWire();
+    void detailsHeroLabelAndVerbAgreeForAnItemNoModelHolds();
 
 private:
     void routeHomeFixtures();
@@ -1053,9 +1056,9 @@ void LiveUpdatesTest::detailsReplyDoesNotOverwriteANewerLiveRecord()
 // The details and series pages' own watched / favourite buttons read
 // ItemActions and listen to its signals, so a record from another client has
 // to come out of ItemActions like a toggle made here. Wired exactly as
-// Application.cpp wires it: ItemActions is the FIRST connection on
-// userDataPatched, ahead of every controller that patches a registered model
-// from the same record.
+// Application.cpp wires it: ItemActions is the service's user-data stage, so
+// it runs ahead of every controller that patches a registered model from the
+// same record.
 void LiveUpdatesTest::itemActionsFollowsALiveRecordAheadOfTheModelBindings()
 {
     LiveUpdateService live(m_client, m_settings);
@@ -1069,8 +1072,7 @@ void LiveUpdatesTest::itemActionsFollowsALiveRecordAheadOfTheModelBindings()
     rail.setItems({row});
     actions.registerModel(&rail);
 
-    connect(&live, &LiveUpdateService::userDataPatched, &actions,
-            &ItemActions::applyUserDataPatches);
+    wireUserData(&live, &actions, nullptr);
     // Stands in for a controller's own binding (Home, Library, Series, …),
     // which patches the same registered row from the same record afterwards.
     int railPatches = 0;
@@ -1119,6 +1121,153 @@ void LiveUpdatesTest::itemActionsFollowsALiveRecordAheadOfTheModelBindings()
     // Following a record is not a write.
     QCOMPARE(actions.pendingUserStateRequestCountForTests(), 0);
     QCOMPARE(m_mock->requests().size(), requestsBefore);
+}
+
+// A record the server wrote before it saw this client's toggle arrives while
+// the toggle's POST is still on the wire. Every page binding patches its rows
+// from the payload it is handed; if that payload were the record's raw value
+// the row would revert, and the request succeeding patches nothing again.
+// The binding must see the user's intent for the field on the wire and the
+// record's value for every other field.
+void LiveUpdatesTest::aStaleRecordCannotRevertAToggleStillOnTheWire()
+{
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(10, 10, 100);
+    ItemActions actions(m_client, nullptr);
+    wireUserData(&live, &actions, nullptr);
+
+    const QString favouritePath =
+        QStringLiteral("/Users/%1/FavoriteItems/%2").arg(kUserId, QStringLiteral("hit"));
+    m_mock->addRoute(QStringLiteral("POST"), favouritePath, 200,
+                     R"({"IsFavorite":true,"Played":false})");
+    m_mock->setRouteDelay(QStringLiteral("POST"), favouritePath, 200);
+
+    // A search row: not registered with ItemActions, patched only by its
+    // binding (Application.cpp's catch-all), exactly like the real one.
+    MediaItemModel searchRows;
+    MediaItem row;
+    row.id = QStringLiteral("hit");
+    row.type = QStringLiteral("Movie");
+    searchRows.setItems({row});
+    connect(&live, &LiveUpdateService::userDataPatched, &searchRows,
+            [&](const QVariantList &entries) {
+                for (const QVariant &value : entries) {
+                    const QVariantMap entry = value.toMap();
+                    searchRows.updateUserData(entry.value(QStringLiteral("itemId")).toString(),
+                                              entry.value(QStringLiteral("played")).toBool(),
+                                              entry.value(QStringLiteral("favorite")).toBool(),
+                                              entry.value(QStringLiteral("positionTicks"))
+                                                  .toLongLong(),
+                                              entry.value(QStringLiteral("playCount")).toInt());
+                }
+            });
+
+    actions.setFavorite(QStringLiteral("hit"), true);
+    searchRows.updateUserData(QStringLiteral("hit"), false, true, 0, 0); // the optimistic paint
+    QCOMPARE(actions.pendingUserStateRequestCountForTests(), 1);
+
+    // Stale on favourite, but the played field and the position are news.
+    live.socket()->handleTextMessage(
+        userDataFrame(QStringLiteral("hit"), true, false, 40 * kTicksPerSecond, 1));
+    QCOMPARE(searchRows.items().first().favorite, true);
+    QCOMPARE(searchRows.items().first().played, true);
+    QCOMPARE(searchRows.items().first().playbackPositionTicks, 40 * kTicksPerSecond);
+    QVERIFY(actions.isFavorite(QStringLiteral("hit")));
+
+    QTRY_COMPARE_WITH_TIMEOUT(actions.pendingUserStateRequestCountForTests(), 0, 5000);
+    QCOMPARE(searchRows.items().first().favorite, true);
+    QVERIFY(actions.isFavorite(QStringLiteral("hit")));
+
+    // Settled, the record is the server's word again.
+    live.socket()->handleTextMessage(userDataFrame(QStringLiteral("hit"), true, false, 0, 1));
+    QCOMPARE(searchRows.items().first().favorite, false);
+    QVERIFY(!actions.isFavorite(QStringLiteral("hit")));
+}
+
+// The details hero's watched / favourite button: its label reads
+// ItemActions::isPlayed(id, page.item) and its click sends the "played" verb
+// with page.item. The page's item is often in no model ItemActions holds (it
+// came from a person's filmography, or its rail was reset on the way back), so
+// both must reach the same answer, and the details reply — the freshest
+// server record the page has — must be part of it. On main the label read the
+// id alone while the verb read the map, so Back from a person page showed
+// "Mark watched" on a watched film and the click marked it unwatched.
+void LiveUpdatesTest::detailsHeroLabelAndVerbAgreeForAnItemNoModelHolds()
+{
+    // The Matrix (301001): watched and favourited, nothing to resume.
+    QVERIFY(m_mock->addRouteFromFile(QStringLiteral("GET"),
+                                     QStringLiteral("/Users/%1/Items/301001").arg(kUserId),
+                                     fixturePath(QStringLiteral("item_details.json"))));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Items/301001/Similar"), 200,
+                     QByteArrayLiteral("{\"Items\":[]}"));
+    m_mock->addRoute(QStringLiteral("GET"), QStringLiteral("/Users/%1/Items").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Items\":[],\"TotalRecordCount\":0}"));
+    m_mock->addRoute(QStringLiteral("DELETE"),
+                     QStringLiteral("/Users/%1/PlayedItems/301001").arg(kUserId), 200,
+                     QByteArrayLiteral("{\"Played\":false}"));
+
+    LiveUpdateService live(m_client, m_settings);
+    live.setDebounceForTests(20, 2000, 4000);
+    ItemActions actions(m_client, nullptr);
+    DetailsController details(m_client);
+    wireUserData(&live, &actions, &details);
+    details.bindLiveUpdates(&live);
+
+    const QString id = QStringLiteral("301001");
+    QVariantMap watchedSnapshot{{QStringLiteral("itemId"), id},
+                                {QStringLiteral("type"), QStringLiteral("Movie")},
+                                {QStringLiteral("played"), true},
+                                {QStringLiteral("favorite"), true},
+                                {QStringLiteral("positionMs"), 0},
+                                {QStringLiteral("resumable"), false}};
+    // Nothing here holds the item: the label falls back to the map, as the
+    // verb does.
+    QVERIFY(actions.isPlayed(id, watchedSnapshot));
+    QVERIFY(actions.isFavorite(id, watchedSnapshot));
+
+    // An older snapshot (taken before the film was watched), then the reply.
+    QVariantMap staleSnapshot = watchedSnapshot;
+    staleSnapshot.insert(QStringLiteral("played"), false);
+    staleSnapshot.insert(QStringLiteral("favorite"), false);
+    QSignalSpy played(&actions, &ItemActions::playedChanged);
+    details.load(id);
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
+    // The reply reached ItemActions: the label is the server's, whatever the
+    // snapshot says, and the page heard about it.
+    QVERIFY(actions.isPlayed(id));
+    QVERIFY(actions.isPlayed(id, staleSnapshot));
+    QVERIFY(actions.isFavorite(id, staleSnapshot));
+    QCOMPARE(played.count(), 1);
+    QCOMPARE(played.at(0).at(1).toBool(), true);
+
+    // The label says "Mark unwatched"; the click does exactly that.
+    actions.togglePlayed(staleSnapshot);
+    QVERIFY(!actions.isPlayed(id, staleSnapshot));
+    QVERIFY(!actions.isPlayed(id, watchedSnapshot));
+    QVERIFY(!details.played());
+    QTRY_COMPARE_WITH_TIMEOUT(actions.pendingUserStateRequestCountForTests(), 0, 5000);
+    QCOMPARE(m_mock->lastRequestFor(QStringLiteral("DELETE"),
+                                    QStringLiteral("/Users/%1/PlayedItems/301001").arg(kUserId))
+                 .method,
+             QStringLiteral("DELETE"));
+
+    // Play / Start over: the snapshot with the controller's resume point.
+    live.socket()->handleTextMessage(userDataFrame(id, false, true, 420'000'000, 3));
+    QCOMPARE(details.positionMs(), 42'000);
+    const QVariantMap playItem = details.withUserState(watchedSnapshot);
+    QCOMPARE(playItem.value(QStringLiteral("positionMs")).toLongLong(), 42'000);
+    QVERIFY(playItem.value(QStringLiteral("resumable")).toBool());
+    QCOMPARE(playItem.value(QStringLiteral("type")).toString(), QStringLiteral("Movie"));
+    // Another item, or this one while a reload is in flight, is left alone.
+    QVariantMap other = watchedSnapshot;
+    other.insert(QStringLiteral("itemId"), QStringLiteral("other"));
+    QCOMPARE(details.withUserState(other), other);
+    m_mock->setRouteDelay(QStringLiteral("GET"),
+                          QStringLiteral("/Users/%1/Items/301001").arg(kUserId), 300);
+    details.load(QStringLiteral("301001"));
+    QVERIFY(details.itemLoading());
+    QCOMPARE(details.withUserState(watchedSnapshot), watchedSnapshot);
+    QTRY_VERIFY_WITH_TIMEOUT(!details.itemLoading(), 5000);
 }
 
 QTEST_GUILESS_MAIN(LiveUpdatesTest)

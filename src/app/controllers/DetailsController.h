@@ -128,6 +128,15 @@ public:
     void bindLiveUpdates(LiveUpdateService *service);
     Q_INVOKABLE void refreshUpcomingEpisodes();
 
+    // What Play and Start over hand ItemActions: the route's item map, with
+    // the resume point this controller holds copied over the map's when the
+    // controller has answered for that item. ItemActions takes the start
+    // position from the map it is given, so a button labelled from the live
+    // position over a map that still carries the snapshot taken when the page
+    // opened would promise one place and start at another. Any other item, or
+    // this one while its reply is still in flight, comes back unchanged.
+    Q_INVOKABLE QVariantMap withUserState(const QVariant &item) const;
+
     void resetSessionState();
 
     Q_INVOKABLE void load(const QString &itemId);
@@ -156,6 +165,12 @@ signals:
     void personChanged();
     void similarStatusChanged();
     void upcomingEpisodesChanged();
+    // The details reply's user data, when nothing newer has arrived since it
+    // was requested. The loaded item is often in no model ItemActions holds,
+    // so without this the page's watched / favourite button and the verb it
+    // fires would each fall back to a different snapshot (Application.cpp).
+    void itemUserDataLoaded(const QString &itemId, bool played, bool favorite,
+                            qint64 positionTicks);
 
 private:
     void cancelRequests();

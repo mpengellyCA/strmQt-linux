@@ -1181,14 +1181,16 @@ void ItemActions::applyExternalUserData(const QString &itemId, std::optional<boo
         emit favoriteChanged(itemId, merge.after.favorite);
 }
 
-void ItemActions::applyUserDataPatches(const QVariantList &entries)
+QVariantList ItemActions::applyUserDataPatches(const QVariantList &entries)
 {
     const auto flag = [](const QVariantMap &entry, const QString &key) -> std::optional<bool> {
         const auto it = entry.constFind(key);
         return it != entry.cend() ? std::optional<bool>(it->toBool()) : std::nullopt;
     };
+    QVariantList merged;
+    merged.reserve(entries.size());
     for (const QVariant &value : entries) {
-        const QVariantMap entry = value.toMap();
+        QVariantMap entry = value.toMap();
         // A key the patch does not carry is not a `false` or a zero.
         std::optional<qint64> positionTicks;
         const auto position = entry.constFind(QStringLiteral("positionTicks"));
@@ -1198,10 +1200,20 @@ void ItemActions::applyUserDataPatches(const QVariantList &entries)
         const auto count = entry.constFind(QStringLiteral("playCount"));
         if (count != entry.cend() && count->toInt() >= 0)
             playCount = count->toInt();
-        applyExternalUserData(entry.value(kItemIdKey).toString(),
-                              flag(entry, QStringLiteral("played")),
+        const QString itemId = entry.value(kItemIdKey).toString();
+        applyExternalUserData(itemId, flag(entry, QStringLiteral("played")),
                               flag(entry, QStringLiteral("favorite")), positionTicks, playCount);
+        if (!itemId.isEmpty() &&
+            (m_playedRequests.contains(itemId) || m_favoriteRequests.contains(itemId))) {
+            const UserState intent = knownState(itemId);
+            if (m_playedRequests.contains(itemId) && entry.contains(QStringLiteral("played")))
+                entry.insert(QStringLiteral("played"), intent.played);
+            if (m_favoriteRequests.contains(itemId) && entry.contains(QStringLiteral("favorite")))
+                entry.insert(QStringLiteral("favorite"), intent.favorite);
+        }
+        merged.append(entry);
     }
+    return merged;
 }
 
 void ItemActions::patchModels(const QString &itemId, const UserState &state,
@@ -1239,14 +1251,14 @@ void ItemActions::applyFavorite(const QString &itemId, bool favorite)
     emit favoriteChanged(itemId, favorite);
 }
 
-bool ItemActions::isPlayed(const QString &itemId) const
+bool ItemActions::isPlayed(const QString &itemId, const QVariantMap &fallback) const
 {
-    return knownState(itemId).played;
+    return knownState(itemId, fallback).played;
 }
 
-bool ItemActions::isFavorite(const QString &itemId) const
+bool ItemActions::isFavorite(const QString &itemId, const QVariantMap &fallback) const
 {
-    return knownState(itemId).favorite;
+    return knownState(itemId, fallback).favorite;
 }
 
 void ItemActions::setPlayed(const QString &itemId, bool played)

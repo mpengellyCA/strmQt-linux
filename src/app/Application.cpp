@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "ApplicationPolicy.h"
+#include "UserDataWiring.h"
 
 #include <QStyleHints>
 
@@ -121,12 +122,6 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     connect(m_actions, &ItemActions::playedCommitted, m_series, &SeriesController::notePlayed);
     connect(m_actions, &ItemActions::playedCommitted, m_details,
             [this](const QString &, bool) { m_details->refreshUpcomingEpisodes(); });
-    // The details page's own item is not a row in any model, so its user state
-    // follows ItemActions directly (and live records, through bindLiveUpdates).
-    connect(m_actions, &ItemActions::playedChanged, m_details, &DetailsController::notePlayed);
-    connect(m_actions, &ItemActions::favoriteChanged, m_details,
-            &DetailsController::noteFavorite);
-
     // Latest rails are built lazily by HomeController::refresh(); registerModel dedupes.
     const auto registerRailModels = [this](const QVariantList &rails) {
         for (const QVariant &rail : rails)
@@ -144,18 +139,10 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     // startup: watch something on a phone and Continue Watching stays wrong until
     // the app is restarted.
     m_live = new LiveUpdateService(m_client, m_settings, this);
-    // The first connection on userDataPatched, on purpose. ItemActions decides
-    // "did this record change the answer" against what the registered models
-    // held BEFORE anyone patched them, patches those models and the play queue
-    // itself, and only then emits playedChanged / favoriteChanged — which is
-    // what the details and series pages' own buttons listen to. Bound after
-    // the controllers below, it would find the rows already matching the
-    // record and say nothing. Everything those signals reach (DetailsController
-    // ::notePlayed / noteFavorite above, the music relay and the album and
-    // artist hearts below) sets a value rather than toggling one, so the
-    // record arriving at them a second time by their own binding is a no-op.
-    connect(m_live, &LiveUpdateService::userDataPatched, m_actions,
-            &ItemActions::applyUserDataPatches);
+    // ItemActions sees every record first and hands every binding below the
+    // merged one; the details controller is wired to it both ways
+    // (UserDataWiring.h says why each half exists).
+    wireUserData(m_live, m_actions, m_details);
     m_home->bindLiveUpdates(m_live);
     m_library->bindLiveUpdates(m_live);
     m_series->bindLiveUpdates(m_live);

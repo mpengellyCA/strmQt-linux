@@ -61,6 +61,7 @@ qt_add_library(strmqt_app STATIC
     app/controllers/SeriesController.h app/controllers/SeriesController.cpp
     app/controllers/DetailsController.h app/controllers/DetailsController.cpp
     app/ItemActions.h app/ItemActions.cpp
+    app/UserDataWiring.h app/UserDataWiring.cpp
     app/YouTubeLinks.h
     app/PlayQueue.h app/PlayQueue.cpp
     app/music/TtlCache.h

@@ -68,18 +68,11 @@ FocusScope {
     readonly property real resumePositionMs: page.liveUserState
                                              ? DetailsCtl.positionMs
                                              : (page.item.positionMs > 0 ? page.item.positionMs : 0)
-    // What Play and Start over are handed. ItemActions takes the start
-    // position from the map it is given, so a label that follows the live
-    // position over a verb that still carries the snapshot would promise one
-    // place and start at another. Nothing is decided here: the two values are
-    // the controller's, copied over the snapshot's.
-    readonly property var playItem: {
-        if (!page.liveUserState)
-            return page.item
-        const live = Object.assign({}, page.item)
-        live.positionMs = DetailsCtl.positionMs
-        live.resumable = DetailsCtl.resumable
-        return live
+    // What Play and Start over are handed: the snapshot, with the resume point
+    // DetailsCtl holds for it (DetailsController::withUserState). Read at the
+    // click, so it is never a step behind the label above.
+    function playItem() {
+        return DetailsCtl.withUserState(page.item)
     }
 
     // ── ClearLogo ──────────────────────────────────────────────────────────
@@ -624,8 +617,10 @@ FocusScope {
     }
 
     function syncUserState() {
-        page.itemPlayed = page.itemId.length > 0 && Actions.isPlayed(page.itemId)
-        page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId)
+        // With the map the verbs below are handed, so the label and the
+        // toggle it sits on fall back to the same snapshot.
+        page.itemPlayed = page.itemId.length > 0 && Actions.isPlayed(page.itemId, page.item)
+        page.itemFavorite = page.itemId.length > 0 && Actions.isFavorite(page.itemId, page.item)
     }
 
     function episodeCode(item) {
@@ -1396,7 +1391,7 @@ FocusScope {
                                 iconName: "play"
                                 variant: "primary"
                                 onClicked: {
-                                    Actions.performItemVerb("play", page.playItem)
+                                    Actions.performItemVerb("play", page.playItem())
                                     page.applyVersion()
                                 }
                                 property Item navLeft: page.verbBefore(4)
@@ -1411,7 +1406,7 @@ FocusScope {
                                 text: qsTr("Start over")
                                 iconName: "skip-previous"
                                 onClicked: {
-                                    Actions.performItemVerb("playFromStart", page.playItem)
+                                    Actions.performItemVerb("playFromStart", page.playItem())
                                     page.applyVersion()
                                 }
                                 property Item navLeft: page.verbBefore(5)
