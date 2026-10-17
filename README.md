@@ -5,7 +5,8 @@
 StrmQt is a media client for [Emby](https://emby.media) servers, written for KDE Plasma in
 C++20 and Qt 6. It opens on your shelves rather than a menu, plays through mpv with
 hardware decoding, and every inch of it can be driven with a game controller, your phone,
-or the keyboard alone.
+or the keyboard alone. A spare computer can also run it for a Fire TV or Android TV, with
+[StrmLight](#on-a-tv-with-strmlight) on the TV and the TV's own remote in your hand.
 
 [**Download**](https://github.com/mpengellyCA/strmQt-linux/releases) ·
 [First run](#first-run) · [Controls](#controls) · [How it is built](ARCHITECTURE.md)
@@ -76,12 +77,37 @@ setup. Another Emby client — the phone app, Emby Web — can also drive this o
 playback target.
 
 There is also a built-in Web Remote: switch it on in Settings (or accept the one-time
-offer after signing in) and open the address it shows in your phone's browser. It is
-served over HTTPS on your local network only, and a phone has to pair first — tap Pair
-and type the code that appears on the TV — so other devices on the network cannot take
-over playback. Anything a key or a controller button can do, the phone
-can ask for too, and its Remote screen switches between the full player and the mini
-player.
+offer) and open the address it shows in your phone's browser. It is served over HTTPS on
+your local network only, and a phone has to pair first — tap Pair, and StrmQt shows a
+four-digit code over whatever is on screen for two minutes; type it on the phone — so
+other devices on the network cannot take over playback. A phone stays paired until you
+remove it in Settings. The remote's pairing has nothing to do with your Emby sign-in: it
+drives the sign-in screen and the *Who's watching?* picker too, and signing in, switching
+profile or signing out never disconnects it. Anything a key or a controller button can
+do, the phone can ask for too, and its Remote screen switches between the full player and
+the mini player.
+
+### On a TV, with StrmLight
+
+A computer with no screen of its own — a mini PC by the TV — can run StrmQt for a Fire TV
+or Android TV to watch. **Settings → Web Remote → Streaming host** sets it up once: a
+hidden desktop running StrmQt full screen, and a Sunshine of its own streaming it. It runs
+as two services of your user with its own settings, certificate and ports, so a Sunshine
+you already use for games is left alone, and it has a sound system of its own — a virtual
+speaker and no sound card — so only StrmQt's sound reaches the TV. StrmQt never installs
+or changes Sunshine; set-up says what is missing (KWin, Sunshine, PipeWire, WirePlumber)
+if it cannot go ahead.
+
+On the TV, [**StrmLight**](https://github.com/mpengellyCA/strmLight-android) — a Moonlight
+made for StrmQt — finds the host on the network by itself and shows a four-digit code.
+Type it once, under **Settings → Web Remote → Pair a StrmLight** or on the phone remote,
+and both the picture and the remote are paired. From then on, opening StrmLight goes
+straight to StrmQt, and the TV's own remote drives it: arrows, OK, Back, play and pause go
+to StrmQt directly rather than as keys through the stream. Settings lists every paired
+phone, StrmLight and Moonlight device, each with Remove.
+
+The streaming host is not in the Flatpak, which cannot run systemd user services or KWin
+outside its sandbox; it says so instead of offering it.
 
 ### YouTube and YouTube Music, in the same room
 
@@ -136,15 +162,15 @@ Qt. Install it from its local path so the package manager pulls in the dependenc
 
 | Distro | Format | Command |
 |---|---|---|
-| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.5-1.ubuntu24.04_amd64.deb` |
-| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.8.5-1.ubuntu26.04_amd64.deb` |
-| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.8.5-1.deb12_amd64.deb` |
-| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.8.5-1.deb13_amd64.deb` |
-| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.8.5-1.fc43.x86_64.rpm` |
-| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.8.5-1.fc44.x86_64.rpm` |
-| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.8.5-1-x86_64.pkg.tar.zst` |
+| Ubuntu 24.04 LTS | `.deb` | `sudo apt install ./strmqt_0.9.0-1.ubuntu24.04_amd64.deb` |
+| Ubuntu 26.04 LTS | `.deb` | `sudo apt install ./strmqt_0.9.0-1.ubuntu26.04_amd64.deb` |
+| Debian 12 | `.deb` | `sudo apt install ./strmqt_0.9.0-1.deb12_amd64.deb` |
+| Debian 13 | `.deb` | `sudo apt install ./strmqt_0.9.0-1.deb13_amd64.deb` |
+| Fedora 43 | `.rpm` | `sudo dnf install ./strmqt-0.9.0-1.fc43.x86_64.rpm` |
+| Fedora 44 | `.rpm` | `sudo dnf install ./strmqt-0.9.0-1.fc44.x86_64.rpm` |
+| Arch and derivatives | Arch package | `sudo pacman -U ./strmqt-0.9.0-1-x86_64.pkg.tar.zst` |
 | everyone | Flatpak | `flatpak install ./ca.mikesdev.StrmQt.flatpak` |
-| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.8.5-x86_64.AppImage` and run it |
+| glibc ≥ 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — not Debian 12 | AppImage | `chmod +x StrmQt-0.9.0-x86_64.AppImage` and run it |
 
 A keyring is recommended, not required: the `.deb` recommends
 `kwalletmanager | gnome-keyring | keepassxc`, the `.rpm` recommends
@@ -268,15 +294,19 @@ without them, so a password never reaches the log). For the Flatpak, pass it wit
 
 ## Where it stands
 
-Version **0.8.5**, a pre-release: YouTube and YouTube Music arrive as destinations in the
-menu, with background play, a docked bar and their own off switches, and full screen can
-be toggled from the profile menu. They are a day old. The parts with logic of their own
-— reading a sign-in from Firefox, the links, the preferences — are covered by tests; how
-the two web pages behave inside the app has been checked by driving them in a headless
-window and by one evening's use on one machine, and both sites can change under it
-without notice.
+Version **0.9.0**, a pre-release: StrmQt on a TV. The streaming host, StrmLight's
+one-code pairing and discovery, the TV remote and the host's separate sound arrive here,
+along with code pairing for the phone remote, an on-screen keyboard, a featured title on
+Home, logos, and gapless music with mpv. The host's file generation, pairing and
+discovery are covered by tests, and the whole path — set-up, discovery, one code, the
+stream, the TV's remote and the separate sound — has been used on one desktop with one
+Fire TV. It has not yet run on a dedicated mini PC, or at boot with nobody logged in.
 
-0.8.0, the release before, was the input release: keyboard, mouse, controller, remote
+0.8.5 added YouTube and YouTube Music as destinations in the menu, with background play,
+a docked bar and their own off switches. Both sites can change under StrmQt without
+notice.
+
+0.8.0 was the input release: keyboard, mouse, controller, remote
 and phone go through one input layer, so an arrow always has somewhere to go and no
 control is out of reach; libraries of films and shows can be filtered by their metadata;
 an idle pointer hides everywhere; and video below the window's resolution is upscaled.
@@ -286,7 +316,7 @@ The core of it has been exercised against a live Emby 4.9 server: browsing, sear
 playback of video and audio, live updates over a WebSocket, playlists, favourites,
 resume and watch state reported back, remote control, and MPRIS2.
 
-The build is clean under `-Werror`, `ctest` passes 87/87 on Qt 6.4.2, 6.8.2, 6.10 and
+The build is clean under `-Werror`, `ctest` passes 92/92 on Qt 6.4.2, 6.8.2, 6.10 and
 6.11 in CI containers, the reviewed qmllint warning baseline matches, and a
 page-construction self-test builds all 17 screens on every release.
 
@@ -303,7 +333,7 @@ Worth knowing before you rely on it:
   one extra copy rather than a feature.
 - True HDR passthrough is deferred. HDR content is tone-mapped instead, correctly, and
   verified against HDR10 HEVC.
-- No gapless audio advance yet, and chapter thumbnails are not implemented.
+- Gapless audio is mpv only, and chapter thumbnails are not implemented.
 - Music Home's *Forgotten favourites* shelf is not yet ordered by least recently
   played: Emby keeps no play date on an album to order it by.
 - On a transcoded stream a held ⏭ fast-forwards no faster than the engine plays (4× in
