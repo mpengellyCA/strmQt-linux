@@ -91,9 +91,8 @@ bool failLoad(MpvPlayer &player, PlayerBackend::LoadId loadId)
     });
 }
 
-// A short clip mpv can keep open with no render context: without one it gives
-// up on the picture, and a file with nothing left to play is a failed load. The
-// silent audio track is what stays. mpeg4 and PCM are ffmpeg's own encoders.
+// A short clip with a picture and a silent audio track, for the cores
+// startCoreWithoutSound() brings up. mpeg4 and PCM are ffmpeg's own encoders.
 // Empty when there is no ffmpeg to make it with.
 QString generateClip(QTemporaryDir &dir, const QString &name = QStringLiteral("clip.avi"))
 {
@@ -117,10 +116,16 @@ QString generateClip(QTemporaryDir &dir, const QString &name = QStringLiteral("c
 // Brings the core up (with a load that fails, which also leaves the event
 // queue empty) and points its audio at mpv's null device, so a clip plays in
 // real time without opening a sound device on the machine running the tests.
+// Its picture goes to mpv's null output: these cores have no video item, and
+// vo=libmpv without a render context fails to open. From mpv 0.38 that costs
+// only the picture and the audio plays on; mpv 0.37 (Ubuntu 24.04) fails the
+// whole file, because it opens the video output before the audio one and then
+// finds nothing playing (player/misc.c, error_on_track).
 bool startCoreWithoutSound(MpvPlayer &player, PlayerBackend::LoadId loadId)
 {
     return failLoad(player, loadId) && player.handle() != nullptr &&
-           mpv_set_property_string(player.handle(), "ao", "null") >= 0;
+           mpv_set_property_string(player.handle(), "ao", "null") >= 0 &&
+           mpv_set_property_string(player.handle(), "vo", "null") >= 0;
 }
 
 // A subtitle file named so that mpv's own sidecar matching (same base name as
