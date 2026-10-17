@@ -348,29 +348,6 @@ QUrl resolveStreamUrl(const QUrl &baseUrl, const QString &pathAndQuery, const QS
     return url;
 }
 
-// A transcode on the item's own timeline. The engine is started at the resume
-// point on every rung, Transcode included (PlayerController::startAttempt),
-// which is right for the HLS transcode: its TranscodingUrl carries no offset.
-// The audio fallback is progressive, and a progressive stream the server was
-// told to start at StartTimeTicks begins there — the engine's own start would
-// then land as far again into it. Whatever the server put in, the stream this
-// client plays starts where the item does.
-QUrl withoutStartOffset(QUrl url)
-{
-    QUrlQuery query(url.query(QUrl::FullyEncoded));
-    bool changed = false;
-    const QList<QPair<QString, QString>> items = query.queryItems(QUrl::FullyEncoded);
-    for (const QPair<QString, QString> &item : items) {
-        if (item.first.compare(QLatin1String("StartTimeTicks"), Qt::CaseInsensitive) == 0) {
-            query.removeAllQueryItems(item.first);
-            changed = true;
-        }
-    }
-    if (changed)
-        url.setQuery(query);
-    return url;
-}
-
 } // namespace
 
 MediaStream parseMediaStream(const QJsonObject &json)
@@ -514,8 +491,7 @@ QList<StreamCandidate> buildLadder(const MediaSource &source, const QUrl &baseUr
         candidate.method = PlayMethod::Transcode;
         candidate.container = source.transcodingContainer;
         candidate.mediaSourceId = source.id;
-        candidate.url =
-            withoutStartOffset(resolveStreamUrl(baseUrl, source.transcodingUrl, accessToken));
+        candidate.url = resolveStreamUrl(baseUrl, source.transcodingUrl, accessToken);
         ladder.append(candidate);
     }
 
