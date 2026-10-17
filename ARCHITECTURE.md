@@ -851,7 +851,9 @@ which has been asking every two seconds with an `X-StrmLight` header, gets in on
 its next try. Until then it is answered 202 and nothing is counted. There is one
 code slot, so a shown code and a StrmLight's code never stand at once, and each is
 for its own kind only: a phone cannot answer a StrmLight's code. A code works once,
-and five wrong guesses at it end it. Dismissing a shown code with Back holds off
+and five wrong guesses at it end it; the same wrong code again from the same peer
+is one guess, not one per try, since a StrmLight goes on asking with its own code
+after a typo here. Dismissing a shown code with Back holds off
 new requests for 30 s, so a phone cannot keep putting one back on the film.
 
 A paired device keeps its token until it is removed in Settings — across restarts,

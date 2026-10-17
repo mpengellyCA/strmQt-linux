@@ -57,6 +57,7 @@ private slots:
     void codeDiesAfterFiveWrongGuesses();
     void strmLightWaitsUntilItsCodeIsTypedIn();
     void strmLightCodeIsForAStrmLightOnly();
+    void strmLightPollingAfterATypoIsNotGuessing();
     void strmLightCodeNeedsAPairedPhone();
     void pairedDeviceOutlivesARestart();
     void keyNavigationSignal();
@@ -130,6 +131,10 @@ private:
         QVERIFY(m_server->showPairingCode());
         QCOMPARE(m_server->pairingCode(), code);
     }
+    // A wrong code never given before. Only a different code is another
+    // guess: the same wrong code again from the same peer is not counted.
+    int m_wrongCodes = 0;
+    QByteArray wrong() { return QByteArray::number(6000 + m_wrongCodes++); }
     RemoteResponse attempt(const QByteArray &pin, const QString &code)
     {
         ensureCode(code);
@@ -290,10 +295,10 @@ void WebRemoteServerTest::pinRateLimiting()
 
     // 5 failed attempts return 403 Forbidden
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(attempt("1234", code).status, 403);
+        QCOMPARE(attempt(wrong(), code).status, 403);
 
     // The next attempt is refused outright, even with the right code.
-    const RemoteResponse locked = attempt("1234", code);
+    const RemoteResponse locked = attempt(wrong(), code);
     QCOMPARE(locked.status, 429);
     QCOMPARE(locked.json().value(QStringLiteral("error")).toString(),
              QStringLiteral("Too many failed attempts. Please wait."));
@@ -317,14 +322,14 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
     };
 
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(attempt("1234", code).status, 403);
-    QCOMPARE(attempt("1234", code).status, 429);
+        QCOMPARE(attempt(wrong(), code).status, 403);
+    QCOMPARE(attempt(wrong(), code).status, 429);
     // Another address is not locked out by this one's misses...
     QCOMPARE(fromOther("0000"), 200);
     // ...and its own misses count from zero.
     for (int i = 0; i < 4; ++i)
-        QCOMPARE(fromOther("1234"), 403);
-    QCOMPARE(fromOther("1234"), 403); // fifth miss: locked for 2 s
+        QCOMPARE(fromOther(wrong()), 403);
+    QCOMPARE(fromOther(wrong()), 403); // fifth miss: locked for 2 s
     QCOMPARE(fromOther("0000"), 429);
 
     // 127.0.0.1: each miss once a lockout has passed doubles it (2, 4, 8 s...).
@@ -333,7 +338,7 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
         now += lock - 1;
         QCOMPARE(attempt("0000", code).status, 429);
         now += 1;
-        QCOMPARE(attempt("1234", code).status, 403);
+        QCOMPARE(attempt(wrong(), code).status, 403);
         lock = std::min<qint64>(lock * 2, 5 * 60 * 1000);
     }
     QCOMPARE(lock, 5 * 60 * 1000); // capped at 5 min
@@ -343,16 +348,16 @@ void WebRemoteServerTest::pinLockoutEscalatesPerAddress()
     // The right code resets the address: five fresh misses before the next lockout.
     QCOMPARE(attempt("0000", code).status, 200);
     for (int i = 0; i < 5; ++i)
-        QCOMPARE(attempt("1234", code).status, 403);
-    QCOMPARE(attempt("1234", code).status, 429);
+        QCOMPARE(attempt(wrong(), code).status, 403);
+    QCOMPARE(attempt(wrong(), code).status, 429);
     now += 2000;
     QCOMPARE(attempt("0000", code).status, 200);
 
     // An address idle for over 10 min is forgotten: 127.0.0.2 had five misses
     // and a lockout; after pruning it has five fresh ones.
     now += 10 * 60 * 1000 + 1;
-    QCOMPARE(fromOther("1234"), 403);
-    QCOMPARE(fromOther("1234"), 403);
+    QCOMPARE(fromOther(wrong()), 403);
+    QCOMPARE(fromOther(wrong()), 403);
     QCOMPARE(fromOther("0000"), 200);
 }
 
@@ -416,17 +421,17 @@ void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
     // Five addresses, four misses each: none reaches its own lockout.
     for (int host = 1; host <= 5; ++host) {
         for (int i = 0; i < 4; ++i)
-            QCOMPARE(from(host, "1111"), 403);
+            QCOMPARE(from(host, wrong()), 403);
     }
     // Twenty misses between them: a sixth address is not even heard out...
     QCOMPARE(from(6, "2468"), 429);
-    QCOMPARE(from(6, "1111"), 429);
+    QCOMPARE(from(6, wrong()), 429);
     // ...nor is one of the five, which still had a try of its own left.
     QCOMPARE(from(1, "2468"), 429);
     // The phone that paired before is not locked out with them, and answers
     // for its own misses only.
     QCOMPARE(attempt("2468", code).status, 200);
-    QCOMPARE(attempt("1111", code).status, 403);
+    QCOMPARE(attempt(wrong(), code).status, 403);
     QCOMPARE(attempt("2468", code).status, 200);
     QCOMPARE(from(6, "2468"), 429); // and its success forgives the others nothing
 
@@ -434,12 +439,12 @@ void WebRemoteServerTest::pinMissesAreLimitedAcrossAddresses()
     now += 5 * 60 * 1000 - 1;
     QCOMPARE(from(6, "2468"), 429);
     now += 1;
-    QCOMPARE(from(6, "1111"), 403);
+    QCOMPARE(from(6, wrong()), 403);
     QCOMPARE(from(7, "2468"), 429);
     now += 5 * 60 * 1000;
     QCOMPARE(from(7, "2468"), 200);
     // 127.0.1.7 has paired; the others are still one miss from the limit.
-    QCOMPARE(from(8, "1111"), 403);
+    QCOMPARE(from(8, wrong()), 403);
     QCOMPARE(from(9, "2468"), 429);
     QCOMPARE(from(7, "2468"), 200);
 
@@ -638,6 +643,30 @@ void WebRemoteServerTest::strmLightCodeIsForAStrmLightOnly()
     // A StrmLight with the wrong code is a guess like any other.
     QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("6061")), 403);
     QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("6060")), 200);
+}
+
+void WebRemoteServerTest::strmLightPollingAfterATypoIsNotGuessing()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    m_http->setToken(pairPhone());
+
+    // Typed in wrong: the StrmLight shows 5555, and goes on asking with it.
+    QVERIFY(m_server->expectStrmLightCode(QStringLiteral("5556")));
+    for (int i = 0; i < 30; ++i)
+        QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("5555")), 403);
+    // One guess, not thirty: the typed code is still there, and the StrmLight
+    // is not locked out.
+    QVERIFY(m_server->awaitingStrmLight());
+
+    // Typed in again, right this time: its next try gets in.
+    QVERIFY(m_server->expectStrmLightCode(QStringLiteral("5555")));
+    QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt("5555")), 200);
+
+    // A different code each time is guessing, and five of them end the code.
+    QVERIFY(m_server->expectStrmLightCode(QStringLiteral("7777")));
+    for (int i = 0; i < 5; ++i)
+        QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt(wrong())), 403);
+    QVERIFY(!m_server->awaitingStrmLight());
 }
 
 void WebRemoteServerTest::strmLightCodeNeedsAPairedPhone()

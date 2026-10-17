@@ -1199,6 +1199,17 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
     }
 
     const QString pin = body.value(QLatin1String("pin")).toString();
+    // The same wrong code again from the same peer is refused but not counted:
+    // a StrmLight keeps polling with its own code after a typo here, and
+    // counting every poll would end the typed code and lock the StrmLight out
+    // within seconds. Only a different code is another guess.
+    const auto previous = m_code->lastGuess.constFind(peerKey);
+    if (previous != m_code->lastGuess.cend() && *previous == pin) {
+        QJsonObject err;
+        err[QStringLiteral("error")] = QStringLiteral("Invalid PIN");
+        sendJson(socket, 403, err);
+        return;
+    }
     if (!pin.isEmpty() && constantTimeEquals(pin.toUtf8(), m_code->code.toUtf8())) {
         // This peer's own count starts over. The shared one does not: that
         // someone had the code says nothing about the others' guesses.
@@ -1232,6 +1243,7 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
             m_pinGlobalSince = now;
         ++m_pinGlobalMisses;
     }
+    m_code->lastGuess.insert(peerKey, pin);
     if (++m_code->misses >= kMaxCodeMisses)
         setPendingCode(std::nullopt, false);
     QJsonObject err;
@@ -1317,7 +1329,7 @@ void WebRemoteServer::setPendingCode(std::optional<QString> code, bool strmLight
     if (!code && !m_code)
         return;
     if (code)
-        m_code = PendingCode{*code, strmLight, 0};
+        m_code = PendingCode{*code, strmLight, 0, {}};
     else
         m_code.reset();
     if (m_code)

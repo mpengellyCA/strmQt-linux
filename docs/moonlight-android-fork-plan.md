@@ -101,8 +101,10 @@ Sunshine's input path at all.
   - `200 {"token": "<token>"}`: paired. Store the token in app-private
     storage and stop showing the code.
   - `403`: a code was typed in but it is not this one (a typo). Keep the
-    same code on screen and keep asking; StrmQt drops a typed code after five
-    wrong tries, and the client is back to `202`.
+    same code on screen and keep asking: asking again with the same code is
+    counted as one wrong try, not one per poll, so the user can retype it.
+    StrmQt drops a typed code after five different wrong codes, and the
+    client is back to `202`.
   - `429`: too many wrong tries from this address. Wait 30 s, then resume.
   The header is required: without it, the request is a phone's and is checked
   against the code StrmQt shows on its own screen instead. A code typed in for

@@ -267,6 +267,9 @@ private:
         QString code;
         bool strmLight = false;
         int misses = 0;
+        // Each peer's last wrong guess at this code: a StrmLight polls the
+        // same code every 2 s, and asking again is not guessing again.
+        QHash<QString, QString> lastGuess;
     };
     std::optional<PendingCode> m_code;
     QTimer m_codeExpiry;
