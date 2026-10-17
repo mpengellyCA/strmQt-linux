@@ -107,6 +107,7 @@ private slots:
     void everyAdvertisedCommandIsRouted();
     void transportCommandsReachThePlayer();
     void pauseAndUnpauseAreIdempotent();
+    void unpauseWhileLoadingIsNotDropped();
     void seekKeepsFullTickPrecision();
     void skipCommandsCarryTheirOwnAmount();
     void nextAndPreviousStepByChapterBeforeTheQueue();
@@ -309,6 +310,22 @@ void RemoteControlTest::pauseAndUnpauseAreIdempotent()
     QVERIFY(!m_player->paused());
     send(QStringLiteral("Playstate"), playstate(QStringLiteral("Unpause")));
     QVERIFY(!m_player->paused());
+}
+
+// Pause and Unpause are absolute. While a load is still settling the engine
+// reads neither Playing nor Paused, and the old handler guarded a toggle with
+// that read: Pause went through (it was "not paused"), and the Unpause meant to
+// undo it was dropped (it was "not paused" either), so the item started paused.
+// Both must reach the engine whatever state it reports.
+void RemoteControlTest::unpauseWhileLoadingIsNotDropped()
+{
+    m_player->playItem(kItemA, QStringLiteral("Item"), 0);
+    QTRY_COMPARE(m_backend->state(), PlayerBackend::State::Loading);
+    m_backend->pauseRequests.clear();
+
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("Pause")));
+    send(QStringLiteral("Playstate"), playstate(QStringLiteral("Unpause")));
+    QCOMPARE(m_backend->pauseRequests, (QList<bool>{true, false}));
 }
 
 // SeekPositionTicks is a JSON number too large to survive a double past roughly

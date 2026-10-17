@@ -34,6 +34,9 @@ public:
 
     void setPaused(bool paused) override
     {
+        // Every request, including those a real engine takes while a load is
+        // still settling (mpv sets the "pause" property whatever its state).
+        pauseRequests.append(paused);
         if (m_state != State::Playing && m_state != State::Paused)
             return;
         simulateState(paused ? State::Paused : State::Playing);
@@ -332,6 +335,7 @@ public:
     bool screenshotSucceeds = true;
     QStringList replayGainModes;
     int stopCalls = 0;
+    QList<bool> pauseRequests;
     bool prefetchSupported = false;
     bool prefetchAccepted = true;
     QList<Prefetch> prefetchRequests;
