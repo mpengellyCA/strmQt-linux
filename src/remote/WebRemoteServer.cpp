@@ -112,6 +112,14 @@ constexpr qsizetype kMaxKnownPinPeers = 64;
 // entries age out.
 constexpr qsizetype kMaxPinPeers = 256;
 
+// A StrmLight (X-StrmLight) asks every 2 s while its code is on its screen,
+// so it is held to a rate instead: fifty tries in any 95 s per peer, one per
+// 1.9 s on average, counted over a window so that a poll the network delays
+// and the next one arriving early are not refused. Waiting tries count too.
+// A wrong code from it still counts as above, once per code.
+constexpr int kStrmLightPolls = 50;
+constexpr qint64 kStrmLightWindowMs = 95 * 1000;
+
 // Fixed-length XOR over the expected PIN. The time taken depends on the PIN's
 // length only, never on how many leading digits a guess got right.
 bool constantTimeEquals(const QByteArray &given, const QByteArray &expected)
@@ -1141,6 +1149,28 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
         QString::fromUtf8(req.headers.value("x-strmlight")).trimmed();
     const bool strmLight = !strmLightName.isEmpty();
     const bool codeFits = m_code && m_code->strmLight == strmLight;
+    const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
+    const QString peerKey = pinPeerKey(socket->peerAddress(), socket->localAddress());
+
+    if (strmLight) {
+        m_strmLightPolls.removeIf([now](const QHash<QString, QList<qint64>>::iterator it) {
+            return it->isEmpty() || now - it->constLast() >= kStrmLightWindowMs;
+        });
+        const bool full = !m_strmLightPolls.contains(peerKey) && m_strmLightPolls.size() >= kMaxPinPeers;
+        QList<qint64> &polls = m_strmLightPolls[peerKey];
+        while (!polls.isEmpty() && now - polls.constFirst() >= kStrmLightWindowMs)
+            polls.removeFirst();
+        if (full || polls.size() >= kStrmLightPolls) {
+            if (polls.isEmpty())
+                m_strmLightPolls.remove(peerKey);
+            // Refused tries are not recorded: one that slows down gets back in.
+            QJsonObject err;
+            err[QStringLiteral("error")] = QStringLiteral("Asking too often. Please wait.");
+            sendJson(socket, 429, err);
+            return;
+        }
+        polls.append(now);
+    }
 
     // A StrmLight asks every 2 s from the moment it shows its code, long
     // before anyone has typed it in here. Until then there is nothing it
@@ -1152,7 +1182,6 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
         return;
     }
 
-    const qint64 now = m_clock ? m_clock() : m_pinClock.elapsed();
     m_pinFailures.removeIf([now](const QHash<QString, PinFailures>::iterator it) {
         return now >= it->lockedUntil && now - it->lastMiss > kPinFailureIdleMs;
     });
@@ -1168,7 +1197,6 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
             m_pinGlobalSince = now; // a clock set back forgives nothing
         }
     }
-    const QString peerKey = pinPeerKey(socket->peerAddress(), socket->localAddress());
     const bool known = m_pinKnownPeers.contains(peerKey);
 
     const auto tooMany = [this, socket] {
@@ -1369,6 +1397,7 @@ void WebRemoteServer::removeAllPairedDevices()
     // and nobody's misses are held against the next pairing either.
     m_pinFailures.clear();
     m_pinKnownPeers.clear();
+    m_strmLightPolls.clear();
     m_pinGlobalMisses = 0;
 }
 

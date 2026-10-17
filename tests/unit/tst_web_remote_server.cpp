@@ -58,6 +58,7 @@ private slots:
     void strmLightWaitsUntilItsCodeIsTypedIn();
     void strmLightCodeIsForAStrmLightOnly();
     void strmLightPollingAfterATypoIsNotGuessing();
+    void strmLightIsHeldToFiftyTriesIn95Seconds();
     void strmLightCodeNeedsAPairedPhone();
     void pairedDeviceOutlivesARestart();
     void keyNavigationSignal();
@@ -667,6 +668,46 @@ void WebRemoteServerTest::strmLightPollingAfterATypoIsNotGuessing()
     for (int i = 0; i < 5; ++i)
         QCOMPARE(RemoteTestClient::statusOf(strmLightAttempt(wrong())), 403);
     QVERIFY(!m_server->awaitingStrmLight());
+}
+
+void WebRemoteServerTest::strmLightIsHeldToFiftyTriesIn95Seconds()
+{
+    qint64 now = 20000000;
+    m_server->setClockForTests([&now] { return now; });
+    const auto restoreClock = qScopeGuard([this] { m_server->setClockForTests({}); });
+    m_settings->setWebRemoteRequirePin(true);
+    const auto tryAt = [this](const QByteArray &name = "Living room") {
+        return RemoteTestClient::statusOf(strmLightAttempt("5555", name));
+    };
+
+    // Every 2 s, as a StrmLight asks, and every 1.9 s: never refused.
+    for (int i = 0; i < 60; ++i, now += 2000)
+        QCOMPARE(tryAt(), 202);
+    now += 95000;
+    for (int i = 0; i < 120; ++i, now += 1900)
+        QCOMPARE(tryAt(), 202);
+
+    // Fifty at once are let through, and the fifty-first is not...
+    now += 95000;
+    for (int i = 0; i < 50; ++i)
+        QCOMPARE(tryAt(), 202);
+    QCOMPARE(tryAt(), 429);
+    // ...whatever name it gives: the limit is the address's.
+    QCOMPARE(tryAt("Bedroom"), 429);
+    // A phone from the same address is not held to it.
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"1234"})").status, 403);
+    // The window moves: 95 s after the burst, the tries are back.
+    now += 94999;
+    QCOMPARE(tryAt(), 429);
+    now += 1;
+    QCOMPARE(tryAt(), 202);
+
+    // Faster than 1.9 s on average is refused within the window.
+    now += 95000;
+    int refused = 0;
+    for (int i = 0; i < 60; ++i, now += 1800)
+        refused += tryAt() == 429;
+    QVERIFY(refused > 0);
 }
 
 void WebRemoteServerTest::strmLightCodeNeedsAPairedPhone()

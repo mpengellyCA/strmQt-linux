@@ -853,7 +853,9 @@ code slot, so a shown code and a StrmLight's code never stand at once, and each 
 for its own kind only: a phone cannot answer a StrmLight's code. A code works once,
 and five wrong guesses at it end it; the same wrong code again from the same peer
 is one guess, not one per try, since a StrmLight goes on asking with its own code
-after a typo here. Dismissing a shown code with Back holds off
+after a typo here. What holds a StrmLight back is a rate instead: fifty tries in
+any 95 s from one address (one per 1.9 s on average, over a window so network
+jitter is not refused), waiting tries included. Dismissing a shown code with Back holds off
 new requests for 30 s, so a phone cannot keep putting one back on the film.
 
 A paired device keeps its token until it is removed in Settings — across restarts,

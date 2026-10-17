@@ -105,7 +105,11 @@ Sunshine's input path at all.
     counted as one wrong try, not one per poll, so the user can retype it.
     StrmQt drops a typed code after five different wrong codes, and the
     client is back to `202`.
-  - `429`: too many wrong tries from this address. Wait 30 s, then resume.
+  - `429`: too many wrong tries from this address, or asking too often.
+    Wait 30 s, then resume.
+  StrmQt allows a StrmLight 50 tries in any 95 s from one address (one per
+  1.9 s on average), waiting tries included. Polling every 2 s stays inside
+  that; never poll faster.
   The header is required: without it, the request is a phone's and is checked
   against the code StrmQt shows on its own screen instead. A code typed in for
   a StrmLight works once and expires after 2 minutes; make a fresh code when

@@ -292,6 +292,8 @@ private:
     // Peers (by pinPeerKey()) that have paired a device: the limit shared by
     // strangers does not lock them out.
     QSet<QString> m_pinKnownPeers;
+    // Each peer's StrmLight tries in the last 95 s, oldest first.
+    QHash<QString, QList<qint64>> m_strmLightPolls;
     QElapsedTimer m_pinClock;
     std::function<qint64()> m_clock;
     std::function<QHostAddress(const QString &)> m_bindResolver;
