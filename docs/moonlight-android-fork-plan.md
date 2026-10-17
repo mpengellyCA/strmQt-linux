@@ -4,8 +4,8 @@ A brief for an agent working in a **separate repository** (a fork of
 `moonlight-stream/moonlight-android`). It needs no access to the StrmQt
 source; everything it must know about StrmQt is in this file.
 
-Written 2026-10-13. Statements about StrmQt were read from its source at
-`main` (`1d5cebf`). Statements about Moonlight's internals are from memory of
+Written 2026-10-13, updated 2026-10-16. Statements about StrmQt were read
+from its source at `main` (`a5a56b4`). Statements about Moonlight's internals are from memory of
 that project and are marked **[verify]**: confirm them against the code before
 relying on them.
 
@@ -80,6 +80,13 @@ Sunshine's input path at all.
 - TLS: the certificate is self-signed. **Pin it on first use**: store the
   certificate's SHA-256 at pairing and accept only that certificate
   afterwards. Do not disable certificate checking.
+- StrmQt replaces the certificate, **with a new key**, when the host gains an
+  IPv4 address or host name the old one did not name (a new DHCP lease, a
+  second network). A pinned client then sees a different certificate. Treat
+  that as "pair again": stop, tell the user the host's certificate changed,
+  and offer the PIN pairing flow, which pins the new one. Never accept it
+  silently, and never fall back to unchecked TLS. A fixed address for the
+  host (a DHCP reservation) avoids this in practice.
 - Sign in: `POST /api/auth/pin` with JSON `{"pin": "1234"}`. A correct PIN
   returns `{"token": "<uuid>"}`. Repeated wrong PINs return `429`; back off.
   The PIN is shown in StrmQt under Settings, Web Remote. Tokens are held in
@@ -248,4 +255,8 @@ for Fire OS boot behaviour.
 - Input latency of transport A depends on the LAN, not on the video stream.
   Measure button-to-screen time and report it.
 - Wrong-PIN lockouts on the StrmQt side during development: back off instead
-  of retrying in a loop.
+  of retrying in a loop. Besides each address's own lockout, StrmQt has one
+  allowance shared by every address that has not yet given the current PIN
+  (20 misses, then one per 5 minutes), so a misbehaving test client can also
+  hold off a first pairing from the real device. A device that has signed in
+  with the current PIN is held only to its own lockout.
