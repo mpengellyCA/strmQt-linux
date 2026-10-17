@@ -198,6 +198,10 @@ int main(int argc, char *argv[])
     // A Bluetooth remote's OK button arrives as Select or XF86OK, not Return,
     // and its Back as Qt::Key_Back, which only the page history listened for.
     if (auto *window = qobject_cast<QWindow *>(roots.value(0))) {
+        // The streaming host's screen is all StrmQt; Main.qml's 1600×900 left
+        // most of the streamed picture empty.
+        if (app.settings()->isStreamingHostInstance())
+            window->showFullScreen();
         window->installEventFilter(new strmqt::WindowFocusKeeper(window));
         // A pointer left where it was while the user picked up a pad stops
         // hovering things and is no longer drawn (input/PointerIdle.h).
