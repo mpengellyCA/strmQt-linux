@@ -114,6 +114,7 @@ Settings::Settings(QObject *parent) : QObject(parent)
         }
     });
     dropObsoleteWebRemotePin(m_store);
+    m_reportedDevices = webRemoteDevices();
 }
 
 Settings::Settings(const QString &iniFilePath, QObject *parent)
@@ -128,6 +129,7 @@ Settings::Settings(const QString &iniFilePath, QObject *parent)
         }
     });
     dropObsoleteWebRemotePin(m_store);
+    m_reportedDevices = webRemoteDevices();
 }
 
 Settings::~Settings()
@@ -910,6 +912,8 @@ void Settings::setPollIntervalSeconds(int seconds)
 
 bool Settings::webRemoteEnabled() const
 {
+    if (m_streamingHost)
+        return true;
     // Opt-in: a listener that can drive playback is not something to open on
     // the network before the user has asked for it.
     return m_store.value(kWebRemoteEnabledKey, false).toBool();
@@ -917,7 +921,7 @@ bool Settings::webRemoteEnabled() const
 
 void Settings::setWebRemoteEnabled(bool enabled)
 {
-    if (enabled == webRemoteEnabled())
+    if (m_streamingHost || enabled == webRemoteEnabled())
         return;
     m_store.setValue(kWebRemoteEnabledKey, enabled);
     emit webRemoteEnabledChanged();
@@ -925,6 +929,8 @@ void Settings::setWebRemoteEnabled(bool enabled)
 
 int Settings::webRemotePort() const
 {
+    if (m_streamingHost)
+        return kStreamingHostWebRemotePort;
     const int port = m_store.value(kWebRemotePortKey, kDefaultWebRemotePort).toInt();
     if (port <= 1024 || port > 65535)
         return kDefaultWebRemotePort;
@@ -934,7 +940,7 @@ int Settings::webRemotePort() const
 void Settings::setWebRemotePort(int port)
 {
     const int clamped = (port <= 1024 || port > 65535) ? kDefaultWebRemotePort : port;
-    if (clamped == webRemotePort())
+    if (m_streamingHost || clamped == webRemotePort())
         return;
     m_store.setValue(kWebRemotePortKey, clamped);
     emit webRemotePortChanged();
@@ -964,15 +970,39 @@ void Settings::setWebRemoteBindMode(const QString &mode)
 
 bool Settings::webRemoteRequirePin() const
 {
+    if (m_streamingHost)
+        return true;
     return m_store.value(kWebRemoteRequirePinKey, true).toBool();
 }
 
 void Settings::setWebRemoteRequirePin(bool required)
 {
-    if (required == webRemoteRequirePin())
+    if (m_streamingHost || required == webRemoteRequirePin())
         return;
     m_store.setValue(kWebRemoteRequirePinKey, required);
     emit webRemoteRequirePinChanged();
+}
+
+void Settings::setStreamingHostInstance(bool host)
+{
+    if (host == m_streamingHost)
+        return;
+    m_streamingHost = host;
+    emit webRemoteEnabledChanged();
+    emit webRemotePortChanged();
+    emit webRemoteRequirePinChanged();
+}
+
+void Settings::syncFromDisk()
+{
+    m_store.sync();
+    // Against what was last said, not what was read before the sync: within
+    // one process the store can see another's write before it is asked.
+    const QVariantList devices = webRemoteDevices();
+    if (devices == m_reportedDevices)
+        return;
+    m_reportedDevices = devices;
+    emit webRemoteDevicesChanged();
 }
 
 QVariantList Settings::webRemoteDevices() const
@@ -993,6 +1023,7 @@ void Settings::setWebRemoteDevices(const QVariantList &devices)
         m_store.setValue(kWebRemoteDevicesKey, QJsonDocument(QJsonArray::fromVariantList(devices))
                                                    .toJson(QJsonDocument::Compact));
     m_store.sync();
+    m_reportedDevices = devices;
     emit webRemoteDevicesChanged();
 }
 

@@ -858,6 +858,29 @@ any 95 s from one address (one per 1.9 s on average, over a window so network
 jitter is not refused), waiting tries included. Dismissing a shown code with Back holds off
 new requests for 30 s, so a phone cannot keep putting one back on the film.
 
+**The streaming host's StrmQt has a remote of its own, and one code pairs a
+StrmLight's picture and its remote.** The headless StrmQt the host's Sunshine
+streams is a second instance beside the desktop one, started with
+`STRMQT_STREAMING_HOST=1` in its unit. Its remote is the TV's only remote, so it
+is locked on, with pairing, on port 8338, whatever the shared settings file says
+for the desktop's (8337 by default). It also answers a UDP probe on 8338
+(`STRMQT-DISCOVER 1`) with its name, its remote and Sunshine ports and its
+certificate's fingerprint, which is how a StrmLight finds it without an address
+typed in. Only this network is answered, and sparingly, since a reply is larger
+than the probe. Nothing in it is trusted for itself: the certificate is still
+pinned and the code still decides.
+
+A StrmLight's code doubles as its Moonlight PIN. It starts Moonlight's pairing
+with that code and polls the remote with it; typed once, the host arms its remote
+with the code and enters it into its Sunshine, retrying for the code's two
+minutes until Moonlight's request is waiting. Every Moonlight asks as the same
+client, so Sunshine can give the PIN to an abandoned request instead: only a new
+device in Sunshine's list counts as paired. A code typed into the desktop StrmQt
+(Settings, or a phone paired with it) is passed to the host over a socket in the
+user's runtime directory, open to this user alone; with no host running, the
+desktop arms its own remote. The paired remotes are shared through the settings
+file, re-read every 3 s, so a device removed in either StrmQt is out of both.
+
 A paired device keeps its token until it is removed in Settings — across restarts,
 sign-outs and profile switches, because pairing a phone is a fact about the room,
 not about the Emby account. Settings keeps only SHA-256 hashes of the tokens, with

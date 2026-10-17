@@ -85,6 +85,7 @@ private slots:
             "ExecStart=/usr/bin/kwin_wayland --virtual --width 3840 --height 2160 --socket strmqt-host "
             "--no-lockscreen --no-global-shortcuts --exit-with-session /usr/bin/strmqt\n")));
         QVERIFY(unit.contains(QStringLiteral("Environment=XDG_CONFIG_HOME=/tmp/x\n")));
+        QVERIFY(unit.contains(QStringLiteral("Environment=STRMQT_STREAMING_HOST=1\n")));
         QVERIFY(unit.contains(QStringLiteral("WantedBy=default.target\n")));
     }
 
@@ -212,6 +213,33 @@ private slots:
         QVERIFY(!host.busy());
         QVERIFY(!host.available());
         QVERIFY(!QFile::exists(env.unitDir + QStringLiteral("/t-host.service")));
+    }
+
+    void aStrmLightsCodeWaitsForAMoonlightToAsk()
+    {
+        QString id = QStringLiteral("stale");
+        // A Sunshine that lists who is asking: nobody yet, so wait.
+        QVERIFY(!StreamingHost::pinTarget(true, {}, &id));
+        // Somebody: that request.
+        const QVariantList asking{QVariantMap{{QStringLiteral("id"), QStringLiteral("abc")},
+                                              {QStringLiteral("name"), QStringLiteral("Fire TV")}}};
+        QVERIFY(StreamingHost::pinTarget(true, asking, &id));
+        QCOMPARE(id, QStringLiteral("abc"));
+        QVERIFY(!StreamingHost::pinTarget(true, {QVariantMap{}}, &id));
+        // One that does not list them takes the PIN for whoever is waiting.
+        QVERIFY(StreamingHost::pinTarget(false, {}, &id));
+        QVERIFY(id.isEmpty());
+
+        // Done is a device that was not there before, not Sunshine saying yes:
+        // the PIN may have gone to an abandoned request from another Moonlight.
+        const auto device = [](const char *uuid) {
+            return QVariant(QVariantMap{{QStringLiteral("uuid"), QString::fromLatin1(uuid)}});
+        };
+        const QStringList before{QStringLiteral("a"), QStringLiteral("b")};
+        QVERIFY(!StreamingHost::hasNewDevice(before, {device("a"), device("b")}));
+        QVERIFY(!StreamingHost::hasNewDevice(before, {device("b")}));
+        QVERIFY(StreamingHost::hasNewDevice(before, {device("a"), device("b"), device("c")}));
+        QVERIFY(StreamingHost::hasNewDevice({}, {device("c")}));
     }
 
     void sunshinesAnswersAreReadTolerantly()

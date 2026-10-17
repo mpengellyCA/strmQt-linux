@@ -1458,9 +1458,10 @@ FocusScope {
                         }
                     }
 
-                    // A StrmLight shows a code of its own; typed here, it is
-                    // let in the next time it asks (every 2 s). By buttons,
-                    // for a remote or a controller.
+                    // A StrmLight shows a code of its own; typed here, it pairs
+                    // its stream and its remote with the streaming host (passed
+                    // there when this is the desktop StrmQt) the next time it
+                    // asks (every 2 s). By buttons, for a remote or a controller.
                     SettingsSections.SettingRow {
                         width: parent.width
                         visible: page.webRemoteAvailable && page.webRemote.running
@@ -1468,7 +1469,7 @@ FocusScope {
                         hint: page.webRemoteAvailable && page.webRemote.awaitingStrmLight
                               ? qsTr("Waiting for the StrmLight to ask with %1…").arg(webRemotePanel.strmLightCode)
                               : webRemotePanel.strmLightCode.length > 0 ? webRemotePanel.strmLightCode
-                              : qsTr("Type the four digits on the StrmLight screen.")
+                              : qsTr("Type the four digits on the StrmLight screen. They pair its picture and its remote.")
 
                         Row {
                             spacing: Theme.spacingTight / 2
@@ -1843,7 +1844,7 @@ FocusScope {
                     SettingsSections.SectionNote {
                         width: parent.width
                         visible: streamingHostPanel.pairingShown && streamingHostPanel.host.devices.length === 0
-                        text: qsTr("No device is paired. In Moonlight on the TV, add this computer by its address and port %1; it shows a PIN to type here.")
+                        text: qsTr("No device is paired. A StrmLight pairs with its code under Web Remote. Plain Moonlight: add this computer by its address and port %1; it shows a PIN to type here.")
                               .arg(streamingHostPanel.present ? streamingHostPanel.host.port : 0)
                     }
 

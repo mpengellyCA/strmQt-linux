@@ -141,6 +141,10 @@ public:
     void setClockForTests(std::function<qint64()> nowMs);
     // Replaces the random source of shown codes.
     void setCodeGeneratorForTests(std::function<QString()> generate);
+    // Who takes a StrmLight's code typed into the phone remote. Unset, this
+    // server arms it itself; the desktop StrmQt passes it to the streaming
+    // host instead (WebRemoteController::pairStrmLight). False is refused.
+    void setStrmLightCodeHandler(std::function<bool(const QString &)> handler);
 
     // What failed PINs are counted against: the address for IPv4 (an
     // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6 from
@@ -273,6 +277,8 @@ private:
     };
     std::optional<PendingCode> m_code;
     QTimer m_codeExpiry;
+    QTimer m_devicesSync;
+    std::function<bool(const QString &)> m_strmLightCodeHandler;
     // After a shown code is cancelled at the TV, phones may not ask for
     // another until then (on m_clock).
     qint64 m_requestsRefusedUntil = 0;

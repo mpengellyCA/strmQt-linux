@@ -11,6 +11,9 @@ namespace strmqt::streaming {
 
 inline constexpr char kHostUnit[] = "strmqt-host.service";
 inline constexpr char kSunshineUnit[] = "strmqt-host-sunshine.service";
+// Set in the screen's unit: the StrmQt it starts is the streaming host's, and
+// runs its remote locked on, on a port of its own (Settings::setStreamingHostInstance).
+inline constexpr char kHostMarker[] = "STRMQT_STREAMING_HOST";
 
 // The streaming host is two systemd user services StrmQt writes and owns:
 // a headless KWin with StrmQt on it, and a Sunshine of its own that captures

@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 
 class QProcess;
@@ -113,6 +114,19 @@ public:
     Q_INVOKABLE void fetchPairing();
     Q_INVOKABLE void pair(const QString &requestId, const QString &pin, const QString &name);
     Q_INVOKABLE void unpair(const QString &uuid);
+    // A StrmLight pairs its stream and its remote with one code: the code
+    // typed for its remote is also its Moonlight PIN. This enters `pin` into
+    // Sunshine as soon as a Moonlight is asking, trying every 2 s for
+    // `seconds`, and quietly: a try with nobody asking is not a failure.
+    Q_INVOKABLE void enterPinWhenAsked(const QString &pin, const QString &name, int seconds);
+    // Whom a PIN goes to now. False: nobody is asking yet, so wait. Otherwise
+    // `requestId` is the request to answer, empty for a Sunshine that does
+    // not list them (it then gives the PIN to whoever is waiting).
+    static bool pinTarget(bool requestsListed, const QVariantList &requests, QString *requestId);
+    // Whether `devices` has one not in `before` (uuids). Every Moonlight asks
+    // as the same client, so Sunshine can give a PIN to an abandoned request
+    // instead of the StrmLight's: only a new device in the list is success.
+    static bool hasNewDevice(const QStringList &before, const QVariantList &devices);
 
     // What this machine lacks for hosting, given what was found on it.
     static QStringList probeProblems(const Environment &environment);
@@ -155,6 +169,7 @@ private:
     void connectApi();
     void configureApi();
     void setPairingMessage(const QString &text, bool failed);
+    void tryPendingPin();
 
     Environment m_env;
     streaming::HostConfig m_config;
@@ -185,6 +200,15 @@ private:
     bool m_pairingReachable = false;
     QString m_pairingMessage;
     bool m_pairingFailed = false;
+    // enterPinWhenAsked(): empty when there is nothing to enter.
+    QString m_pendingPin;
+    QString m_pendingPinName;
+    qint64 m_pendingPinUntil = 0;
+    bool m_pinInFlight = false;
+    QTimer *m_pinTimer = nullptr;
+    // The paired devices when the PIN was given; unknown until first listed.
+    QStringList m_pinBaseline;
+    bool m_pinBaselineKnown = false;
 };
 
 } // namespace strmqt

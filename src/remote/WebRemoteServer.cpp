@@ -120,6 +120,9 @@ constexpr qsizetype kMaxPinPeers = 256;
 constexpr int kStrmLightPolls = 50;
 constexpr qint64 kStrmLightWindowMs = 95 * 1000;
 
+// How often paired remotes written by the other StrmQt are picked up.
+constexpr int kDevicesSyncMs = 3000;
+
 // Fixed-length XOR over the expected PIN. The time taken depends on the PIN's
 // length only, never on how many leading digits a guess got right.
 bool constantTimeEquals(const QByteArray &given, const QByteArray &expected)
@@ -380,6 +383,14 @@ WebRemoteServer::WebRemoteServer(Settings *settings,
     m_codeExpiry.setSingleShot(true);
     m_codeExpiry.setInterval(kPairingCodeSeconds * 1000);
     connect(&m_codeExpiry, &QTimer::timeout, this, [this] { setPendingCode(std::nullopt, false); });
+    // The desktop StrmQt and the streaming host's share the paired remotes
+    // (Settings), and neither hears the other change them: a device removed
+    // in one is out of the other within this, its event stream too.
+    m_devicesSync.setInterval(kDevicesSyncMs);
+    connect(&m_devicesSync, &QTimer::timeout, this, [this] {
+        if (m_settings)
+            m_settings->syncFromDisk();
+    });
     connect(m_server, &QSslServer::startedEncryptionHandshake, this, &WebRemoteServer::onStartedEncryptionHandshake);
     connect(m_server, &QSslServer::sslErrors, this, [](QSslSocket *, const QList<QSslError> &errors) {
         qCWarning(logApp) << "webremote server sslErrors:" << errors;
@@ -506,6 +517,7 @@ bool WebRemoteServer::start()
 
     m_statusTick.start();
     m_keepAlive.start();
+    m_devicesSync.start();
     qCInfo(logApp) << "webremote: listening on" << bindAddr.toString() << port;
     emit runningChanged(true);
     return true;
@@ -519,6 +531,7 @@ void WebRemoteServer::stop()
     m_statusTick.stop();
     m_keepAlive.stop();
     m_statusCoalesce.stop();
+    m_devicesSync.stop();
     // Paired devices stay paired; a code that was showing does not stay up.
     setPendingCode(std::nullopt, false);
     m_sseClients.clear();
@@ -568,6 +581,11 @@ void WebRemoteServer::setBindAddressResolverForTests(
 void WebRemoteServer::setClockForTests(std::function<qint64()> nowMs)
 {
     m_clock = std::move(nowMs);
+}
+
+void WebRemoteServer::setStrmLightCodeHandler(std::function<bool(const QString &)> handler)
+{
+    m_strmLightCodeHandler = std::move(handler);
 }
 
 void WebRemoteServer::setCodeGeneratorForTests(std::function<QString()> generate)
@@ -1304,8 +1322,15 @@ void WebRemoteServer::handleApiAuthRequest(QSslSocket *socket)
 
 void WebRemoteServer::handleApiPairStrmLight(QSslSocket *socket, const QJsonObject &body)
 {
-    if (!expectStrmLightCode(body.value(QLatin1String("code")).toString())) {
+    const QString code = body.value(QLatin1String("code")).toString();
+    if (!isFourDigits(code)) {
         sendError(socket, 400, QStringLiteral("The code is the four digits on the StrmLight screen."));
+        return;
+    }
+    // On the desktop StrmQt the code is the streaming host's to take.
+    const bool taken = m_strmLightCodeHandler ? m_strmLightCodeHandler(code) : expectStrmLightCode(code);
+    if (!taken) {
+        sendError(socket, 503, QStringLiteral("StrmQt could not take the code. Is the streaming host running?"));
         return;
     }
     sendOk(socket);

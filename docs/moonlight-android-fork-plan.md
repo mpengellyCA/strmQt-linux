@@ -38,9 +38,16 @@ features, publishing to an app store, phones and tablets.
 - This instance is separate from any desktop Sunshine on the same machine, so
   **its ports are not the defaults**. The client must let the user set the
   host address and port, not assume 47989.
-- StrmQt runs its **Web Remote** server on the same host: HTTPS on port 8337
-  by default, self-signed certificate, one-time code pairing. This is the control
-  channel described in section 4.
+- The headless StrmQt runs its own **Web Remote** server: HTTPS on port 8338,
+  always on, self-signed certificate, one-time code pairing. This is the control
+  channel described in section 4. (The desktop StrmQt's remote, for phones, is
+  on 8337; a StrmLight does not use it.)
+- **Discovery:** the headless StrmQt answers the UDP datagram
+  `STRMQT-DISCOVER 1` sent to port 8338 (broadcast) with JSON
+  `{"service":"strmqt","version":1,"name","remotePort","sunshinePort","fingerprint"}`
+  to the sender. The reply's source address is the host. Only private,
+  link-local and loopback senders are answered, one reply per sender per
+  200 ms.
 
 ### Why not just send keyboard keys through Moonlight
 
@@ -76,7 +83,7 @@ settings. Build A first.
 The client talks to StrmQt directly over the LAN. It does not depend on
 Sunshine's input path at all.
 
-- Base URL: `https://<host>:8337` (port configurable).
+- Base URL: `https://<host>:8338` (from discovery; port configurable).
 - TLS: the certificate is self-signed. **Pin it on first use**: store the
   certificate's SHA-256 at pairing and accept only that certificate
   afterwards. Do not disable certificate checking.
@@ -92,7 +99,12 @@ Sunshine's input path at all.
 - Pairing: there is no standing PIN. **The client makes up a random 4-digit
   code and shows it on its own screen**, with a line asking the user to type
   it into StrmQt (Settings, Web Remote, "Pair a StrmLight") or into the phone
-  remote (Remote, "Pair a StrmLight"). Meanwhile, every 2 seconds, it sends
+  remote (Remote, "Pair a StrmLight"). **The same code is its Moonlight PIN:**
+  it starts Moonlight's pairing against `<host>:<sunshinePort>` with it, and
+  StrmQt enters it into that Sunshine once it is typed in, so one entry pairs
+  the stream and the remote. Sunshine answers `409` while an abandoned pairing
+  from any Moonlight is open (they all use one client id); retry every 5 s.
+  Meanwhile, every 2 seconds, it sends
   `POST /api/auth/pin` with the header `X-StrmLight: <device name>` (up to 40
   characters, shown in StrmQt's list of paired devices) and JSON
   `{"pin": "<the code>"}`:

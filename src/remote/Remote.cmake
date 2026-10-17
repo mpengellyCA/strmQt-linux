@@ -4,6 +4,8 @@ qt_add_library(strmqt_remote STATIC
     remote/QrCodeGenerator.h remote/QrCodeGenerator.cpp
     remote/WebRemoteServer.h remote/WebRemoteServer.cpp
     remote/WebRemoteController.h remote/WebRemoteController.cpp
+    remote/HostLink.h remote/HostLink.cpp
+    remote/DiscoveryResponder.h remote/DiscoveryResponder.cpp
 )
 
 qt_add_resources(strmqt_remote "strmqt_webremote_assets"

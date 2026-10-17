@@ -14,6 +14,7 @@
 #include "controllers/PlayerController.h"
 #include "controllers/PlaylistController.h"
 #include "controllers/RemoteControlService.h"
+#include "platform/streaming/HostFiles.h"
 #include "remote/WebRemoteServer.h"
 #include "remote/WebRemoteController.h"
 #include <QClipboard>
@@ -68,6 +69,9 @@ Application::Application(int &argc, char **argv) : QGuiApplication(argc, argv)
     initLogging();
 
     m_settings = new Settings(this);
+    // Before anything reads the remote's settings: the streaming host's
+    // StrmQt runs its own, locked on, beside the desktop's.
+    m_settings->setStreamingHostInstance(qEnvironmentVariableIsSet(streaming::kHostMarker));
     m_secrets = new SecretsStore(this);
     m_client = new emby::EmbyClient(this);
     m_client->setDeviceId(m_settings->deviceId());

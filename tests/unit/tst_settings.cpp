@@ -26,6 +26,8 @@ private slots:
     void webRemoteIsOffAndPinnedByDefault();
     void pairedRemotesAreKeptAcrossRuns();
     void anOldWebRemotePinIsDropped();
+    void theStreamingHostsRemoteIsLockedOnItsOwnPort();
+    void pairedRemotesWrittenByAnotherStrmQtArePickedUp();
     void youtubeAndYoutubeMusicAreSwitchedSeparately();
 };
 
@@ -299,6 +301,68 @@ void SettingsTest::pairedRemotesAreKeptAcrossRuns()
     QCOMPARE(settings.webRemoteDevices(), devices);
     settings.setWebRemoteDevices({});
     QVERIFY(settings.webRemoteDevices().isEmpty());
+}
+
+// The streaming host's StrmQt shares the desktop's settings file; its remote
+// is the TV's only one, so it is on and paired whatever the file says, and on
+// its own port, and it writes none of the three back for the desktop to read.
+void SettingsTest::theStreamingHostsRemoteIsLockedOnItsOwnPort()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    Settings settings(ini);
+    settings.setWebRemoteEnabled(false);
+    settings.setWebRemoteRequirePin(false);
+    settings.setWebRemotePort(9000);
+
+    QSignalSpy port(&settings, &Settings::webRemotePortChanged);
+    settings.setStreamingHostInstance(true);
+    QCOMPARE(port.count(), 1);
+    QVERIFY(settings.isStreamingHostInstance());
+    QVERIFY(settings.webRemoteEnabled());
+    QVERIFY(settings.webRemoteRequirePin());
+    QCOMPARE(settings.webRemotePort(), Settings::kStreamingHostWebRemotePort);
+    QCOMPARE(settings.webRemotePort(), 8338);
+
+    settings.setWebRemoteEnabled(false);
+    settings.setWebRemoteRequirePin(false);
+    settings.setWebRemotePort(9100);
+    QVERIFY(settings.webRemoteEnabled());
+    QCOMPARE(settings.webRemotePort(), 8338);
+
+    // The desktop's own choices are still in the file, untouched.
+    Settings desktop(ini);
+    QVERIFY(!desktop.webRemoteEnabled());
+    QVERIFY(!desktop.webRemoteRequirePin());
+    QCOMPARE(desktop.webRemotePort(), 9000);
+}
+
+void SettingsTest::pairedRemotesWrittenByAnotherStrmQtArePickedUp()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ini = dir.filePath(QStringLiteral("test.ini"));
+    Settings host(ini);
+    Settings desktop(ini);
+    QSignalSpy changed(&desktop, &Settings::webRemoteDevicesChanged);
+
+    const QVariantList devices{QVariantMap{{QStringLiteral("id"), QStringLiteral("a")},
+                                           {QStringLiteral("name"), QStringLiteral("Living room")},
+                                           {QStringLiteral("kind"), QStringLiteral("strmlight")},
+                                           {QStringLiteral("hash"), QStringLiteral("00ff")}}};
+    host.setWebRemoteDevices(devices);
+    desktop.syncFromDisk();
+    QCOMPARE(desktop.webRemoteDevices(), devices);
+    QCOMPARE(changed.count(), 1);
+    // Nothing new: nothing said.
+    desktop.syncFromDisk();
+    QCOMPARE(changed.count(), 1);
+
+    host.setWebRemoteDevices({});
+    desktop.syncFromDisk();
+    QVERIFY(desktop.webRemoteDevices().isEmpty());
+    QCOMPARE(changed.count(), 2);
 }
 
 // Phones used to sign in with a fixed PIN kept in the file. Pairing codes

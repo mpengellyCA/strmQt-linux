@@ -114,6 +114,7 @@ QString hostUnit(const HostConfig &config)
         // The desktop session's displays, when there is one, are not this
         // service's.
         QStringLiteral("UnsetEnvironment=DISPLAY WAYLAND_DISPLAY"),
+        QStringLiteral("Environment=%1=1").arg(QLatin1String(kHostMarker)),
     };
     for (const QString &pair : config.environment)
         lines << QStringLiteral("Environment=%1").arg(pair);

@@ -1,5 +1,6 @@
 #include "WebRemoteController.h"
 
+#include "HostLink.h"
 #include "NetworkAddressHelper.h"
 #include "QrCodeGenerator.h"
 #include "TlsCertificateGenerator.h"
@@ -8,6 +9,7 @@
 #include "core/Log.h"
 #include "core/Settings.h"
 
+#include <QRegularExpression>
 #include <QUrl>
 
 #include <utility>
@@ -51,7 +53,15 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
         connect(m_server, &WebRemoteServer::connectedClientsChanged, this, &WebRemoteController::connectedClientsChanged);
         connect(m_server, &WebRemoteServer::pairingChanged, this, &WebRemoteController::pairingChanged);
         connect(m_server, &WebRemoteServer::devicePaired, this, &WebRemoteController::devicePaired);
+        // A code typed on a phone goes where one typed in Settings goes.
+        m_server->setStrmLightCodeHandler([this](const QString &code) { return pairStrmLight(code); });
     }
+    m_passedExpiry.setSingleShot(true);
+    m_passedExpiry.setInterval(WebRemoteServer::kPairingCodeSeconds * 1000);
+    connect(&m_passedExpiry, &QTimer::timeout, this, [this] {
+        m_passedCode.clear();
+        emit pairingChanged();
+    });
     if (m_settings) {
         connect(m_settings, &Settings::webRemoteEnabledChanged, this, [this] {
             // Turned on from Settings: the offer has been answered.
@@ -68,7 +78,27 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
             restart();
             announceUrls(); // also when it stays stopped
         });
-        connect(m_settings, &Settings::webRemoteDevicesChanged, this, &WebRemoteController::devicesChanged);
+        connect(m_settings, &Settings::webRemoteDevicesChanged, this, [this] {
+            // The host paired a StrmLight with a code passed from here: it is
+            // written to the settings both share, and that is how it is heard.
+            QStringList ids;
+            QString pairedName;
+            for (const QVariant &device : devices()) {
+                const QVariantMap map = device.toMap();
+                const QString id = map.value(QStringLiteral("id")).toString();
+                ids << id;
+                if (!m_knownDeviceIds.contains(id) && map.value(QStringLiteral("kind")) == QLatin1String("strmlight"))
+                    pairedName = map.value(QStringLiteral("name")).toString();
+            }
+            m_knownDeviceIds = ids;
+            emit devicesChanged();
+            if (!m_passedCode.isEmpty() && !pairedName.isEmpty()) {
+                m_passedCode.clear();
+                m_passedExpiry.stop();
+                emit pairingChanged();
+                emit devicePaired(pairedName, QStringLiteral("strmlight"));
+            }
+        });
         connect(m_settings, &Settings::webRemoteRequirePinChanged, this, &WebRemoteController::requirePinChanged);
         connect(m_settings, &Settings::webRemoteBindModeChanged, this, [this] {
             emit bindModeChanged();
@@ -92,6 +122,8 @@ WebRemoteController::WebRemoteController(Settings *settings, SessionController *
         });
     }
 
+    for (const QVariant &device : devices())
+        m_knownDeviceIds << device.toMap().value(QStringLiteral("id")).toString();
     updateFingerprint();
     evaluate();
 }
@@ -345,7 +377,7 @@ QString WebRemoteController::pairingCode() const
 
 bool WebRemoteController::awaitingStrmLight() const
 {
-    return m_server && m_server->awaitingStrmLight();
+    return !m_passedCode.isEmpty() || (m_server && m_server->awaitingStrmLight());
 }
 
 int WebRemoteController::pairingSeconds() const
@@ -360,11 +392,37 @@ QVariantList WebRemoteController::devices() const
 
 bool WebRemoteController::pairStrmLight(const QString &code)
 {
-    return m_server && m_server->isRunning() && m_server->expectStrmLightCode(code);
+    static const QRegularExpression fourDigits(QStringLiteral("^[0-9]{4}$"));
+    if (!fourDigits.match(code).hasMatch())
+        return false;
+    const bool host = m_settings && m_settings->isStreamingHostInstance();
+    if (!host && m_hostLink && m_hostLink->pass(code)) {
+        m_passedCode = code;
+        m_passedExpiry.start();
+        emit pairingChanged();
+        return true;
+    }
+    // The host itself, or a desktop StrmQt with no host running: a StrmLight
+    // pointed at this StrmQt's own remote.
+    return armHere(code);
+}
+
+bool WebRemoteController::armHere(const QString &code)
+{
+    if (!(m_server && m_server->isRunning() && m_server->expectStrmLightCode(code)))
+        return false;
+    if (m_sunshinePairing)
+        m_sunshinePairing(code);
+    return true;
 }
 
 void WebRemoteController::cancelPairing()
 {
+    if (!m_passedCode.isEmpty()) {
+        m_passedCode.clear();
+        m_passedExpiry.stop();
+        emit pairingChanged();
+    }
     if (m_server)
         m_server->cancelPairing();
 }

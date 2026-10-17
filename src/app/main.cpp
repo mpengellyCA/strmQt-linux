@@ -22,7 +22,10 @@
 #include "controllers/SeriesController.h"
 #include "controllers/SessionController.h"
 #include "music/MusicPlayback.h"
+#include "remote/DiscoveryResponder.h"
+#include "remote/HostLink.h"
 #include "remote/WebRemoteController.h"
+#include "remote/WebRemoteServer.h"
 #include "core/Settings.h"
 #include "input/InputMap.h"
 #include "input/KeyEventLogger.h"
@@ -37,6 +40,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QStringList>
+#include <QJsonObject>
+#include <QSysInfo>
 #include <QUrl>
 #include <QWindow>
 #ifdef STRMQT_HAVE_YOUTUBE
@@ -74,6 +79,35 @@ int main(int argc, char *argv[])
     // already gone.
     strmqt::StreamingHost streamingHost;
     strmqt::OnScreenKeyboard onScreenKeyboard;
+
+    // A StrmLight pairs with the streaming host's StrmQt, with one code for
+    // its stream and its remote. That StrmQt answers StrmLights looking for
+    // it, takes codes typed into the desktop StrmQt, and gives its Sunshine
+    // the same code; the desktop StrmQt passes codes on to it.
+    strmqt::HostLink hostLink;
+    strmqt::DiscoveryResponder discovery([&app, &streamingHost] {
+        return QJsonObject{
+            {QStringLiteral("name"), QSysInfo::machineHostName()},
+            {QStringLiteral("remotePort"), app.settings()->webRemotePort()},
+            {QStringLiteral("sunshinePort"), streamingHost.port()},
+            {QStringLiteral("fingerprint"), app.webRemote()->certFingerprint()},
+        };
+    });
+    if (app.settings()->isStreamingHostInstance()) {
+        app.webRemote()->setSunshinePairing([&streamingHost](const QString &code) {
+            streamingHost.enterPinWhenAsked(code, QStringLiteral("StrmLight"),
+                                            strmqt::WebRemoteServer::kPairingCodeSeconds);
+        });
+        hostLink.listen([&app](const QString &code) { return app.webRemote()->pairStrmLight(code); });
+        discovery.start(quint16(app.settings()->webRemotePort()));
+    } else {
+        app.webRemote()->setHostLink(&hostLink);
+    }
+    // Both go before the application object does.
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&app] {
+        app.webRemote()->setHostLink(nullptr);
+        app.webRemote()->setSunshinePairing({});
+    });
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("emby"),

@@ -4,6 +4,7 @@
 #include "platform/SecretsStore.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -450,6 +451,19 @@ void StreamingHost::connectApi()
         QVariantList devices;
         for (const SunshineApi::Client &client : clients)
             devices << QVariantMap{{QStringLiteral("name"), client.name}, {QStringLiteral("uuid"), client.uuid}};
+        if (!m_pendingPin.isEmpty()) {
+            if (!m_pinBaselineKnown) {
+                m_pinBaseline.clear();
+                for (const SunshineApi::Client &client : clients)
+                    m_pinBaseline << client.uuid;
+                m_pinBaselineKnown = true;
+            } else if (hasNewDevice(m_pinBaseline, devices)) {
+                qCInfo(logApp) << "streaming host: a StrmLight paired with Sunshine";
+                setPairingMessage(tr("Paired %1.").arg(m_pendingPinName), false);
+                m_pendingPin.clear();
+                m_pinTimer->stop();
+            }
+        }
         if (devices == m_devices && m_pairingReachable)
             return;
         m_devices = devices;
@@ -466,6 +480,8 @@ void StreamingHost::connectApi()
                 m_requests = requests;
                 m_requestsListed = listed;
                 emit pairingChanged();
+                if (!m_pendingPin.isEmpty())
+                    tryPendingPin(); // a Moonlight has just started asking
             });
     connect(m_api, &SunshineApi::unreachable, this, [this](const QString &reason) {
         m_pairingReachable = false;
@@ -474,6 +490,16 @@ void StreamingHost::connectApi()
         setPairingMessage(reason, true);
     });
     connect(m_api, &SunshineApi::paired, this, [this](const QString &error) {
+        if (m_pinInFlight) {
+            // enterPinWhenAsked(): a miss is tried again, and not reported.
+            // Taken is not done either: the list says whether the StrmLight
+            // is in it (hasNewDevice), and until then the tries go on.
+            m_pinInFlight = false;
+            if (error.isEmpty())
+                qCInfo(logApp) << "streaming host: Sunshine took the StrmLight's code";
+            m_api->fetch();
+            return;
+        }
         setPairingMessage(error.isEmpty() ? tr("Paired.") : tr("Pairing failed: %1").arg(error), !error.isEmpty());
         m_api->fetch();
     });
@@ -518,6 +544,71 @@ void StreamingHost::unpair(const QString &uuid)
 {
     configureApi();
     m_api->unpair(uuid);
+}
+
+void StreamingHost::enterPinWhenAsked(const QString &pin, const QString &name, int seconds)
+{
+    m_pendingPin = pin;
+    m_pendingPinName = name.trimmed().isEmpty() ? tr("StrmLight") : name.trimmed();
+    m_pendingPinUntil = QDateTime::currentMSecsSinceEpoch() + qint64(seconds) * 1000;
+    m_pinInFlight = false;
+    m_pinBaselineKnown = false;
+    if (!m_pinTimer) {
+        m_pinTimer = new QTimer(this);
+        m_pinTimer->setInterval(2000);
+        connect(m_pinTimer, &QTimer::timeout, this, &StreamingHost::tryPendingPin);
+    }
+    m_pinTimer->start();
+    tryPendingPin();
+}
+
+bool StreamingHost::pinTarget(bool requestsListed, const QVariantList &requests, QString *requestId)
+{
+    QString id;
+    if (requestsListed) {
+        if (requests.isEmpty())
+            return false;
+        // More than one is rare (each Moonlight shows its own PIN); the code
+        // is wrong for all but one, and Sunshine refuses those.
+        id = requests.constFirst().toMap().value(QStringLiteral("id")).toString();
+        if (id.isEmpty())
+            return false;
+    }
+    if (requestId)
+        *requestId = id;
+    return true;
+}
+
+bool StreamingHost::hasNewDevice(const QStringList &before, const QVariantList &devices)
+{
+    for (const QVariant &device : devices) {
+        if (!before.contains(device.toMap().value(QStringLiteral("uuid")).toString()))
+            return true;
+    }
+    return false;
+}
+
+void StreamingHost::tryPendingPin()
+{
+    if (m_pendingPin.isEmpty() || QDateTime::currentMSecsSinceEpoch() > m_pendingPinUntil) {
+        m_pendingPin.clear();
+        if (m_pinTimer)
+            m_pinTimer->stop();
+        return;
+    }
+    if (m_pinInFlight)
+        return;
+    configureApi();
+    if (!m_api->ready())
+        return; // still starting, or its sign-in not read yet: next time
+    QString requestId;
+    // Who was paired before the PIN, first: the StrmLight is the one after.
+    if (!m_pinBaselineKnown || !pinTarget(m_requestsListed, m_requests, &requestId)) {
+        m_api->fetch(); // pairingsFetched tries again
+        return;
+    }
+    m_pinInFlight = true;
+    m_api->pair(requestId, m_pendingPin, m_pendingPinName);
 }
 
 void StreamingHost::setPairingMessage(const QString &text, bool failed)

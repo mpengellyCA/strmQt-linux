@@ -4,16 +4,19 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantList>
 
 #include <functional>
+#include <utility>
 
 namespace strmqt {
 
 class Settings;
 class SessionController;
 class WebRemoteServer;
+class HostLink;
 
 // The phone remote as QML sees it, and its run policy: the server listens only
 // while the remote is enabled AND the session is signed in. A session boundary
@@ -100,8 +103,12 @@ public:
     Q_INVOKABLE void stop();
     Q_INVOKABLE void restart();
     Q_INVOKABLE void regenerateCertificate();
-    // The code a StrmLight is showing; false unless it is four digits and the
-    // remote is running.
+    // The code a StrmLight is showing; false unless it is four digits and
+    // something took it. A StrmLight pairs with the streaming host's StrmQt,
+    // so the desktop StrmQt passes the code there when one is running
+    // (setHostLink) and arms its own remote only when none is. The host arms
+    // its remote and gives Sunshine the same code (setSunshinePairing): one
+    // code pairs the stream and the remote.
     Q_INVOKABLE bool pairStrmLight(const QString &code);
     // Takes the code off the TV (Back, while it is showing).
     Q_INVOKABLE void cancelPairing();
@@ -115,6 +122,10 @@ public:
     // server, and sets how often a running lan/tailscale server re-resolves.
     void setAddressResolverForTests(std::function<QHostAddress(const QString &mode)> resolver,
                                     int rebindIntervalMs);
+    // Not owned. On the desktop StrmQt, how a code reaches the host.
+    void setHostLink(HostLink *link) { m_hostLink = link; }
+    // On the host, what gives Sunshine the code a StrmLight's remote was armed with.
+    void setSunshinePairing(std::function<void(const QString &code)> pair) { m_sunshinePairing = std::move(pair); }
 
 signals:
     void enabledChanged();
@@ -148,6 +159,7 @@ private:
     void updateRebindTimer();
     // Restarts on the new address when the network under lan/tailscale changed.
     void checkBindAddress();
+    bool armHere(const QString &code);
 
     Settings *m_settings;
     SessionController *m_session;
@@ -157,6 +169,13 @@ private:
     QString m_error;
     QTimer m_rebindTimer;
     std::function<QHostAddress(const QString &)> m_resolver;
+    HostLink *m_hostLink = nullptr;
+    std::function<void(const QString &)> m_sunshinePairing;
+    // A code passed to the host, until a StrmLight shows up among the paired
+    // remotes or the code would have run out.
+    QString m_passedCode;
+    QTimer m_passedExpiry;
+    QStringList m_knownDeviceIds;
 };
 
 } // namespace strmqt

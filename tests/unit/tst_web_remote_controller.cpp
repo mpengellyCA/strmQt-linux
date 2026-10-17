@@ -1,8 +1,10 @@
 #include <QHostAddress>
+#include <QMutex>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTcpServer>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtTest>
 
 #include <memory>
@@ -12,6 +14,7 @@
 #include "app/controllers/SessionController.h"
 #include "core/Settings.h"
 #include "platform/SecretsStore.h"
+#include "remote/HostLink.h"
 #include "remote/WebRemoteController.h"
 #include "remote/WebRemoteServer.h"
 #include "server/emby/EmbyClient.h"
@@ -53,6 +56,8 @@ private slots:
     void setupIsOfferedOnceAfterSignIn();
     void acceptingTheOfferEnablesWithAPin();
     void pairingIsReportedToQml();
+    void aStrmLightCodeGoesToTheHostWhenOneIsRunning();
+    void withNoHostTheCodeIsArmedHereAndGivenToSunshine();
     void enablingInSettingsWithdrawsTheOffer();
     void enablingInSettingsOnAFreshInstallRequiresThePin();
     void enablingInSettingsKeepsAPinRequirementTurnedOff();
@@ -384,6 +389,98 @@ void WebRemoteControllerTest::pairingIsReportedToQml()
     QCOMPARE(device.value(QStringLiteral("name")).toString(), QStringLiteral("Sofa phone"));
     m_remote->removeDevice(device.value(QStringLiteral("id")).toString());
     QVERIFY(m_remote->devices().isEmpty());
+}
+
+namespace {
+// The streaming host's end of the link, on a thread of its own, as it would
+// be in its own process.
+struct HostEnd
+{
+    QThread thread;
+    HostLink *link = nullptr;
+    QMutex mutex;
+    QStringList taken;
+
+    explicit HostEnd(const QString &path)
+    {
+        link = new HostLink(path);
+        link->moveToThread(&thread);
+        thread.start();
+        QMetaObject::invokeMethod(link, [this] {
+            link->listen([this](const QString &code) {
+                QMutexLocker lock(&mutex);
+                taken << code;
+                return true;
+            });
+        }, Qt::BlockingQueuedConnection);
+    }
+    ~HostEnd()
+    {
+        QMetaObject::invokeMethod(link, [this] { delete link; }, Qt::BlockingQueuedConnection);
+        thread.quit();
+        thread.wait();
+    }
+    QStringList codes()
+    {
+        QMutexLocker lock(&mutex);
+        return taken;
+    }
+};
+} // namespace
+
+void WebRemoteControllerTest::aStrmLightCodeGoesToTheHostWhenOneIsRunning()
+{
+    const QString path = m_dir->filePath(QStringLiteral("host-link"));
+    HostEnd host(path);
+    HostLink link(path);
+    m_remote->setHostLink(&link);
+    bool sunshine = false;
+    m_remote->setSunshinePairing([&sunshine](const QString &) { sunshine = true; });
+    signIn();
+    QVERIFY(m_remote->isRunning());
+
+    // Typed in Settings: the host has it, this StrmQt's own remote does not.
+    QSignalSpy pairing(m_remote.get(), &WebRemoteController::pairingChanged);
+    QVERIFY(m_remote->pairStrmLight(QStringLiteral("4831")));
+    QCOMPARE(host.codes(), QStringList{QStringLiteral("4831")});
+    QVERIFY(!m_server->awaitingStrmLight());
+    QVERIFY(m_remote->awaitingStrmLight());
+    QVERIFY(!sunshine); // the host's Sunshine is the host's to tell
+    QCOMPARE(pairing.size(), 1);
+
+    // Typed on a phone paired with this StrmQt: the same.
+    RemoteTestClient http(kPort);
+    QCOMPARE(http.post(QStringLiteral("/api/auth/strmlight"), R"({"code":"5555"})").status, 200);
+    QCOMPARE(host.codes().size(), 2);
+    QCOMPARE(host.codes().last(), QStringLiteral("5555"));
+    QCOMPARE(http.post(QStringLiteral("/api/auth/strmlight"), R"({"code":"55"})").status, 400);
+
+    // The host pairs it and writes it to the settings both read: heard here.
+    QSignalSpy paired(m_remote.get(), &WebRemoteController::devicePaired);
+    m_settings->setWebRemoteDevices({QVariantMap{{QStringLiteral("id"), QStringLiteral("x")},
+                                                 {QStringLiteral("name"), QStringLiteral("Living room")},
+                                                 {QStringLiteral("kind"), QStringLiteral("strmlight")},
+                                                 {QStringLiteral("hash"), QStringLiteral("00ff")}}});
+    QCOMPARE(paired.size(), 1);
+    QCOMPARE(paired.first().at(0).toString(), QStringLiteral("Living room"));
+    QVERIFY(!m_remote->awaitingStrmLight());
+}
+
+void WebRemoteControllerTest::withNoHostTheCodeIsArmedHereAndGivenToSunshine()
+{
+    HostLink link(m_dir->filePath(QStringLiteral("nobody-listens")));
+    m_remote->setHostLink(&link);
+    QStringList sunshine;
+    m_remote->setSunshinePairing([&sunshine](const QString &code) { sunshine << code; });
+    signIn();
+
+    QVERIFY(m_remote->pairStrmLight(QStringLiteral("4831")));
+    QVERIFY(m_server->awaitingStrmLight());
+    // One code: the remote is armed with it, and Sunshine is given it too.
+    QCOMPARE(sunshine, QStringList{QStringLiteral("4831")});
+    QVERIFY(!m_remote->pairStrmLight(QStringLiteral("48a1")));
+    QCOMPARE(sunshine.size(), 1);
+    m_remote->setHostLink(nullptr);
 }
 
 void WebRemoteControllerTest::acceptingTheOfferEnablesWithAPin()

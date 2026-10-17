@@ -206,6 +206,16 @@ public:
     void setWebRemoteBindMode(const QString &mode);
     bool webRemoteRequirePin() const;
     void setWebRemoteRequirePin(bool required);
+    // The streaming host's own StrmQt (HostFiles.h, kHostMarker). Its remote
+    // is the TV's only remote, so it is on and paired, always, and on a port
+    // of its own beside the desktop StrmQt's: the three settings above read
+    // that way and their setters change nothing. Not stored; set at start.
+    void setStreamingHostInstance(bool host);
+    bool isStreamingHostInstance() const { return m_streamingHost; }
+    static constexpr int kStreamingHostWebRemotePort = 8338;
+    // Picks up what another StrmQt (the host's, or the desktop's) wrote to the
+    // same settings since: paired remotes are shared between them.
+    void syncFromDisk();
     // Phones and StrmLights that have paired with the web remote, each
     // {id, name, kind ("phone" | "strmlight"), hash, added}: `hash` is the
     // SHA-256 of the device's token, never the token. Kept until removed.
@@ -360,6 +370,9 @@ private:
     void pruneRetainedPlaybackState();
     void pruneRetainedPlaybackGroup(const QString &group, const QString &touched = {});
     QSettings m_store;
+    bool m_streamingHost = false;
+    // The paired remotes as last announced (webRemoteDevicesChanged).
+    QVariantList m_reportedDevices;
     QElapsedTimer m_lastPlaybackSync;
     QString m_lastPlaybackSyncIdentity;
     PendingLastPlayback m_pendingLastPlayback;
