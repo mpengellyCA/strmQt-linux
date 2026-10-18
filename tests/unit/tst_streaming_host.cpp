@@ -447,24 +447,6 @@ private slots:
         QVERIFY(StreamingHost::strangers({}).isEmpty());
     }
 
-    void aNewStrmLightReplacesTheOnePairedBefore()
-    {
-        const auto device = [](const char *uuid) {
-            return QVariant(QVariantMap{{QStringLiteral("name"), QStringLiteral("StrmLight")},
-                                        {QStringLiteral("uuid"), QString::fromLatin1(uuid)}});
-        };
-        // Paired before the PIN: "old" (and "older", left from 0.9.0). The
-        // new one stays; the rest are unpaired.
-        const QStringList before{QStringLiteral("old"), QStringLiteral("older")};
-        QCOMPARE(StreamingHost::replaced(before, {device("old"), device("new"), device("older")}),
-                 (QStringList{QStringLiteral("old"), QStringLiteral("older")}));
-        // The first StrmLight replaces nothing.
-        QVERIFY(StreamingHost::replaced({}, {device("new")}).isEmpty());
-        // One already gone (removed by hand meanwhile) is not asked about.
-        QCOMPARE(StreamingHost::replaced(before, {device("new"), device("older")}),
-                 QStringList{QStringLiteral("older")});
-    }
-
     void theSunshineVouchedForIsTheCertificateItWrote()
     {
         QTemporaryDir dir;

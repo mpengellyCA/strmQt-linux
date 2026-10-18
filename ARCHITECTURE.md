@@ -892,16 +892,17 @@ The other direction is the certificate: the answer that pairs a StrmLight, and
 Sunshine's certificate over the remote's pinned TLS. StrmLight compares it with
 the certificate Moonlight pinned when it paired, and streams from no other.
 
-**One StrmLight to one StrmQt.** A host streams to one TV, so a new pairing
-replaces the old one on both sides. On the host, the remote token of any other
-StrmLight is dropped as the new one is issued (`pairDevice`), and the Sunshine
-pairings that were there before the PIN (`StreamingHost::replaced`) are unpaired
-once the new device shows in Sunshine's list. On the TV, StrmLight keeps one
-StrmQt and removes every other computer from Moonlight's list when it pairs.
-More than one host on a machine (several virtual screens) would be the way to
-serve more TVs; that is not built. The host's `sunshine.conf` also turns off
-Sunshine's tray icon (`system_tray = disabled`): it would otherwise sit in the
-desktop's tray, since the host shares the user's session bus.
+**One StrmQt per StrmLight.** A TV pairs with one StrmQt; a StrmQt serves
+every TV paired with it. When StrmLight pairs, it keeps that StrmQt alone and
+removes every other computer from Moonlight's list; the StrmQt it left keeps
+the TV listed until someone removes it there. Up to `kStreams` (4) of them may
+watch at once (`channels` in `sunshine.conf`; Sunshine's default is 1): each
+gets its own encode of the one screen, which is how two rooms show the same
+film, or play the same music, nearly in step.
+
+**No tray icon.** The host's `sunshine.conf` turns off Sunshine's tray icon
+(`system_tray = disabled`): the host shares the user's session bus, so the
+icon would otherwise sit in the desktop's system tray.
 
 **StrmQt's ports are 8330–8356.** Sunshine's ports are fixed offsets from one
 base, and the host's base is 8335: 8330 (HTTPS), 8335 (HTTP), 8336 (its web

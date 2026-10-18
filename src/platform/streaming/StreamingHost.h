@@ -176,10 +176,6 @@ public:
     // Moonlight, paired some other way (Settings had a PIN pad for one in
     // 0.9.0). They are unpaired as soon as they are seen.
     static QStringList strangers(const QVariantList &devices);
-    // The uuids of `devices` that were paired before the PIN (`before`): once a
-    // new StrmLight has paired, these are the one it replaces. A host streams
-    // to one StrmLight at a time.
-    static QStringList replaced(const QStringList &before, const QVariantList &devices);
 
     // What this machine lacks for hosting, given what was found on it.
     static QStringList probeProblems(const Environment &environment);
@@ -269,8 +265,6 @@ private:
     bool m_pinBaselineKnown = false;
     // Strangers being unpaired, so that each is asked once.
     QStringList m_refusing;
-    // StrmLights a new one replaced, being unpaired.
-    QStringList m_replacing;
 };
 
 } // namespace strmqt

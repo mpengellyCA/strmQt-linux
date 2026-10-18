@@ -1718,7 +1718,7 @@ FocusScope {
                     width: parent.width
                     visible: page.currentKey === "strmlight"
                     title: qsTr("Pair a StrmLight")
-                    subtitle: qsTr("StrmLight is the StrmQt app for Fire TV and Android TV. It finds the streaming host by itself and shows a four-digit code; typed here once, that code pairs its picture and its remote. The streaming host has one StrmLight at a time: pairing another replaces it.")
+                    subtitle: qsTr("StrmLight is the StrmQt app for Fire TV and Android TV. It finds the streaming host by itself and shows a four-digit code; typed here once, that code pairs its picture and its remote. Several StrmLights can share this host; each StrmLight pairs with one StrmQt.")
 
                     // A StrmLight shows a code of its own; typed here, it pairs
                     // its stream and its remote with the streaming host (passed

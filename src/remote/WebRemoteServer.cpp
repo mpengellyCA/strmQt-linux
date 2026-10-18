@@ -1458,12 +1458,6 @@ QString WebRemoteServer::pairDevice(const QString &name, bool strmLight)
     device[QStringLiteral("added")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     if (m_settings) {
         QVariantList devices = m_settings->webRemoteDevices();
-        if (strmLight) {
-            // One StrmLight at a time: the one paired before loses its token.
-            devices.removeIf([](const QVariant &other) {
-                return other.toMap().value(QStringLiteral("kind")).toString() == QLatin1String("strmlight");
-            });
-        }
         devices.append(device);
         while (devices.size() > kMaxPairedDevices)
             devices.removeFirst();
