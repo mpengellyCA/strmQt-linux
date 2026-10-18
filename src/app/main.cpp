@@ -48,6 +48,7 @@
 #include <QJsonObject>
 #include <QSysInfo>
 #include <QUrl>
+#include <QGuiApplication>
 #include <QWindow>
 #ifdef STRMQT_HAVE_YOUTUBE
 #include "app/YouTubeSignIn.h"
@@ -122,7 +123,19 @@ int main(int argc, char *argv[])
         });
         app.webRemote()->setStrmLightSync([&playTogether, &playTogetherClock](const QString &device,
                                                                               const QJsonObject &report) {
-            return playTogether.report(device, report, playTogetherClock.elapsed());
+            const qint64 now = playTogetherClock.elapsed();
+            const int before = playTogether.tvs(now);
+            const QJsonObject answer = playTogether.report(device, report, now);
+            // KWin sends Sunshine a frame only when the screen changes, so a
+            // TV that joins while it is still has no picture (green or black)
+            // until something moves. Drawing it again gives every session one.
+            if (playTogether.tvs(now) > before) {
+                for (QWindow *window : QGuiApplication::topLevelWindows()) {
+                    if (auto *quickWindow = qobject_cast<QQuickWindow *>(window))
+                        quickWindow->update();
+                }
+            }
+            return answer;
         });
         // KWin keeps the screen's scale; set again in case its folder is new.
         QTimer::singleShot(3 * 1000, &streamingHost, &strmqt::StreamingHost::applyScale);
