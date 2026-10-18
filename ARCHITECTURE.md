@@ -898,7 +898,7 @@ removes every other computer from Moonlight's list; the StrmQt it left keeps
 the TV listed until someone removes it there. Up to `kStreams` (4) of them may
 watch at once (`channels` in `sunshine.conf`; Sunshine's default is 1): each
 gets its own encode of the one screen, which is how two rooms show the same
-film, or play the same music, nearly in step.
+film, or play the same music, in step (below).
 
 **The host keeps time for TVs playing together.** The streaming host's StrmQt
 answers time requests on UDP 8339 (`TimeService`): the four times of NTP, in
