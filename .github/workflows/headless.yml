@@ -1,0 +1,245 @@
+name: Headless build
+
+# The experimental builds of the `headless` branch: main plus what a host
+# nobody sits at needs (`strmqt admin`, the foreground host), for the
+# strmqt-headless Docker image and nothing else yet. One .deb, for the Ubuntu
+# the image is built on, published as a pre-release beside StrmQt's own.
+#
+# headless-sync.yml merges main into the branch on every push to main, so the
+# two never drift apart. This workflow is the branch's release.yml: its
+# version is main's followed by -headless.<revision>, the revision kept in
+# packaging/headless/revision, and when that version has no tag the push is a
+# candidate. It is tested, the .deb built and install-checked, and only then
+# tagged and published. A new version on main therefore ships a headless build
+# by itself, and the branch ships its own changes by bumping the revision.
+#
+# The file lives on main as well, inert there, because GitHub dispatches only
+# a workflow the default branch knows. headless-sync.yml dispatches it with
+# --ref headless after each merge: a push made with the workflow token starts
+# no workflow of its own.
+#
+# Run by hand it is a dry run by default.
+on:
+  push:
+    branches: [headless]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and check everything, but tag and publish nothing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: headless-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Is this a headless build?
+    runs-on: ubuntu-latest
+    outputs:
+      candidate: ${{ steps.decide.outputs.candidate }}
+      publish: ${{ steps.decide.outputs.publish }}
+      tag: ${{ steps.decide.outputs.tag }}
+      version: ${{ steps.decide.outputs.version }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide
+        id: decide
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          # Dispatched on any other branch, this would build that branch.
+          [ "$GITHUB_REF_NAME" = headless ] || {
+            echo "::error::this builds the headless branch only (asked for '$GITHUB_REF_NAME'): use --ref headless"
+            exit 1
+          }
+          CM_VER=$(sed -n 's/^project(StrmQt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          [[ "$CM_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::cannot read a x.y.z version from CMakeLists.txt (got '$CM_VER')"
+            exit 1
+          }
+          REV=$(tr -d '[:space:]' < packaging/headless/revision)
+          [[ "$REV" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::packaging/headless/revision is not a revision number (got '$REV')"
+            exit 1
+          }
+          VERSION="$CM_VER-headless.$REV"
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            TAGGED=true
+          else
+            TAGGED=false
+          fi
+          CANDIDATE=false
+          PUBLISH=false
+          if [ "$DRY_RUN" = "true" ]; then
+            CANDIDATE=true
+          elif [ "$TAGGED" = "false" ]; then
+            CANDIDATE=true
+            PUBLISH=true
+          fi
+          echo "version=$VERSION tag=$TAG tagged=$TAGGED candidate=$CANDIDATE publish=$PUBLISH"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "candidate=$CANDIDATE"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
+  # ── Tests ───────────────────────────────────────────────────────────────────
+  # Every push, candidate or not: a merge from main that breaks the branch is
+  # found when it happens, not at the next release.
+  ci:
+    name: CI
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+
+  # ── The image's .deb ────────────────────────────────────────────────────────
+  # packages.yml's deb and deb-install jobs, for the one target.
+  deb:
+    name: .deb (ubuntu-26.04)
+    needs: resolve
+    if: needs.resolve.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    container: 'ubuntu:26.04'
+    steps:
+      - name: Install git
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+        with: { ref: '${{ needs.resolve.outputs.sha }}' }
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: scripts/ci/deps.sh ubuntu-26.04
+      - run: scripts/ci/package-deb.sh ubuntu-26.04 "$GITHUB_WORKSPACE/out"
+      - uses: actions/upload-artifact@v4
+        with: { name: 'deb-ubuntu-26.04', path: 'out/*.deb', if-no-files-found: error }
+
+  deb-install:
+    name: .deb install check (ubuntu-26.04)
+    needs: [resolve, deb]
+    runs-on: ubuntu-latest
+    container: 'ubuntu:26.04'
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ needs.resolve.outputs.sha }}' }
+      - uses: actions/download-artifact@v4
+        with: { name: 'deb-ubuntu-26.04', path: pkgs }
+      - run: scripts/ci/install-check.sh pkgs/*.deb
+
+  # ── Publish ─────────────────────────────────────────────────────────────────
+  release:
+    name: Tag and publish
+    needs: [resolve, ci, deb, deb-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with: { name: 'deb-ubuntu-26.04', path: upload }
+
+      - name: Notes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          ls -l upload
+          n=$(find upload -type f -name '*.deb' | wc -l)
+          [ "$n" -eq 1 ] || { echo "::error::expected 1 .deb, found $n"; exit 1; }
+          BASE=${VERSION%-headless.*}
+          {
+            echo "**Experimental.** An automatic build of StrmQt's \`headless\` branch, for the"
+            echo "[strmqt-headless](https://github.com/mpengellyCA/strmqt-headless) Docker image. It is"
+            echo "not a StrmQt release: on a desktop, install [StrmQt $BASE](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$BASE)."
+            echo
+            echo "StrmQt $BASE, from commit \`${SHA:0:7}\`, and the branch's own changes:"
+            echo
+            git log --no-merges --reverse --format='- %s' "origin/main..$SHA"
+          } > notes.md
+          cat notes.md
+
+      - name: Dry run stops here
+        if: needs.resolve.outputs.publish != 'true'
+        run: echo "Dry run - ${{ needs.resolve.outputs.tag }} was not tagged and nothing was published."
+
+      - name: Publish
+        if: needs.resolve.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG appeared while this run was building"
+            exit 1
+          fi
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "StrmQt $VERSION (experimental)" \
+            --notes-file notes.md \
+            --draft \
+            upload/*.deb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SHA" -m "StrmQt $TAG (experimental headless build)"
+          git push origin "refs/tags/$TAG"
+          # Always a pre-release, whatever the version: never StrmQt's latest.
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
+
+  # ── Tell someone ────────────────────────────────────────────────────────────
+  notify:
+    name: Report a failed headless build
+    needs: [resolve, ci, deb, deb-install, release]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Headless build ${TAG:-pipeline} failed"
+          {
+            echo "The headless pipeline failed on \`${SHA:0:7}\`. Nothing was tagged or published."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Failed jobs:"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+              --jq '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.html_url))"'
+            echo
+            echo "Push the fix to \`headless\` (or to \`main\`, if it is main's): the pipeline runs again by itself."
+          } > body.md
+          cat body.md
+          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          fi

@@ -102,3 +102,25 @@ those files as the release. Nobody pushes a release tag by hand.
 - When a job fails, nothing is tagged and the pipeline opens an issue naming the failed
   jobs. Push the fix to `main`; it runs again by itself.
 - To rehearse without publishing: `gh workflow run release.yml` (a dry run by default).
+
+### The `headless` branch
+
+`headless` is main plus what a host nobody sits at needs (`strmqt admin`, the foreground
+host). It is not merged into main yet: its builds are experimental, and only the
+[strmqt-headless](https://github.com/mpengellyCA/strmqt-headless) Docker image uses them.
+
+- It is kept in step with main by `.github/workflows/headless-sync.yml`, which merges
+  every push to main into it. A merge that conflicts, or that brings a change to a
+  workflow (which the workflow token may not push), is left undone and an issue
+  "headless no longer merges with main" says so: merge main into `headless` by hand and
+  push.
+- Work for the headless host is committed to `headless`. Anything main needs as well goes
+  to main, and reaches the branch by the merge.
+- `.github/workflows/headless.yml` is the branch's `release.yml`. Its version is main's
+  followed by `-headless.<revision>`, the revision kept in `packaging/headless/revision`:
+  a new version on main ships a headless build by itself, and the branch ships its own
+  changes by bumping the revision in the commit meant to ship. It builds the one `.deb`
+  the image installs (Ubuntu 26.04) and publishes it as a pre-release, with notes it
+  writes itself.
+- Never change main's five version files on `headless`; the merge from main does.
+- To rehearse: `gh workflow run headless.yml --ref headless` (a dry run by default).
