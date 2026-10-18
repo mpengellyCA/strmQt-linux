@@ -14,15 +14,15 @@ namespace strmqt {
 // path is: from the host sending a sample to that sample leaving its speaker,
 // as it measures it (its "latency"). Every one of them is told the same delay
 // D, which is the slowest one's latency plus kMarginMs, and plays each sample
-// D after the host sent it, on the host's clock (TimeService). With one TV,
-// D is 0: it plays as soon as it can, as before.
+// D after the host sent it, on the host's clock (TimeService). A TV alone is
+// held by its own latency too, so one that joins it need not move it.
 //
-// Every change of D is heard, as each TV skips or waits once to the new
-// target, so D stays put while it is comfortably above the slowest latency.
-// It goes up at once when a TV comes within kCloseMs of it, since a TV that
-// cannot keep up is heard too, and comes down only when it has been more than
-// kStepDownMs too high for kStepDownAfterMs. A TV that has not reported for
-// kForgetMs has stopped streaming and no longer counts.
+// Every change of D is heard on every TV, as each skips or waits once to the
+// new target, so while the host plays, D only goes up, and only when a TV
+// comes within kCloseMs of it: a TV that cannot keep up is heard too. It comes
+// down while nothing plays. A TV that has not reported for kForgetMs has
+// stopped streaming, but its latency still counts for kRememberMs: when it
+// streams again, D already holds it and the others hear nothing as it joins.
 //
 // Only while the host plays something (setPlaying): the menus have no sound
 // to echo, and every TV waiting D there makes them feel slow. D is kept
@@ -31,10 +31,9 @@ class PlayTogether
 {
 public:
     static constexpr qint64 kForgetMs = 5000;
+    static constexpr qint64 kRememberMs = 30 * 60 * 1000;
     static constexpr int kMarginMs = 15;
     static constexpr int kCloseMs = 5;
-    static constexpr int kStepDownMs = 20;
-    static constexpr qint64 kStepDownAfterMs = 10000;
     // Beyond this a report is not believed: no TV takes a second.
     static constexpr double kMaxLatencyMs = 1000;
 
@@ -60,7 +59,6 @@ private:
     int m_delayMs = 0;
     bool m_playing = false;
     int m_toldMs = 0;
-    qint64 m_highSinceMs = -1;
 };
 
 } // namespace strmqt

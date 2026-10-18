@@ -19,35 +19,21 @@ QJsonObject PlayTogether::report(const QString &device, const QJsonObject &repor
         && latency.toDouble() <= kMaxLatencyMs)
         tv.latencyMs = latency.toDouble();
 
-    int next = 0;
-    if (m_tvs.size() >= 2) {
-        double slowest = 0;
-        for (const Tv &each : std::as_const(m_tvs))
-            slowest = std::max(slowest, each.latencyMs);
-        const int needed = int(std::ceil(slowest));
-        next = m_delayMs;
-        if (m_delayMs == 0 || needed + kCloseMs > m_delayMs) {
-            next = needed + kMarginMs;
-            m_highSinceMs = -1;
-        } else if (m_delayMs > needed + kMarginMs + kStepDownMs) {
-            if (m_highSinceMs < 0)
-                m_highSinceMs = nowMs;
-            if (nowMs - m_highSinceMs >= kStepDownAfterMs) {
-                next = needed + kMarginMs;
-                m_highSinceMs = -1;
-            }
-        } else {
-            m_highSinceMs = -1;
-        }
-    }
-    m_delayMs = next;
+    double slowest = 0;
+    for (const Tv &each : std::as_const(m_tvs))
+        slowest = std::max(slowest, each.latencyMs);
+    const int needed = int(std::ceil(slowest));
+    if (needed == 0)
+        m_delayMs = 0;
+    else if (!m_playing || needed + kCloseMs > m_delayMs)
+        m_delayMs = needed + kMarginMs;
     if (delayMs() != m_toldMs) {
         m_toldMs = delayMs();
-        qCInfo(logApp) << "TVs playing together:" << m_tvs.size() << "delay" << m_toldMs << "ms";
+        qCInfo(logApp) << "TVs playing together:" << tvs(nowMs) << "delay" << m_toldMs << "ms";
     }
     return QJsonObject{
         {QStringLiteral("delayMs"), delayMs()},
-        {QStringLiteral("tvs"), int(m_tvs.size())},
+        {QStringLiteral("tvs"), tvs(nowMs)},
     };
 }
 
@@ -65,7 +51,7 @@ int PlayTogether::tvs(qint64 nowMs) const
 void PlayTogether::forget(qint64 nowMs)
 {
     for (auto it = m_tvs.begin(); it != m_tvs.end();) {
-        if (nowMs - it->seenMs >= kForgetMs)
+        if (nowMs - it->seenMs >= kRememberMs)
             it = m_tvs.erase(it);
         else
             ++it;

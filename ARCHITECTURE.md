@@ -917,11 +917,13 @@ can time each other and check the host's figures around the triangle
 How far behind the host they play is the host's to say (`PlayTogether`). Each
 StrmLight that is streaming posts its own latency, host to speaker, to
 `POST /api/strmlight/sync` about once a second, and every one is answered the
-same delay: the slowest one's latency plus a margin, or 0 for a TV alone, which
-then plays as soon as it can, as before. The delay rises at once, because a TV
-that cannot keep up is heard, and falls only by a clear step, so a wavering
-latency does not move every TV's sound. It lives on the host because only the
-host sees every TV; a TV that stops reporting is forgotten after five seconds.
+same delay: the slowest one's latency plus a margin, a TV alone included, so
+one that joins it need not move it. Every change of the delay is heard on every
+TV, so while something plays it only rises, at once, because a TV that cannot
+keep up is heard too; it comes down while nothing plays, and is 0 in the menus.
+It lives on the host because only the host sees every TV. A TV that stops
+reporting no longer streams after five seconds, but its latency counts for half
+an hour: when it streams again, the others hear nothing as it joins.
 
 **No tray icon.** The host's `sunshine.conf` turns off Sunshine's tray icon
 (`system_tray = disabled`): the host shares the user's session bus, so the
