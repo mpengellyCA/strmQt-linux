@@ -1,0 +1,97 @@
+name: Headless sync
+
+# Keeps the `headless` branch in step with main: every push to main is merged
+# into it, and its pipeline (headless.yml) is started on the result. A merge
+# that does not go cleanly is never forced: the branch is left as it was and
+# an issue says which files conflict, to be merged by hand.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: headless-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge main into headless
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if ! git ls-remote --exit-code --heads origin headless >/dev/null; then
+            echo "There is no headless branch: nothing to keep in step."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          MAIN=$(git rev-parse origin/main)
+          git checkout -B headless origin/headless
+          if git merge-base --is-ancestor "$MAIN" HEAD; then
+            echo "headless already has main's ${MAIN:0:7}."
+            exit 0
+          fi
+          report() {
+            TITLE="headless no longer merges with main"
+            {
+              echo "$1"
+              echo
+              echo "The branch was left as it was. Merge main into it by hand and push;"
+              echo "the next push to main checks again."
+              echo
+              echo "Run: $RUN_URL"
+            } > body.md
+            cat body.md
+            OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+              --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+            if [ -n "$OPEN" ]; then
+              gh issue comment "$OPEN" --repo "$GITHUB_REPOSITORY" --body-file body.md
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+            fi
+            exit 1
+          }
+          if ! git merge --no-ff --no-edit -m "chore(headless): merge main ${MAIN:0:7}" "$MAIN"; then
+            CONFLICTS=$(git diff --name-only --diff-filter=U | sed 's/.*/- `&`/')
+            git merge --abort
+            report "$(echo "Merging main's \`${MAIN:0:7}\` into \`headless\` conflicts in:"
+                      echo
+                      echo "$CONFLICTS")"
+          fi
+          # The workflow token may not change .github/workflows, so a merge
+          # that brings a workflow change from main is pushed by hand.
+          if ! git push origin headless; then
+            WORKFLOWS=$(git diff --name-only origin/headless HEAD -- .github/workflows | sed 's/.*/- `&`/')
+            if [ -n "$WORKFLOWS" ]; then
+              report "$(echo "Main's \`${MAIN:0:7}\` changes workflows, which this workflow may not push:"
+                        echo
+                        echo "$WORKFLOWS")"
+            fi
+            report "The push to headless failed: did someone push to it meanwhile?"
+          fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+      # A push made with the workflow token starts no workflow, so the
+      # branch's pipeline is dispatched instead.
+      - name: Build the merged branch
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run headless.yml --repo "$GITHUB_REPOSITORY" --ref headless -f dry_run=false
