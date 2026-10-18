@@ -895,10 +895,11 @@ the certificate Moonlight pinned when it paired, and streams from no other.
 **One StrmQt per StrmLight.** A TV pairs with one StrmQt; a StrmQt serves
 every TV paired with it. When StrmLight pairs, it keeps that StrmQt alone and
 removes every other computer from Moonlight's list; the StrmQt it left keeps
-the TV listed until someone removes it there. Up to `kStreams` (4) of them may
-watch at once (`channels` in `sunshine.conf`; Sunshine's default is 1): each
-gets its own encode of the one screen, which is how two rooms show the same
-film, or play the same music, nearly in step.
+the TV listed until someone removes it there. More than one may watch at
+once: a second StrmLight joins the stream already running (Sunshine has no
+limit to set for it), and each gets its own encode of the one screen, which is
+how two rooms show the same film, or play the same music, nearly in step.
+Nothing keeps them in step: neither Sunshine nor Moonlight syncs clients.
 
 **No tray icon.** The host's `sunshine.conf` turns off Sunshine's tray icon
 (`system_tray = disabled`): the host shares the user's session bus, so the

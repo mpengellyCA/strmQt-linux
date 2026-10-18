@@ -115,8 +115,8 @@ Only StrmLight can watch the streaming host. A plain Moonlight cannot pair with 
 StrmLight in turn streams only from the Sunshine its StrmQt vouches for, never from a
 plain Sunshine.
 
-Several StrmLights can share one streaming host, and up to four can watch at once, all
-seeing the same screen: the same film in two rooms, or music through the house. Each
+Several StrmLights can share one streaming host, and more than one can watch at once,
+all seeing the same screen: the same film in two rooms, or music through the house. Each
 StrmLight pairs with one StrmQt: pairing a TV with another StrmQt makes it forget the one
 before. The host's Sunshine keeps
 out of the desktop's system tray.
