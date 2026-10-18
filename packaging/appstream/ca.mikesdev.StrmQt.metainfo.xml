@@ -63,6 +63,17 @@
   </requires>
 
   <releases>
+    <release version="0.9.2" date="2026-10-18" type="development">
+      <description>
+        <p>TVs watching the streaming host together play in step.</p>
+        <ul>
+          <li>The host keeps time for every StrmLight watching it, and tells each how far behind it to play, so two rooms sound as one, with no echo.</li>
+          <li>Each TV keeps its picture with its sound.</li>
+          <li>A TV that joins waits on a syncing screen and comes in silently, without disturbing the others.</li>
+          <li>The menus are not held back: TVs play together only while the host plays something.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.1" date="2026-10-18" type="development">
       <description>
         <p>The streaming host, tightened up.</p>

@@ -12,12 +12,14 @@ namespace strmqt::streaming {
 
 // StrmQt's ports: Sunshine on base 8335 takes 8330 (HTTPS), 8335 (HTTP), 8336
 // (its web page), 8344-8348 (UDP, the stream) and 8356 (RTSP), leaving 8337
-// and 8338 for the desktop's remote and the streaming host's. Below every
+// and 8338 for the desktop's remote and the streaming host's, and UDP 8339 for
+// the host's clock (remote/TimeService.h). Below every
 // distribution's range of ports lent to outgoing connections (32768 and up
 // by default, 10240 on some).
 inline constexpr int kDefaultPort = 8335;
 inline constexpr int kBlockFirst = 8330;
 inline constexpr int kBlockLast = 8356;
+inline constexpr int kTimePort = 8339;
 // The base 0.9.0 chose, inside those ranges; a restart moves a host off it.
 inline constexpr int kLegacyPort = 48989;
 

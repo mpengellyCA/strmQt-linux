@@ -128,6 +128,8 @@ public:
     void setSunshinePairing(std::function<void(const QString &code)> pair) { m_sunshinePairing = std::move(pair); }
     // On the host, what a StrmLight is told (WebRemoteServer::setStrmLightHost).
     void setStrmLightHost(std::function<QJsonObject()> host);
+    // On the host, what a streaming StrmLight is told (WebRemoteServer::setStrmLightSync).
+    void setStrmLightSync(std::function<QJsonObject(const QString &device, const QJsonObject &report)> sync);
 
 signals:
     void enabledChanged();

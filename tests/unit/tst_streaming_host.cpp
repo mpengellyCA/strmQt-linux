@@ -190,6 +190,7 @@ private slots:
         QCOMPARE(ports.constLast(), kBlockLast);
         QVERIFY(!ports.contains(8337)); // the desktop's remote
         QVERIFY(!ports.contains(8338)); // the streaming host's
+        QVERIFY(!ports.contains(kTimePort)); // the host's clock
         QCOMPARE(webUiPort(kDefaultPort), 8336);
     }
 

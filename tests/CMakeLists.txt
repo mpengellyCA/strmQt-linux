@@ -383,6 +383,11 @@ target_link_libraries(tst_web_remote_server PRIVATE strmqt_remote)
 
 strmqt_add_test(tst_host_discovery unit/tst_host_discovery.cpp)
 target_link_libraries(tst_host_discovery PRIVATE strmqt_remote)
+strmqt_add_test(tst_time_service unit/tst_time_service.cpp)
+target_link_libraries(tst_time_service PRIVATE strmqt_remote)
+
+strmqt_add_test(tst_play_together unit/tst_play_together.cpp)
+target_link_libraries(tst_play_together PRIVATE strmqt_remote)
 
 strmqt_add_test(tst_host_supervisor unit/tst_host_supervisor.cpp)
 

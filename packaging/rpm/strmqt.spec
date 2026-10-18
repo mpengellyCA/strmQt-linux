@@ -1,7 +1,7 @@
 # StrmQt RPM packaging (spec 2026-09-27 §7.3). Built in, and for, one Fedora
 # release's container by scripts/ci/package-rpm.sh; not a Fedora-review spec.
 Name:           strmqt
-Version:        0.9.1
+Version:        0.9.2
 Release:        1%{?dist}
 Summary:        Couch-first Emby client for the Linux desktop
 License:        GPL-3.0-or-later AND OFL-1.1 AND MIT AND LGPL-3.0-or-later
@@ -68,6 +68,10 @@ export QT_QPA_PLATFORM=offscreen
 %{_datadir}/icons/hicolor/*/apps/ca.mikesdev.StrmQt.*
 
 %changelog
+* Sun Oct 18 2026 Mike Pengelly <mike@leadrix.io> - 0.9.2-1
+- TVs watching the streaming host together play in step: the host keeps
+  time for them and tells every StrmLight how far behind it to play.
+
 * Sun Oct 18 2026 Mike Pengelly <mike@leadrix.io> - 0.9.1-1
 - Only StrmLight streams from the host, from StrmQt's own ports (8330-8356);
   picture, sound and screen scale for StrmLight set in StrmQt; Settings

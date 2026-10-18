@@ -151,6 +151,11 @@ public:
     // the Sunshine this vouches for) and the stream settings as "stream". The
     // fingerprint is also in the answer that pairs one.
     void setStrmLightHost(std::function<QJsonObject()> host);
+    // What a paired StrmLight that is streaming reports at POST
+    // /api/strmlight/sync, with its paired device id, and is answered
+    // (PlayTogether). Unset, the request is unknown, as on a StrmQt from
+    // before it.
+    void setStrmLightSync(std::function<QJsonObject(const QString &device, const QJsonObject &report)> sync);
 
     // What failed PINs are counted against: the address for IPv4 (an
     // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6 from
@@ -286,6 +291,7 @@ private:
     QTimer m_devicesSync;
     std::function<bool(const QString &)> m_strmLightCodeHandler;
     std::function<QJsonObject()> m_strmLightHost;
+    std::function<QJsonObject(const QString &, const QJsonObject &)> m_strmLightSync;
     // After a shown code is cancelled at the TV, phones may not ask for
     // another until then (on m_clock).
     qint64 m_requestsRefusedUntil = 0;

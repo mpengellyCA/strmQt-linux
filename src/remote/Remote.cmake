@@ -6,6 +6,8 @@ qt_add_library(strmqt_remote STATIC
     remote/WebRemoteController.h remote/WebRemoteController.cpp
     remote/HostLink.h remote/HostLink.cpp
     remote/DiscoveryResponder.h remote/DiscoveryResponder.cpp
+    remote/TimeService.h remote/TimeService.cpp
+    remote/PlayTogether.h remote/PlayTogether.cpp
 )
 
 qt_add_resources(strmqt_remote "strmqt_webremote_assets"
