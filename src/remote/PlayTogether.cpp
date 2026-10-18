@@ -40,14 +40,20 @@ QJsonObject PlayTogether::report(const QString &device, const QJsonObject &repor
             m_highSinceMs = -1;
         }
     }
-    if (next != m_delayMs) {
-        qCInfo(logApp) << "TVs playing together:" << m_tvs.size() << "delay" << next << "ms";
-        m_delayMs = next;
+    m_delayMs = next;
+    if (delayMs() != m_toldMs) {
+        m_toldMs = delayMs();
+        qCInfo(logApp) << "TVs playing together:" << m_tvs.size() << "delay" << m_toldMs << "ms";
     }
     return QJsonObject{
-        {QStringLiteral("delayMs"), m_delayMs},
+        {QStringLiteral("delayMs"), delayMs()},
         {QStringLiteral("tvs"), int(m_tvs.size())},
     };
+}
+
+void PlayTogether::setPlaying(bool playing)
+{
+    m_playing = playing;
 }
 
 int PlayTogether::tvs(qint64 nowMs) const

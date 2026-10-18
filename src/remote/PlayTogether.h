@@ -23,6 +23,10 @@ namespace strmqt {
 // cannot keep up is heard too, and comes down only when it has been more than
 // kStepDownMs too high for kStepDownAfterMs. A TV that has not reported for
 // kForgetMs has stopped streaming and no longer counts.
+//
+// Only while the host plays something (setPlaying): the menus have no sound
+// to echo, and every TV waiting D there makes them feel slow. D is kept
+// meanwhile, so playing starts held by it at once.
 class PlayTogether
 {
 public:
@@ -39,7 +43,10 @@ public:
     // believable "latencyMs" still counts the TV, at the latency it last gave.
     QJsonObject report(const QString &device, const QJsonObject &report, qint64 nowMs);
 
-    int delayMs() const { return m_delayMs; }
+    // Whether the host is playing something; D is 0 while it is not.
+    void setPlaying(bool playing);
+
+    int delayMs() const { return m_playing ? m_delayMs : 0; }
     int tvs(qint64 nowMs) const;
 
 private:
@@ -51,6 +58,8 @@ private:
 
     QHash<QString, Tv> m_tvs;
     int m_delayMs = 0;
+    bool m_playing = false;
+    int m_toldMs = 0;
     qint64 m_highSinceMs = -1;
 };
 

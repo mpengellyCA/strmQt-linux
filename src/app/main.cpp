@@ -121,9 +121,10 @@ int main(int argc, char *argv[])
                 host.insert(QStringLiteral("timePort"), timeService.port());
             return host;
         });
-        app.webRemote()->setStrmLightSync([&playTogether, &playTogetherClock](const QString &device,
-                                                                              const QJsonObject &report) {
+        app.webRemote()->setStrmLightSync([&app, &playTogether, &playTogetherClock](const QString &device,
+                                                                                    const QJsonObject &report) {
             const qint64 now = playTogetherClock.elapsed();
+            playTogether.setPlaying(app.player() && app.player()->active());
             const int before = playTogether.tvs(now);
             const QJsonObject answer = playTogether.report(device, report, now);
             // KWin sends Sunshine a frame only when the screen changes, so a

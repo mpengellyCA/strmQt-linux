@@ -31,11 +31,13 @@ private slots:
     void theDelayComesDownOnlyByEnough();
     void aTvThatStopsIsForgotten();
     void aReportThatIsNotBelievedIsIgnored();
+    void theMenusAreNotHeldBack();
 };
 
 void PlayTogetherTest::oneTvPlaysAsSoonAsItCan()
 {
     PlayTogether together;
+    together.setPlaying(true);
     const QJsonObject answer = together.report(QStringLiteral("a"), latency(42), 0);
     QCOMPARE(delayOf(answer), 0);
     QCOMPARE(answer.value(QStringLiteral("tvs")).toInt(), 1);
@@ -44,6 +46,7 @@ void PlayTogetherTest::oneTvPlaysAsSoonAsItCan()
 void PlayTogetherTest::theSlowestTvSetsTheDelay()
 {
     PlayTogether together;
+    together.setPlaying(true);
     together.report(QStringLiteral("a"), latency(42), 0);
     const QJsonObject answer = together.report(QStringLiteral("b"), latency(61.2), 100);
     QCOMPARE(delayOf(answer), 62 + PlayTogether::kMarginMs);
@@ -59,6 +62,7 @@ void PlayTogetherTest::theSlowestTvSetsTheDelay()
 void PlayTogetherTest::theDelayComesDownOnlyByEnough()
 {
     PlayTogether together;
+    together.setPlaying(true);
     together.report(QStringLiteral("a"), latency(40), 0);
     QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 0)), 85);
     // Somewhat lower: not worth a change everyone hears.
@@ -80,6 +84,7 @@ void PlayTogetherTest::theDelayComesDownOnlyByEnough()
 void PlayTogetherTest::aTvThatStopsIsForgotten()
 {
     PlayTogether together;
+    together.setPlaying(true);
     together.report(QStringLiteral("a"), latency(40), 0);
     together.report(QStringLiteral("b"), latency(70), 0);
     QCOMPARE(together.tvs(PlayTogether::kForgetMs - 1), 2);
@@ -93,6 +98,7 @@ void PlayTogetherTest::aTvThatStopsIsForgotten()
 void PlayTogetherTest::aReportThatIsNotBelievedIsIgnored()
 {
     PlayTogether together;
+    together.setPlaying(true);
     together.report(QStringLiteral("a"), latency(40), 0);
     together.report(QStringLiteral("b"), latency(30), 0);
     for (const QJsonObject &report : {latency(-1), latency(5000), QJsonObject{{QStringLiteral("latencyMs"), QStringLiteral("90")}},
@@ -102,6 +108,18 @@ void PlayTogetherTest::aReportThatIsNotBelievedIsIgnored()
         QCOMPARE(delayOf(answer), 40 + PlayTogether::kMarginMs);
         QCOMPARE(answer.value(QStringLiteral("tvs")).toInt(), 2);
     }
+}
+
+void PlayTogetherTest::theMenusAreNotHeldBack()
+{
+    PlayTogether together;
+    together.report(QStringLiteral("a"), latency(40), 0);
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 0)), 0);
+    // Playing, held at once, by what was measured meanwhile.
+    together.setPlaying(true);
+    QCOMPARE(delayOf(together.report(QStringLiteral("a"), latency(40), 1000)), 85);
+    together.setPlaying(false);
+    QCOMPARE(delayOf(together.report(QStringLiteral("a"), latency(40), 2000)), 0);
 }
 
 QTEST_GUILESS_MAIN(PlayTogetherTest)
