@@ -63,6 +63,18 @@
   </requires>
 
   <releases>
+    <release version="0.9.1" date="2026-10-18" type="development">
+      <description>
+        <p>The streaming host, tightened up.</p>
+        <ul>
+          <li>Only StrmLight can watch the streaming host, and StrmLight watches only its own StrmQt.</li>
+          <li>The host's Sunshine moves to StrmQt's own ports, 8330 to 8356.</li>
+          <li>Resolution, screen scale, frame rate, quality, codec and sound for StrmLight are set in StrmQt.</li>
+          <li>Settings has its own sections for YouTube, the Mobile Web Remote and StrmLight.</li>
+          <li>The host keeps its display settings to itself and its Sunshine out of the system tray.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-10-17" type="development">
       <description>
         <p>StrmQt on a TV.</p>
