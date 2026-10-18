@@ -1782,6 +1782,8 @@ FocusScope {
                         model: strmLightPairPanel.strmLights
 
                         SettingsSections.SettingRow {
+                            id: strmLightRow
+
                             required property var modelData
                             required property int index
 
@@ -1791,10 +1793,10 @@ FocusScope {
                                   .arg(new Date(modelData.added).toLocaleDateString(Qt.locale(), Locale.ShortFormat))
 
                             StrmButton {
-                                objectName: "strmLightRemoveDevice" + index
+                                objectName: "strmLightRemoveDevice" + strmLightRow.index
                                 text: qsTr("Remove")
                                 destructive: true
-                                onClicked: page.webRemote.removeDevice(modelData.id)
+                                onClicked: page.webRemote.removeDevice(strmLightRow.modelData.id)
                             }
                         }
                     }

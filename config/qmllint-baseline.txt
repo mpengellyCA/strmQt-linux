@@ -833,7 +833,6 @@ src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	target: SeriesCtl.
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: !SeriesCtl.loading && episodeGrid.count === 0
 src/ui/pages/SeriesPage.qml: Unqualified access [unqualified]	visible: SeriesCtl.loading
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	&& page.prefsAvailable && Prefs.youtubeMusicEnabled
-src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	&& typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	? qsTr("%1 is already bound to “%2”. Pick another key.").arg(sequence).arg(Input.displayName(conflictingActionId))
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	Input.resetBinding(page.captureActionId);
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	LiveCtl.pollIntervalSeconds = page.pollOptions[index].value;
@@ -851,7 +850,6 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	enabled: modelDa
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	iconName: PlayerCtl.muted ? "volume-mute" : PlayerCtl.volume < 50 ? "volume-low" : "volume-high"
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	if (Input.setBinding(page.captureActionId, sequence))
-src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "streamingHostPair" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "streamingHostUnpair" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "webRemoteRemoveDevice" + index
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	objectName: "youtubeSignInCopy" + index
@@ -880,8 +878,6 @@ src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	onToggled: Prefs
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	padDriving: Input.gamepadActive
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	placeholder: qsTr("%1 s").arg(LiveCtl.pollIntervalSeconds)
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
-src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
-src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	subtitle: Session.username.length > 0 ? qsTr("Signed in as %1").arg(Session.username) : qsTr("Not signed in")
 src/ui/pages/SettingsPage.qml: Unqualified access [unqualified]	target: Input
