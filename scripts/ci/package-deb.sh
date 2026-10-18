@@ -17,6 +17,12 @@ cp -r "$work/strmqt/packaging/debian" "$work/strmqt/debian"
 cd "$work/strmqt"
 # 0.7.5-1 -> 0.7.5-1~<suffix>: one upload per release, ordered below a real Debian upload.
 version=$(dpkg-parsechangelog -S Version)
+# The headless branch's builds: 0.9.1-1 -> 0.9.1+headless.1-1, above 0.9.1's and below 0.9.2's.
+if [ -f packaging/headless/revision ]; then
+    headless="${version%-*}+headless.$(tr -d '[:space:]' < packaging/headless/revision)-${version##*-}"
+    sed -i "1s/($version)/($headless)/" debian/changelog
+    version=$headless
+fi
 sed -i "1s/($version)/($version~$suffix)/" debian/changelog
 dpkg-buildpackage -b -us -uc
 mkdir -p "$out"

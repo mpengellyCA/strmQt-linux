@@ -44,7 +44,16 @@ qt_add_library(strmqt_core STATIC
 )
 target_include_directories(strmqt_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(strmqt_core PUBLIC Qt6::Core Qt6::Network Qt6::DBus Qt6::WebSockets)
-target_compile_definitions(strmqt_core PUBLIC STRMQT_VERSION="${PROJECT_VERSION}")
+# The headless branch's experimental builds say so: 0.9.1-headless.1 (AGENTS.md).
+set(STRMQT_VERSION "${PROJECT_VERSION}")
+if(EXISTS "${PROJECT_SOURCE_DIR}/packaging/headless/revision")
+    file(STRINGS "${PROJECT_SOURCE_DIR}/packaging/headless/revision" _headless_revision LIMIT_COUNT 1)
+    string(STRIP "${_headless_revision}" _headless_revision)
+    string(APPEND STRMQT_VERSION "-headless.${_headless_revision}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${PROJECT_SOURCE_DIR}/packaging/headless/revision")
+endif()
+target_compile_definitions(strmqt_core PUBLIC STRMQT_VERSION="${STRMQT_VERSION}")
 
 # A run from the build tree finds the shaders in the source tree
 # (UpscaleCatalog::installedShaderDirectory, after the installed location).
