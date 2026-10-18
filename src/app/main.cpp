@@ -99,8 +99,11 @@ int main(int argc, char *argv[])
             streamingHost.enterPinWhenAsked(code, strmqt::WebRemoteServer::kPairingCodeSeconds);
         });
         // A StrmLight streams only from the Sunshine this StrmQt vouches for,
-        // and this StrmQt keeps nothing but StrmLights paired with it.
-        app.webRemote()->setSunshineFingerprint([&streamingHost] { return streamingHost.sunshineFingerprint(); });
+        // with the settings it gives, and this StrmQt keeps nothing but
+        // StrmLights paired with it.
+        app.webRemote()->setStrmLightHost([&streamingHost] { return streamingHost.strmLightHost(); });
+        // KWin keeps the screen's scale; set again in case its folder is new.
+        QTimer::singleShot(3 * 1000, &streamingHost, &strmqt::StreamingHost::applyScale);
         auto *pairingCheck = new QTimer(&app);
         QObject::connect(pairingCheck, &QTimer::timeout, &streamingHost, &strmqt::StreamingHost::checkPairing);
         pairingCheck->start(60 * 1000);

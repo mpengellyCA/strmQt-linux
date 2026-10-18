@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonObject>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QScopeGuard>
@@ -92,7 +93,8 @@ private slots:
         QVERIFY(unit.contains(QStringLiteral(
             "ExecStart=/usr/bin/kwin_wayland --virtual --width 3840 --height 2160 --socket strmqt-host "
             "--no-lockscreen --no-global-shortcuts "
-            "--exit-with-session \"/usr/bin/env PIPEWIRE_REMOTE=strmqt-host-pipewire /usr/bin/strmqt\"\n")));
+            "--exit-with-session \"/usr/bin/env XDG_CONFIG_HOME=/tmp/x PIPEWIRE_REMOTE=strmqt-host-pipewire "
+            "/usr/bin/strmqt\"\n")));
         QVERIFY(unit.contains(QStringLiteral("Environment=XDG_CONFIG_HOME=/tmp/x\n")));
         QVERIFY(unit.contains(QStringLiteral("Environment=STRMQT_STREAMING_HOST=1\n")));
         QVERIFY(unit.contains(QStringLiteral("WantedBy=default.target\n")));
@@ -184,6 +186,71 @@ private slots:
         QVERIFY(!ports.contains(8337)); // the desktop's remote
         QVERIFY(!ports.contains(8338)); // the streaming host's
         QCOMPARE(webUiPort(kDefaultPort), 8336);
+    }
+
+    void theHostsKWinKeepsItsSettingsToItself()
+    {
+        HostConfig config = sample();
+        config.configHome = QStringLiteral("/home/u/.config");
+        const QString unit = hostUnit(config);
+        // KWin's own folder, so its virtual screen never lands in the
+        // desktop's kwinoutputconfig.json; StrmQt gets the desktop's back.
+        QVERIFY(unit.contains(QStringLiteral("Environment=XDG_CONFIG_HOME=%1/kwin\n").arg(config.stateDir)));
+        QVERIFY(unit.contains(QStringLiteral("/usr/bin/env XDG_CONFIG_HOME=/home/u/.config PIPEWIRE_REMOTE=")));
+    }
+
+    void aStrmLightIsToldWhatToAskSunshineFor()
+    {
+        HostConfig config = sample();
+        QJsonObject stream = streamJson(config);
+        QCOMPARE(stream.value(QStringLiteral("width")).toInt(), config.width);
+        QCOMPARE(stream.value(QStringLiteral("height")).toInt(), config.height);
+        QCOMPARE(stream.value(QStringLiteral("fps")).toInt(), 30);
+        QCOMPARE(stream.value(QStringLiteral("codec")).toString(), QStringLiteral("auto"));
+        QCOMPARE(stream.value(QStringLiteral("audio")).toString(), QStringLiteral("2"));
+        // Automatic: by size and frame rate.
+        QCOMPARE(stream.value(QStringLiteral("bitrateKbps")).toInt(), automaticBitrate(config.height, 30));
+        QCOMPARE(automaticBitrate(2160, 30), 40000);
+        QCOMPARE(automaticBitrate(2160, 60), 60000);
+        QCOMPARE(automaticBitrate(1080, 30), 15000);
+        config.bitrateKbps = 80000;
+        config.fps = 60;
+        config.codec = QStringLiteral("av1");
+        config.audio = QStringLiteral("51");
+        stream = streamJson(config);
+        QCOMPARE(stream.value(QStringLiteral("bitrateKbps")).toInt(), 80000);
+        QCOMPARE(stream.value(QStringLiteral("fps")).toInt(), 60);
+        QCOMPARE(stream.value(QStringLiteral("codec")).toString(), QStringLiteral("av1"));
+        QCOMPARE(stream.value(QStringLiteral("audio")).toString(), QStringLiteral("51"));
+    }
+
+    void streamSettingsAreKeptAndReadFreshForStrmLight()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        QVERIFY(QDir().mkpath(env.stateDir));
+        {
+            StreamingHost desktop(env);
+            desktop.setStreamFps(60);
+            desktop.setStreamCodec(QStringLiteral("hevc"));
+            desktop.setStreamAudio(QStringLiteral("71"));
+            desktop.setStreamBitrate(60000);
+            desktop.setStreamCodec(QStringLiteral("vp9")); // not one of them
+            desktop.setStreamFps(24);
+        }
+        StreamingHost host(env);
+        QCOMPARE(host.streamFps(), 60);
+        QCOMPARE(host.streamCodec(), QStringLiteral("hevc"));
+        QCOMPARE(host.streamAudio(), QStringLiteral("71"));
+        QCOMPARE(host.streamBitrate(), 60000);
+
+        // The desktop's StrmQt changes them while the host's runs: what a
+        // StrmLight is told follows without a restart.
+        StreamingHost desktop(env);
+        desktop.setStreamFps(30);
+        const QJsonObject told = host.strmLightHost();
+        QCOMPARE(told.value(QStringLiteral("stream")).toObject().value(QStringLiteral("fps")).toInt(), 30);
+        QVERIFY(told.contains(QStringLiteral("sunshineFingerprint")));
     }
 
     void portsLinuxMayLendAreNoticed()

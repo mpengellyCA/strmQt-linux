@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -65,6 +66,26 @@ struct HostConfig
     // Sunshine's base port; every other port is an offset from it.
     int port = kDefaultPort;
     QString name = QStringLiteral("StrmQt");
+    // The headless screen's scale, in percent, as KWin's display settings set
+    // it (StreamingHost applies it with kscreen-doctor; KWin keeps it in its
+    // own folder, kwinConfigHome). KWin's --scale does not scale a virtual
+    // output, it only enlarges it.
+    int scalePercent = 100;
+    // The desktop's XDG_CONFIG_HOME, handed back to the StrmQt on the screen:
+    // its KWin has a folder of its own (kwinConfigHome), or it would write its
+    // virtual screen over the desktop's kwinoutputconfig.json.
+    QString configHome;
+    // What a StrmLight asks Sunshine for (Moonlight's client chooses these; it
+    // reads them from GET /api/strmlight/host before each stream). The size is
+    // the screen's.
+    int fps = 30;
+    // 0: by size and frame rate (automaticBitrate).
+    int bitrateKbps = 0;
+    // "auto", "hevc", "av1" or "h264". No HDR: KWin's virtual outputs cannot
+    // be HDR, so a 10-bit stream would carry an SDR picture.
+    QString codec = QStringLiteral("auto");
+    // Moonlight's audio configurations: "2", "51" or "71".
+    QString audio = QStringLiteral("2");
     // Sunshine's own web page: this machine only, unless switched on.
     bool webUiOnNetwork = false;
     // KEY=VALUE pairs for the StrmQt in the session. Tests point it at a
@@ -87,9 +108,20 @@ QString audioConfPath(const HostConfig &config);
 // %t/<audioRuntimeDir>/native.
 QString audioRemote(const HostConfig &config);
 QString audioRuntimeDir(const HostConfig &config);
+// The headless KWin's XDG_CONFIG_HOME.
+QString kwinConfigHome(const HostConfig &config);
+// The name KWin's virtual backend gives the screen.
+inline constexpr char kVirtualOutput[] = "Virtual-0";
 
 // What `config` cannot be written as, in the user's words; empty when it can.
 QStringList configProblems(const HostConfig &config);
+
+// The bitrate a stream of this size and rate gets when none is chosen, in
+// kbit/s: enough for films and series to look as they do on the server.
+int automaticBitrate(int height, int fps);
+// The stream settings a StrmLight applies, as GET /api/strmlight/host gives
+// them under "stream".
+QJsonObject streamJson(const HostConfig &config);
 
 // The ports a Sunshine on `base` listens on.
 QList<int> tcpPorts(int base);

@@ -80,6 +80,8 @@ StreamingHost::Environment StreamingHost::Environment::detect()
     env.pipewire = QStandardPaths::findExecutable(QStringLiteral("pipewire"));
     env.wireplumber = QStandardPaths::findExecutable(QStringLiteral("wireplumber"));
     env.systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    env.kscreenDoctor = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
+    env.configHome = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
     return env;
 }
 
@@ -89,6 +91,7 @@ StreamingHost::StreamingHost(Environment environment, QObject *parent)
     : QObject(parent), m_env(std::move(environment))
 {
     m_config.stateDir = m_env.stateDir;
+    m_config.configHome = m_env.configHome;
     m_config.socket = m_env.socket;
     m_config.hostUnit = m_env.hostUnit;
     m_config.audioUnit = m_env.audioUnit;
@@ -226,12 +229,28 @@ void StreamingHost::readState()
 
 void StreamingHost::loadConfig()
 {
-    const QSettings stored(m_env.stateDir + QStringLiteral("/host.ini"), QSettings::IniFormat);
-    const int height = stored.value(QStringLiteral("height"), m_config.height).toInt();
-    m_config.height = height;
-    m_config.width = height * 16 / 9;
-    m_config.port = stored.value(QStringLiteral("port"), m_config.port).toInt();
-    m_config.webUiOnNetwork = stored.value(QStringLiteral("webUiOnNetwork"), false).toBool();
+    readConfig(m_env.stateDir, &m_config);
+}
+
+void StreamingHost::readConfig(const QString &stateDir, streaming::HostConfig *config)
+{
+    const QSettings stored(stateDir + QStringLiteral("/host.ini"), QSettings::IniFormat);
+    const int height = stored.value(QStringLiteral("height"), config->height).toInt();
+    config->height = height;
+    config->width = height * 16 / 9;
+    config->port = stored.value(QStringLiteral("port"), config->port).toInt();
+    config->webUiOnNetwork = stored.value(QStringLiteral("webUiOnNetwork"), false).toBool();
+    config->scalePercent = std::clamp(stored.value(QStringLiteral("scale"), 100).toInt(), 100, 300);
+    const int fps = stored.value(QStringLiteral("fps"), 30).toInt();
+    config->fps = fps == 60 ? 60 : 30;
+    config->bitrateKbps = std::clamp(stored.value(QStringLiteral("bitrateKbps"), 0).toInt(), 0, 150000);
+    static const QStringList codecs{QStringLiteral("auto"), QStringLiteral("hevc"), QStringLiteral("av1"),
+                                    QStringLiteral("h264")};
+    const QString codec = stored.value(QStringLiteral("codec")).toString();
+    config->codec = codecs.contains(codec) ? codec : QStringLiteral("auto");
+    static const QStringList layouts{QStringLiteral("2"), QStringLiteral("51"), QStringLiteral("71")};
+    const QString audio = stored.value(QStringLiteral("audio")).toString();
+    config->audio = layouts.contains(audio) ? audio : QStringLiteral("2");
 }
 
 void StreamingHost::saveConfig() const
@@ -240,6 +259,103 @@ void StreamingHost::saveConfig() const
     stored.setValue(QStringLiteral("height"), m_config.height);
     stored.setValue(QStringLiteral("port"), m_config.port);
     stored.setValue(QStringLiteral("webUiOnNetwork"), m_config.webUiOnNetwork);
+    stored.setValue(QStringLiteral("scale"), m_config.scalePercent);
+    stored.setValue(QStringLiteral("fps"), m_config.fps);
+    stored.setValue(QStringLiteral("bitrateKbps"), m_config.bitrateKbps);
+    stored.setValue(QStringLiteral("codec"), m_config.codec);
+    stored.setValue(QStringLiteral("audio"), m_config.audio);
+}
+
+void StreamingHost::setScale(int percent)
+{
+    percent = std::clamp(percent, 100, 300);
+    if (percent == m_config.scalePercent)
+        return;
+    m_config.scalePercent = percent;
+    saveConfig();
+    emit configChanged();
+    applyScale();
+}
+
+void StreamingHost::applyScale()
+{
+    if (m_env.kscreenDoctor.isEmpty())
+        return;
+    auto *process = new QProcess(this);
+    // From the desktop, the screen is reached by its socket; on the screen,
+    // WAYLAND_DISPLAY already names it.
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("WAYLAND_DISPLAY"), m_env.socket);
+    environment.remove(QStringLiteral("DISPLAY"));
+    process->setProcessEnvironment(environment);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(process, &QProcess::finished, this, [process](int code, QProcess::ExitStatus status) {
+        if (status != QProcess::NormalExit || code != 0)
+            qCWarning(logApp) << "streaming host: the screen's scale was not set:"
+                              << process->readAll().trimmed().right(300);
+        process->deleteLater();
+    });
+    QTimer::singleShot(kStepTimeoutMs, process, [process] {
+        if (process->state() != QProcess::NotRunning)
+            process->kill();
+    });
+    process->start(m_env.kscreenDoctor,
+                   {QStringLiteral("output.%1.scale.%2")
+                        .arg(QLatin1String(streaming::kVirtualOutput))
+                        .arg(m_config.scalePercent / 100.0)});
+}
+
+void StreamingHost::setStreamFps(int fps)
+{
+    if ((fps != 30 && fps != 60) || fps == m_config.fps)
+        return;
+    m_config.fps = fps;
+    saveConfig();
+    emit configChanged();
+}
+
+void StreamingHost::setStreamBitrate(int kbps)
+{
+    kbps = std::clamp(kbps, 0, 150000);
+    if (kbps == m_config.bitrateKbps)
+        return;
+    m_config.bitrateKbps = kbps;
+    saveConfig();
+    emit configChanged();
+}
+
+int StreamingHost::automaticBitrate() const
+{
+    return streaming::automaticBitrate(m_config.height, m_config.fps);
+}
+
+void StreamingHost::setStreamCodec(const QString &codec)
+{
+    static const QStringList codecs{QStringLiteral("auto"), QStringLiteral("hevc"), QStringLiteral("av1"),
+                                    QStringLiteral("h264")};
+    if (!codecs.contains(codec) || codec == m_config.codec)
+        return;
+    m_config.codec = codec;
+    saveConfig();
+    emit configChanged();
+}
+
+void StreamingHost::setStreamAudio(const QString &audio)
+{
+    static const QStringList layouts{QStringLiteral("2"), QStringLiteral("51"), QStringLiteral("71")};
+    if (!layouts.contains(audio) || audio == m_config.audio)
+        return;
+    m_config.audio = audio;
+    saveConfig();
+    emit configChanged();
+}
+
+QJsonObject StreamingHost::strmLightHost() const
+{
+    streaming::HostConfig current = m_config;
+    readConfig(m_env.stateDir, &current);
+    return QJsonObject{{QStringLiteral("sunshineFingerprint"), sunshineFingerprint()},
+                       {QStringLiteral("stream"), streaming::streamJson(current)}};
 }
 
 void StreamingHost::setHeight(int height)
@@ -291,7 +407,8 @@ bool StreamingHost::writeFiles()
         setMessage(problems.join(QLatin1Char(' ')), true);
         return false;
     }
-    if (!QDir().mkpath(m_env.unitDir) || !QDir().mkpath(m_env.stateDir + QStringLiteral("/audio"))) {
+    if (!QDir().mkpath(m_env.unitDir) || !QDir().mkpath(m_env.stateDir + QStringLiteral("/audio"))
+        || !QDir().mkpath(streaming::kwinConfigHome(m_config))) {
         setMessage(tr("Could not create the streaming host's folders."), true);
         return false;
     }

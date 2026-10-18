@@ -145,11 +145,12 @@ public:
     // server arms it itself; the desktop StrmQt passes it to the streaming
     // host instead (WebRemoteController::pairStrmLight). False is refused.
     void setStrmLightCodeHandler(std::function<bool(const QString &)> handler);
-    // The streaming host's Sunshine certificate, as lowercase hex SHA-256 of
-    // its DER form; empty when unknown. A StrmLight streams only from the
-    // Sunshine this vouches for: it is in the answer that pairs one, and at
-    // GET /api/strmlight/host for a paired one.
-    void setSunshineFingerprint(std::function<QString()> fingerprint);
+    // What a paired StrmLight is told at GET /api/strmlight/host: the
+    // streaming host's Sunshine certificate as "sunshineFingerprint"
+    // (lowercase hex SHA-256 of its DER form; a StrmLight streams only from
+    // the Sunshine this vouches for) and the stream settings as "stream". The
+    // fingerprint is also in the answer that pairs one.
+    void setStrmLightHost(std::function<QJsonObject()> host);
 
     // What failed PINs are counted against: the address for IPv4 (an
     // IPv4-mapped IPv6 address is its IPv4 form), the /64 for IPv6 from
@@ -284,7 +285,7 @@ private:
     QTimer m_codeExpiry;
     QTimer m_devicesSync;
     std::function<bool(const QString &)> m_strmLightCodeHandler;
-    std::function<QString()> m_sunshineFingerprint;
+    std::function<QJsonObject()> m_strmLightHost;
     // After a shown code is cancelled at the TV, phones may not ask for
     // another until then (on m_clock).
     qint64 m_requestsRefusedUntil = 0;

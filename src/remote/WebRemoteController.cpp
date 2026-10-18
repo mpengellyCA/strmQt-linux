@@ -208,10 +208,10 @@ int WebRemoteController::connectedClientsCount() const
     return m_server ? m_server->connectedClientsCount() : 0;
 }
 
-void WebRemoteController::setSunshineFingerprint(std::function<QString()> fingerprint)
+void WebRemoteController::setStrmLightHost(std::function<QJsonObject()> host)
 {
     if (m_server)
-        m_server->setSunshineFingerprint(std::move(fingerprint));
+        m_server->setStrmLightHost(std::move(host));
 }
 
 QString WebRemoteController::certFingerprint() const

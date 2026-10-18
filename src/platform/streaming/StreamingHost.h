@@ -3,6 +3,7 @@
 #include "HostFiles.h"
 #include "SunshineApi.h"
 
+#include <QJsonObject>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -42,6 +43,19 @@ class StreamingHost : public QObject
     Q_PROPERTY(bool webUiOnNetwork READ webUiOnNetwork WRITE setWebUiOnNetwork NOTIFY configChanged)
     Q_PROPERTY(int port READ port NOTIFY configChanged)
     Q_PROPERTY(QString webUiAddress READ webUiAddress NOTIFY configChanged)
+    // The headless screen's scale in percent, as KWin's display settings set
+    // it. Applied at once to a running host; `scaleAvailable` is false without
+    // kscreen-doctor, which applies it.
+    Q_PROPERTY(int scale READ scale WRITE setScale NOTIFY configChanged)
+    Q_PROPERTY(bool scaleAvailable READ scaleAvailable CONSTANT)
+    // What a StrmLight asks Sunshine for, read before each stream: frame rate,
+    // bitrate in kbit/s (0: by size and frame rate, `automaticBitrate`), codec
+    // ("auto", "hevc", "av1", "h264") and sound ("2", "51", "71").
+    Q_PROPERTY(int streamFps READ streamFps WRITE setStreamFps NOTIFY configChanged)
+    Q_PROPERTY(int streamBitrate READ streamBitrate WRITE setStreamBitrate NOTIFY configChanged)
+    Q_PROPERTY(int automaticBitrate READ automaticBitrate NOTIFY configChanged)
+    Q_PROPERTY(QString streamCodec READ streamCodec WRITE setStreamCodec NOTIFY configChanged)
+    Q_PROPERTY(QString streamAudio READ streamAudio WRITE setStreamAudio NOTIFY configChanged)
     // Pairing, through the host Sunshine's own API. Each entry of `devices`
     // is {name, uuid}, a StrmLight: nothing else may stay paired.
     Q_PROPERTY(QVariantList devices READ devices NOTIFY pairingChanged)
@@ -66,6 +80,10 @@ public:
         QString pipewire;
         QString wireplumber;
         QString systemctl;
+        // Optional: without it the screen's scale cannot be changed.
+        QString kscreenDoctor;
+        // The desktop's XDG_CONFIG_HOME, for the StrmQt on the screen.
+        QString configHome;
         // `loginctl enable-linger`: start at boot, before anyone logs in.
         bool linger = true;
         bool insideFlatpak = false;
@@ -92,6 +110,18 @@ public:
     bool webUiOnNetwork() const { return m_config.webUiOnNetwork; }
     void setWebUiOnNetwork(bool on);
     int port() const { return m_config.port; }
+    int scale() const { return m_config.scalePercent; }
+    void setScale(int percent);
+    bool scaleAvailable() const { return !m_env.kscreenDoctor.isEmpty(); }
+    int streamFps() const { return m_config.fps; }
+    void setStreamFps(int fps);
+    int streamBitrate() const { return m_config.bitrateKbps; }
+    void setStreamBitrate(int kbps);
+    int automaticBitrate() const;
+    QString streamCodec() const { return m_config.codec; }
+    void setStreamCodec(const QString &codec);
+    QString streamAudio() const { return m_config.audio; }
+    void setStreamAudio(const QString &audio);
     QString webUiAddress() const;
     QVariantList devices() const { return m_devices; }
     bool pairingReachable() const { return m_pairingReachable; }
@@ -122,6 +152,14 @@ public:
     // form, which StrmLight compares with the one it paired with; empty
     // before Sunshine has written it.
     QString sunshineFingerprint() const;
+    // What GET /api/strmlight/host gives a paired StrmLight: the fingerprint
+    // and, under "stream", the settings above. Read from the host's settings
+    // file each time: the desktop StrmQt changes them, not this instance.
+    QJsonObject strmLightHost() const;
+    // Sets the running screen's scale to the one chosen (kscreen-doctor).
+    // The streaming host's StrmQt does it once it is up, and the desktop's
+    // whenever it changes.
+    void applyScale();
     // Whom a PIN goes to now. False: nobody is asking yet, so wait. Otherwise
     // `requestId` is the request to answer, empty for a Sunshine that does
     // not list them (it then gives the PIN to whoever is waiting).
@@ -169,6 +207,7 @@ private:
     void probe();
     void readState();
     void loadConfig();
+    static void readConfig(const QString &stateDir, streaming::HostConfig *config);
     void saveConfig() const;
     bool writeFiles();
     void applyIfInstalled();

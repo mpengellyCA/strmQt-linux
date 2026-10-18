@@ -50,6 +50,8 @@ QStringList configProblems(const HostConfig &config)
     path(QStringLiteral("PipeWire"), config.pipewire);
     path(QStringLiteral("WirePlumber"), config.wireplumber);
     path(QStringLiteral("The streaming host's folder"), config.stateDir);
+    if (!config.configHome.isEmpty())
+        path(QStringLiteral("The settings folder"), config.configHome);
     static const QRegularExpression socketName(QStringLiteral("^[A-Za-z0-9_-]+$"));
     static const QRegularExpression unitName(QStringLiteral("^[A-Za-z0-9_.-]+\\.service$"));
     for (const QString &unit : {config.hostUnit, config.audioUnit}) {
@@ -64,6 +66,8 @@ QStringList configProblems(const HostConfig &config)
                         .arg(config.height);
     if (config.port < 1029 || config.port > 65000)
         problems << QStringLiteral("Port %1 is out of range.").arg(config.port);
+    if (config.scalePercent < 100 || config.scalePercent > 300)
+        problems << QStringLiteral("The screen scale %1% is out of range.").arg(config.scalePercent);
     for (const QString &pair : config.environment) {
         static const QRegularExpression assignment(
             QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*=[^\\s\"'\\\\%$]*$"));
@@ -139,13 +143,25 @@ QString hostUnit(const HostConfig &config)
     // StrmQt alone is moved to the host's PipeWire for programs that talk to
     // PipeWire directly (mpv): KWin itself must stay on the desktop's, where
     // Sunshine finds its screencast. KWin splits the session command itself.
+    // KWin keeps its settings, the screen's scale among them, in a folder of
+    // its own; StrmQt gets the desktop's back.
+    // One named in `environment` (a test's scratch profile) is StrmQt's.
+    QString strmqtConfigHome = config.configHome;
+    for (const QString &pair : config.environment) {
+        if (pair.startsWith(QLatin1String("XDG_CONFIG_HOME=")))
+            strmqtConfigHome = pair.mid(16);
+    }
+    lines << QStringLiteral("Environment=XDG_CONFIG_HOME=%1").arg(kwinConfigHome(config));
+    const QString session = (strmqtConfigHome.isEmpty() ? QStringLiteral("-u XDG_CONFIG_HOME")
+                                                        : QStringLiteral("XDG_CONFIG_HOME=") + strmqtConfigHome)
+                            + QStringLiteral(" PIPEWIRE_REMOTE=") + audioRemote(config);
     lines << QStringLiteral("ExecStart=%1 --virtual --width %2 --height %3 --socket %4 "
                             "--no-lockscreen --no-global-shortcuts "
-                            "--exit-with-session \"/usr/bin/env PIPEWIRE_REMOTE=%5 %6\"")
+                            "--exit-with-session \"/usr/bin/env %5 %6\"")
                  .arg(config.kwin)
                  .arg(config.width)
                  .arg(config.height)
-                 .arg(config.socket, audioRemote(config), config.strmqt)
+                 .arg(config.socket, session, config.strmqt)
           << QStringLiteral("Restart=on-failure") << QStringLiteral("RestartSec=3") << QString()
           << QStringLiteral("[Install]") << QStringLiteral("WantedBy=default.target");
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
@@ -320,6 +336,30 @@ int freePortBase(const std::function<bool(int, bool)> &isFree, int first, int tr
             return base;
     }
     return 0;
+}
+
+int automaticBitrate(int height, int fps)
+{
+    const int kbps = height >= 2160 ? 40000 : height >= 1440 ? 25000 : height >= 1080 ? 15000 : 8000;
+    return fps > 30 ? kbps * 3 / 2 : kbps;
+}
+
+QString kwinConfigHome(const HostConfig &config)
+{
+    return config.stateDir + QStringLiteral("/kwin");
+}
+
+QJsonObject streamJson(const HostConfig &config)
+{
+    return QJsonObject{
+        {QStringLiteral("width"), config.width},
+        {QStringLiteral("height"), config.height},
+        {QStringLiteral("fps"), config.fps},
+        {QStringLiteral("bitrateKbps"),
+         config.bitrateKbps > 0 ? config.bitrateKbps : automaticBitrate(config.height, config.fps)},
+        {QStringLiteral("codec"), config.codec},
+        {QStringLiteral("audio"), config.audio},
+    };
 }
 
 bool portsLent(const QString &localRange, const QString &reserved, int first, int last)

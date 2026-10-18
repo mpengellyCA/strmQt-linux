@@ -629,8 +629,11 @@ void WebRemoteServerTest::strmLightWaitsUntilItsCodeIsTypedIn()
 void WebRemoteServerTest::strmLightIsToldWhichSunshineToTrust()
 {
     const QString sunshine = QStringLiteral("14f04bd951e34c3fa35a09d06245b868c540bf1da58dada259de769e24e46a62");
-    m_server->setSunshineFingerprint([sunshine] { return sunshine; });
-    const auto cleanup = qScopeGuard([this] { m_server->setSunshineFingerprint({}); });
+    const QJsonObject stream{{QStringLiteral("fps"), 30}, {QStringLiteral("codec"), QStringLiteral("hevc")}};
+    m_server->setStrmLightHost([sunshine, stream] {
+        return QJsonObject{{QStringLiteral("sunshineFingerprint"), sunshine}, {QStringLiteral("stream"), stream}};
+    });
+    const auto cleanup = qScopeGuard([this] { m_server->setStrmLightHost({}); });
     m_settings->setWebRemoteRequirePin(true);
     const QString phone = pairPhone();
     m_http->setToken(phone);
@@ -649,6 +652,7 @@ void WebRemoteServerTest::strmLightIsToldWhichSunshineToTrust()
     const auto host = m_http->get(QStringLiteral("/api/strmlight/host"));
     QCOMPARE(host.status, 200);
     QCOMPARE(host.json().value(QStringLiteral("sunshineFingerprint")).toString(), sunshine);
+    QCOMPARE(host.json().value(QStringLiteral("stream")).toObject(), stream);
 
     // Not to anyone else, even with the PIN setting off.
     m_settings->setWebRemoteRequirePin(false);
