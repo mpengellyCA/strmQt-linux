@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
 #else
     const bool youtube = false;
 #endif
-    // In the build AND switched on (Settings → Server → YouTube): a trailer
+    // In the build AND switched on (Settings → YouTube): a trailer
     // or a search asked for while it is off goes where it went before there
     // was a YouTube tab.
     const auto applyYouTube = [&app, youtube] {

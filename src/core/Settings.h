@@ -46,6 +46,9 @@ class Settings : public QObject
     // YouTube and YouTube Music, each switched off by itself. Off is gone:
     // no entry in the rail, nothing that leads there from another page, and
     // its web view unloaded. Both on unless the user says otherwise.
+    // This is the streaming host's StrmQt, the one a StrmLight watches; it
+    // does not manage StrmLight (Settings shows no StrmLight section there).
+    Q_PROPERTY(bool streamingHostInstance READ isStreamingHostInstance CONSTANT)
     Q_PROPERTY(bool youtubeEnabled READ youtubeEnabled WRITE setYoutubeEnabled
                    NOTIFY youtubeEnabledChanged)
     Q_PROPERTY(bool youtubeMusicEnabled READ youtubeMusicEnabled WRITE setYoutubeMusicEnabled

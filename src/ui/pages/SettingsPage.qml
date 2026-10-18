@@ -69,6 +69,50 @@ FocusScope {
         { "text": qsTr("720p"), "value": 720 }
     ]
 
+    readonly property var streamingHostScales: [
+        { "text": qsTr("100%"), "value": 100 },
+        { "text": qsTr("125%"), "value": 125 },
+        { "text": qsTr("150%"), "value": 150 },
+        { "text": qsTr("175%"), "value": 175 },
+        { "text": qsTr("200%"), "value": 200 },
+        { "text": qsTr("250%"), "value": 250 },
+        { "text": qsTr("300%"), "value": 300 }
+    ]
+
+    readonly property var streamFpsOptions: [
+        { "text": qsTr("30 fps"), "value": 30 },
+        { "text": qsTr("60 fps"), "value": 60 }
+    ]
+
+    readonly property var streamBitrateOptions: [
+        { "text": qsTr("Automatic"), "value": 0 },
+        { "text": qsTr("10 Mbps"), "value": 10000 },
+        { "text": qsTr("20 Mbps"), "value": 20000 },
+        { "text": qsTr("40 Mbps"), "value": 40000 },
+        { "text": qsTr("60 Mbps"), "value": 60000 },
+        { "text": qsTr("80 Mbps"), "value": 80000 },
+        { "text": qsTr("100 Mbps"), "value": 100000 },
+        { "text": qsTr("150 Mbps"), "value": 150000 }
+    ]
+
+    readonly property var streamCodecOptions: [
+        { "text": qsTr("Automatic"), "value": "auto" },
+        { "text": qsTr("HEVC (H.265)"), "value": "hevc" },
+        { "text": qsTr("AV1"), "value": "av1" },
+        { "text": qsTr("H.264"), "value": "h264" }
+    ]
+
+    readonly property var streamAudioOptions: [
+        { "text": qsTr("Stereo"), "value": "2" },
+        { "text": qsTr("5.1 surround"), "value": "51" },
+        { "text": qsTr("7.1 surround"), "value": "71" }
+    ]
+
+    // The streaming host's own StrmQt: a StrmLight watches it, and it does not
+    // manage StrmLight.
+    readonly property bool streamingHostInstance: typeof Prefs !== "undefined" && Prefs.streamingHostInstance
+    readonly property bool youtubeBuilt: typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+
     readonly property string unavailableHint: qsTr("Unavailable: the settings object is not exposed to QML.")
 
     // ── Sections ───────────────────────────────────────────────────────────
@@ -99,8 +143,18 @@ FocusScope {
             "icon": "refresh"
         },
         {
+            "key": "youtube",
+            "title": qsTr("YouTube"),
+            "icon": "play"
+        },
+        {
             "key": "remote",
-            "title": qsTr("Web Remote"),
+            "title": qsTr("Mobile Web Remote"),
+            "icon": "cast"
+        },
+        {
+            "key": "strmlight",
+            "title": qsTr("StrmLight"),
             "icon": "cast"
         },
         {
@@ -113,7 +167,8 @@ FocusScope {
             "title": qsTr("About"),
             "icon": "info"
         }
-    ]
+    ].filter(section => (section.key !== "strmlight" || !page.streamingHostInstance)
+                        && (section.key !== "youtube" || page.youtubeBuilt))
 
     property int currentSection: 0
 
@@ -775,8 +830,7 @@ FocusScope {
                 // entry, the view, and whatever led there from other pages.
                 StrmPanel {
                     width: parent.width
-                    visible: page.currentKey === "server"
-                             && typeof YouTubeAvailable !== "undefined" && YouTubeAvailable
+                    visible: page.currentKey === "youtube" && page.youtubeBuilt
                     title: qsTr("YouTube")
                     subtitle: qsTr("YouTube and YouTube Music inside StrmQt. Turned off, one is gone from the menu and from every page that leads to it.")
 
@@ -822,7 +876,7 @@ FocusScope {
                     readonly property var signIn: typeof YouTubeSignIn !== "undefined" ? YouTubeSignIn : null
 
                     width: parent.width
-                    visible: page.currentKey === "server" && youtubeMusicPanel.signIn !== null
+                    visible: page.currentKey === "youtube" && youtubeMusicPanel.signIn !== null
                              && page.prefsAvailable && Prefs.youtubeMusicEnabled
                     title: qsTr("YouTube Music sign-in")
                     subtitle: qsTr("Google does not allow signing in from inside an app like this one. Sign in to YouTube in Firefox, then copy that sign-in here.")
@@ -1389,12 +1443,9 @@ FocusScope {
                 StrmPanel {
                     id: webRemotePanel
 
-                    // The code a StrmLight shows, typed with the buttons below.
-                    property string strmLightCode: ""
-
                     width: parent.width
                     visible: page.currentKey === "remote"
-                    title: qsTr("Web Remote")
+                    title: qsTr("Mobile Web Remote")
                     subtitle: qsTr("Browse media and control playback from any phone, tablet, or browser on your network.")
 
                     SettingsSections.SettingRow {
@@ -1458,66 +1509,12 @@ FocusScope {
                         }
                     }
 
-                    // A StrmLight shows a code of its own; typed here, it pairs
-                    // its stream and its remote with the streaming host (passed
-                    // there when this is the desktop StrmQt) the next time it
-                    // asks (every 2 s). By buttons, for a remote or a controller.
-                    SettingsSections.SettingRow {
-                        width: parent.width
-                        visible: page.webRemoteAvailable && page.webRemote.running
-                        label: qsTr("Pair a StrmLight")
-                        hint: page.webRemoteAvailable && page.webRemote.awaitingStrmLight
-                              ? qsTr("Waiting for the StrmLight to ask with %1…").arg(webRemotePanel.strmLightCode)
-                              : webRemotePanel.strmLightCode.length > 0 ? webRemotePanel.strmLightCode
-                              : qsTr("Type the four digits on the StrmLight screen. They pair its picture and its remote.")
-
-                        Row {
-                            spacing: Theme.spacingTight / 2
-
-                            Repeater {
-                                model: 10
-
-                                StrmButton {
-                                    required property int index
-
-                                    objectName: "strmLightDigit" + index
-                                    text: String(index)
-                                    enabled: webRemotePanel.strmLightCode.length < 4
-                                    onClicked: webRemotePanel.strmLightCode += String(index)
-                                }
-                            }
-
-                            StrmButton {
-                                text: qsTr("Clear")
-                                enabled: webRemotePanel.strmLightCode.length > 0
-                                onClicked: {
-                                    webRemotePanel.strmLightCode = "";
-                                    if (page.webRemoteAvailable && page.webRemote.awaitingStrmLight)
-                                        page.webRemote.cancelPairing();
-                                }
-                            }
-
-                            StrmButton {
-                                objectName: "strmLightPair"
-                                text: qsTr("Pair")
-                                variant: "primary"
-                                enabled: webRemotePanel.strmLightCode.length === 4
-                                onClicked: if (page.webRemoteAvailable)
-                                               page.webRemote.pairStrmLight(webRemotePanel.strmLightCode)
-                            }
-                        }
-                    }
-
-                    Connections {
-                        target: page.webRemoteAvailable ? page.webRemote : null
-                        function onDevicePaired(name, kind) {
-                            if (kind === "strmlight")
-                                webRemotePanel.strmLightCode = "";
-                        }
-                    }
+                    // Phones; StrmLights are listed under StrmLight.
+                    readonly property var phones: page.webRemoteAvailable
+                                                  ? page.webRemote.devices.filter(device => device.kind !== "strmlight") : []
 
                     Repeater {
-                        model: page.webRemoteAvailable ? page.webRemote.devices : []
+                        model: webRemotePanel.phones
 
                         SettingsSections.SettingRow {
                             required property var modelData
@@ -1525,8 +1522,7 @@ FocusScope {
 
                             width: parent.width
                             label: modelData.name
-                            hint: (modelData.kind === "strmlight" ? qsTr("StrmLight, paired %1")
-                                                                  : qsTr("Phone, paired %1"))
+                            hint: qsTr("Phone, paired %1")
                                   .arg(new Date(modelData.added).toLocaleDateString(Qt.locale(), Locale.ShortFormat))
 
                             StrmButton {
@@ -1542,7 +1538,7 @@ FocusScope {
                         width: parent.width
                         visible: page.webRemoteAvailable && page.webRemote.devices.length > 1
                         label: qsTr("Remove every paired device")
-                        hint: qsTr("Each one has to pair again.")
+                        hint: qsTr("Phones and StrmLights. Each one has to pair again.")
 
                         StrmButton {
                             text: qsTr("Remove all")
@@ -1554,8 +1550,8 @@ FocusScope {
                     SettingsSections.SectionNote {
                         width: parent.width
                         visible: page.webRemoteAvailable && page.webRemote.requirePin
-                                 && page.webRemote.devices.length === 0
-                        text: qsTr("Nothing is paired. Open the address below on a phone and tap Pair; a code appears on this screen.")
+                                 && webRemotePanel.phones.length === 0
+                        text: qsTr("No phone is paired. Open the address below on a phone and tap Pair; a code appears on this screen.")
                     }
 
                     SettingsSections.InfoRow {
@@ -1710,6 +1706,100 @@ FocusScope {
                     }
                 }
 
+                // ── StrmLight: pairing ─────────────────────────────────────
+                StrmPanel {
+                    id: strmLightPairPanel
+
+                    // The code a StrmLight shows, typed with the buttons below.
+                    property string strmLightCode: ""
+                    readonly property var strmLights: page.webRemoteAvailable
+                                                      ? page.webRemote.devices.filter(device => device.kind === "strmlight") : []
+
+                    width: parent.width
+                    visible: page.currentKey === "strmlight"
+                    title: qsTr("Pair a StrmLight")
+                    subtitle: qsTr("StrmLight is the StrmQt app for Fire TV and Android TV. It finds the streaming host by itself and shows a four-digit code; typed here once, that code pairs its picture and its remote.")
+
+                    // A StrmLight shows a code of its own; typed here, it pairs
+                    // its stream and its remote with the streaming host (passed
+                    // there when this is the desktop StrmQt) the next time it
+                    // asks (every 2 s). By buttons, for a remote or a controller.
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        visible: page.webRemoteAvailable
+                        label: qsTr("Pair a StrmLight")
+                        hint: page.webRemoteAvailable && page.webRemote.awaitingStrmLight
+                              ? qsTr("Waiting for the StrmLight to ask with %1…").arg(strmLightPairPanel.strmLightCode)
+                              : strmLightPairPanel.strmLightCode.length > 0 ? strmLightPairPanel.strmLightCode
+                              : qsTr("Type the four digits on the StrmLight screen. They pair its picture and its remote.")
+
+                        Row {
+                            spacing: Theme.spacingTight / 2
+
+                            Repeater {
+                                model: 10
+
+                                StrmButton {
+                                    required property int index
+
+                                    objectName: "strmLightDigit" + index
+                                    text: String(index)
+                                    enabled: strmLightPairPanel.strmLightCode.length < 4
+                                    onClicked: strmLightPairPanel.strmLightCode += String(index)
+                                }
+                            }
+
+                            StrmButton {
+                                text: qsTr("Clear")
+                                enabled: strmLightPairPanel.strmLightCode.length > 0
+                                onClicked: {
+                                    strmLightPairPanel.strmLightCode = "";
+                                    if (page.webRemoteAvailable && page.webRemote.awaitingStrmLight)
+                                        page.webRemote.cancelPairing();
+                                }
+                            }
+
+                            StrmButton {
+                                objectName: "strmLightPair"
+                                text: qsTr("Pair")
+                                variant: "primary"
+                                enabled: strmLightPairPanel.strmLightCode.length === 4
+                                onClicked: if (page.webRemoteAvailable)
+                                               page.webRemote.pairStrmLight(strmLightPairPanel.strmLightCode)
+                            }
+                        }
+                    }
+
+                    Connections {
+                        target: page.webRemoteAvailable ? page.webRemote : null
+                        function onDevicePaired(name, kind) {
+                            if (kind === "strmlight")
+                                strmLightPairPanel.strmLightCode = "";
+                        }
+                    }
+
+                    Repeater {
+                        model: strmLightPairPanel.strmLights
+
+                        SettingsSections.SettingRow {
+                            required property var modelData
+                            required property int index
+
+                            width: parent.width
+                            label: modelData.name
+                            hint: qsTr("StrmLight, paired %1. Removed, it pairs again with a new code.")
+                                  .arg(new Date(modelData.added).toLocaleDateString(Qt.locale(), Locale.ShortFormat))
+
+                            StrmButton {
+                                objectName: "strmLightRemoveDevice" + index
+                                text: qsTr("Remove")
+                                destructive: true
+                                onClicked: page.webRemote.removeDevice(modelData.id)
+                            }
+                        }
+                    }
+                }
+
                 // ── Streaming host ─────────────────────────────────────────
                 // A headless StrmQt and a Sunshine of its own, as services.
                 // Nothing on this computer is looked at until "Look" is
@@ -1732,9 +1822,9 @@ FocusScope {
                     }
 
                     width: parent.width
-                    visible: page.currentKey === "remote" && streamingHostPanel.present
+                    visible: page.currentKey === "strmlight" && streamingHostPanel.present
                     title: qsTr("Streaming host")
-                    subtitle: qsTr("Runs StrmQt on a screen of its own, with no monitor, and streams it with Sunshine to Moonlight on a TV. It starts with this computer and is separate from any Sunshine you use for your desktop.")
+                    subtitle: qsTr("Runs StrmQt on a screen of its own, with no monitor, and streams it with Sunshine to StrmLight on a TV. It starts with this computer and is separate from any Sunshine you use for your desktop.")
 
                     // The services' states move by themselves (starting, then
                     // running); asked for only while this is on screen.
@@ -1778,25 +1868,6 @@ FocusScope {
                                ? qsTr("%1, port %2").arg(streamingHostPanel.stateText(streamingHostPanel.host.sunshineState))
                                                     .arg(streamingHostPanel.host.port)
                                : ""
-                    }
-
-                    SettingsSections.SettingRow {
-                        width: parent.width
-                        label: qsTr("Screen size")
-                        hint: qsTr("What the headless screen is drawn at. Moonlight can ask for less.")
-
-                        StrmSelect {
-                            objectName: "streamingHostSize"
-                            width: Theme.scale(220)
-                            enabled: streamingHostPanel.present && !streamingHostPanel.host.busy
-                            model: page.streamingHostSizes
-                            currentIndex: page.indexOfValue(page.streamingHostSizes,
-                                                            streamingHostPanel.present ? streamingHostPanel.host.height : 2160)
-                            onActivated: index => {
-                                if (streamingHostPanel.present)
-                                    streamingHostPanel.host.height = page.streamingHostSizes[index].value;
-                            }
-                        }
                     }
 
                     SettingsSections.SettingRow {
@@ -1905,6 +1976,145 @@ FocusScope {
                             destructive: true
                             onClicked: streamingHostPanel.host.remove()
                         }
+                    }
+                }
+
+                // ── StrmLight: picture and sound ───────────────────────────
+                // What the headless screen is and what a StrmLight asks its
+                // Sunshine for; StrmLight reads the stream settings before
+                // each stream, so they apply from the next one.
+                StrmPanel {
+                    id: pictureSoundPanel
+
+                    readonly property var host: streamingHostPanel.present ? streamingHostPanel.host : null
+
+                    width: parent.width
+                    visible: page.currentKey === "strmlight" && pictureSoundPanel.host !== null
+                    title: qsTr("Picture and sound")
+                    subtitle: qsTr("How the streaming host's screen is drawn and what StrmLight asks Sunshine for. Stream settings apply from the next time StrmLight starts the stream.")
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Screen size")
+                        hint: qsTr("What the headless screen is drawn at, and what StrmLight streams. Changing it restarts the streaming host.")
+
+                        StrmSelect {
+                            objectName: "streamingHostSize"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null && !pictureSoundPanel.host.busy
+                            model: page.streamingHostSizes
+                            currentIndex: page.indexOfValue(page.streamingHostSizes,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.height : 2160)
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.height = page.streamingHostSizes[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Screen scale")
+                        hint: pictureSoundPanel.host !== null && !pictureSoundPanel.host.scaleAvailable
+                              ? qsTr("Needs kscreen-doctor (KDE's libkscreen), which sets it.")
+                              : qsTr("The scale KWin's display settings would set: larger text and controls on the TV. Applies at once.")
+
+                        StrmSelect {
+                            objectName: "streamingHostScale"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null && pictureSoundPanel.host.scaleAvailable
+                            model: page.streamingHostScales
+                            currentIndex: page.indexOfValue(page.streamingHostScales,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.scale : 100)
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.scale = page.streamingHostScales[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Frame rate")
+                        hint: qsTr("Films and series are 24 or 25 frames a second; 60 makes scrolling and menus smoother.")
+
+                        StrmSelect {
+                            objectName: "streamFps"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null
+                            model: page.streamFpsOptions
+                            currentIndex: page.indexOfValue(page.streamFpsOptions,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.streamFps : 30)
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.streamFps = page.streamFpsOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Quality")
+                        hint: pictureSoundPanel.host !== null && pictureSoundPanel.host.streamBitrate === 0
+                              ? qsTr("Automatic: %1 Mbps for this size and frame rate. More is sharper, if the network keeps up.")
+                                .arg(pictureSoundPanel.host.automaticBitrate / 1000)
+                              : qsTr("The bitrate StrmLight asks for. More is sharper, if the network keeps up.")
+
+                        StrmSelect {
+                            objectName: "streamBitrate"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null
+                            model: page.streamBitrateOptions
+                            currentIndex: page.indexOfValue(page.streamBitrateOptions,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.streamBitrate : 0)
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.streamBitrate = page.streamBitrateOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Codec")
+                        hint: qsTr("Automatic picks the best one the TV can decode. HEVC and AV1 look better than H.264 at the same bitrate; a TV that cannot decode the one chosen falls back.")
+
+                        StrmSelect {
+                            objectName: "streamCodec"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null
+                            model: page.streamCodecOptions
+                            currentIndex: page.indexOfValue(page.streamCodecOptions,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.streamCodec : "auto")
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.streamCodec = page.streamCodecOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SettingRow {
+                        width: parent.width
+                        label: qsTr("Sound")
+                        hint: qsTr("Surround needs a TV or receiver that plays it; StrmQt sends what the video has.")
+
+                        StrmSelect {
+                            objectName: "streamAudio"
+                            width: Theme.scale(220)
+                            enabled: pictureSoundPanel.host !== null
+                            model: page.streamAudioOptions
+                            currentIndex: page.indexOfValue(page.streamAudioOptions,
+                                                            pictureSoundPanel.host !== null ? pictureSoundPanel.host.streamAudio : "2")
+                            onActivated: index => {
+                                if (pictureSoundPanel.host !== null)
+                                    pictureSoundPanel.host.streamAudio = page.streamAudioOptions[index].value;
+                            }
+                        }
+                    }
+
+                    SettingsSections.SectionNote {
+                        width: parent.width
+                        text: qsTr("No HDR yet: KWin cannot make the headless screen HDR, so an HDR stream would still carry an SDR picture.")
                     }
                 }
 

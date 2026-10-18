@@ -90,7 +90,7 @@ the mini player.
 ### On a TV, with StrmLight
 
 A computer with no screen of its own — a mini PC by the TV — can run StrmQt for a Fire TV
-or Android TV to watch. **Settings → Web Remote → Streaming host** sets it up once: a
+or Android TV to watch. **Settings → StrmLight → Streaming host** sets it up once: a
 hidden desktop running StrmQt full screen, and a Sunshine of its own streaming it. It runs
 as two services of your user with its own settings, certificate and ports, so a Sunshine
 you already use for games is left alone, and it has a sound system of its own — a virtual
@@ -100,11 +100,16 @@ if it cannot go ahead.
 
 On the TV, [**StrmLight**](https://github.com/mpengellyCA/strmLight-android) — a Moonlight
 made for StrmQt — finds the host on the network by itself and shows a four-digit code.
-Type it once, under **Settings → Web Remote → Pair a StrmLight** or on the phone remote,
+Type it once, under **Settings → StrmLight → Pair a StrmLight** or on the phone remote,
 and both the picture and the remote are paired. From then on, opening StrmLight goes
 straight to StrmQt, and the TV's own remote drives it: arrows, OK, Back, play and pause go
 to StrmQt directly rather than as keys through the stream. Settings lists every paired
 phone and StrmLight, each with Remove.
+
+**Settings → StrmLight → Picture and sound** sets the host screen's size and scale, and
+what StrmLight streams: frame rate, quality (bitrate), codec, and stereo, 5.1 or 7.1
+sound. StrmLight reads these before each stream, so its own settings never need touching.
+HDR is not offered yet, because KWin's headless screen cannot be HDR.
 
 Only StrmLight can watch the streaming host. A plain Moonlight cannot pair with it, and
 StrmLight in turn streams only from the Sunshine its StrmQt vouches for, never from a
@@ -132,7 +137,7 @@ Only one thing is ever heard: starting a film, a YouTube video or a YouTube Musi
 quiets the other two.
 
 Signing in: YouTube signs in on its own screen with a code, as on a TV. YouTube Music
-cannot be signed in to inside an app — Google refuses it — so **Settings → Server** copies
+cannot be signed in to inside an app — Google refuses it — so **Settings → YouTube** copies
 a sign-in from Firefox instead: press **Look in Firefox** and it lists each Firefox
 profile and container on your computer, and whether it is signed in to YouTube; you choose
 which one to use. Nothing of Firefox's is opened before you press that button. StrmQt
@@ -141,7 +146,7 @@ Google session of every account signed in there — and never writes to Firefox'
 
 The AppImage does not have these two yet; every other package does.
 
-Don't want them? **Settings → Server → YouTube** switches each off separately, and off is
+Don't want them? **Settings → YouTube** switches each off separately, and off is
 gone: out of the menu, nothing playing, and trailers open in your browser as before.
 There is no ad blocking and none is planned.
 
