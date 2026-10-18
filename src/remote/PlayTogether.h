@@ -17,16 +17,20 @@ namespace strmqt {
 // D after the host sent it, on the host's clock (TimeService). With one TV,
 // D is 0: it plays as soon as it can, as before.
 //
-// D goes up at once, since a TV that cannot keep up is heard, and comes down
-// only by kStepDownMs or more, so a latency that wavers does not move every
-// TV's sound back and forth. A TV that has not reported for kForgetMs has
-// stopped streaming and no longer counts.
+// Every change of D is heard, as each TV skips or waits once to the new
+// target, so D stays put while it is comfortably above the slowest latency.
+// It goes up at once when a TV comes within kCloseMs of it, since a TV that
+// cannot keep up is heard too, and comes down only when it has been more than
+// kStepDownMs too high for kStepDownAfterMs. A TV that has not reported for
+// kForgetMs has stopped streaming and no longer counts.
 class PlayTogether
 {
 public:
     static constexpr qint64 kForgetMs = 5000;
-    static constexpr int kMarginMs = 10;
+    static constexpr int kMarginMs = 15;
+    static constexpr int kCloseMs = 5;
     static constexpr int kStepDownMs = 20;
+    static constexpr qint64 kStepDownAfterMs = 10000;
     // Beyond this a report is not believed: no TV takes a second.
     static constexpr double kMaxLatencyMs = 1000;
 
@@ -47,6 +51,7 @@ private:
 
     QHash<QString, Tv> m_tvs;
     int m_delayMs = 0;
+    qint64 m_highSinceMs = -1;
 };
 
 } // namespace strmqt

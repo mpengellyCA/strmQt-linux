@@ -19,17 +19,30 @@ QJsonObject PlayTogether::report(const QString &device, const QJsonObject &repor
         && latency.toDouble() <= kMaxLatencyMs)
         tv.latencyMs = latency.toDouble();
 
-    int wanted = 0;
+    int next = 0;
     if (m_tvs.size() >= 2) {
         double slowest = 0;
         for (const Tv &each : std::as_const(m_tvs))
             slowest = std::max(slowest, each.latencyMs);
-        wanted = int(std::ceil(slowest)) + kMarginMs;
+        const int needed = int(std::ceil(slowest));
+        next = m_delayMs;
+        if (m_delayMs == 0 || needed + kCloseMs > m_delayMs) {
+            next = needed + kMarginMs;
+            m_highSinceMs = -1;
+        } else if (m_delayMs > needed + kMarginMs + kStepDownMs) {
+            if (m_highSinceMs < 0)
+                m_highSinceMs = nowMs;
+            if (nowMs - m_highSinceMs >= kStepDownAfterMs) {
+                next = needed + kMarginMs;
+                m_highSinceMs = -1;
+            }
+        } else {
+            m_highSinceMs = -1;
+        }
     }
-    if (wanted > m_delayMs || wanted <= m_delayMs - kStepDownMs || wanted == 0) {
-        if (wanted != m_delayMs)
-            qCInfo(logApp) << "TVs playing together:" << m_tvs.size() << "delay" << wanted << "ms";
-        m_delayMs = wanted;
+    if (next != m_delayMs) {
+        qCInfo(logApp) << "TVs playing together:" << m_tvs.size() << "delay" << next << "ms";
+        m_delayMs = next;
     }
     return QJsonObject{
         {QStringLiteral("delayMs"), m_delayMs},

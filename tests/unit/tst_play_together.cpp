@@ -50,17 +50,31 @@ void PlayTogetherTest::theSlowestTvSetsTheDelay()
     QCOMPARE(answer.value(QStringLiteral("tvs")).toInt(), 2);
     // Both are told the same.
     QCOMPARE(delayOf(together.report(QStringLiteral("a"), latency(42), 200)), 62 + PlayTogether::kMarginMs);
-    // And a TV that gets slower moves it up at once.
-    QCOMPARE(delayOf(together.report(QStringLiteral("a"), latency(80), 300)), 80 + PlayTogether::kMarginMs);
+    // A little slower is still well inside it.
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 300)), 62 + PlayTogether::kMarginMs);
+    // Close to it, it moves up at once.
+    QCOMPARE(delayOf(together.report(QStringLiteral("a"), latency(80), 400)), 80 + PlayTogether::kMarginMs);
 }
 
 void PlayTogetherTest::theDelayComesDownOnlyByEnough()
 {
     PlayTogether together;
     together.report(QStringLiteral("a"), latency(40), 0);
-    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 0)), 80);
-    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(55), 1000)), 80);
-    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(50), 2000)), 60);
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 0)), 85);
+    // Somewhat lower: not worth a change everyone hears.
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(55), 1000)), 85);
+    // Well lower, but only for a moment.
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(45), 2000)), 85);
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(70), 3000)), 85);
+    // Well lower for long enough.
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(45), 4000)), 85);
+    // Both keep reporting meanwhile.
+    for (qint64 at = 5000; at < 4000 + PlayTogether::kStepDownAfterMs; at += 1000) {
+        together.report(QStringLiteral("a"), latency(40), at);
+        QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(45), at)), 85);
+    }
+    together.report(QStringLiteral("a"), latency(40), 4000 + PlayTogether::kStepDownAfterMs);
+    QCOMPARE(delayOf(together.report(QStringLiteral("b"), latency(45), 4000 + PlayTogether::kStepDownAfterMs)), 60);
 }
 
 void PlayTogetherTest::aTvThatStopsIsForgotten()
