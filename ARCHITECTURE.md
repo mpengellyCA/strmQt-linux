@@ -900,6 +900,20 @@ watch at once (`channels` in `sunshine.conf`; Sunshine's default is 1): each
 gets its own encode of the one screen, which is how two rooms show the same
 film, or play the same music, nearly in step.
 
+**The host keeps time for TVs playing together.** The streaming host's StrmQt
+answers time requests on UDP 8339 (`TimeService`): the four times of NTP, in
+48-byte datagrams, with the host's half on `CLOCK_MONOTONIC`. That is the clock
+Sunshine stamps each captured frame with, so a frame's RTP timestamp and the
+host's clock are one timeline, and a TV that knows its offset from that clock
+knows when on the host every frame was captured. It is answered on a thread of
+its own, with the kernel's receive time where it gives one, because on the GUI
+thread every reply would carry whatever the interface was doing. The port is in
+`GET /api/strmlight/host` and the discovery reply as `timePort`. A reply is never
+larger than its request and only this network is answered, at a ration per
+sender, so it amplifies nothing. StrmLights answer the same requests, so two TVs
+can time each other and check the host's figures around the triangle
+(StrmLight's `docs/synchronized-playback.md`).
+
 **No tray icon.** The host's `sunshine.conf` turns off Sunshine's tray icon
 (`system_tray = disabled`): the host shares the user's session bus, so the
 icon would otherwise sit in the desktop's system tray.
@@ -907,7 +921,7 @@ icon would otherwise sit in the desktop's system tray.
 **StrmQt's ports are 8330–8356.** Sunshine's ports are fixed offsets from one
 base, and the host's base is 8335: 8330 (HTTPS), 8335 (HTTP), 8336 (its web
 page), UDP 8344–8348 (the stream) and 8356 (RTSP), leaving 8337 and 8338 for
-the two remotes. 0.9.0's base, 48989, was inside the range Linux lends to
+the two remotes and UDP 8339 for the host's clock. 0.9.0's base, 48989, was inside the range Linux lends to
 outgoing connections (32768 and up by default, 10240 and up on some
 distributions), and a Sunshine started while one of its ports was lent, to an
 `adb connect` for instance, ran with no stream. A set-up or restart moves a host

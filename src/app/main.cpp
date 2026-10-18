@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "WindowFocusKeeper.h"
+#include "platform/streaming/HostFiles.h"
 #include "platform/streaming/StreamingHost.h"
 #include "input/FocusNavigator.h"
 #include <QQuickWindow>
@@ -24,6 +25,7 @@
 #include "music/MusicPlayback.h"
 #include "remote/DiscoveryResponder.h"
 #include "remote/HostLink.h"
+#include "remote/TimeService.h"
 #include "remote/WebRemoteController.h"
 #include "remote/WebRemoteServer.h"
 #include "core/Settings.h"
@@ -86,13 +88,18 @@ int main(int argc, char *argv[])
     // it, takes codes typed into the desktop StrmQt, and gives its Sunshine
     // the same code; the desktop StrmQt passes codes on to it.
     strmqt::HostLink hostLink;
-    strmqt::DiscoveryResponder discovery([&app, &streamingHost] {
-        return QJsonObject{
+    // The host's clock, which StrmLights playing together line up on.
+    strmqt::TimeService timeService;
+    strmqt::DiscoveryResponder discovery([&app, &streamingHost, &timeService] {
+        QJsonObject reply{
             {QStringLiteral("name"), QSysInfo::machineHostName()},
             {QStringLiteral("remotePort"), app.settings()->webRemotePort()},
             {QStringLiteral("sunshinePort"), streamingHost.port()},
             {QStringLiteral("fingerprint"), app.webRemote()->certFingerprint()},
         };
+        if (timeService.isRunning())
+            reply.insert(QStringLiteral("timePort"), timeService.port());
+        return reply;
     });
     if (app.settings()->isStreamingHostInstance()) {
         app.webRemote()->setSunshinePairing([&streamingHost](const QString &code) {
@@ -101,7 +108,12 @@ int main(int argc, char *argv[])
         // A StrmLight streams only from the Sunshine this StrmQt vouches for,
         // with the settings it gives, and this StrmQt keeps nothing but
         // StrmLights paired with it.
-        app.webRemote()->setStrmLightHost([&streamingHost] { return streamingHost.strmLightHost(); });
+        app.webRemote()->setStrmLightHost([&streamingHost, &timeService] {
+            QJsonObject host = streamingHost.strmLightHost();
+            if (timeService.isRunning())
+                host.insert(QStringLiteral("timePort"), timeService.port());
+            return host;
+        });
         // KWin keeps the screen's scale; set again in case its folder is new.
         QTimer::singleShot(3 * 1000, &streamingHost, &strmqt::StreamingHost::applyScale);
         auto *pairingCheck = new QTimer(&app);
@@ -109,6 +121,7 @@ int main(int argc, char *argv[])
         pairingCheck->start(60 * 1000);
         QTimer::singleShot(15 * 1000, &streamingHost, &strmqt::StreamingHost::checkPairing);
         hostLink.listen([&app](const QString &code) { return app.webRemote()->pairStrmLight(code); });
+        timeService.start(quint16(strmqt::streaming::kTimePort));
         discovery.start(quint16(app.settings()->webRemotePort()));
     } else {
         app.webRemote()->setHostLink(&hostLink);
