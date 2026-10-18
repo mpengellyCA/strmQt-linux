@@ -214,6 +214,12 @@ void WebRemoteController::setStrmLightHost(std::function<QJsonObject()> host)
         m_server->setStrmLightHost(std::move(host));
 }
 
+void WebRemoteController::setStrmLightSync(std::function<QJsonObject(const QString &, const QJsonObject &)> sync)
+{
+    if (m_server)
+        m_server->setStrmLightSync(std::move(sync));
+}
+
 QString WebRemoteController::certFingerprint() const
 {
     return m_certFingerprint;

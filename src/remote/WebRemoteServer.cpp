@@ -593,6 +593,11 @@ void WebRemoteServer::setStrmLightHost(std::function<QJsonObject()> host)
     m_strmLightHost = std::move(host);
 }
 
+void WebRemoteServer::setStrmLightSync(std::function<QJsonObject(const QString &, const QJsonObject &)> sync)
+{
+    m_strmLightSync = std::move(sync);
+}
+
 void WebRemoteServer::setCodeGeneratorForTests(std::function<QString()> generate)
 {
     m_codeGenerator = std::move(generate);
@@ -1039,6 +1044,21 @@ bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
 
     if (!post)
         return false;
+
+    // A paired StrmLight that is streaming, every second or so; see
+    // setStrmLightSync.
+    if (path == QLatin1String("/api/strmlight/sync") && m_strmLightSync) {
+        const QByteArray auth = req.headers.value("authorization");
+        const QString device = auth.startsWith("Bearer ")
+            ? m_deviceByHash.value(tokenHash(QString::fromUtf8(auth.mid(7)).trimmed()))
+            : QString();
+        if (device.isEmpty()) {
+            sendError(socket, 401, QStringLiteral("Unauthorized"));
+            return true;
+        }
+        sendJson(socket, 200, m_strmLightSync(device, body));
+        return true;
+    }
 
     if (path == QLatin1String("/api/play")) {
         handleApiPlay(socket, body);

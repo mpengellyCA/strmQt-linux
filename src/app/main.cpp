@@ -25,6 +25,7 @@
 #include "music/MusicPlayback.h"
 #include "remote/DiscoveryResponder.h"
 #include "remote/HostLink.h"
+#include "remote/PlayTogether.h"
 #include "remote/TimeService.h"
 #include "remote/WebRemoteController.h"
 #include "remote/WebRemoteServer.h"
@@ -39,6 +40,7 @@
 #include "input/SkipKeyFilter.h"
 
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
@@ -90,6 +92,10 @@ int main(int argc, char *argv[])
     strmqt::HostLink hostLink;
     // The host's clock, which StrmLights playing together line up on.
     strmqt::TimeService timeService;
+    // How far behind the host they play, so they are heard as one.
+    strmqt::PlayTogether playTogether;
+    QElapsedTimer playTogetherClock;
+    playTogetherClock.start();
     strmqt::DiscoveryResponder discovery([&app, &streamingHost, &timeService] {
         QJsonObject reply{
             {QStringLiteral("name"), QSysInfo::machineHostName()},
@@ -113,6 +119,10 @@ int main(int argc, char *argv[])
             if (timeService.isRunning())
                 host.insert(QStringLiteral("timePort"), timeService.port());
             return host;
+        });
+        app.webRemote()->setStrmLightSync([&playTogether, &playTogetherClock](const QString &device,
+                                                                              const QJsonObject &report) {
+            return playTogether.report(device, report, playTogetherClock.elapsed());
         });
         // KWin keeps the screen's scale; set again in case its folder is new.
         QTimer::singleShot(3 * 1000, &streamingHost, &strmqt::StreamingHost::applyScale);

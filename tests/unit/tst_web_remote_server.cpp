@@ -57,6 +57,7 @@ private slots:
     void codeDiesAfterFiveWrongGuesses();
     void strmLightWaitsUntilItsCodeIsTypedIn();
     void strmLightIsToldWhichSunshineToTrust();
+    void aStreamingStrmLightIsToldHowFarBehindToPlay();
     void severalStrmLightsShareAHost();
     void strmLightCodeIsForAStrmLightOnly();
     void strmLightPollingAfterATypoIsNotGuessing();
@@ -668,6 +669,40 @@ void WebRemoteServerTest::strmLightIsToldWhichSunshineToTrust()
     const auto paired = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"2580","name":"Other phone"})");
     QCOMPARE(paired.status, 200);
     QVERIFY(!paired.json().contains(QStringLiteral("sunshineFingerprint")));
+}
+
+void WebRemoteServerTest::aStreamingStrmLightIsToldHowFarBehindToPlay()
+{
+    QStringList devices;
+    m_server->setStrmLightSync([&devices](const QString &device, const QJsonObject &report) {
+        devices << device;
+        return QJsonObject{{QStringLiteral("delayMs"), report.value(QStringLiteral("latencyMs")).toInt() + 10}};
+    });
+    const auto cleanup = qScopeGuard([this] { m_server->setStrmLightSync({}); });
+    m_settings->setWebRemoteRequirePin(false);
+    const QString phone = pairPhone();
+    m_http->setToken(phone);
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"7171"})").status, 200);
+    const QByteArray reply = strmLightAttempt("7171");
+    const QString token = QJsonDocument::fromJson(reply.mid(reply.indexOf("\r\n\r\n") + 4))
+                              .object()
+                              .value(QStringLiteral("token"))
+                              .toString();
+    QVERIFY(!token.isEmpty());
+
+    m_http->setToken(token);
+    const auto answer = m_http->post(QStringLiteral("/api/strmlight/sync"), R"({"latencyMs":40})");
+    QCOMPARE(answer.status, 200);
+    QCOMPARE(answer.json().value(QStringLiteral("delayMs")).toInt(), 50);
+    QCOMPARE(devices.size(), 1);
+    QVERIFY(!devices.first().isEmpty());
+
+    // Only a paired device, by its token, with the PIN setting off too.
+    m_http->setToken(QString());
+    QCOMPARE(m_http->post(QStringLiteral("/api/strmlight/sync"), R"({"latencyMs":40})").status, 401);
+    m_http->setToken(QStringLiteral("not-a-token"));
+    QCOMPARE(m_http->post(QStringLiteral("/api/strmlight/sync"), R"({"latencyMs":40})").status, 401);
+    QCOMPARE(devices.size(), 1);
 }
 
 void WebRemoteServerTest::severalStrmLightsShareAHost()

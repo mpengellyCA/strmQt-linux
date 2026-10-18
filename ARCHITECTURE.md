@@ -914,6 +914,15 @@ sender, so it amplifies nothing. StrmLights answer the same requests, so two TVs
 can time each other and check the host's figures around the triangle
 (StrmLight's `docs/synchronized-playback.md`).
 
+How far behind the host they play is the host's to say (`PlayTogether`). Each
+StrmLight that is streaming posts its own latency, host to speaker, to
+`POST /api/strmlight/sync` about once a second, and every one is answered the
+same delay: the slowest one's latency plus a margin, or 0 for a TV alone, which
+then plays as soon as it can, as before. The delay rises at once, because a TV
+that cannot keep up is heard, and falls only by a clear step, so a wavering
+latency does not move every TV's sound. It lives on the host because only the
+host sees every TV; a TV that stops reporting is forgotten after five seconds.
+
 **No tray icon.** The host's `sunshine.conf` turns off Sunshine's tray icon
 (`system_tray = disabled`): the host shares the user's session bus, so the
 icon would otherwise sit in the desktop's system tray.
