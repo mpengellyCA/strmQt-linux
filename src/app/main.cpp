@@ -46,6 +46,7 @@
 #include <QTimer>
 #include <QStringList>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QSysInfo>
 #include <QUrl>
 #include <QGuiApplication>
@@ -130,7 +131,11 @@ int main(int argc, char *argv[])
             // KWin sends Sunshine a frame only when the screen changes, so a
             // TV that joins while it is still has no picture (green or black)
             // until something moves. Drawing it again gives every session one.
-            if (playTogether.tvs(now) > before) {
+            // Once is not always enough: the TV's first report can come before
+            // Sunshine's session for it is up, so it is drawn again for as long
+            // as the TV says it has no picture (StrmLight 0.9.4 and newer).
+            const bool noPicture = report.value(QStringLiteral("picture")) == QJsonValue(false);
+            if (noPicture || playTogether.tvs(now) > before) {
                 for (QWindow *window : QGuiApplication::topLevelWindows()) {
                     if (auto *quickWindow = qobject_cast<QQuickWindow *>(window))
                         quickWindow->update();
