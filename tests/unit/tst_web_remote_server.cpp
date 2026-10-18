@@ -57,6 +57,7 @@ private slots:
     void codeDiesAfterFiveWrongGuesses();
     void strmLightWaitsUntilItsCodeIsTypedIn();
     void strmLightIsToldWhichSunshineToTrust();
+    void aNewStrmLightReplacesTheOnePairedBefore();
     void strmLightCodeIsForAStrmLightOnly();
     void strmLightPollingAfterATypoIsNotGuessing();
     void strmLightIsHeldToFiftyTriesIn95Seconds();
@@ -667,6 +668,46 @@ void WebRemoteServerTest::strmLightIsToldWhichSunshineToTrust()
     const auto paired = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"2580","name":"Other phone"})");
     QCOMPARE(paired.status, 200);
     QVERIFY(!paired.json().contains(QStringLiteral("sunshineFingerprint")));
+}
+
+void WebRemoteServerTest::aNewStrmLightReplacesTheOnePairedBefore()
+{
+    m_settings->setWebRemoteRequirePin(true);
+    const QString phone = pairPhone();
+    const auto pairStrmLight = [this, &phone](const QByteArray &code, const QByteArray &name) {
+        m_http->setToken(phone);
+        const QByteArray body = R"({"code":")" + code + R"("})";
+        if (m_http->post(QStringLiteral("/api/auth/strmlight"), body).status != 200)
+            return QString();
+        const QByteArray reply = strmLightAttempt(code, name);
+        return QJsonDocument::fromJson(reply.mid(reply.indexOf("\r\n\r\n") + 4))
+            .object()
+            .value(QStringLiteral("token"))
+            .toString();
+    };
+    const QString den = pairStrmLight("4141", "Den");
+    QVERIFY(!den.isEmpty());
+    const QString loft = pairStrmLight("4242", "Loft");
+    QVERIFY(!loft.isEmpty());
+
+    // One StrmLight at a time: the Den's is gone, the phone stays.
+    QStringList strmLights;
+    bool phoneListed = false;
+    for (const QVariant &device : m_server->pairedDevices()) {
+        const QVariantMap map = device.toMap();
+        if (map.value(QStringLiteral("kind")).toString() == QStringLiteral("strmlight"))
+            strmLights << map.value(QStringLiteral("name")).toString();
+        else
+            phoneListed = true;
+    }
+    QCOMPARE(strmLights, QStringList{QStringLiteral("Loft")});
+    QVERIFY(phoneListed);
+    m_http->setToken(den);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 401);
+    m_http->setToken(loft);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
+    m_http->setToken(phone);
+    QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
 }
 
 void WebRemoteServerTest::strmLightCodeIsForAStrmLightOnly()

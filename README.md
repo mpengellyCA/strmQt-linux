@@ -115,6 +115,10 @@ Only StrmLight can watch the streaming host. A plain Moonlight cannot pair with 
 StrmLight in turn streams only from the Sunshine its StrmQt vouches for, never from a
 plain Sunshine.
 
+The streaming host serves one StrmLight at a time, and a StrmLight one StrmQt: pairing a
+second TV replaces the first, and a TV paired with another StrmQt forgets the one before.
+The host's Sunshine keeps out of the desktop's system tray.
+
 The streaming host is not in the Flatpak, which cannot run systemd user services or KWin
 outside its sandbox; it says so instead of offering it.
 

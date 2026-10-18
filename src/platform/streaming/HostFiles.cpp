@@ -91,6 +91,9 @@ QString sunshineConf(const HostConfig &config)
         // monitor behind it without a permission dialog nobody could answer.
         QStringLiteral("capture = kwin"),
         QStringLiteral("upnp = off"),
+        // No icon in the desktop's tray: this Sunshine is StrmQt's, run
+        // and set up from its Settings, not something to click on.
+        QStringLiteral("system_tray = disabled"),
         QStringLiteral("origin_web_ui_allowed = %1")
             .arg(config.webUiOnNetwork ? QStringLiteral("lan") : QStringLiteral("pc")),
         QStringLiteral("file_apps = %1/apps.json").arg(dir),

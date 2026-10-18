@@ -650,7 +650,17 @@ void StreamingHost::connectApi()
                 m_pinBaselineKnown = true;
             } else if (hasNewDevice(m_pinBaseline, devices)) {
                 qCInfo(logApp) << "streaming host: a StrmLight paired with Sunshine";
-                setPairingMessage(tr("Paired a StrmLight."), false);
+                const QStringList before = replaced(m_pinBaseline, devices);
+                for (const QString &uuid : before) {
+                    if (m_replacing.contains(uuid))
+                        continue;
+                    qCInfo(logApp) << "streaming host: unpairing the StrmLight the new one replaces";
+                    m_replacing << uuid;
+                    m_api->unpair(uuid);
+                }
+                setPairingMessage(before.isEmpty() ? tr("Paired a StrmLight.")
+                                                   : tr("Paired a StrmLight. It replaces the one paired before."),
+                                  false);
                 m_pendingPin.clear();
                 m_pinTimer->stop();
             }
@@ -702,6 +712,13 @@ void StreamingHost::connectApi()
                                   false);
             else
                 qCWarning(logApp) << "streaming host: could not unpair a device that is not a StrmLight:" << error;
+            m_api->fetch();
+            return;
+        }
+        if (m_replacing.removeAll(uuid) > 0) {
+            // "Paired a StrmLight. It replaces…" stays up.
+            if (!error.isEmpty())
+                qCWarning(logApp) << "streaming host: could not unpair the StrmLight a new one replaced:" << error;
             m_api->fetch();
             return;
         }
@@ -785,6 +802,17 @@ QStringList StreamingHost::strangers(const QVariantList &devices)
         const QVariantMap entry = device.toMap();
         if (entry.value(QStringLiteral("name")).toString() != QLatin1String(kStrmLightDevice))
             uuids << entry.value(QStringLiteral("uuid")).toString();
+    }
+    return uuids;
+}
+
+QStringList StreamingHost::replaced(const QStringList &before, const QVariantList &devices)
+{
+    QStringList uuids;
+    for (const QVariant &device : devices) {
+        const QString uuid = device.toMap().value(QStringLiteral("uuid")).toString();
+        if (before.contains(uuid))
+            uuids << uuid;
     }
     return uuids;
 }
