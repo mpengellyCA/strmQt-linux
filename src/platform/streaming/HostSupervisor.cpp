@@ -181,10 +181,12 @@ bool HostSupervisor::runAll(const QList<QStringList> &commands, const Service &s
             process->kill();
             process->waitForFinished(1000);
         }
+        const QString why = process->error() == QProcess::FailedToStart ? process->errorString()
+                                                                         : QStringLiteral("failed");
         delete process;
         if (!ok) {
             qCWarning(logApp).noquote() << "host:" << service.name << "did not start:"
-                                        << command.first() << "failed";
+                                        << command.first() << why;
             return false;
         }
     }
@@ -207,11 +209,21 @@ void HostSupervisor::start()
         }
         QProcess *process = newProcess(service, this);
         const QString name = service.name;
-        connect(process, &QProcess::finished, this, [this, name] { ended(name); });
+        connect(process, &QProcess::finished, this, [this, name](int code, QProcess::ExitStatus status) {
+            qCWarning(logApp).noquote() << "host:" << name
+                                        << (status == QProcess::CrashExit ? QStringLiteral("crashed")
+                                                                          : QStringLiteral("exited with %1").arg(code));
+            ended(name);
+        });
         m_processes << process;
         qCInfo(logApp).noquote() << "host: starting" << name;
         process->start(service.command.first(), service.command.mid(1));
-        if (!process->waitForStarted(kWaitMs) || !runAll(service.after, service)) {
+        if (!process->waitForStarted(kWaitMs)) {
+            qCWarning(logApp).noquote() << "host:" << name << "did not start:" << process->errorString();
+            ended(name);
+            return;
+        }
+        if (!runAll(service.after, service)) {
             ended(name);
             return;
         }
