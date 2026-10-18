@@ -881,6 +881,17 @@ user's runtime directory, open to this user alone; with no host running, the
 desktop arms its own remote. The paired remotes are shared through the settings
 file, re-read every 3 s, so a device removed in either StrmQt is out of both.
 
+**Only StrmLight streams, and only from its own StrmQt.** The host's Sunshine
+pairs nothing StrmQt did not pair: Settings has no PIN pad for a plain Moonlight,
+the Sunshine sign-in is StrmQt's alone, and StrmQt names every pairing it makes
+`StrmLight` (Sunshine takes the name from whoever enters the PIN through its API).
+Any other paired device, such as a Moonlight paired by 0.9.0's PIN pad, is
+unpaired as soon as a listing shows it; the host's StrmQt lists every minute.
+The other direction is the certificate: the answer that pairs a StrmLight, and
+`GET /api/strmlight/host` for a paired one, give the SHA-256 of the host
+Sunshine's certificate over the remote's pinned TLS. StrmLight compares it with
+the certificate Moonlight pinned when it paired, and streams from no other.
+
 **The streaming host's sound is on a PipeWire of its own.** While it streams,
 Sunshine makes the output it captures the default one (its virtual sink, or
 `audio_sink`), so on the desktop's PipeWire every program's sound would go to the

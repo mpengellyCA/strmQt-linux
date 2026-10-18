@@ -1815,8 +1815,7 @@ FocusScope {
                         }
                     }
 
-                    // ── Pairing: Moonlight shows a PIN, it is typed here ──
-                    property string pin: ""
+                    // ── Pairing: StrmLights only, each with its code under Web Remote ──
                     readonly property bool pairingShown: streamingHostPanel.looked && streamingHostPanel.present
                                                          && streamingHostPanel.host.installed
                                                          && streamingHostPanel.host.pairingReachable
@@ -1843,84 +1842,10 @@ FocusScope {
 
                     SettingsSections.SectionNote {
                         width: parent.width
-                        visible: streamingHostPanel.pairingShown && streamingHostPanel.host.devices.length === 0
-                        text: qsTr("No device is paired. A StrmLight pairs with its code under Web Remote. Plain Moonlight: add this computer by its address and port %1; it shows a PIN to type here.")
-                              .arg(streamingHostPanel.present ? streamingHostPanel.host.port : 0)
-                    }
-
-                    // The PIN, by buttons: the host has no keyboard, and a
-                    // remote or a controller can press these.
-                    SettingsSections.SettingRow {
-                        width: parent.width
                         visible: streamingHostPanel.pairingShown
-                                 && (streamingHostPanel.host.requests.length > 0 || !streamingHostPanel.host.requestsListed)
-                        label: qsTr("PIN from the TV")
-                        hint: streamingHostPanel.pin.length > 0 ? streamingHostPanel.pin : qsTr("Four digits.")
-
-                        Row {
-                            spacing: Theme.spacingTight / 2
-
-                            Repeater {
-                                model: 10
-
-                                StrmButton {
-                                    required property int index
-
-                                    objectName: "streamingHostDigit" + index
-                                    text: String(index)
-                                    enabled: streamingHostPanel.pin.length < 4
-                                    onClicked: streamingHostPanel.pin += String(index)
-                                }
-                            }
-
-                            StrmButton {
-                                text: qsTr("Clear")
-                                enabled: streamingHostPanel.pin.length > 0
-                                onClicked: streamingHostPanel.pin = ""
-                            }
-                        }
-                    }
-
-                    Repeater {
-                        model: streamingHostPanel.pairingShown ? streamingHostPanel.host.requests : []
-
-                        SettingsSections.SettingRow {
-                            required property var modelData
-                            required property int index
-
-                            width: parent.width
-                            label: modelData.name.length > 0 ? qsTr("%1 is asking to pair").arg(modelData.name)
-                                                             : qsTr("A device is asking to pair")
-                            hint: qsTr("Enter the PIN it is showing, then pair.")
-
-                            StrmButton {
-                                objectName: "streamingHostPair" + index
-                                text: qsTr("Pair")
-                                enabled: streamingHostPanel.pin.length === 4
-                                onClicked: {
-                                    streamingHostPanel.host.pair(modelData.id, streamingHostPanel.pin, modelData.name);
-                                    streamingHostPanel.pin = "";
-                                }
-                            }
-                        }
-                    }
-
-                    // A Sunshine that cannot say who is asking takes the PIN
-                    // alone and matches it to whoever is waiting.
-                    SettingsSections.SettingRow {
-                        width: parent.width
-                        visible: streamingHostPanel.pairingShown && !streamingHostPanel.host.requestsListed
-                        label: qsTr("Pair the device showing this PIN")
-                        hint: qsTr("Start pairing in Moonlight first.")
-
-                        StrmButton {
-                            text: qsTr("Pair")
-                            enabled: streamingHostPanel.pin.length === 4
-                            onClicked: {
-                                streamingHostPanel.host.pair("", streamingHostPanel.pin, "");
-                                streamingHostPanel.pin = "";
-                            }
-                        }
+                        text: streamingHostPanel.present && streamingHostPanel.host.devices.length === 0
+                              ? qsTr("No StrmLight is paired. A StrmLight pairs with the code it shows, under Pair a StrmLight above.")
+                              : qsTr("Only StrmLight can watch this computer. A plain Moonlight is refused.")
                     }
 
                     SettingsSections.SectionNote {

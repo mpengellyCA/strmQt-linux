@@ -112,14 +112,14 @@ void SunshineApi::pair(const QString &pairingId, const QString &pin, const QStri
 void SunshineApi::unpair(const QString &uuid)
 {
     if (!m_ready) {
-        emit unpaired(tr("Sunshine is not answering yet."));
+        emit unpaired(uuid, tr("Sunshine is not answering yet."));
         return;
     }
     const QJsonObject body{{QStringLiteral("uuid"), uuid}};
     QNetworkReply *reply = send("POST", QStringLiteral("/api/clients/unpair"), QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, uuid] {
         const QString failed = failure(reply);
-        emit unpaired(failed.isEmpty() ? errorIn(reply->readAll()) : failed);
+        emit unpaired(uuid, failed.isEmpty() ? errorIn(reply->readAll()) : failed);
     });
 }
 

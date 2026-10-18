@@ -39,6 +39,7 @@
 #include <QDebug>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QTimer>
 #include <QStringList>
 #include <QJsonObject>
 #include <QSysInfo>
@@ -95,9 +96,15 @@ int main(int argc, char *argv[])
     });
     if (app.settings()->isStreamingHostInstance()) {
         app.webRemote()->setSunshinePairing([&streamingHost](const QString &code) {
-            streamingHost.enterPinWhenAsked(code, QStringLiteral("StrmLight"),
-                                            strmqt::WebRemoteServer::kPairingCodeSeconds);
+            streamingHost.enterPinWhenAsked(code, strmqt::WebRemoteServer::kPairingCodeSeconds);
         });
+        // A StrmLight streams only from the Sunshine this StrmQt vouches for,
+        // and this StrmQt keeps nothing but StrmLights paired with it.
+        app.webRemote()->setSunshineFingerprint([&streamingHost] { return streamingHost.sunshineFingerprint(); });
+        auto *pairingCheck = new QTimer(&app);
+        QObject::connect(pairingCheck, &QTimer::timeout, &streamingHost, &strmqt::StreamingHost::checkPairing);
+        pairingCheck->start(60 * 1000);
+        QTimer::singleShot(15 * 1000, &streamingHost, &strmqt::StreamingHost::checkPairing);
         hostLink.listen([&app](const QString &code) { return app.webRemote()->pairStrmLight(code); });
         discovery.start(quint16(app.settings()->webRemotePort()));
     } else {

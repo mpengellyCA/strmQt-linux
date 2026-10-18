@@ -125,6 +125,8 @@ public:
     void setHostLink(HostLink *link) { m_hostLink = link; }
     // On the host, what gives Sunshine the code a StrmLight's remote was armed with.
     void setSunshinePairing(std::function<void(const QString &code)> pair) { m_sunshinePairing = std::move(pair); }
+    // On the host, the Sunshine a StrmLight may stream from (WebRemoteServer::setSunshineFingerprint).
+    void setSunshineFingerprint(std::function<QString()> fingerprint);
 
 signals:
     void enabledChanged();

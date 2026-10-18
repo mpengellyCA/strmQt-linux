@@ -588,6 +588,11 @@ void WebRemoteServer::setStrmLightCodeHandler(std::function<bool(const QString &
     m_strmLightCodeHandler = std::move(handler);
 }
 
+void WebRemoteServer::setSunshineFingerprint(std::function<QString()> fingerprint)
+{
+    m_sunshineFingerprint = std::move(fingerprint);
+}
+
 void WebRemoteServer::setCodeGeneratorForTests(std::function<QString()> generate)
 {
     m_codeGenerator = std::move(generate);
@@ -955,6 +960,18 @@ bool WebRemoteServer::dispatchApi(QSslSocket *socket, const HttpRequest &req)
             sendJson(socket, 200, currentStatusJson());
             return true;
         }
+        // Paired devices only, whatever the PIN setting: it says which
+        // Sunshine a StrmLight may stream from.
+        if (path == QLatin1String("/api/strmlight/host")) {
+            if (!isAuthorized(req)) {
+                sendError(socket, 401, QStringLiteral("Unauthorized"));
+                return true;
+            }
+            QJsonObject res;
+            res[QStringLiteral("sunshineFingerprint")] = m_sunshineFingerprint ? m_sunshineFingerprint() : QString();
+            sendJson(socket, 200, res);
+            return true;
+        }
         if (path == QLatin1String("/api/queue")) {
             sendJsonArray(socket, 200, currentQueueJson());
             return true;
@@ -1273,6 +1290,8 @@ void WebRemoteServer::handleApiAuthPin(QSslSocket *socket, const HttpRequest &re
         emit devicePaired(name, strmLight ? QStringLiteral("strmlight") : QStringLiteral("phone"));
         QJsonObject resp;
         resp[QStringLiteral("token")] = token;
+        if (strmLight && m_sunshineFingerprint)
+            resp[QStringLiteral("sunshineFingerprint")] = m_sunshineFingerprint();
         sendJson(socket, 200, resp);
         return;
     }

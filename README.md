@@ -104,7 +104,11 @@ Type it once, under **Settings → Web Remote → Pair a StrmLight** or on the p
 and both the picture and the remote are paired. From then on, opening StrmLight goes
 straight to StrmQt, and the TV's own remote drives it: arrows, OK, Back, play and pause go
 to StrmQt directly rather than as keys through the stream. Settings lists every paired
-phone, StrmLight and Moonlight device, each with Remove.
+phone and StrmLight, each with Remove.
+
+Only StrmLight can watch the streaming host. A plain Moonlight cannot pair with it, and
+StrmLight in turn streams only from the Sunshine its StrmQt vouches for, never from a
+plain Sunshine.
 
 The streaming host is not in the Flatpak, which cannot run systemd user services or KWin
 outside its sandbox; it says so instead of offering it.

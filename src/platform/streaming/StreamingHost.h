@@ -43,13 +43,8 @@ class StreamingHost : public QObject
     Q_PROPERTY(int port READ port NOTIFY configChanged)
     Q_PROPERTY(QString webUiAddress READ webUiAddress NOTIFY configChanged)
     // Pairing, through the host Sunshine's own API. Each entry of `devices`
-    // is {name, uuid}; each of `requests` is {id, name}: a Moonlight showing a
-    // PIN right now.
+    // is {name, uuid}, a StrmLight: nothing else may stay paired.
     Q_PROPERTY(QVariantList devices READ devices NOTIFY pairingChanged)
-    Q_PROPERTY(QVariantList requests READ requests NOTIFY pairingChanged)
-    // False for a Sunshine that cannot say who is asking: the PIN is then
-    // sent on its own and Sunshine matches it to whoever is waiting.
-    Q_PROPERTY(bool requestsListed READ requestsListed NOTIFY pairingChanged)
     Q_PROPERTY(bool pairingReachable READ pairingReachable NOTIFY pairingChanged)
     Q_PROPERTY(QString pairingMessage READ pairingMessage NOTIFY pairingChanged)
     Q_PROPERTY(bool pairingFailed READ pairingFailed NOTIFY pairingChanged)
@@ -99,8 +94,6 @@ public:
     int port() const { return m_config.port; }
     QString webUiAddress() const;
     QVariantList devices() const { return m_devices; }
-    QVariantList requests() const { return m_requests; }
-    bool requestsListed() const { return m_requestsListed; }
     bool pairingReachable() const { return m_pairingReachable; }
     QString pairingMessage() const { return m_pairingMessage; }
     bool pairingFailed() const { return m_pairingFailed; }
@@ -115,13 +108,20 @@ public:
     Q_INVOKABLE void remove();
     // Asks Sunshine for the paired devices and for who is asking to pair.
     Q_INVOKABLE void fetchPairing();
-    Q_INVOKABLE void pair(const QString &requestId, const QString &pin, const QString &name);
+    // The same, for the streaming host's own StrmQt, which has no Settings
+    // page open to ask: it refuses what is not a StrmLight from there.
+    void checkPairing();
     Q_INVOKABLE void unpair(const QString &uuid);
     // A StrmLight pairs its stream and its remote with one code: the code
     // typed for its remote is also its Moonlight PIN. This enters `pin` into
     // Sunshine as soon as a Moonlight is asking, trying every 2 s for
     // `seconds`, and quietly: a try with nobody asking is not a failure.
-    Q_INVOKABLE void enterPinWhenAsked(const QString &pin, const QString &name, int seconds);
+    // This is the only way anything is paired with the host's Sunshine.
+    Q_INVOKABLE void enterPinWhenAsked(const QString &pin, int seconds);
+    // The host Sunshine's certificate as lowercase hex SHA-256 of its DER
+    // form, which StrmLight compares with the one it paired with; empty
+    // before Sunshine has written it.
+    QString sunshineFingerprint() const;
     // Whom a PIN goes to now. False: nobody is asking yet, so wait. Otherwise
     // `requestId` is the request to answer, empty for a Sunshine that does
     // not list them (it then gives the PIN to whoever is waiting).
@@ -130,6 +130,14 @@ public:
     // as the same client, so Sunshine can give a PIN to an abandoned request
     // instead of the StrmLight's: only a new device in the list is success.
     static bool hasNewDevice(const QStringList &before, const QVariantList &devices);
+    // The name StrmQt gives each pairing it makes (enterPinWhenAsked). Only
+    // StrmQt can name one: Sunshine takes the name from whoever enters the
+    // PIN through its API, and only StrmQt has the API's sign-in.
+    static constexpr char kStrmLightDevice[] = "StrmLight";
+    // The uuids of `devices` that StrmQt did not pair for a StrmLight: a plain
+    // Moonlight, paired some other way (Settings had a PIN pad for one in
+    // 0.9.0). They are unpaired as soon as they are seen.
+    static QStringList strangers(const QVariantList &devices);
 
     // What this machine lacks for hosting, given what was found on it.
     static QStringList probeProblems(const Environment &environment);
@@ -205,13 +213,14 @@ private:
     bool m_pairingFailed = false;
     // enterPinWhenAsked(): empty when there is nothing to enter.
     QString m_pendingPin;
-    QString m_pendingPinName;
     qint64 m_pendingPinUntil = 0;
     bool m_pinInFlight = false;
     QTimer *m_pinTimer = nullptr;
     // The paired devices when the PIN was given; unknown until first listed.
     QStringList m_pinBaseline;
     bool m_pinBaselineKnown = false;
+    // Strangers being unpaired, so that each is asked once.
+    QStringList m_refusing;
 };
 
 } // namespace strmqt

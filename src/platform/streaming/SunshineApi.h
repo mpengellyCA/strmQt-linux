@@ -56,7 +56,7 @@ signals:
     void clientsFetched(const QList<strmqt::streaming::SunshineApi::Client> &clients);
     void pairingsFetched(const QList<strmqt::streaming::SunshineApi::Pairing> &pairings, bool listed);
     void paired(const QString &error);
-    void unpaired(const QString &error);
+    void unpaired(const QString &uuid, const QString &error);
     // The API did not answer: stopped, still starting, or the wrong password.
     void unreachable(const QString &reason);
 

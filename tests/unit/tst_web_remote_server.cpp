@@ -56,6 +56,7 @@ private slots:
     void requestWithPairingOffShowsNothing();
     void codeDiesAfterFiveWrongGuesses();
     void strmLightWaitsUntilItsCodeIsTypedIn();
+    void strmLightIsToldWhichSunshineToTrust();
     void strmLightCodeIsForAStrmLightOnly();
     void strmLightPollingAfterATypoIsNotGuessing();
     void strmLightIsHeldToFiftyTriesIn95Seconds();
@@ -623,6 +624,45 @@ void WebRemoteServerTest::strmLightWaitsUntilItsCodeIsTypedIn()
     QVERIFY(listed);
     m_http->setToken(token);
     QCOMPARE(m_http->get(QStringLiteral("/api/status")).status, 200);
+}
+
+void WebRemoteServerTest::strmLightIsToldWhichSunshineToTrust()
+{
+    const QString sunshine = QStringLiteral("14f04bd951e34c3fa35a09d06245b868c540bf1da58dada259de769e24e46a62");
+    m_server->setSunshineFingerprint([sunshine] { return sunshine; });
+    const auto cleanup = qScopeGuard([this] { m_server->setSunshineFingerprint({}); });
+    m_settings->setWebRemoteRequirePin(true);
+    const QString phone = pairPhone();
+    m_http->setToken(phone);
+    QCOMPARE(m_http->post(QStringLiteral("/api/auth/strmlight"), R"({"code":"6161"})").status, 200);
+
+    // In the answer that pairs it, over the remote's pinned certificate.
+    const QByteArray reply = strmLightAttempt("6161");
+    QCOMPARE(RemoteTestClient::statusOf(reply), 200);
+    const QJsonObject body = QJsonDocument::fromJson(reply.mid(reply.indexOf("\r\n\r\n") + 4)).object();
+    QCOMPARE(body.value(QStringLiteral("sunshineFingerprint")).toString(), sunshine);
+    const QString token = body.value(QStringLiteral("token")).toString();
+    QVERIFY(!token.isEmpty());
+
+    // And again whenever a paired one asks.
+    m_http->setToken(token);
+    const auto host = m_http->get(QStringLiteral("/api/strmlight/host"));
+    QCOMPARE(host.status, 200);
+    QCOMPARE(host.json().value(QStringLiteral("sunshineFingerprint")).toString(), sunshine);
+
+    // Not to anyone else, even with the PIN setting off.
+    m_settings->setWebRemoteRequirePin(false);
+    m_http->setToken(QString());
+    QCOMPARE(m_http->get(QStringLiteral("/api/strmlight/host")).status, 401);
+
+    // A phone pairs as before, and is not told.
+    m_server->cancelPairing();
+    m_nextCode = QStringLiteral("2580");
+    QVERIFY(m_server->showPairingCode());
+    m_http->setToken(QString());
+    const auto paired = m_http->post(QStringLiteral("/api/auth/pin"), R"({"pin":"2580","name":"Other phone"})");
+    QCOMPARE(paired.status, 200);
+    QVERIFY(!paired.json().contains(QStringLiteral("sunshineFingerprint")));
 }
 
 void WebRemoteServerTest::strmLightCodeIsForAStrmLightOnly()

@@ -4,6 +4,7 @@
 #include "platform/SecretsStore.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -12,6 +13,7 @@
 #include <QRandomGenerator>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSslCertificate>
 #include <QStandardPaths>
 #include <QTcpServer>
 #include <QTimer>
@@ -471,6 +473,17 @@ void StreamingHost::connectApi()
         QVariantList devices;
         for (const SunshineApi::Client &client : clients)
             devices << QVariantMap{{QStringLiteral("name"), client.name}, {QStringLiteral("uuid"), client.uuid}};
+        const QStringList refused = strangers(devices);
+        for (const QString &uuid : refused) {
+            if (m_refusing.contains(uuid))
+                continue;
+            qCInfo(logApp) << "streaming host: unpairing a device StrmQt did not pair for a StrmLight";
+            m_refusing << uuid;
+            m_api->unpair(uuid);
+        }
+        devices.removeIf([&refused](const QVariant &device) {
+            return refused.contains(device.toMap().value(QStringLiteral("uuid")).toString());
+        });
         if (!m_pendingPin.isEmpty()) {
             if (!m_pinBaselineKnown) {
                 m_pinBaseline.clear();
@@ -479,7 +492,7 @@ void StreamingHost::connectApi()
                 m_pinBaselineKnown = true;
             } else if (hasNewDevice(m_pinBaseline, devices)) {
                 qCInfo(logApp) << "streaming host: a StrmLight paired with Sunshine";
-                setPairingMessage(tr("Paired %1.").arg(m_pendingPinName), false);
+                setPairingMessage(tr("Paired a StrmLight."), false);
                 m_pendingPin.clear();
                 m_pinTimer->stop();
             }
@@ -523,7 +536,17 @@ void StreamingHost::connectApi()
         setPairingMessage(error.isEmpty() ? tr("Paired.") : tr("Pairing failed: %1").arg(error), !error.isEmpty());
         m_api->fetch();
     });
-    connect(m_api, &SunshineApi::unpaired, this, [this](const QString &error) {
+    connect(m_api, &SunshineApi::unpaired, this, [this](const QString &uuid, const QString &error) {
+        if (m_refusing.removeAll(uuid) > 0) {
+            if (error.isEmpty())
+                setPairingMessage(tr("Removed a device that was not a StrmLight: only a StrmLight paired with "
+                                     "its code can watch this computer."),
+                                  false);
+            else
+                qCWarning(logApp) << "streaming host: could not unpair a device that is not a StrmLight:" << error;
+            m_api->fetch();
+            return;
+        }
         setPairingMessage(error.isEmpty() ? tr("The device was removed.") : tr("Could not remove it: %1").arg(error),
                           !error.isEmpty());
         m_api->fetch();
@@ -553,11 +576,10 @@ void StreamingHost::fetchPairing()
     m_api->fetch();
 }
 
-void StreamingHost::pair(const QString &requestId, const QString &pin, const QString &name)
+void StreamingHost::checkPairing()
 {
     configureApi();
-    const QString label = name.trimmed().isEmpty() ? tr("TV") : name.trimmed();
-    m_api->pair(requestId, pin, label);
+    m_api->fetch(); // nothing, until Sunshine has written its certificate
 }
 
 void StreamingHost::unpair(const QString &uuid)
@@ -566,10 +588,9 @@ void StreamingHost::unpair(const QString &uuid)
     m_api->unpair(uuid);
 }
 
-void StreamingHost::enterPinWhenAsked(const QString &pin, const QString &name, int seconds)
+void StreamingHost::enterPinWhenAsked(const QString &pin, int seconds)
 {
     m_pendingPin = pin;
-    m_pendingPinName = name.trimmed().isEmpty() ? tr("StrmLight") : name.trimmed();
     m_pendingPinUntil = QDateTime::currentMSecsSinceEpoch() + qint64(seconds) * 1000;
     m_pinInFlight = false;
     m_pinBaselineKnown = false;
@@ -597,6 +618,26 @@ bool StreamingHost::pinTarget(bool requestsListed, const QVariantList &requests,
     if (requestId)
         *requestId = id;
     return true;
+}
+
+QStringList StreamingHost::strangers(const QVariantList &devices)
+{
+    QStringList uuids;
+    for (const QVariant &device : devices) {
+        const QVariantMap entry = device.toMap();
+        if (entry.value(QStringLiteral("name")).toString() != QLatin1String(kStrmLightDevice))
+            uuids << entry.value(QStringLiteral("uuid")).toString();
+    }
+    return uuids;
+}
+
+QString StreamingHost::sunshineFingerprint() const
+{
+    const QList<QSslCertificate> certificates =
+        QSslCertificate::fromPath(m_env.stateDir + QStringLiteral("/cert.pem"), QSsl::Pem);
+    if (certificates.isEmpty())
+        return {};
+    return QString::fromLatin1(certificates.constFirst().digest(QCryptographicHash::Sha256).toHex());
 }
 
 bool StreamingHost::hasNewDevice(const QStringList &before, const QVariantList &devices)
@@ -628,7 +669,7 @@ void StreamingHost::tryPendingPin()
         return;
     }
     m_pinInFlight = true;
-    m_api->pair(requestId, m_pendingPin, m_pendingPinName);
+    m_api->pair(requestId, m_pendingPin, QLatin1String(kStrmLightDevice));
 }
 
 void StreamingHost::setPairingMessage(const QString &text, bool failed)

@@ -3,6 +3,7 @@
 #include "platform/streaming/SunshineApi.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QProcess>
 #include <QStandardPaths>
@@ -298,6 +299,53 @@ private slots:
         QVERIFY(StreamingHost::hasNewDevice({}, {device("c")}));
     }
 
+    void onlyWhatStrmQtPairedForAStrmLightMayStay()
+    {
+        const auto device = [](const char *name, const char *uuid) {
+            return QVariant(QVariantMap{{QStringLiteral("name"), QString::fromLatin1(name)},
+                                        {QStringLiteral("uuid"), QString::fromLatin1(uuid)}});
+        };
+        // StrmQt names every pairing it makes; anything else is a plain
+        // Moonlight paired some other way, and is unpaired.
+        QVERIFY(StreamingHost::strangers({device("StrmLight", "a"), device("StrmLight", "b")}).isEmpty());
+        QCOMPARE(StreamingHost::strangers({device("StrmLight", "a"), device("TV", "b"), device("strmlight", "c")}),
+                 (QStringList{QStringLiteral("b"), QStringLiteral("c")}));
+        QCOMPARE(StreamingHost::strangers({device("", "d")}), QStringList{QStringLiteral("d")});
+        QVERIFY(StreamingHost::strangers({}).isEmpty());
+    }
+
+    void theSunshineVouchedForIsTheCertificateItWrote()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        StreamingHost host(env);
+        // Not run yet: nothing to vouch for.
+        QVERIFY(host.sunshineFingerprint().isEmpty());
+
+        // A certificate as Sunshine writes one (made with openssl for this
+        // test; a public certificate, no key).
+        const QByteArray certificate =
+            "-----BEGIN CERTIFICATE-----\n"
+            "MIIBnDCCAUOgAwIBAgIUCW9VxXoZCqX0OW5KYPo3fW0ZxxUwCgYIKoZIzj0EAwIw\n"
+            "IzEhMB8GA1UEAwwYU3Vuc2hpbmUgR2FtZXN0cmVhbSBIb3N0MCAXDTI2MTAxODAx\n"
+            "NTIzN1oYDzIxMjYwOTI0MDE1MjM3WjAjMSEwHwYDVQQDDBhTdW5zaGluZSBHYW1l\n"
+            "c3RyZWFtIEhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ99s3HEKhozVnj\n"
+            "5Cj64yZAs/aqtjUn8ZTpUhrEUJNSZaES4PaQ6wwoWyd/N3CsA4kzYJWJbXW6VXys\n"
+            "RtJowIqzo1MwUTAdBgNVHQ4EFgQUyfjZlQOgD2E3ZcfqYFuVf8xbmgYwHwYDVR0j\n"
+            "BBgwFoAUyfjZlQOgD2E3ZcfqYFuVf8xbmgYwDwYDVR0TAQH/BAUwAwEB/zAKBggq\n"
+            "hkjOPQQDAgNHADBEAiB0Heh4sfZt219Zo/ONW/4d6JqPx1Ek31Gz9AsLWu273AIg\n"
+            "CEnUNfQbC74kbcg9VWAZq62VgJZhJnbSVJ9yiZtuwpo=\n"
+            "-----END CERTIFICATE-----\n";
+        QVERIFY(QDir().mkpath(env.stateDir));
+        QFile file(env.stateDir + QStringLiteral("/cert.pem"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(certificate);
+        file.close();
+        // `openssl x509 -outform der | sha256sum`
+        QCOMPARE(host.sunshineFingerprint(),
+                 QStringLiteral("14f04bd951e34c3fa35a09d06245b868c540bf1da58dada259de769e24e46a62"));
+    }
+
     void sunshinesAnswersAreReadTolerantly()
     {
         const auto clients = SunshineApi::parseClients(
@@ -420,12 +468,7 @@ private slots:
         host.fetchPairing();
         QTRY_VERIFY2_WITH_TIMEOUT(host.pairingReachable(), qPrintable(host.pairingMessage()), 10000);
         QCOMPARE(host.devices().size(), 0);
-        QCOMPARE(host.requests().size(), 0);
-        qInfo() << "requests listed:" << host.requestsListed();
-        QSignalSpy pairing(&host, &StreamingHost::pairingChanged);
-        host.pair(QStringLiteral("00000000000000000000000000000000"), QStringLiteral("1234"), QStringLiteral("Nobody"));
-        QTRY_VERIFY_WITH_TIMEOUT(host.pairingFailed(), 10000);
-        qInfo() << host.pairingMessage();
+        QCOMPARE(host.sunshineFingerprint().size(), 64);
     }
 
 private:

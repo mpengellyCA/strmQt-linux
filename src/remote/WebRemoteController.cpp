@@ -208,6 +208,12 @@ int WebRemoteController::connectedClientsCount() const
     return m_server ? m_server->connectedClientsCount() : 0;
 }
 
+void WebRemoteController::setSunshineFingerprint(std::function<QString()> fingerprint)
+{
+    if (m_server)
+        m_server->setSunshineFingerprint(std::move(fingerprint));
+}
+
 QString WebRemoteController::certFingerprint() const
 {
     return m_certFingerprint;
