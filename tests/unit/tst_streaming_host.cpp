@@ -2,12 +2,15 @@
 #include "platform/streaming/StreamingHost.h"
 #include "platform/streaming/SunshineApi.h"
 
+#include <algorithm>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QScopeGuard>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -68,7 +71,7 @@ private slots:
             QVERIFY2(conf.contains(line), key);
         }
         QVERIFY(conf.contains(QStringLiteral("capture = kwin\n")));
-        QVERIFY(conf.contains(QStringLiteral("port = 48989\n")));
+        QVERIFY(conf.contains(QStringLiteral("port = 8335\n")));
     }
 
     void aNameCannotAddASettingOfItsOwn()
@@ -163,13 +166,39 @@ private slots:
 
     void aBusyPortMovesTheWholeRange()
     {
-        // 49010 is base 48989's RTSP port: one taken port rules the base out.
-        const auto busy = [](int port, bool udp) { return !(port == 49010 && !udp); };
-        QCOMPARE(freePortBase(busy), 49089);
-        QCOMPARE(freePortBase([](int, bool) { return true; }), 48989);
+        // 8356 is base 8335's RTSP port: one taken port rules the base out.
+        const auto busy = [](int port, bool udp) { return !(port == 8356 && !udp); };
+        QCOMPARE(freePortBase(busy), 8435);
+        QCOMPARE(freePortBase([](int, bool) { return true; }), 8335);
         QCOMPARE(freePortBase([](int, bool) { return false; }), 0);
-        const auto udpBusy = [](int port, bool udp) { return !(udp && port == 48989 + 9); };
-        QCOMPARE(freePortBase(udpBusy), 49089);
+        const auto udpBusy = [](int port, bool udp) { return !(udp && port == 8335 + 9); };
+        QCOMPARE(freePortBase(udpBusy), 8435);
+    }
+
+    void sunshineKeepsToStrmQtsBlockAndLeavesTheRemotesTheirs()
+    {
+        QList<int> ports = tcpPorts(kDefaultPort) + udpPorts(kDefaultPort);
+        std::sort(ports.begin(), ports.end());
+        QCOMPARE(ports.constFirst(), kBlockFirst);
+        QCOMPARE(ports.constLast(), kBlockLast);
+        QVERIFY(!ports.contains(8337)); // the desktop's remote
+        QVERIFY(!ports.contains(8338)); // the streaming host's
+        QCOMPARE(webUiPort(kDefaultPort), 8336);
+    }
+
+    void portsLinuxMayLendAreNoticed()
+    {
+        // The kernel's default range, and the one this kind of distribution sets.
+        QVERIFY(!portsLent(QStringLiteral("32768\t60999\n"), {}, kBlockFirst, kBlockLast));
+        QVERIFY(!portsLent(QStringLiteral("10240 65535"), {}, kBlockFirst, kBlockLast));
+        // 0.9.0's ports were inside the second.
+        QVERIFY(portsLent(QStringLiteral("10240 65535"), QStringLiteral("\n"), 48984, 49010));
+        QVERIFY(!portsLent(QStringLiteral("10240 65535"), QStringLiteral("48984-49010\n"), 48984, 49010));
+        // Reserved only in part is still lent.
+        QVERIFY(portsLent(QStringLiteral("1024 65535"), QStringLiteral("8330-8340,9000"), kBlockFirst, kBlockLast));
+        QVERIFY(!portsLent(QStringLiteral("1024 65535"), QStringLiteral("8000,8330-8356"), kBlockFirst, kBlockLast));
+        // Unreadable: nothing to say.
+        QVERIFY(!portsLent({}, {}, kBlockFirst, kBlockLast));
     }
 
     void theProbeSaysWhatIsMissing()
@@ -257,6 +286,38 @@ private slots:
         QVERIFY(host.failed());
         QVERIFY(host.message().contains(QStringLiteral("Failed to connect to bus")));
         QVERIFY(!host.busy());
+    }
+
+    void aRestartMovesA090HostOffItsPorts()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        {
+            StreamingHost first(env);
+            QSignalSpy settled(&first, &StreamingHost::settled);
+            first.setUp();
+            QVERIFY(settled.wait(5000));
+        }
+        // As 0.9.0 left it.
+        {
+            QSettings stored(env.stateDir + QStringLiteral("/host.ini"), QSettings::IniFormat);
+            stored.setValue(QStringLiteral("port"), kLegacyPort);
+        }
+        StreamingHost host(env);
+        QCOMPARE(host.port(), kLegacyPort);
+        host.refresh();
+        QVERIFY(host.installed());
+        QSignalSpy settled(&host, &StreamingHost::settled);
+        host.restart();
+        QVERIFY(settled.wait(5000));
+        // StrmQt's block, or a step above it when this machine already uses it.
+        QVERIFY(host.port() >= kDefaultPort && host.port() < kLegacyPort);
+        QVERIFY(read(env.stateDir + QStringLiteral("/sunshine.conf"))
+                    .contains(QStringLiteral("port = %1\n").arg(host.port())));
+        QCOMPARE(QSettings(env.stateDir + QStringLiteral("/host.ini"), QSettings::IniFormat)
+                     .value(QStringLiteral("port"))
+                     .toInt(),
+                 host.port());
     }
 
     void aMachineThatCannotHostIsToldWhyAndNothingIsWritten()

@@ -9,6 +9,17 @@
 
 namespace strmqt::streaming {
 
+// StrmQt's ports: Sunshine on base 8335 takes 8330 (HTTPS), 8335 (HTTP), 8336
+// (its web page), 8344-8348 (UDP, the stream) and 8356 (RTSP), leaving 8337
+// and 8338 for the desktop's remote and the streaming host's. Below every
+// distribution's range of ports lent to outgoing connections (32768 and up
+// by default, 10240 on some).
+inline constexpr int kDefaultPort = 8335;
+inline constexpr int kBlockFirst = 8330;
+inline constexpr int kBlockLast = 8356;
+// The base 0.9.0 chose, inside those ranges; a restart moves a host off it.
+inline constexpr int kLegacyPort = 48989;
+
 inline constexpr char kHostUnit[] = "strmqt-host.service";
 inline constexpr char kSunshineUnit[] = "strmqt-host-sunshine.service";
 inline constexpr char kAudioUnit[] = "strmqt-host-audio.service";
@@ -52,7 +63,7 @@ struct HostConfig
     int width = 3840;
     int height = 2160;
     // Sunshine's base port; every other port is an offset from it.
-    int port = 48989;
+    int port = kDefaultPort;
     QString name = QStringLiteral("StrmQt");
     // Sunshine's own web page: this machine only, unless switched on.
     bool webUiOnNetwork = false;
@@ -89,7 +100,13 @@ int webUiPort(int base);
 // free; 0 when none of `tries` is. A second Sunshine on a machine that already
 // runs one cannot take the defaults, and one busy port is enough to leave it
 // running with no stream.
-int freePortBase(const std::function<bool(int port, bool udp)> &isFree, int first = 48989,
+int freePortBase(const std::function<bool(int port, bool udp)> &isFree, int first = kDefaultPort,
                  int tries = 20, int step = 100);
+
+// Whether Linux may lend a port in [first, last] to an outgoing connection: it
+// is inside ip_local_port_range and not in ip_local_reserved_ports (the two
+// files' text). A Sunshine started while one of its ports is lent can't bind
+// it, and runs without a stream.
+bool portsLent(const QString &localRange, const QString &reserved, int first, int last);
 
 } // namespace strmqt::streaming

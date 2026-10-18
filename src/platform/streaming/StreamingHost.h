@@ -180,6 +180,11 @@ private:
     void connectApi();
     void configureApi();
     void setPairingMessage(const QString &text, bool failed);
+    // 0.9.0 put Sunshine on base 48989, where Linux lends ports to outgoing
+    // connections; a set-up or restart moves it to StrmQt's block.
+    void leaveLegacyPort();
+    // Adds the command that reserves the ports when Linux may lend them.
+    void notePortsLent();
     void tryPendingPin();
 
     Environment m_env;

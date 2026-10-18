@@ -1,5 +1,7 @@
 #include "HostFiles.h"
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -318,6 +320,33 @@ int freePortBase(const std::function<bool(int, bool)> &isFree, int first, int tr
             return base;
     }
     return 0;
+}
+
+bool portsLent(const QString &localRange, const QString &reserved, int first, int last)
+{
+    const QStringList bounds = localRange.simplified().split(QLatin1Char(' '));
+    if (bounds.size() != 2)
+        return false;
+    bool lowOk = false;
+    bool highOk = false;
+    const int low = bounds.at(0).toInt(&lowOk);
+    const int high = bounds.at(1).toInt(&highOk);
+    if (!lowOk || !highOk)
+        return false;
+    QList<std::pair<int, int>> kept;
+    for (const QString &entry : reserved.simplified().split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const QStringList ends = entry.trimmed().split(QLatin1Char('-'));
+        const int from = ends.at(0).toInt();
+        kept.append({from, ends.size() > 1 ? ends.at(1).toInt() : from});
+    }
+    for (int port = std::max(first, low); port <= std::min(last, high); ++port) {
+        const bool isKept = std::any_of(kept.cbegin(), kept.cend(), [port](const std::pair<int, int> &range) {
+            return port >= range.first && port <= range.second;
+        });
+        if (!isKept)
+            return true;
+    }
+    return false;
 }
 
 } // namespace strmqt::streaming

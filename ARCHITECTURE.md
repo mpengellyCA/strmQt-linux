@@ -892,6 +892,17 @@ The other direction is the certificate: the answer that pairs a StrmLight, and
 Sunshine's certificate over the remote's pinned TLS. StrmLight compares it with
 the certificate Moonlight pinned when it paired, and streams from no other.
 
+**StrmQt's ports are 8330–8356.** Sunshine's ports are fixed offsets from one
+base, and the host's base is 8335: 8330 (HTTPS), 8335 (HTTP), 8336 (its web
+page), UDP 8344–8348 (the stream) and 8356 (RTSP), leaving 8337 and 8338 for
+the two remotes. 0.9.0's base, 48989, was inside the range Linux lends to
+outgoing connections (32768 and up by default, 10240 and up on some
+distributions), and a Sunshine started while one of its ports was lent, to an
+`adb connect` for instance, ran with no stream. A set-up or restart moves a host
+off 48989, and StrmLight follows it by discovery. Set-up also checks the range
+the kernel lends and, if the block is inside it, prints the
+`ip_local_reserved_ports` line that keeps it for StrmQt.
+
 **The streaming host's sound is on a PipeWire of its own.** While it streams,
 Sunshine makes the output it captures the default one (its virtual sink, or
 `audio_sink`), so on the desktop's PipeWire every program's sound would go to the

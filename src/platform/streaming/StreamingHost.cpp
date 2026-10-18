@@ -3,6 +3,8 @@
 #include "core/Log.h"
 #include "platform/SecretsStore.h"
 
+#include <algorithm>
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -51,6 +53,12 @@ bool portFree(int port, bool udp)
     }
     QTcpServer server;
     return server.listen(QHostAddress::Any, static_cast<quint16>(port));
+}
+
+QString readProc(const char *path)
+{
+    QFile file(QString::fromLatin1(path));
+    return file.open(QIODevice::ReadOnly) ? QString::fromLatin1(file.readAll()) : QString();
 }
 
 } // namespace
@@ -313,8 +321,9 @@ void StreamingHost::setUp()
         setMessage(m_problems.join(QLatin1Char(' ')), true);
         return;
     }
-    // Chosen once, at the first set-up, and kept: clients remember the port
-    // they paired with.
+    // Chosen at the first set-up and kept, apart from a move off 0.9.0's
+    // base: a StrmLight follows the host to a new port by discovery, but
+    // there is no reason to make it.
     if (!m_installed) {
         const int base = streaming::freePortBase(portFree, m_config.port);
         if (base == 0) {
@@ -325,9 +334,12 @@ void StreamingHost::setUp()
             m_config.port = base;
             emit configChanged();
         }
+    } else {
+        leaveLegacyPort();
     }
     if (!writeFiles())
         return;
+    notePortsLent();
     QList<Step> steps{
         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, {}},
         {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("enable"), m_env.hostUnit, m_env.sunshineUnit}, {}},
@@ -363,13 +375,42 @@ void StreamingHost::restart()
     if (m_busy || !m_installed)
         return;
     // The files are written again first: a newer StrmQt may write them
-    // differently (its unit gained STRMQT_STREAMING_HOST), and a restart is
-    // when that should take effect.
+    // differently (its unit gained STRMQT_STREAMING_HOST; its ports moved),
+    // and a restart is when that should take effect.
+    leaveLegacyPort();
     if (!writeFiles())
         return;
+    notePortsLent();
     run({{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, {}},
          {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}}},
         tr("The streaming host restarted."));
+}
+
+void StreamingHost::leaveLegacyPort()
+{
+    if (m_config.port != streaming::kLegacyPort)
+        return;
+    const int base = streaming::freePortBase(portFree);
+    if (base == 0)
+        return; // stays where it is, which works
+    qCInfo(logApp) << "streaming host: Sunshine moves from base port" << m_config.port << "to" << base;
+    m_config.port = base;
+    emit configChanged();
+}
+
+void StreamingHost::notePortsLent()
+{
+    const int first = std::min(m_config.port - 5, streaming::kBlockFirst);
+    const int last = std::max(m_config.port + 21, streaming::kBlockLast);
+    if (!streaming::portsLent(readProc("/proc/sys/net/ipv4/ip_local_port_range"),
+                              readProc("/proc/sys/net/ipv4/ip_local_reserved_ports"), first, last))
+        return;
+    m_notes << tr("This computer may lend ports %1 to %2 to other programs' connections, and Sunshine "
+                  "can't start its stream while one is lent. To keep them for StrmQt, run: "
+                  "echo 'net.ipv4.ip_local_reserved_ports = %1-%2' | sudo tee /etc/sysctl.d/60-strmqt.conf "
+                  "&& sudo sysctl --system")
+                   .arg(first)
+                   .arg(last);
 }
 
 void StreamingHost::remove()
