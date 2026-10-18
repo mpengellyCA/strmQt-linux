@@ -905,6 +905,30 @@ Nothing keeps them in step: neither Sunshine nor Moonlight syncs clients.
 (`system_tray = disabled`): the host shares the user's session bus, so the
 icon would otherwise sit in the desktop's system tray.
 
+**A host nobody sits at is run from a terminal.** `strmqt admin` (in
+`app/admin`) is the same binary started with no window and no display:
+`status`, `pair <code>`, `devices`, `unpair`, `stream`, `youtube-music
+import|sign-out`, and `host setup|restart|remove|run`. What only the running
+host's StrmQt can do — arm a StrmLight's code, take a YouTube Music sign-in
+into its web view — goes to it over the HostLink socket, as a request line
+naming the verb and the length of what follows, answered "ok" or "no" and a
+sentence; the rest is the settings file and the host's folder, which the
+running StrmQts read again on their own. The sign-in is the YouTube and Google
+rows of a Firefox elsewhere, sent as JSON and taken as `FirefoxCookies` takes
+a local store's. strmqt-headless (its own repository) is the other half:
+`strmqtctl` runs these over SSH or `docker compose exec`, and reads that
+Firefox on the administrator's computer.
+
+**A container has no systemd, so `strmqt admin host run` is one.** In the
+strmqt-headless image (`STRMQT_HOST_FOREGROUND`), the same three units are
+written as on any machine, and `HostSupervisor` reads them back and does
+what systemd would with them, as far as they ask: environment, runtime
+directory, the waits before and after, restarts. There is one description of
+the host either way. When one service ends, all three are restarted together;
+restarting more than five times in two minutes gives up, and the container's
+own restart policy takes over. Set-up, restart and removal are refused there:
+the host starts and stops with its container.
+
 **StrmQt's ports are 8330–8356.** Sunshine's ports are fixed offsets from one
 base, and the host's base is 8335: 8330 (HTTPS), 8335 (HTTP), 8336 (its web
 page), UDP 8344–8348 (the stream) and 8356 (RTSP), leaving 8337 and 8338 for

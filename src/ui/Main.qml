@@ -1468,6 +1468,11 @@ ApplicationWindow {
             if (root.ensureYouTubeMusic())
                 YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
         }
+        // A sign-in sent from another computer, to the streaming host.
+        function onOfferRequested() {
+            if (root.ensureYouTubeMusic())
+                YouTubeSignIn.importOffered(youtubeMusicHost.item.profile);
+        }
         function onSignOutRequested() {
             if (root.ensureYouTubeMusic())
                 YouTubeSignIn.clear(youtubeMusicHost.item.profile);

@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <optional>
 #include <sqlite3.h>
 
 namespace strmqt::firefox {
@@ -115,6 +116,58 @@ bool wanted(const QString &host)
             return true;
     }
     return false;
+}
+
+// What moz_cookies holds of a cookie, from either a store or a JSON row.
+struct Row
+{
+    QString name;
+    QString value;
+    QString host;
+    QString path;
+    qint64 expiry = 0;
+    bool secure = false;
+    bool httpOnly = false;
+    int sameSite = 0;
+};
+
+// The cookie `row` is, or none: not YouTube's or Google's, or expired.
+std::optional<QNetworkCookie> toCookie(const Row &row, qint64 now)
+{
+    if (!wanted(row.host))
+        return std::nullopt;
+    const qint64 expiry = toSeconds(row.expiry);
+    if (expiry > 0 && expiry <= now)
+        return std::nullopt;
+    QNetworkCookie cookie(row.name.toUtf8(), row.value.toUtf8());
+    cookie.setDomain(row.host);
+    cookie.setPath(row.path);
+    if (expiry > 0)
+        cookie.setExpirationDate(QDateTime::fromSecsSinceEpoch(expiry));
+    cookie.setSecure(row.secure);
+    cookie.setHttpOnly(row.httpOnly);
+    // Firefox: 0 none, 1 lax, 2 strict (and 256 "unset" in newer ones).
+    // "None" on a cookie that is not Secure is how older Firefox wrote
+    // "nothing was said", and Chromium refuses that pair outright: such
+    // a cookie is left to the engine's default.
+    switch (row.sameSite) {
+    case 0:
+        if (cookie.isSecure())
+            cookie.setSameSitePolicy(QNetworkCookie::SameSite::None);
+        break;
+    case 1: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Lax); break;
+    case 2: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Strict); break;
+    default: break;
+    }
+    return cookie;
+}
+
+// The cookies sources() takes for a sign-in.
+bool isSignIn(const QNetworkCookie &cookie)
+{
+    return (cookie.name() == "SID" || cookie.name() == "__Secure-3PSID")
+           && (cookie.domain() == QLatin1String(".youtube.com")
+               || cookie.domain() == QLatin1String(".google.com"));
 }
 
 } // namespace
@@ -240,37 +293,58 @@ QList<QNetworkCookie> cookies(const Source &source, QString *error)
     sqlite3_bind_text(statement, 1, attributes.constData(), int(attributes.size()), SQLITE_STATIC);
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     while (sqlite3_step(statement) == SQLITE_ROW) {
-        const QString host = text(statement, 2);
-        if (!wanted(host))
-            continue;
-        const qint64 expiry = toSeconds(sqlite3_column_int64(statement, 4));
-        if (expiry > 0 && expiry <= now)
-            continue;
-        QNetworkCookie cookie(text(statement, 0).toUtf8(), text(statement, 1).toUtf8());
-        cookie.setDomain(host);
-        cookie.setPath(text(statement, 3));
-        if (expiry > 0)
-            cookie.setExpirationDate(QDateTime::fromSecsSinceEpoch(expiry));
-        cookie.setSecure(sqlite3_column_int(statement, 5) != 0);
-        cookie.setHttpOnly(sqlite3_column_int(statement, 6) != 0);
-        // Firefox: 0 none, 1 lax, 2 strict (and 256 "unset" in newer ones).
-        // "None" on a cookie that is not Secure is how older Firefox wrote
-        // "nothing was said", and Chromium refuses that pair outright: such
-        // a cookie is left to the engine's default.
-        switch (sqlite3_column_int(statement, 7)) {
-        case 0:
-            if (cookie.isSecure())
-                cookie.setSameSitePolicy(QNetworkCookie::SameSite::None);
-            break;
-        case 1: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Lax); break;
-        case 2: cookie.setSameSitePolicy(QNetworkCookie::SameSite::Strict); break;
-        default: break;
-        }
-        result << cookie;
+        const Row row{text(statement, 0),
+                      text(statement, 1),
+                      text(statement, 2),
+                      text(statement, 3),
+                      sqlite3_column_int64(statement, 4),
+                      sqlite3_column_int(statement, 5) != 0,
+                      sqlite3_column_int(statement, 6) != 0,
+                      sqlite3_column_int(statement, 7)};
+        if (const auto cookie = toCookie(row, now))
+            result << *cookie;
     }
     sqlite3_finalize(statement);
     if (result.isEmpty())
         fail(QStringLiteral("There is no YouTube sign-in there."));
+    return result;
+}
+
+Carried carried(const QByteArray &json, QString *error)
+{
+    Carried result;
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(json, &parseError);
+    if (!document.isObject()) {
+        if (error)
+            *error = QStringLiteral("That is not a sign-in StrmQt can read.");
+        return result;
+    }
+    const QJsonObject root = document.object();
+    result.label = root.value(QLatin1String("label")).toString().simplified().left(120);
+    if (result.label.isEmpty())
+        result.label = QStringLiteral("Firefox on another computer");
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const QJsonArray rows = root.value(QLatin1String("cookies")).toArray();
+    for (const QJsonValue &value : rows) {
+        const QJsonObject object = value.toObject();
+        const Row row{object.value(QLatin1String("name")).toString(),
+                      object.value(QLatin1String("value")).toString(),
+                      object.value(QLatin1String("host")).toString(),
+                      object.value(QLatin1String("path")).toString(QStringLiteral("/")),
+                      qint64(object.value(QLatin1String("expiry")).toDouble()),
+                      object.value(QLatin1String("isSecure")).toInt() != 0,
+                      object.value(QLatin1String("isHttpOnly")).toInt() != 0,
+                      object.value(QLatin1String("sameSite")).toInt()};
+        if (row.name.isEmpty())
+            continue;
+        if (const auto cookie = toCookie(row, now)) {
+            result.signedIn = result.signedIn || isSignIn(*cookie);
+            result.cookies << *cookie;
+        }
+    }
+    if (result.cookies.isEmpty() && error)
+        *error = QStringLiteral("There is no YouTube sign-in there.");
     return result;
 }
 

@@ -86,6 +86,10 @@ public:
         QString configHome;
         // `loginctl enable-linger`: start at boot, before anyone logs in.
         bool linger = true;
+        // No systemd, as in a container: `strmqt admin host run` starts the
+        // services itself, from the same files (HostSupervisor.h). prepare()
+        // takes setUp()'s place, and nothing else here asks systemd.
+        bool foreground = false;
         bool insideFlatpak = false;
         QStringList strmqtEnvironment;
 
@@ -134,6 +138,11 @@ public:
     // The services' states alone; cheap enough to ask on a timer while shown.
     Q_INVOKABLE void checkState() { readState(); }
     Q_INVOKABLE void setUp();
+    // setUp() for a foreground host: chooses its ports and Sunshine's sign-in
+    // the first time, and writes the files, but starts nothing.
+    void prepare();
+    // Where the services' files are written.
+    QString unitPath(const QString &unit) const;
     Q_INVOKABLE void restart();
     Q_INVOKABLE void remove();
     // Asks Sunshine for the paired devices and for who is asking to pair.
@@ -215,7 +224,11 @@ private:
     void next();
     void finish(bool ok, const QString &text);
     void setMessage(const QString &text, bool failed);
-    QString unitPath(const QString &unit) const;
+    // Runs `action` once the host's sign-in has been read from its vault: a
+    // set-up before that would choose a new one over it.
+    void afterPassword(void (StreamingHost::*action)());
+    // Chooses the ports at a first set-up, or moves a host off 0.9.0's.
+    bool choosePorts();
     void connectApi();
     void configureApi();
     void setPairingMessage(const QString &text, bool failed);
@@ -248,6 +261,8 @@ private:
     // guards (Sunshine's pairings and private key).
     SecretsStore *m_vault = nullptr;
     QString m_password;
+    bool m_passwordRead = true;
+    void (StreamingHost::*m_afterPassword)() = nullptr;
     streaming::SunshineApi *m_api = nullptr;
     QVariantList m_devices;
     QVariantList m_requests;

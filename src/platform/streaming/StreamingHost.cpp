@@ -4,6 +4,7 @@
 #include "platform/SecretsStore.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -82,6 +83,8 @@ StreamingHost::Environment StreamingHost::Environment::detect()
     env.systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
     env.kscreenDoctor = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
     env.configHome = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    // Set by the strmqt-headless image, whose host runs without systemd.
+    env.foreground = qEnvironmentVariableIsSet("STRMQT_HOST_FOREGROUND");
     return env;
 }
 
@@ -101,9 +104,13 @@ StreamingHost::StreamingHost(Environment environment, QObject *parent)
     m_api = new streaming::SunshineApi(this);
     connectApi();
     if (QFile::exists(m_env.stateDir + QStringLiteral("/secrets.ini"))) {
+        m_passwordRead = false;
         m_vault->readSecret(QLatin1String(kPasswordKey)).then(this, [this](const Result<QString> &stored) {
             if (stored.ok() && m_password.isEmpty())
                 m_password = stored.value;
+            m_passwordRead = true;
+            if (const auto action = std::exchange(m_afterPassword, nullptr))
+                (this->*action)();
         });
     }
 }
@@ -158,7 +165,7 @@ QStringList StreamingHost::probeProblems(const Environment &env)
                        "your distribution to host a stream.");
         return problems;
     }
-    if (env.systemctl.isEmpty())
+    if (env.systemctl.isEmpty() && !env.foreground)
         problems << tr("systemd was not found. The streaming host runs as systemd user services.");
     if (env.kwin.isEmpty())
         problems << tr("KWin (kwin_wayland) was not found. It provides the headless screen.");
@@ -364,6 +371,8 @@ void StreamingHost::setHeight(int height)
         return;
     m_config.height = height;
     m_config.width = height * 16 / 9;
+    // Kept before a set-up too: `strmqt admin stream --height` exits at once.
+    saveConfig();
     emit configChanged();
     applyIfInstalled();
 }
@@ -390,6 +399,11 @@ void StreamingHost::applyIfInstalled()
     }
     if (!writeFiles())
         return;
+    if (m_env.foreground) {
+        // Nothing here can restart what `strmqt admin host run` started.
+        setMessage(tr("The change is applied the next time the host starts."), false);
+        return;
+    }
     run({{m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("daemon-reload")}, {}},
          {m_env.systemctl, {QStringLiteral("--user"), QStringLiteral("restart"), m_env.hostUnit, m_env.sunshineUnit}, {}}},
         tr("The streaming host restarted with the new setting."));
@@ -429,15 +443,13 @@ bool StreamingHost::writeFiles()
     return true;
 }
 
-void StreamingHost::setUp()
+void StreamingHost::afterPassword(void (StreamingHost::*action)())
 {
-    if (m_busy)
-        return;
-    probe();
-    if (!m_problems.isEmpty()) {
-        setMessage(m_problems.join(QLatin1Char(' ')), true);
-        return;
-    }
+    m_afterPassword = action;
+}
+
+bool StreamingHost::choosePorts()
+{
     // Chosen at the first set-up and kept, apart from a move off 0.9.0's
     // base: a StrmLight follows the host to a new port by discovery, but
     // there is no reason to make it.
@@ -445,7 +457,7 @@ void StreamingHost::setUp()
         const int base = streaming::freePortBase(portFree, m_config.port);
         if (base == 0) {
             setMessage(tr("No free range of ports was found for Sunshine."), true);
-            return;
+            return false;
         }
         if (base != m_config.port) {
             m_config.port = base;
@@ -454,7 +466,27 @@ void StreamingHost::setUp()
     } else {
         leaveLegacyPort();
     }
-    if (!writeFiles())
+    return true;
+}
+
+void StreamingHost::setUp()
+{
+    if (m_busy)
+        return;
+    if (m_env.foreground) {
+        setMessage(tr("This streaming host starts and stops with its container."), true);
+        return;
+    }
+    if (!m_passwordRead) {
+        afterPassword(&StreamingHost::setUp);
+        return;
+    }
+    probe();
+    if (!m_problems.isEmpty()) {
+        setMessage(m_problems.join(QLatin1Char(' ')), true);
+        return;
+    }
+    if (!choosePorts() || !writeFiles())
         return;
     notePortsLent();
     QList<Step> steps{
@@ -487,10 +519,47 @@ void StreamingHost::setUp()
     run(steps, tr("The streaming host is set up and running."));
 }
 
+void StreamingHost::prepare()
+{
+    if (m_busy)
+        return;
+    if (!m_passwordRead) {
+        afterPassword(&StreamingHost::prepare);
+        return;
+    }
+    probe();
+    readState();
+    if (!m_problems.isEmpty()) {
+        setMessage(m_problems.join(QLatin1Char(' ')), true);
+        emit settled();
+        return;
+    }
+    if (!choosePorts() || !writeFiles()) {
+        emit settled();
+        return;
+    }
+    notePortsLent();
+    // As setUp() does, with nothing running yet to stop first.
+    QList<Step> steps;
+    if (m_password.isEmpty()) {
+        m_password = newPassword();
+        m_vault->writeSecret(QLatin1String(kPasswordKey), m_password);
+        steps << Step{m_env.sunshine,
+                      {m_env.stateDir + QStringLiteral("/sunshine.conf"), QStringLiteral("--creds"),
+                       QLatin1String(kSunshineUser), m_password},
+                      {}, true};
+    }
+    run(steps, tr("The streaming host is ready."));
+}
+
 void StreamingHost::restart()
 {
     if (m_busy || !m_installed)
         return;
+    if (m_env.foreground) {
+        setMessage(tr("This streaming host starts and stops with its container."), true);
+        return;
+    }
     // The files are written again first: a newer StrmQt may write them
     // differently (its unit gained STRMQT_STREAMING_HOST; its ports moved),
     // and a restart is when that should take effect.
@@ -534,6 +603,10 @@ void StreamingHost::remove()
 {
     if (m_busy)
         return;
+    if (m_env.foreground) {
+        setMessage(tr("This streaming host starts and stops with its container."), true);
+        return;
+    }
     // Stopping units that are not loaded and deleting files that are not there
     // are both fine: remove means "make sure it is gone".
     const QString gone = QStringLiteral("-");

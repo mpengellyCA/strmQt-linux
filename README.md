@@ -124,6 +124,11 @@ out of the desktop's system tray.
 The streaming host is not in the Flatpak, which cannot run systemd user services or KWin
 outside its sandbox; it says so instead of offering it.
 
+A host with nobody at its screen — a mini PC in a cupboard, a container — is run from a
+terminal with `strmqt admin` (`strmqt admin help` lists its commands), and from another
+computer with [strmqt-headless](https://github.com/mpengellyCA/strmqt-headless), which
+also runs the host in Docker and signs its YouTube Music in from your own Firefox.
+
 ### YouTube and YouTube Music, in the same room
 
 Two more destinations in the menu, each driven with the same arrows, OK and Back as the

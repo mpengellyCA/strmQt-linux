@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "WindowFocusKeeper.h"
+#include "admin/Admin.h"
 #include "platform/streaming/StreamingHost.h"
 #include "input/FocusNavigator.h"
 #include <QQuickWindow>
@@ -41,6 +42,7 @@
 #include <QQmlContext>
 #include <QTimer>
 #include <QStringList>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QSysInfo>
 #include <QUrl>
@@ -55,6 +57,11 @@
 
 int main(int argc, char *argv[])
 {
+    // `strmqt admin …`: the streaming host's administration, from a terminal
+    // and with no display (app/admin/Admin.h).
+    if (argc > 1 && qstrcmp(argv[1], "admin") == 0)
+        return strmqt::admin::main(argc, argv);
+
     // ARCHITECTURE.md: pin the Qt scene graph to OpenGL so the libmpv render API can
     // share the GL context when video lands (M3). Explicit env override wins.
     if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND"))
@@ -109,6 +116,22 @@ int main(int argc, char *argv[])
         pairingCheck->start(60 * 1000);
         QTimer::singleShot(15 * 1000, &streamingHost, &strmqt::StreamingHost::checkPairing);
         hostLink.listen([&app](const QString &code) { return app.webRemote()->pairStrmLight(code); });
+        // `strmqt admin status` asks whether this host is up, and how.
+        hostLink.handle("status", [&app, &streamingHost](const QByteArray &) {
+            const QJsonObject status{
+                {QStringLiteral("name"), QSysInfo::machineHostName()},
+                {QStringLiteral("remotePort"), app.settings()->webRemotePort()},
+                {QStringLiteral("sunshinePort"), streamingHost.port()},
+                {QStringLiteral("emby"), app.session()->authenticated()},
+#ifdef STRMQT_HAVE_YOUTUBE
+                {QStringLiteral("youtubeMusic"), app.settings()->youtubeMusicEnabled()},
+#else
+                {QStringLiteral("youtubeMusic"), false},
+#endif
+            };
+            return strmqt::HostLink::Answer{
+                true, QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))};
+        });
         discovery.start(quint16(app.settings()->webRemotePort()));
     } else {
         app.webRemote()->setHostLink(&hostLink);
@@ -173,6 +196,22 @@ int main(int argc, char *argv[])
     // Settings' "YouTube Music" panel and the shell (Main.qml) meet here.
     YouTubeSignIn youtubeSignIn;
     engine.rootContext()->setContextProperty(QStringLiteral("YouTubeSignIn"), &youtubeSignIn);
+    // The streaming host has no Firefox and nobody at its screen: a sign-in
+    // read out of one elsewhere is sent here (strmqt admin youtube-music).
+    if (app.settings()->isStreamingHostInstance()) {
+        hostLink.handle("youtube-music-import", [&youtubeSignIn](const QByteArray &body) {
+            QString error;
+            const strmqt::firefox::Carried carried = strmqt::firefox::carried(body, &error);
+            if (carried.cookies.isEmpty())
+                return strmqt::HostLink::Answer{false, error};
+            const bool ok = youtubeSignIn.offer(carried);
+            return strmqt::HostLink::Answer{ok, youtubeSignIn.status()};
+        });
+        hostLink.handle("youtube-music-sign-out", [&youtubeSignIn](const QByteArray &) {
+            const bool ok = youtubeSignIn.signOut();
+            return strmqt::HostLink::Answer{ok, youtubeSignIn.status()};
+        });
+    }
 #else
     const bool youtube = false;
 #endif

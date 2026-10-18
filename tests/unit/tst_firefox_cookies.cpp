@@ -222,6 +222,50 @@ private slots:
         QVERIFY(sources({ m_root }).isEmpty());
     }
 
+    // What strmqt-headless sends from another computer is taken as a store's
+    // rows are: Google's and YouTube's alone, none expired.
+    void aCarriedSignInIsTakenAsAStoresRowsAre()
+    {
+        const QByteArray json = QStringLiteral(R"({
+            "label": "Firefox · default-release",
+            "cookies": [
+                {"name": "SID", "value": "s", "host": ".youtube.com", "path": "/",
+                 "expiry": %1, "isSecure": 1, "isHttpOnly": 1, "sameSite": 0},
+                {"name": "PREF", "value": "p", "host": "music.youtube.com", "path": "/",
+                 "expiry": %2, "isSecure": 1, "isHttpOnly": 0, "sameSite": 1},
+                {"name": "OLD", "value": "o", "host": ".google.com", "path": "/", "expiry": 1000},
+                {"name": "X", "value": "x", "host": ".notgoogle.com", "path": "/", "expiry": %1},
+                {"value": "nameless", "host": ".google.com"}
+            ],
+            "unknown": true
+        })").arg(m_soon).arg(m_soon * 1000).toUtf8();
+        QString error;
+        const Carried carried = strmqt::firefox::carried(json, &error);
+        QCOMPARE(carried.label, QStringLiteral("Firefox · default-release"));
+        QVERIFY(carried.signedIn);
+        QCOMPARE(carried.cookies.size(), 2);
+        QCOMPARE(carried.cookies.at(0).name(), QByteArray("SID"));
+        QVERIFY(carried.cookies.at(0).isHttpOnly());
+        QCOMPARE(carried.cookies.at(0).sameSitePolicy(), QNetworkCookie::SameSite::None);
+        // Milliseconds are read as Firefox writes them now.
+        QCOMPARE(carried.cookies.at(1).expirationDate().toSecsSinceEpoch(), m_soon);
+        QCOMPARE(carried.cookies.at(1).sameSitePolicy(), QNetworkCookie::SameSite::Lax);
+
+        // Not signed in, and nothing at all, are told apart.
+        const Carried prefsOnly = strmqt::firefox::carried(
+            QStringLiteral(R"({"cookies":[{"name":"PREF","value":"p","host":".youtube.com","expiry":%1}]})")
+                .arg(m_soon).toUtf8());
+        QVERIFY(!prefsOnly.signedIn);
+        QCOMPARE(prefsOnly.cookies.size(), 1);
+        QVERIFY(!prefsOnly.label.isEmpty());
+
+        for (const QByteArray &nothing : {QByteArray("[]"), QByteArray("not json"), QByteArray("{}")}) {
+            error.clear();
+            QVERIFY(strmqt::firefox::carried(nothing, &error).cookies.isEmpty());
+            QVERIFY(!error.isEmpty());
+        }
+    }
+
 private:
     QScopedPointer<QTemporaryDir> m_dir;
     QString m_root;

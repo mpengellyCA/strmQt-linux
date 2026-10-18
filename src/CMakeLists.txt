@@ -27,6 +27,7 @@ qt_add_library(strmqt_core STATIC
     platform/PowerInhibit.h platform/PowerInhibit.cpp
     platform/SecretsStore.h platform/SecretsStore.cpp
     platform/streaming/HostFiles.h platform/streaming/HostFiles.cpp
+    platform/streaming/HostSupervisor.h platform/streaming/HostSupervisor.cpp
     platform/streaming/StreamingHost.h platform/streaming/StreamingHost.cpp
     platform/streaming/SunshineApi.h platform/streaming/SunshineApi.cpp
     platform/secrets/DBusTransport.h platform/secrets/DBusTransport.cpp
@@ -97,6 +98,13 @@ qt_add_library(strmqt_app STATIC
 target_link_libraries(strmqt_app PUBLIC strmqt_core)
 
 include(remote/Remote.cmake)
+
+# `strmqt admin`: the streaming host's administration from a terminal
+# (app/admin/Admin.h). QtCore only, so it runs where there is no display.
+qt_add_library(strmqt_admin STATIC
+    app/admin/Admin.h app/admin/Admin.cpp
+)
+target_link_libraries(strmqt_admin PUBLIC strmqt_remote strmqt_core)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
@@ -271,7 +279,7 @@ endif()
 
 # qmltyperegistrar includes QML_ELEMENT headers by bare file name.
 target_include_directories(strmqt PRIVATE playback/mpv)
-target_link_libraries(strmqt PRIVATE strmqt_app strmqt_remote Qt6::Gui Qt6::Quick Qt6::QuickControls2
+target_link_libraries(strmqt PRIVATE strmqt_app strmqt_remote strmqt_admin Qt6::Gui Qt6::Quick Qt6::QuickControls2
     Qt6::OpenGL PkgConfig::MPV)
 if(LIBVLC_FOUND)
     target_include_directories(strmqt PRIVATE playback/vlc)

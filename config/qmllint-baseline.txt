@@ -9,6 +9,7 @@ src/ui/Main.qml: Member "playPause" not found on type "QQuickItem" [missing-prop
 src/ui/Main.qml: Member "previous" not found on type "QObject" [missing-property]	onPreviousRequested: youtubeMusicHost.item.previous()
 src/ui/Main.qml: Member "profile" not found on type "QObject" [missing-property]	YouTubeSignIn.clear(youtubeMusicHost.item.profile);
 src/ui/Main.qml: Member "profile" not found on type "QObject" [missing-property]	YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
+src/ui/Main.qml: Member "profile" not found on type "QObject" [missing-property]	YouTubeSignIn.importOffered(youtubeMusicHost.item.profile);
 src/ui/Main.qml: Member "reload" not found on type "QObject" [missing-property]	youtubeMusicHost.item.reload();
 src/ui/Main.qml: Member "resumePlayback" not found on type "QObject" [missing-property]	youtubeHost.item.resumePlayback();
 src/ui/Main.qml: Member "seekBy" not found on type "QQuickItem" [missing-property]	onSeekRequested: seconds => root.youtubeMiniView.seekBy(seconds)
@@ -37,6 +38,7 @@ src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	SearchCtl.query = text;
 src/ui/Main.qml: Unqualified access [unqualified]	YouTubeSignIn.clear(youtubeMusicHost.item.profile);
 src/ui/Main.qml: Unqualified access [unqualified]	YouTubeSignIn.importInto(youtubeMusicHost.item.profile, index);
+src/ui/Main.qml: Unqualified access [unqualified]	YouTubeSignIn.importOffered(youtubeMusicHost.item.profile);
 src/ui/Main.qml: Unqualified access [unqualified]	active: PlayerCtl.active === true
 src/ui/Main.qml: Unqualified access [unqualified]	const action = Input.actionForKey(event.key, event.modifiers, "browse");
 src/ui/Main.qml: Unqualified access [unqualified]	function onActionChosen(actionId) { Input.trigger(actionId); }

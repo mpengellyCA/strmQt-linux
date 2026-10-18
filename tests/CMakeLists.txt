@@ -384,6 +384,11 @@ target_link_libraries(tst_web_remote_server PRIVATE strmqt_remote)
 strmqt_add_test(tst_host_discovery unit/tst_host_discovery.cpp)
 target_link_libraries(tst_host_discovery PRIVATE strmqt_remote)
 
+strmqt_add_test(tst_host_supervisor unit/tst_host_supervisor.cpp)
+
+strmqt_add_test(tst_admin unit/tst_admin.cpp)
+target_link_libraries(tst_admin PRIVATE strmqt_admin)
+
 strmqt_add_test(tst_web_remote_controller unit/tst_web_remote_controller.cpp
     mocks/MockEmbyServer.h mocks/MockEmbyServer.cpp)
 target_include_directories(tst_web_remote_controller PRIVATE mocks)

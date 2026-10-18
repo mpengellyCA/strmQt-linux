@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QList>
 #include <QNetworkCookie>
 #include <QString>
@@ -48,5 +49,19 @@ QList<Source> sources(const QStringList &profileDirs);
 // The cookies for youtube.com and google.com in `source`. Empty when the
 // store cannot be read; `error` then says why.
 QList<QNetworkCookie> cookies(const Source &source, QString *error = nullptr);
+
+// A sign-in read out of a Firefox on another computer and sent here, which is
+// how the streaming host gets one: it has no Firefox, and nobody to use one.
+// strmqt-headless sends `{"label": "...", "cookies": [...]}`, each cookie a
+// row of moz_cookies by its column names. They are taken as cookies() takes
+// a store's rows: youtube.com's and google.com's alone, none expired.
+struct Carried
+{
+    QString label;
+    bool signedIn = false;
+    QList<QNetworkCookie> cookies;
+};
+// Empty cookies when there is nothing to sign in with; `error` then says why.
+Carried carried(const QByteArray &json, QString *error = nullptr);
 
 } // namespace strmqt::firefox

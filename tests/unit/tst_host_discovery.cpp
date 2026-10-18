@@ -30,6 +30,8 @@ private slots:
     void repliesAreRationed();
     void aCodeReachesTheHost();
     void noHostMeansTheCodeStaysHere();
+    void aRequestIsAnsweredInWords();
+    void noHostIsAnAnswerToo();
 
 private:
     static QJsonObject sample()
@@ -133,9 +135,11 @@ struct HostThread
     QStringList taken;
     bool accept = true;
 
-    explicit HostThread(const QString &path)
+    explicit HostThread(const QString &path, const QHash<QByteArray, HostLink::Handler> &handlers = {})
     {
         link = new HostLink(path);
+        for (auto it = handlers.cbegin(); it != handlers.cend(); ++it)
+            link->handle(it.key(), it.value());
         link->moveToThread(&thread);
         thread.start();
         bool listening = false;
@@ -189,6 +193,52 @@ void HostDiscoveryTest::noHostMeansTheCodeStaysHere()
     timer.start();
     QVERIFY(!desktop.pass(QStringLiteral("4831"), 500));
     QVERIFY(timer.elapsed() < 1000);
+}
+
+void HostDiscoveryTest::aRequestIsAnsweredInWords()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("link"));
+    QHash<QByteArray, HostLink::Handler> handlers;
+    handlers.insert("echo", [](const QByteArray &body) {
+        return HostLink::Answer{true, QString::fromUtf8(body) + QStringLiteral(" back\nover two lines")};
+    });
+    handlers.insert("size", [](const QByteArray &body) {
+        return HostLink::Answer{body.size() == 512 * 1024 && body.count('x') == body.size(),
+                                QString::number(body.size())};
+    });
+    HostThread host(path, handlers);
+    HostLink admin(path);
+
+    HostLink::Answer answer = admin.ask("echo", "hello");
+    QVERIFY(answer.ok);
+    // One line, whatever the host says.
+    QCOMPARE(answer.text, QStringLiteral("hello back over two lines"));
+
+    // A sign-in's worth arrives whole, however it is split on the way.
+    answer = admin.ask("size", QByteArray(512 * 1024, 'x'));
+    QVERIFY2(answer.ok, qPrintable(answer.text));
+
+    // A request nobody handles is refused in words.
+    answer = admin.ask("nothing");
+    QVERIFY(!answer.ok);
+    QVERIFY(!answer.text.isEmpty());
+    // So is one larger than any request may be, before it is sent.
+    QVERIFY(!admin.ask("echo", QByteArray(HostLink::kMaxBody + 1, 'x')).ok);
+
+    // Codes are passed as they always were.
+    QVERIFY(admin.pass(QStringLiteral("4831")));
+}
+
+void HostDiscoveryTest::noHostIsAnAnswerToo()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    HostLink admin(dir.filePath(QStringLiteral("nobody")));
+    const HostLink::Answer answer = admin.ask("status", {}, 500);
+    QVERIFY(!answer.ok);
+    QVERIFY(answer.text.contains(QStringLiteral("not running")));
 }
 
 QTEST_GUILESS_MAIN(HostDiscoveryTest)

@@ -604,6 +604,67 @@ private slots:
         QCOMPARE(host.sunshineFingerprint().size(), 64);
     }
 
+    void aForegroundHostNeedsNoSystemd()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        env.systemctl.clear();
+        QCOMPARE(StreamingHost::probeProblems(env).size(), 1);
+        env.foreground = true;
+        QVERIFY(StreamingHost::probeProblems(env).isEmpty());
+    }
+
+    void prepareWritesTheFilesAndChoosesTheSignInOnce()
+    {
+        QTemporaryDir dir;
+        StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        env.systemctl.clear();
+        env.foreground = true;
+        // Sunshine is only asked to take its sign-in.
+        writeScript(env.sunshine, "# zkde_screencast_unstable_v1\necho \"$2\" >> \"$LOG\"\n");
+        qputenv("LOG", dir.filePath(QStringLiteral("calls")).toUtf8());
+        {
+            StreamingHost host(env);
+            QSignalSpy settled(&host, &StreamingHost::settled);
+            host.prepare();
+            QVERIFY(settled.count() == 1 || settled.wait(5000));
+            QVERIFY2(!host.failed(), qPrintable(host.message()));
+            QVERIFY(host.installed() || QFile::exists(host.unitPath(env.hostUnit)));
+            QVERIFY(read(host.unitPath(env.hostUnit)).contains(QStringLiteral("--exit-with-session")));
+            QVERIFY(read(host.unitPath(env.audioUnit)).contains(QStringLiteral("RuntimeDirectory=")));
+            QVERIFY(QFile::exists(env.stateDir + QStringLiteral("/sunshine.conf")));
+            QTRY_VERIFY(QFile::exists(env.stateDir + QStringLiteral("/secrets.ini")));
+
+            // Nothing here starts or stops it: its container does.
+            host.setUp();
+            QVERIFY(host.failed());
+            QVERIFY(!host.busy());
+        }
+        QCOMPARE(read(dir.filePath(QStringLiteral("calls"))), QStringLiteral("--creds\n"));
+
+        // A container started again keeps the sign-in it chose: the second
+        // prepare() waits for it to be read rather than choosing another.
+        StreamingHost again(env);
+        QSignalSpy settled(&again, &StreamingHost::settled);
+        again.prepare();
+        QVERIFY(settled.count() == 1 || settled.wait(5000));
+        QVERIFY2(!again.failed(), qPrintable(again.message()));
+        QCOMPARE(read(dir.filePath(QStringLiteral("calls"))), QStringLiteral("--creds\n"));
+    }
+
+    void anUnsetUpHostKeepsItsHeight()
+    {
+        QTemporaryDir dir;
+        const StreamingHost::Environment env = fakeEnvironment(dir, "exit 0\n");
+        QVERIFY(QDir().mkpath(env.stateDir));
+        {
+            StreamingHost host(env);
+            host.setHeight(1080);
+        }
+        StreamingHost host(env);
+        QCOMPARE(host.height(), 1080);
+    }
+
 private:
     StreamingHost::Environment fakeEnvironment(const QTemporaryDir &dir, const QByteArray &systemctl)
     {
