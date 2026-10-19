@@ -1,3 +1,10 @@
+strmqt (0.9.3-1) unstable; urgency=medium
+
+  * A TV that joins while the host's screen is still gets its picture at
+    once, not green for up to 20 s.
+
+ -- Mike Pengelly <mike@leadrix.io>  Mon, 19 Oct 2026 02:45:00 +0000
+
 strmqt (0.9.2-1) unstable; urgency=medium
 
   * TVs watching the streaming host together play in step: the host keeps
